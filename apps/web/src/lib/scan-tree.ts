@@ -81,3 +81,15 @@ export function withoutComplete(rows: TreeRow[], done: ReadonlySet<string>, all:
     return inside.length === 0 || countDone(inside, done) < inside.length;
   });
 }
+
+/** Every folder path among `paths` (all levels), optionally only those at or under `under`. */
+export function foldersOf(paths: string[], under = ''): string[] {
+  const out = new Set<string>();
+  for (const p of paths) {
+    if (!scanKind(p)) continue;
+    const parts = p.split('/').slice(0, -1);
+    for (let i = 1; i <= parts.length; i++) out.add(parts.slice(0, i).join('/'));
+  }
+  const prefix = under ? under + '/' : '';
+  return [...out].filter((f) => !under || f === under || f.startsWith(prefix)).sort();
+}

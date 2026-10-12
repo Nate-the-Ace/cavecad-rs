@@ -311,6 +311,16 @@ export const trimming = $state({ on: false, draft: [] as [number, number][] });
 /** True when the scan is in the folder now open. */
 export const have = (path: string) => files.has(path);
 
+/** Folds (`closed`) or unfolds several tree folders at once. */
+export function setFolders(folders: string[], closed: boolean) {
+  const set = new Set(scans.collapsed);
+  for (const f of folders) {
+    if (closed) set.add(f);
+    else set.delete(f);
+  }
+  scans.collapsed = [...set];
+}
+
 /** Folds or unfolds a tree folder. */
 export function toggleFolder(path: string) {
   scans.collapsed = scans.collapsed.includes(path) ? scans.collapsed.filter((p) => p !== path) : [...scans.collapsed, path];

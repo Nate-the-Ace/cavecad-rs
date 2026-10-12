@@ -1,4 +1,4 @@
-import { countDone, filesUnder, scanKind, treeRows, withoutComplete } from '../src/lib/scan-tree.ts';
+import { countDone, filesUnder, foldersOf, scanKind, treeRows, withoutComplete } from '../src/lib/scan-tree.ts';
 
 let bad = 0;
 const ok = (c: boolean, m: string) => { if (!c) { bad++; console.log('FAIL', m); } };
@@ -22,6 +22,9 @@ ok(countDone(filesUnder(paths, '2025'), done) === 2, 'complete count for a folde
 const open = withoutComplete(treeRows(paths, new Set()), done, paths).map((r) => r.name).join('|');
 ok(open === '2025|trip 10|p1.png|cover.jpg', 'complete scans and finished folders drop out: ' + open);
 ok(withoutComplete(treeRows(paths, new Set()), new Set(), paths).length === rows.length, 'nothing complete, nothing dropped');
+
+ok(foldersOf(paths).join('|') === '2025|2025/trip 10|2025/trip 2', 'every folder at every level: ' + foldersOf(paths).join('|'));
+ok(foldersOf(paths, '2025/trip 2').join('|') === '2025/trip 2' && foldersOf(paths, '2025').length === 3, 'folders under one');
 
 if (bad) process.exit(1);
 console.log('scan tree ok');

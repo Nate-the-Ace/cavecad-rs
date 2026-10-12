@@ -12,8 +12,8 @@
   import { engine, loadEngine, type ScanAlignment } from '../lib/engine';
   import { formatLength } from '../lib/units';
   import type { TripChoice } from '../lib/notebook';
-  import { countDone, filesUnder, treeRows, withoutComplete, type TreeRow } from '../lib/scan-tree';
-  import { addFiles, align, dropItems, trimming, checkRemembered, have, pickFolder, reopenRemembered, scans, select, toggleFolder } from '../lib/scans.svelte';
+  import { countDone, filesUnder, foldersOf, treeRows, withoutComplete, type TreeRow } from '../lib/scan-tree';
+  import { addFiles, align, dropItems, trimming, checkRemembered, have, pickFolder, reopenRemembered, scans, select, setFolders, toggleFolder } from '../lib/scans.svelte';
   import { showPanel } from '../lib/workspace.svelte';
 
   let ready = $state(false);
@@ -177,6 +177,12 @@
     changed();
   }
 
+  /** Folds or unfolds folders from the menu (`under` empty means the whole tree). */
+  function fold(under: string, closed: boolean) {
+    setFolders(foldersOf(scans.paths, under), closed);
+    menu = null;
+  }
+
   function openMenu(e: MouseEvent, r: TreeRow) {
     e.preventDefault();
     menu = { row: r, x: Math.min(e.clientX, window.innerWidth - 200), y: Math.min(e.clientY, window.innerHeight - 90) };
@@ -235,11 +241,22 @@
     {#if menu.row.kind === 'folder'}
       <button role="menuitem" onclick={() => menu && mark(menu.row as TreeRow, true)}>Mark all complete</button>
       <button role="menuitem" onclick={() => menu && mark(menu.row as TreeRow, false)}>Mark all incomplete</button>
+      <hr />
+      {#if menu.row.collapsed}
+        <button role="menuitem" onclick={() => menu && fold(menu.row.path, false)}>Expand (this folder and inside)</button>
+        <button role="menuitem" onclick={() => { if (menu) setFolders([menu.row.path], false); menu = null; }}>Expand this folder only</button>
+      {:else}
+        <button role="menuitem" onclick={() => menu && fold(menu.row.path, true)}>Collapse (this folder and inside)</button>
+        <button role="menuitem" onclick={() => menu && fold(menu.row.path, false)}>Expand everything inside</button>
+      {/if}
     {:else if done.has(menu.row.path)}
       <button role="menuitem" onclick={() => menu && mark(menu.row as TreeRow, false)}>Mark incomplete</button>
     {:else}
       <button role="menuitem" onclick={() => menu && mark(menu.row as TreeRow, true)}>Mark complete</button>
     {/if}
+    <hr />
+    <button role="menuitem" onclick={() => fold('', false)}>Expand all folders</button>
+    <button role="menuitem" onclick={() => fold('', true)}>Collapse all folders</button>
   </div>
 {/if}
 
@@ -380,6 +397,7 @@
   .veil { position: fixed; inset: 0; z-index: 60; }
   .menu { position: fixed; z-index: 61; min-width: 170px; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 4px; box-shadow: 0 6px 24px rgba(0, 0, 0, 0.35); display: flex; flex-direction: column; }
   .menu .what { font-size: 11px; color: var(--muted); padding: 4px 8px; max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .menu hr { border: none; border-top: 1px solid var(--line); margin: 4px 2px; width: 100%; }
   .menu button { border: none; background: none; text-align: left; padding: 6px 8px; border-radius: 4px; }
   .menu button:hover { background: var(--accent-bg); }
   .none { color: var(--muted); font-size: 12px; padding: 8px 4px; }
