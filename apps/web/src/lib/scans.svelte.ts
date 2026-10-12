@@ -447,6 +447,8 @@ export const align = $state({
   /** Which drawing the scan is being placed in: the Map, the Profile's run on show, or the Cross Section's station on show. */
   kind: 'map' as 'map' | 'profile' | 'section',
   view: 'map',
+  /** Cross Section: the second pick is a wall straight out from the station, which sets the scale. */
+  wall: true,
   point: { x: 0, y: 0, seq: 0 },
 });
 

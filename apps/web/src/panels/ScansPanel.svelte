@@ -160,14 +160,43 @@
   });
 
   /** A spot on the scan was clicked: it waits for its station (click it on the Map, or choose it here). */
-  function picked(px: number, py: number) {
+  function picked(px: number, py: number, dir?: 'left' | 'right' | 'up' | 'down') {
     if (trimming.on) {
       trimming.draft = [...trimming.draft, [px, py]];
+      return;
+    }
+    if (wallScale && align.pending && dir) {
+      setScaleFromWall(px, py, dir);
       return;
     }
     align.pending = { px, py };
     chosen = '';
     clearPick();
+  }
+
+  /** Cross Section only: the first spot is the station, the second a wall straight out from it, so the passage's measurement there sets the scale. */
+  const wallScale = $derived(align.on && align.kind === 'section' && align.wall && !!cave.station);
+  const walls = $derived(wallScale ? (void cave.version, engine.stationDetail(cave.station, cave.adjusted)?.walls ?? null) : null);
+  const wallNotes = $derived(
+    Object.fromEntries((['left', 'right', 'up', 'down'] as const).map((d) => [d, walls?.[d] != null ? `${d} · ${formatLength(walls[d] as number, cave.units, 2)}` : `${d} · not measured`])) as Partial<Record<'left' | 'right' | 'up' | 'down', string>>,
+  );
+
+  function setScaleFromWall(px: number, py: number, dir: 'left' | 'right' | 'up' | 'down') {
+    const first = align.pending;
+    const v = walls?.[dir];
+    if (!first) return;
+    if (v == null || !(v > 0)) {
+      scans.message = `No ${dir} measurement at this station: enter it in the Notebook, or pick another wall.`;
+      return;
+    }
+    // a new scale replaces the old matches
+    for (let n = al?.anchors.length ?? 0; n > 0; n--) engine.scanRemoveAnchor(cave.trip, align.view, scans.selected, 0);
+    const there = dir === 'left' ? `${-v}:0` : dir === 'right' ? `${v}:0` : dir === 'up' ? `0:${v}` : `0:${-v}`;
+    const a = engine.scanAddAnchor(cave.trip, align.view, scans.selected, first.px, first.py, cave.station);
+    const b = engine.scanAddAnchor(cave.trip, align.view, scans.selected, px, py, there);
+    scans.message = [a, b].find((r) => r.startsWith('error'))?.replace(/^error: /, '') ?? '';
+    align.pending = null;
+    changed();
   }
 
   /** Trims the scan to the outline traced (a dragged loop, or points closed with Enter). */
@@ -417,7 +446,10 @@
   {#if align.on && linkedHere}
     <div class="alignbar" role="group" aria-label="Align under the map">
       <span class="hint">
-        {#if align.pending}
+        {#if wallScale}
+          {#if align.pending}Now click the cave wall straight out from the station (left, right, up or down: the line snaps to the nearest). The passage's measurement there sets the scale. <button onclick={() => (align.pending = null)}>Cancel</button>
+          {:else}Click the station's spot on the scan, then a point on the cave wall straight out from it.{/if}
+        {:else if align.pending}
           {align.kind === 'map' ? `Now click that spot's station on the Map, or choose it:` : `Now click the same place in the ${align.kind === 'profile' ? 'Profile' : 'Cross Section'}, or choose its station:`}
           <select bind:value={chosen} aria-label="Station" onchange={() => match(chosen)}>
             <option value="">Station…</option>
@@ -428,6 +460,9 @@
           Click a spot on the scan that you can find in the {align.kind === 'map' ? 'Map (a station mark)' : align.kind === 'profile' ? 'Profile (a station, or any place on it)' : 'Cross Section (the station, or any place on it)'}. {#if !al || al.anchors.length < 2}Two matches place the scan; more fit it better.{/if}
         {/if}
       </span>
+      {#if align.kind === 'section'}
+        <label title="Click the station on the scan, then the wall straight out from it: the measured left, right, up or down at the station sets the scale. Turn off to match any two places by hand."><input type="checkbox" bind:checked={align.wall} onchange={() => (align.pending = null)} /> Set scale from a wall</label>
+      {/if}
       {#each al?.anchors ?? [] as a, i}
         <span class="match">{a.label || `${formatLength(a.x ?? 0, cave.units, 1)}, ${formatLength(a.y ?? 0, cave.units, 1)}`}<button class="x" aria-label="Remove this match" onclick={() => unmatch(i)}><X size={11} /></button></span>
       {/each}
@@ -477,7 +512,7 @@
     <!-- svelte-ignore a11y_no_noninteractive_tabindex: the divider is a keyboard-adjustable separator -->
     <div class="split" role="separator" aria-orientation="vertical" aria-label="Resize the scan tree" aria-valuenow={treeWidth} tabindex="0" title="Drag to resize the tree (double-click to reset)" onpointerdown={dragTree} onkeydown={nudgeTree} ondblclick={() => setTreeWidth(220)}></div>
     {#if scans.url}
-      {#key scans.url}<ScanViewer url={scans.url} kind={scans.kind} name={scans.selected} marks={align.on && linkedHere ? (al?.anchors ?? []).map((a) => ({ px: a.px, py: a.py, label: a.label || `${formatLength(a.x ?? 0, cave.units, 1)}, ${formatLength(a.y ?? 0, cave.units, 1)}` })) : []} pending={align.on ? align.pending : null} picking={(align.on || trimming.on) && linkedHere} onpick={picked} trim={linkedHere ? savedTrim : null} draft={trimming.on ? trimming.draft : []} tracing={trimming.on && linkedHere} onstroke={saveTrim} />{/key}
+      {#key scans.url}<ScanViewer url={scans.url} kind={scans.kind} name={scans.selected} marks={align.on && linkedHere ? (al?.anchors ?? []).map((a) => ({ px: a.px, py: a.py, label: a.label || `${formatLength(a.x ?? 0, cave.units, 1)}, ${formatLength(a.y ?? 0, cave.units, 1)}` })) : []} pending={align.on ? align.pending : null} snapFrom={wallScale ? align.pending : null} snapNotes={wallNotes} picking={(align.on || trimming.on) && linkedHere} onpick={picked} trim={linkedHere ? savedTrim : null} draft={trimming.on ? trimming.draft : []} tracing={trimming.on && linkedHere} onstroke={saveTrim} />{/key}
     {:else}
       <div class="empty">{scans.paths.length ? 'Pick a scan to see it.' : ''}</div>
     {/if}

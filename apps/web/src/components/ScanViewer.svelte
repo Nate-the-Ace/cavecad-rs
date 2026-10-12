@@ -5,6 +5,8 @@
   // own viewer.
   import { RotateCw, Maximize } from '@lucide/svelte';
 
+  type Dir = 'left' | 'right' | 'up' | 'down';
+
   let {
     url,
     kind = 'image',
@@ -13,6 +15,8 @@
     pending = null,
     picking = false,
     onpick,
+    snapFrom = null,
+    snapNotes = {},
     trim = null,
     draft = [],
     tracing = false,
@@ -27,7 +31,11 @@
     pending?: { px: number; py: number } | null;
     /** A click on the scan picks a spot (instead of nothing). */
     picking?: boolean;
-    onpick?: (px: number, py: number) => void;
+    onpick?: (px: number, py: number, dir?: Dir) => void;
+    /** Where a scale line starts (the station's spot): the next pick snaps to a straight line from it, left, right, up or down on the screen. */
+    snapFrom?: { px: number; py: number } | null;
+    /** What to say at the end of the tracking line for each direction (the passage's measurement there). */
+    snapNotes?: Partial<Record<Dir, string>>;
     /** The saved outline the scan is trimmed to: what is outside is dimmed. */
     trim?: [number, number][] | null;
     /** An outline being traced, point by point. */
@@ -45,6 +53,8 @@
   let natural = $state({ w: 1, h: 1 });
   let downAt: { x: number; y: number } | null = null;
   let stroke = $state<[number, number][] | null>(null);
+  /** The scan pixel the pointer is over (for the tracking line). */
+  let hover = $state<{ px: number; py: number } | null>(null);
   let drawing = false;
   const pointers = new Map<number, { x: number; y: number }>();
   let pinch = 0;
@@ -103,7 +113,23 @@
     pinch = 0;
   }
 
+  /** The nearest straight line (as seen on screen) from `from` towards `to`: the snapped pixel, and which way it goes. */
+  function snap(from: { px: number; py: number }, to: { px: number; py: number }): { px: number; py: number; dir: Dir } {
+    const a = (turn * Math.PI) / 2;
+    const dx = to.px - from.px;
+    const dy = to.py - from.py;
+    const sx = dx * Math.cos(a) - dy * Math.sin(a); // the same step as it looks on screen
+    const sy = dx * Math.sin(a) + dy * Math.cos(a);
+    const horizontal = Math.abs(sx) >= Math.abs(sy);
+    const [tx, ty] = horizontal ? [sx, 0] : [0, sy];
+    const b = -a;
+    const dir: Dir = horizontal ? (sx < 0 ? 'left' : 'right') : sy < 0 ? 'up' : 'down';
+    return { px: from.px + tx * Math.cos(b) - ty * Math.sin(b), py: from.py + tx * Math.sin(b) + ty * Math.cos(b), dir };
+  }
+  const tracking = $derived(snapFrom && hover ? snap(snapFrom, hover) : null);
+
   function move(e: PointerEvent) {
+    if (snapFrom) hover = pixelAt(e.clientX, e.clientY);
     const p = pointers.get(e.pointerId);
     if (!p) return;
     if (drawing && pointers.size === 1) {
@@ -162,7 +188,10 @@
     // A press that did not move is a pick (when picking), not the end of a pan.
     if (picking && downAt && pointers.size === 1 && Math.hypot(e.clientX - downAt.x, e.clientY - downAt.y) < 4) {
       const p = pixelAt(e.clientX, e.clientY);
-      if (p.px >= 0 && p.py >= 0 && p.px <= natural.w && p.py <= natural.h) onpick?.(p.px, p.py);
+      if (snapFrom) {
+        const s = snap(snapFrom, p);
+        if (s.px >= 0 && s.py >= 0 && s.px <= natural.w && s.py <= natural.h) onpick?.(s.px, s.py, s.dir);
+      } else if (p.px >= 0 && p.py >= 0 && p.px <= natural.w && p.py <= natural.h) onpick?.(p.px, p.py);
     }
     downAt = null;
     pointers.delete(e.pointerId);
@@ -206,10 +235,17 @@
             {#each draft as p}<circle cx={p[0]} cy={p[1]} r={4 / scale} class="dot" />{/each}
           {/if}
           {#if stroke}<polyline class="draft" points={stroke.map((p) => p.join(',')).join(' ')} vector-effect="non-scaling-stroke" />{/if}
+          {#if snapFrom && tracking}
+            <line class="track" x1={snapFrom.px} y1={snapFrom.py} x2={tracking.px} y2={tracking.py} vector-effect="non-scaling-stroke" />
+            <circle cx={tracking.px} cy={tracking.py} r={5 / scale} class="trackdot" />
+          {/if}
         </svg>
         {#each marks as m}
           <div class="pin" style="left: {m.px}px; top: {m.py}px"><span style="transform: scale({1 / scale}) rotate({-turn * 90}deg)"><i></i>{m.label}</span></div>
         {/each}
+        {#if snapFrom && tracking && snapNotes[tracking.dir]}
+          <div class="pin wait" style="left: {tracking.px}px; top: {tracking.py}px"><span style="transform: scale({1 / scale}) rotate({-turn * 90}deg)">{snapNotes[tracking.dir]}</span></div>
+        {/if}
         {#if pending}
           <div class="pin wait" style="left: {pending.px}px; top: {pending.py}px"><span style="transform: scale({1 / scale}) rotate({-turn * 90}deg)"><i></i>?</span></div>
         {/if}
@@ -231,6 +267,8 @@
   .trim .draft { fill: none; stroke: #0a84ff; stroke-width: 2; }
   .trim .closing { stroke: #0a84ff; stroke-width: 1; stroke-dasharray: 3 4; }
   .trim .dot { fill: #0a84ff; }
+  .trim .track { stroke: #ff9f0a; stroke-width: 2; stroke-dasharray: 6 4; }
+  .trim .trackdot { fill: #ff9f0a; }
   .pin { position: absolute; width: 0; height: 0; }
   .pin span { position: absolute; left: 0; top: 0; transform-origin: 0 0; display: block; color: #ff4d2e; font: 600 12px sans-serif; white-space: nowrap; text-shadow: 0 0 3px #fff, 0 0 3px #fff; pointer-events: none; }
   .pin i { position: absolute; left: -7px; top: -7px; width: 14px; height: 14px; border-radius: 50%; border: 2px solid #ff4d2e; background: rgba(255, 77, 46, 0.2); }
