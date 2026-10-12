@@ -1,7 +1,7 @@
 <script lang="ts">
   import { engine } from '../lib/engine';
   import { PANELS, panelState, resetLayout, togglePanel } from '../lib/workspace.svelte';
-  import { FileInput, Route, Waypoints, Pencil, Spline, PaintBucket, PanelTop, Scissors, Box, Map as MapIcon, Terminal, LayoutDashboard } from '@lucide/svelte';
+  import { FileInput, Route, Waypoints, Pencil, Spline, PaintBucket, PanelTop, Scissors, Box, Map as MapIcon, Terminal, LayoutDashboard, Activity } from '@lucide/svelte';
   import type { Component } from 'svelte';
 
   interface Item {
@@ -33,7 +33,7 @@
     Draw: [],
     Sheets: [],
     View: [
-      { name: 'Panels', items: [panelItem('map', MapIcon), panelItem('console', Terminal)] },
+      { name: 'Panels', items: [panelItem('map', MapIcon), panelItem('profile', Activity), panelItem('console', Terminal)] },
       { name: 'Layout', items: [{ label: 'Reset', icon: LayoutDashboard, run: resetLayout }] },
     ],
   };

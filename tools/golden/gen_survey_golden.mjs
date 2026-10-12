@@ -9,7 +9,7 @@ import vm from 'node:vm';
 
 const [, , oldRoot = `${process.env.HOME}/Documents/github/cavecad-main/cave-survey`, outDir = 'crates/cave-survey/tests/golden'] = process.argv;
 const core = (f) => `scripts/CaveSurvey/Core/${f}.js`;
-const FILES = ['CsUuid', 'CsTell', 'CsUnits', 'CsAngles', 'CsModel', 'CsTraverse', 'CsNetwork', 'CsAdjust', 'CsLrud', 'Format/CsCompass'].map(core);
+const FILES = ['CsUuid', 'CsTell', 'CsUnits', 'CsAngles', 'CsModel', 'CsTraverse', 'CsNetwork', 'CsAdjust', 'CsLrud', 'CsProfile', 'Format/CsCompass'].map(core);
 
 const ctx = vm.createContext({ console, Math, JSON, Date, RegExp, Object, Array, String, Number, isFinite, parseFloat, parseInt, isNaN });
 for (const f of FILES) {
@@ -36,6 +36,18 @@ for (const name of FIXTURES) {
         left: x.left, right: x.right, up: x.up, down: x.down, leftOpen: !!x.leftOpen, rightOpen: !!x.rightOpen, upOpen: !!x.upOpen, downOpen: !!x.downOpen, trip: x.trip }; }),
       name: s.caveName || s.name, startLrud: s.startLrud, fixed: s.fixed,
       trips: (s.trips || []).map(function(t){ return { name: t.name, startLrud: t.startLrud || null }; }),
+      profile: (function(){
+        var g = CsProfile.groupRuns(r), adj = CsProfile.adjacency(r), idx = CsProfile.legIndex(r), bands = {};
+        for (var i = 0; i < g.order.length; i++) {
+          var key = g.order[i], run = g.runs[key];
+          var tn = CsProfile.tieNameOfRun(key);
+          var tie = (tn !== null && r.stations.hasOwnProperty(tn)) ? tn : null;
+          var b = CsProfile.unrollBand(run, tie, r, null, { adjacency: adj, legIndex: idx });
+          bands[key] = { tie: b.tie, stopped: b.stopped, stoppedReason: b.stoppedReason, omitted: b.omitted,
+                         stations: b.stations.map(function(x){ return [x.name, x.x, x.y]; }), runStations: run.stations };
+        }
+        return { order: g.order, ungrouped: g.ungrouped, bands: bands };
+      })(),
       walls: (function(){ var w = CsLrud.wallRuns(s, r, 'slope'); var run = function(x){ return { points: x.points.map(function(p){ return [p.x, p.y]; }), stations: x.stations }; }; return { left: w.left.map(run), right: w.right.map(run), skipped: w.skipped }; })(),
       resolved: { stations: pick(r.stations), anchors: r.anchors, loops: r.loops.map(loop), ties: r.ties.map(loop), legCount: r.legs.length },
       adjusted: { converged: a.summary.converged, adjusted: a.adjusted, stations: pick(a.stations) }

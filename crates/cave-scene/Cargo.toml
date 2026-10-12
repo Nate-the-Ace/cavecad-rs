@@ -13,7 +13,11 @@ cave-doc = { path = "../cave-doc" }
 serde_json = "1"
 cave-survey = { path = "../cave-survey" }
 cave-walls = { path = "../cave-walls" }
+cave-profile = { path = "../cave-profile" }
+cave-geom = { path = "../cave-geom" }
+cave-draw = { path = "../cave-draw" }
 serde = { version = "1", features = ["derive"] }
 
 [dev-dependencies]
+cave-id = { path = "../cave-id" }
 cave-fixture = { path = "../cave-fixture" }

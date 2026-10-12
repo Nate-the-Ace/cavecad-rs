@@ -19,6 +19,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "cave-draw"
+version = "0.0.1"
+dependencies = [
+ "cave-doc",
+ "cave-geom",
+ "cave-id",
+]
+
+[[package]]
 name = "cave-fixture"
 version = "0.0.1"
 dependencies = [
@@ -51,12 +60,26 @@ dependencies = [
 ]
 
 [[package]]
-name = "cave-scene"
+name = "cave-profile"
 version = "0.0.1"
 dependencies = [
  "cave-doc",
  "cave-fixture",
  "cave-id",
+ "cave-survey",
+ "serde_json",
+]
+
+[[package]]
+name = "cave-scene"
+version = "0.0.1"
+dependencies = [
+ "cave-doc",
+ "cave-draw",
+ "cave-fixture",
+ "cave-geom",
+ "cave-id",
+ "cave-profile",
  "cave-survey",
  "cave-walls",
  "serde",
@@ -95,9 +118,12 @@ name = "cave-wasm"
 version = "0.0.1"
 dependencies = [
  "cave-doc",
+ "cave-draw",
  "cave-fixture",
+ "cave-id",
  "cave-log",
  "cave-scene",
+ "js-sys",
  "serde",
  "serde_json",
  "tracing",
@@ -112,10 +138,45 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4e7648175b45a9a48536d676f68d918270699102aa8dab5496df06904c914600"
 
 [[package]]
+name = "futures-core"
+version = "0.3.34"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "92d699e522242e69e3003b94ecc1f960f3a5e015aa7c5d7486e65ad01dd94f5e"
+
+[[package]]
+name = "futures-task"
+version = "0.3.34"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cd417de3d1d015fc3bfd2b1ea46dfc7bab72ef86f1cc7cc9c78e728b34a6d1fd"
+
+[[package]]
+name = "futures-util"
+version = "0.3.34"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0d50a92467f8ba5dd6e3ee5d4bd04d73ab2e4e1c44474a0674821dfce14b79bc"
+dependencies = [
+ "futures-core",
+ "futures-task",
+ "pin-project-lite",
+ "slab",
+]
+
+[[package]]
 name = "itoa"
 version = "1.0.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
+
+[[package]]
+name = "js-sys"
+version = "0.3.106"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7883d941dae510fb2d978fc3fe018c71c9e2892fd38854de3e8b92c2e5ad9cc5"
+dependencies = [
+ "cfg-if",
+ "futures-util",
+ "wasm-bindgen",
+]
 
 [[package]]
 name = "lazy_static"
@@ -222,6 +283,12 @@ checksum = "f40ca3c46823713e0d4209592e8d6e826aa57e928f09752619fc696c499637f6"
 dependencies = [
  "lazy_static",
 ]
+
+[[package]]
+name = "slab"
+version = "0.4.12"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0c790de23124f9ab44544d7ac05d60440adc586479ce501c1d6d7da3cd8c9cf5"
 
 [[package]]
 name = "syn"

@@ -4,6 +4,7 @@
   import { DEMOS } from '../lib/demos';
   import { engine, loadEngine, type Scene } from '../lib/engine';
   import { CaveView, type Projection } from '../lib/viewport/cave-view';
+  import { cave, changed } from '../lib/cave.svelte';
   import { ViewCube } from '../lib/viewport/view-cube';
 
   let wrap: HTMLDivElement;
@@ -13,7 +14,6 @@
   let view: CaveView | null = null;
 
   let demo = $state(DEMOS[0].id);
-  let adjusted = $state(true);
   let depthColor = $state(false);
   let walls = $state(true);
   let projection = $state<Projection>('perspective');
@@ -24,14 +24,17 @@
     const d = DEMOS.find((x) => x.id === id);
     if (!d || !view) return;
     status = engine.openDemo(d.json);
-    scene = engine.scene(adjusted);
+    cave.run = '';
+    changed();
+    scene = engine.scene(cave.adjusted);
     view.setScene(scene);
   }
 
   function refresh() {
     if (!view) return;
-    scene = engine.scene(adjusted);
+    scene = engine.scene(cave.adjusted);
     view.setScene(scene, false);
+    changed();
   }
 
   onMount(() => {
@@ -66,7 +69,7 @@
     <select bind:value={demo} onchange={() => open(demo)} aria-label="Demo cave">
       {#each DEMOS as d}<option value={d.id}>{d.title}</option>{/each}
     </select>
-    <label><input type="checkbox" bind:checked={adjusted} onchange={refresh} /> Adjusted</label>
+    <label><input type="checkbox" bind:checked={cave.adjusted} onchange={refresh} /> Adjusted</label>
     <label><input type="checkbox" bind:checked={walls} onchange={() => view?.setShowWalls(walls)} /> Walls</label>
     <button class:on={depthColor} title="Colour by elevation" onclick={() => ((depthColor = !depthColor), view?.setElevationColors(depthColor))}><Palette size={15} /></button>
     {#if status}<span class="status">{status}</span>{/if}

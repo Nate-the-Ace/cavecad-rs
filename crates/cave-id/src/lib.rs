@@ -26,6 +26,20 @@ impl Id {
     pub const fn as_u128(self) -> u128 {
         self.0
     }
+
+    /// A fixed id derived from a name (FNV-1a, 128 bit). Not random and not secret: for entities
+    /// that must be the same on every machine, such as the built-in sketch layer, so two people
+    /// who each create it independently create the same one and merges stay clean.
+    pub fn from_name(name: &str) -> Self {
+        const OFFSET: u128 = 0x6c62_272e_07bb_0142_62b8_2175_6295_c58d;
+        const PRIME: u128 = 0x0000_0000_0100_0000_0000_0000_0000_013b;
+        let mut h = OFFSET;
+        for b in name.bytes() {
+            h ^= u128::from(b);
+            h = h.wrapping_mul(PRIME);
+        }
+        Id(h)
+    }
 }
 
 impl fmt::Display for Id {
@@ -160,6 +174,16 @@ mod tests {
             assert_eq!(id.to_string().len(), 26);
             assert_eq!(id.to_string().parse::<Id>(), Ok(id));
         }
+    }
+
+    #[test]
+    fn named_ids_are_stable_and_distinct() {
+        assert_eq!(
+            Id::from_name("layer:profile-sketch"),
+            Id::from_name("layer:profile-sketch")
+        );
+        assert_ne!(Id::from_name("a"), Id::from_name("b"));
+        assert_ne!(Id::from_name(""), Id::from_name("a"));
     }
 
     #[test]

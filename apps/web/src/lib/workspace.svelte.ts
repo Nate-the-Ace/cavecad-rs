@@ -7,6 +7,7 @@ import type { DockviewApi, DockviewGroupPanel, IContentRenderer, IHeaderActionsR
 import { mount, unmount, type Component } from 'svelte';
 import MapPanel from '../panels/MapPanel.svelte';
 import ConsolePanel from '../components/Console.svelte';
+import ProfilePanel from '../panels/ProfilePanel.svelte';
 
 const LAYOUT_KEY = 'cavecad.layout.v1';
 
@@ -15,11 +16,14 @@ interface PanelDef {
   component: Component;
   /** Height in pixels when first opened below another panel. */
   height?: number;
+  /** Width in pixels when first opened beside another panel. */
+  width?: number;
 }
 
 /** Every panel the workspace can show. Add new panels here. */
 export const PANELS: Record<string, PanelDef> = {
   map: { title: 'Map', component: MapPanel },
+  profile: { title: 'Profile', component: ProfilePanel, width: 460 },
   console: { title: 'Console', component: ConsolePanel, height: 220 },
 };
 
@@ -97,6 +101,7 @@ function refreshOpen() {
 function defaultLayout(a: DockviewApi) {
   a.clear();
   a.addPanel({ id: 'map', component: 'map', title: PANELS.map.title });
+  a.addPanel({ id: 'profile', component: 'profile', title: PANELS.profile.title, position: { referencePanel: 'map', direction: 'right' }, initialWidth: PANELS.profile.width });
   a.addPanel({ id: 'console', component: 'console', title: PANELS.console.title, position: { referencePanel: 'map', direction: 'below' }, initialHeight: PANELS.console.height });
 }
 

@@ -4,6 +4,10 @@
 //! Derived data only: [`build`] reads a [`Document`] and runs the survey math; nothing is stored
 //! back. The canvas stays dumb: it receives a [`Scene`] and draws it.
 
+mod profile;
+
+pub use profile::{ProfileScene, RunInfo, profile_scene, runs};
+
 use cave_doc::Document;
 use cave_id::Id;
 use cave_survey::{LegKind, Params, adjust, extract, resolve};

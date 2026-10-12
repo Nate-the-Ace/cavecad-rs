@@ -205,6 +205,8 @@ pub enum Field {
     FeatureTrip,
     /// For section traces, the station the section is cut at.
     FeatureStation,
+    /// For profile sketches, the run (key) whose band the stroke was drawn on.
+    FeatureRun,
     /// Free-form tags.
     FeatureTags,
     /// Layer a symbol is drawn on.
@@ -303,6 +305,7 @@ impl Field {
             FeatureShape => (K::Feature, V::Text),
             FeatureTrip => (K::Feature, V::Ref),
             FeatureStation => (K::Feature, V::Ref),
+            FeatureRun => (K::Feature, V::Text),
             FeatureTags => (K::Feature, V::Map),
             SymbolLayer => (K::Symbol, V::Ref),
             SymbolName => (K::Symbol, V::Text),

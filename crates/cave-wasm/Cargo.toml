@@ -15,6 +15,9 @@ cave-log = { path = "../cave-log" }
 cave-doc = { path = "../cave-doc" }
 cave-fixture = { path = "../cave-fixture" }
 cave-scene = { path = "../cave-scene" }
+cave-draw = { path = "../cave-draw" }
+cave-id = { path = "../cave-id" }
+js-sys = "0.3"
 tracing.workspace = true
 tracing-subscriber.workspace = true
 wasm-bindgen = "0.2"
