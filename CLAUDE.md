@@ -83,3 +83,7 @@ Pen input is on the road map too (see "Pen and tablet input" in `docs/DESIGN.md`
 
 The View tab's unit setting (metric by default, or imperial) decides what people read AND what they type. Every length a tool shows goes through `formatLength` and every length a tool asks for uses `apps/web/src/components/LengthField.svelte` (parser: `parseLength` in `lib/units.ts`, which also accepts an explicit unit such as `30 cm` or `5'6"`). Never add a bare number input for a distance. Fields hold metres internally; the stored cave and DXF export stay metric. Check the parser with `npm run test:units` in `apps/web`.
 
+## Every panel that can be edited has its own Undo and Redo (standing rule from Nathan, 2026-10-12)
+
+A panel that can be drawn on or otherwise edited (Map, Profile, Cross Section, and any future one: Shaped Lines, Callout, sheets, ...) keeps its own history and must never undo another panel's work. In the engine an edit is recorded with `record_edit(scope, ...)` where `scope` is the panel (`Scope` in `apps/web/src/lib/engine.ts`: add the new panel's name there and in `cave-wasm`); in the panel's toolbar put `<PanelUndo scope="..." label="..." />` (`apps/web/src/components/PanelUndo.svelte`) and handle Ctrl/Cmd+Z and Shift+Ctrl/Cmd+Z in its keydown with `engine.undo(scope)` / `engine.redo(scope)`. Never call undo or redo without a scope.
+

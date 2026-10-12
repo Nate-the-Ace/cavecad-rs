@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount, untrack } from 'svelte';
-  import { Home, Maximize, Box, Square, Palette, Eye, Undo2, Redo2 } from '@lucide/svelte';
+  import { Home, Maximize, Box, Square, Palette, Eye } from '@lucide/svelte';
+  import PanelUndo from './PanelUndo.svelte';
   import { DEMOS } from '../lib/demos';
   import { engine, loadEngine, type Scene, type TypeStyle } from '../lib/engine';
   import { CaveView, type Projection } from '../lib/viewport/cave-view';
@@ -74,23 +75,17 @@
     });
   });
 
-  // The Map's own undo and redo: only what was drawn or placed on the map.
-  let mapUndo = $state({ undo: false, redo: false });
-  $effect(() => {
-    void cave.version;
-    untrack(() => {
-      mapUndo = loaded ? engine.editState('map') : { undo: false, redo: false };
-    });
-  });
-  const undoMap = () => engine.undo('map') && changed();
-  const redoMap = () => engine.redo('map') && changed();
-
   // The selected line gets a halo and, on the map, handles; Delete removes a selected map line.
   $effect(() => {
     const id = cave.selected;
     view?.setSelectedLine(id);
   });
   function onKey(e: KeyboardEvent) {
+    if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z') {
+      e.preventDefault();
+      if ((e.shiftKey ? engine.redo('map') : engine.undo('map'))) changed();
+      return;
+    }
     if ((e.key === 'Delete' || e.key === 'Backspace') && cave.selected && view?.hasMapLine(cave.selected)) {
       e.preventDefault();
       engine.deleteLine(cave.selected);
@@ -248,14 +243,13 @@
         </div>
       {/if}
     </div>
+    <PanelUndo scope="map" label="on the map" />
     <button class:on={depthColor} title="Colour by elevation" onclick={() => ((depthColor = !depthColor), view?.setElevationColors(depthColor), loadPassage())}><Palette size={15} /></button>
     {#if drawHint}<span class="status">{drawHint}</span>{:else if status}<span class="status">{status}</span>{/if}
   </div>
   <div class="cube">
     <div bind:this={cubeHost}></div>
     <div class="cubebar">
-      <button title="Undo on the map (what was drawn or placed here)" disabled={!mapUndo.undo} onclick={undoMap}><Undo2 size={15} /></button>
-      <button title="Redo on the map" disabled={!mapUndo.redo} onclick={redoMap}><Redo2 size={15} /></button>
       <button title="Home view" onclick={() => view?.home()}><Home size={15} /></button>
       <button title="Fit to cave" onclick={() => view?.fit()}><Maximize size={15} /></button>
       <button title={projection === 'perspective' ? 'Switch to orthographic' : 'Switch to perspective'} onclick={() => view?.setProjection(projection === 'perspective' ? 'orthographic' : 'perspective')}>

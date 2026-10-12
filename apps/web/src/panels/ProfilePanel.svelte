@@ -1,7 +1,8 @@
 <script lang="ts">
   import { onMount, untrack } from 'svelte';
   import { onTheme } from '../lib/theme';
-  import { Undo2, Redo2, Maximize } from '@lucide/svelte';
+  import { Maximize } from '@lucide/svelte';
+  import PanelUndo from '../components/PanelUndo.svelte';
   import { looks } from '../lib/ink';
   import { cave, changed, setShowSections } from '../lib/cave.svelte';
   import { defaultBandOffset, drawHandles, drawStrokes, glyphCurves, hits, leaderEnd } from '../lib/section-glyph';
@@ -17,8 +18,6 @@
   let height = $state(0);
   let runs = $state<RunInfo[]>([]);
   let band = $state<ProfileScene | null>(null);
-  let canUndo = $state(false);
-  let canRedo = $state(false);
   let message = $state('');
 
   // View: pixels per metre (uniform, so the profile is true to scale), and where s=0, z=0 sits.
@@ -74,9 +73,6 @@
     runs = engine.profileRuns(cave.adjusted);
     if (!runs.some((r) => r.key === cave.run)) cave.run = runs[0]?.key ?? '';
     band = cave.run ? engine.profileBand(cave.run, cave.adjusted) : null;
-    const state = engine.editState('profile');
-    canUndo = state.undo;
-    canRedo = state.redo;
     schedule();
   }
 
@@ -389,8 +385,7 @@
       {#each runs as r}<option value={r.key}>{r.key} · {r.stations} stations · {formatLength(r.length, cave.units)}{r.tie ? ` · from ${r.tie}` : ''}</option>{/each}
     </select>
     <label class="show" title="Show the cross sections drawn at stations, next to their stations (drag one to place it)"><input type="checkbox" checked={cave.showSections.profile} onchange={(e) => (setShowSections('profile', e.currentTarget.checked), schedule())} /> Sections</label>
-    <button title="Undo (Ctrl/Cmd+Z)" disabled={!canUndo} onclick={doUndo}><Undo2 size={15} /></button>
-    <button title="Redo (Shift+Ctrl/Cmd+Z)" disabled={!canRedo} onclick={doRedo}><Redo2 size={15} /></button>
+    <PanelUndo scope="profile" label="in the profile" />
     <button title="Fit band (or double middle-click)" onclick={fit}><Maximize size={15} /></button>
   </div>
   {#if band?.note || message || (band && (band.omitted > 0 || band.unplaced > 0))}

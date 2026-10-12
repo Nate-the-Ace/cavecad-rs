@@ -5,7 +5,8 @@
   // their station and follow it when the survey is adjusted.
   import { onMount, untrack } from 'svelte';
   import { onTheme } from '../lib/theme';
-  import { Undo2, Redo2, Maximize, ChevronLeft, ChevronRight } from '@lucide/svelte';
+  import { Maximize, ChevronLeft, ChevronRight } from '@lucide/svelte';
+  import PanelUndo from '../components/PanelUndo.svelte';
   import { looks } from '../lib/ink';
   import { drawHandles, drawStrokes } from '../lib/section-glyph';
   import { LineEditor } from '../lib/line-editor';
@@ -21,8 +22,6 @@
   let ready = $state(false);
   let stations = $state.raw<SectionStation[]>([]);
   let section = $state.raw<StationSection | null>(null);
-  let canUndo = $state(false);
-  let canRedo = $state(false);
   let message = $state('');
   let barH = $state(50);
 
@@ -66,9 +65,6 @@
     stations = engine.sectionStations(cave.adjusted, true, wireFilter());
     if (!stations.some((s) => s.id === cave.station)) cave.station = (stations.find((s) => s.outlined) ?? stations[0])?.id ?? '';
     section = cave.station ? engine.sectionAt(cave.adjusted, cave.station, true, wireFilter()) : null;
-    const st = engine.editState('section');
-    canUndo = st.undo;
-    canRedo = st.redo;
     frameOnce();
     schedule();
   }
@@ -361,8 +357,7 @@
       {#each stations as s}<option value={s.id}>{s.label}{s.outlined ? '' : ' (no walls)'}{s.sketches ? ` · ${s.sketches} sketch${s.sketches === 1 ? '' : 'es'}` : ''}</option>{/each}
     </select>
     <button title="Next station" disabled={index < 0 || index >= stations.length - 1} onclick={() => step(1)}><ChevronRight size={15} /></button>
-    <button title="Undo (Ctrl/Cmd+Z)" disabled={!canUndo} onclick={doUndo}><Undo2 size={15} /></button>
-    <button title="Redo (Shift+Ctrl/Cmd+Z)" disabled={!canRedo} onclick={doRedo}><Redo2 size={15} /></button>
+    <PanelUndo scope="section" label="in this cross section" />
     <button title="Fit (or double middle-click)" onclick={fit}><Maximize size={15} /></button>
   </div>
   {#if ready && !stations.length}
