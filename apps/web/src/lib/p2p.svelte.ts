@@ -55,6 +55,8 @@ const CHUNK = 16_000;
 
 interface Peer {
   id: string;
+  /** The scan pages this peer says it has (so a missing page can be asked for from someone who holds it). */
+  has?: Set<string>;
   pc: RTCPeerConnection;
   ch: RTCDataChannel | null;
   /** The person this peer is, once admitted. */
@@ -75,6 +77,13 @@ let timer: ReturnType<typeof setInterval> | undefined;
 let sessionId = '';
 let lastHost = '';
 const wanted = new Set<string>();
+/** When each page was asked for, so a request that went nowhere is asked again. */
+const wantedAt = new Map<string, number>();
+/** Pages a guest asked the host for that the host is fetching from another guest first. */
+const relayTo = new Map<string, Set<Peer>>();
+/** What this device last said it holds. */
+let advertised = '';
+let scanTimer: ReturnType<typeof setInterval> | undefined;
 
 const rid = () => Math.random().toString(36).slice(2, 14).padEnd(12, 'x');
 const STUN: RTCIceServer = { urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] };
@@ -232,6 +241,7 @@ type Msg = {
   people?: Person[];
   owner?: string;
   path?: string;
+  paths?: string[];
   type?: string;
   size?: number;
   view?: string;
@@ -249,9 +259,25 @@ function handle(peer: Peer, m: Msg, role: 'host' | 'guest') {
   if (role === 'host') hostHears(peer, m);
   else guestHears(peer, m);
   // Both sides: pages
-  if (m.t === 'want' && m.path) {
+  if (m.t === 'has' && Array.isArray(m.paths)) {
+    peer.has = new Set(m.paths.map(String));
+  } else if (m.t === 'want' && m.path) {
     const f = fileOf(m.path);
     if (f) sendFile(peer, m.path, f);
+    else if (role === 'host') {
+      // the host does not have it, but another guest may: ask them and pass it on when it arrives
+      const holder = admitted().find((q) => q !== peer && q.has?.has(m.path!));
+      if (holder) {
+        const to = relayTo.get(m.path) ?? new Set<Peer>();
+        to.add(peer);
+        relayTo.set(m.path, to);
+        if (!wanted.has(m.path)) {
+          wanted.add(m.path);
+          wantedAt.set(m.path, Date.now());
+          send(holder, { t: 'want', path: m.path });
+        }
+      }
+    }
   } else if (m.t === 'scan' && m.path) {
     peer.incoming = { path: m.path, type: m.type ?? '', size: m.size ?? 0, parts: [], got: 0 };
   } else if (m.t === 'scanEnd' && peer.incoming && peer.incoming.path === m.path) {
@@ -260,6 +286,10 @@ function handle(peer: Peer, m: Msg, role: 'host' | 'guest') {
     const name = inc.path.slice(inc.path.lastIndexOf('/') + 1);
     addRemoteFile(inc.path, new File(inc.parts, name, { type: inc.type }));
     wanted.delete(inc.path);
+    wantedAt.delete(inc.path);
+    const file = fileOf(inc.path);
+    if (file) for (const q of relayTo.get(inc.path) ?? []) if (q.ch?.readyState === 'open') sendFile(q, inc.path, file);
+    relayTo.delete(inc.path);
     if (p2p.following && lastView.scan === inc.path) select(inc.path);
   }
 }
@@ -402,6 +432,7 @@ export function applyView() {
 
 function startTimer() {
   stopTimer();
+  scanTimer = setInterval(scanBeat, 2500);
   timer = setInterval(() => {
     fadeCursors();
     const ops = engine.syncOutbox();
@@ -415,6 +446,40 @@ function startTimer() {
 function stopTimer() {
   clearInterval(timer);
   timer = undefined;
+  clearInterval(scanTimer);
+  scanTimer = undefined;
+  advertised = '';
+  wantedAt.clear();
+  relayTo.clear();
+}
+
+/**
+ * Keeps everyone's scan pages in step: each device says which pages of the cave it holds, and asks for
+ * the pages it is missing from someone who holds them (guests ask the host, which fetches from
+ * another guest when it does not have the page itself). Checked every few seconds, so a page linked
+ * or opened later travels too.
+ */
+function scanBeat() {
+  if (p2p.role === 'none') return;
+  const linked = [...new Set(engine.scanLinks().map((l) => l.path))];
+  const mine = linked.filter(have).sort();
+  const key = mine.join('\n');
+  if (key !== advertised) {
+    advertised = key;
+    const msg = { t: 'has', paths: mine };
+    if (p2p.role === 'host') toAll(msg);
+    else if (guestPeer) send(guestPeer, msg);
+  }
+  const now = Date.now();
+  for (const [path, at] of wantedAt) if (now - at > 30_000) (wanted.delete(path), wantedAt.delete(path)); // asked and nothing came: ask again
+  for (const path of linked) {
+    if (have(path) || wanted.has(path)) continue;
+    const from = p2p.role === 'host' ? admitted().find((q) => q.has?.has(path)) : guestPeer;
+    if (!from) continue;
+    wanted.add(path);
+    wantedAt.set(path, now);
+    send(from, { t: 'want', path });
+  }
 }
 
 setPeerHooks({
@@ -581,6 +646,8 @@ export function leaveP2p() {
   peers.clear();
   pending.clear();
   wanted.clear();
+  wantedAt.clear();
+  relayTo.clear();
   guestPeer = null;
   if (p2p.role !== 'none') {
     live.status = 'off';

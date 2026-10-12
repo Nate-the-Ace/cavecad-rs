@@ -83,12 +83,19 @@
     untrack(() => {
       if (!view) return;
       view.setHalo(halo, haloM, haloF);
-      const z = (scene?.bounds?.[2] ?? 0) - 0.5;
+      // A scan lies like a carpet at the height of the stations it is matched to (the whole survey's average when it has none), just under them.
+      const all = scene?.stations ?? [];
+      const mean = (zs: number[]) => (zs.length ? zs.reduce((a, b) => a + b, 0) / zs.length : (scene?.bounds?.[2] ?? 0) + 0.5);
+      const surveyZ = mean(all.map((st) => st.at[2]));
+      const zFor = (ids: string[] | undefined) => {
+        const own = (ids ?? []).map((id) => all.find((st) => st.id === id)?.at[2]).filter((v): v is number => v !== undefined);
+        return (own.length ? mean(own) : surveyZ) - 0.3;
+      };
       const list = on
         ? engine
             .scanPlacements('map', cave.adjusted)
             .filter((p) => !filter.hiddenTrips.includes(p.trip) && have(p.path))
-            .map((p) => ({ key: `${p.trip}/${p.path}`, url: mapUrl(p.path)!, matrix: p.matrix, z, opacity, trim: p.trim, warp: p.warp }))
+            .map((p) => ({ key: `${p.trip}/${p.path}`, url: mapUrl(p.path)!, matrix: p.matrix, z: zFor(p.stations), opacity, trim: p.trim, warp: p.warp }))
         : [];
       view.setScans(list);
     });

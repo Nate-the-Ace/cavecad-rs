@@ -241,6 +241,8 @@ export interface ScanPlacement {
   mode: 'rigid' | 'warp' | 'rubber';
   /** The rubber-sheet warp when the scan is fitted that way (it replaces the matrix for drawing). */
   warp?: Warp | null;
+  /** The stations its matches are (ids), so a view can lay the scan at their height. */
+  stations?: string[];
   /** The outline it is trimmed to (scan pixels), or null for the whole scan. */
   trim: [number, number][] | null;
 }
