@@ -12,7 +12,7 @@ use std::collections::BTreeMap;
 pub enum ApplyError {
     /// The value's type does not match the field's.
     TypeMismatch,
-    /// A number was NaN or infinite.
+    /// A number, point or path coordinate was NaN or infinite, or a path was too short.
     NotFinite,
     /// The id already belongs to an entity of a different kind.
     KindMismatch(Id),
@@ -76,7 +76,7 @@ impl Document {
                 if value.value_type() != field.value_type() {
                     return Err(ApplyError::TypeMismatch);
                 }
-                if !value.is_finite() {
+                if !value.is_valid() {
                     return Err(ApplyError::NotFinite);
                 }
                 (*id, field.kind())

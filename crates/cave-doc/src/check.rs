@@ -5,13 +5,14 @@ use crate::field::{Field, Kind};
 use cave_id::Id;
 use std::collections::BTreeMap;
 
-/// Something wrong with the survey that a person should look at.
+/// Something wrong with the survey or drawing that a person should look at.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum Issue {
-    /// A shot points at a station or trip that does not exist (for example, deleted by someone else).
+    /// A reference points at something that does not exist or is the wrong kind (for example
+    /// a station deleted by someone else).
     DanglingReference {
-        /// The shot.
-        shot: Id,
+        /// The entity holding the reference.
+        entity: Id,
         /// Which reference field.
         field: Field,
         /// The missing target.
@@ -24,16 +25,53 @@ pub enum Issue {
         /// The stations using it.
         stations: Vec<Id>,
     },
-    /// A shot has no FROM station.
-    ShotWithoutFrom {
-        /// The shot.
-        shot: Id,
+    /// A required field is empty (a shot with no FROM station, a feature with no layer or line).
+    MissingRequired {
+        /// The incomplete entity.
+        entity: Id,
+        /// The empty field.
+        field: Field,
     },
-    /// A shot that is not a splay has no TO station.
-    ShotWithoutTo {
-        /// The shot.
-        shot: Id,
-    },
+}
+
+/// References that must point at a live entity of the given kind.
+const REFS: &[(Field, Kind)] = &[
+    (Field::ShotFrom, Kind::Station),
+    (Field::ShotTo, Kind::Station),
+    (Field::ShotTrip, Kind::Trip),
+    (Field::LayerGroup, Kind::Layer),
+    (Field::FeatureLayer, Kind::Layer),
+    (Field::FeatureTrip, Kind::Trip),
+    (Field::FeatureStation, Kind::Station),
+    (Field::SymbolLayer, Kind::Layer),
+    (Field::SymbolTrip, Kind::Trip),
+    (Field::TextLayer, Kind::Layer),
+];
+
+/// Fields every entity of the kind must have filled in.
+const REQUIRED: &[(Field, Kind)] = &[
+    (Field::ShotFrom, Kind::Shot),
+    (Field::FeatureLayer, Kind::Feature),
+    (Field::FeaturePath, Kind::Feature),
+    (Field::SymbolLayer, Kind::Symbol),
+    (Field::SymbolAt, Kind::Symbol),
+    (Field::TextLayer, Kind::Text),
+    (Field::TextAt, Kind::Text),
+];
+
+const KINDS: &[Kind] = &[
+    Kind::Trip,
+    Kind::Station,
+    Kind::Shot,
+    Kind::Layer,
+    Kind::Feature,
+    Kind::Symbol,
+    Kind::Text,
+];
+
+fn is_empty(v: &crate::field::Value) -> bool {
+    use crate::field::Value::*;
+    matches!(v, Ref(None) | Point(None) | Path(None))
 }
 
 /// Lists every issue in the document, in a stable order.
@@ -54,28 +92,34 @@ pub fn validate(doc: &Document) -> Vec<Issue> {
             out.push(Issue::DuplicateLabel { label, stations });
         }
     }
-    for shot in doc.ids_of(Kind::Shot) {
-        let Some(e) = doc.entity(shot) else { continue };
-        for (field, kind) in [
-            (Field::ShotFrom, Kind::Station),
-            (Field::ShotTo, Kind::Station),
-            (Field::ShotTrip, Kind::Trip),
-        ] {
-            if let Some(target) = e.reference(field)
-                && doc.entity(target).is_none_or(|t| t.kind() != kind)
+    for &kind in KINDS {
+        for id in doc.ids_of(kind) {
+            let Some(e) = doc.entity(id) else { continue };
+            for &(field, target_kind) in REFS.iter().filter(|(f, _)| f.kind() == kind) {
+                if let Some(target) = e.reference(field)
+                    && doc.entity(target).is_none_or(|t| t.kind() != target_kind)
+                {
+                    out.push(Issue::DanglingReference {
+                        entity: id,
+                        field,
+                        target,
+                    });
+                }
+            }
+            for &(field, _) in REQUIRED.iter().filter(|(_, k)| *k == kind) {
+                if is_empty(&e.get(field)) {
+                    out.push(Issue::MissingRequired { entity: id, field });
+                }
+            }
+            if kind == Kind::Shot
+                && e.reference(Field::ShotTo).is_none()
+                && !e.flag(Field::ShotSplay)
             {
-                out.push(Issue::DanglingReference {
-                    shot,
-                    field,
-                    target,
+                out.push(Issue::MissingRequired {
+                    entity: id,
+                    field: Field::ShotTo,
                 });
             }
-        }
-        if e.reference(Field::ShotFrom).is_none() {
-            out.push(Issue::ShotWithoutFrom { shot });
-        }
-        if e.reference(Field::ShotTo).is_none() && !e.flag(Field::ShotSplay) {
-            out.push(Issue::ShotWithoutTo { shot });
         }
     }
     out
@@ -87,6 +131,7 @@ mod tests {
     use crate::clock::ActorId;
     use crate::field::Value;
     use crate::op::Action;
+    use cave_geom::{Path, Point};
     use cave_id::{IdSource, SeqIds};
 
     fn station(d: &mut Document, id: Id, label: &str) {
@@ -104,6 +149,10 @@ mod tests {
         .unwrap();
     }
 
+    fn set(id: Id, field: Field, value: Value) -> Action {
+        Action::Set { id, field, value }
+    }
+
     #[test]
     fn clean_survey_has_no_issues() {
         let mut d = Document::new(ActorId(1));
@@ -116,16 +165,8 @@ mod tests {
                 id: s,
                 kind: Kind::Shot,
             },
-            Action::Set {
-                id: s,
-                field: Field::ShotFrom,
-                value: Value::Ref(Some(a)),
-            },
-            Action::Set {
-                id: s,
-                field: Field::ShotTo,
-                value: Value::Ref(Some(b)),
-            },
+            set(s, Field::ShotFrom, Value::Ref(Some(a))),
+            set(s, Field::ShotTo, Value::Ref(Some(b))),
         ])
         .unwrap();
         assert!(validate(&d).is_empty());
@@ -143,16 +184,8 @@ mod tests {
                 id: s,
                 kind: Kind::Shot,
             },
-            Action::Set {
-                id: s,
-                field: Field::ShotFrom,
-                value: Value::Ref(Some(a)),
-            },
-            Action::Set {
-                id: s,
-                field: Field::ShotTo,
-                value: Value::Ref(Some(b)),
-            },
+            set(s, Field::ShotFrom, Value::Ref(Some(a))),
+            set(s, Field::ShotTo, Value::Ref(Some(b))),
             Action::Create {
                 id: t,
                 kind: Kind::Shot,
@@ -166,12 +199,18 @@ mod tests {
         .unwrap();
         let issues = validate(&d);
         assert!(issues.contains(&Issue::DanglingReference {
-            shot: s,
+            entity: s,
             field: Field::ShotTo,
             target: b
         }));
-        assert!(issues.contains(&Issue::ShotWithoutFrom { shot: t }));
-        assert!(issues.contains(&Issue::ShotWithoutTo { shot: t }));
+        assert!(issues.contains(&Issue::MissingRequired {
+            entity: t,
+            field: Field::ShotFrom
+        }));
+        assert!(issues.contains(&Issue::MissingRequired {
+            entity: t,
+            field: Field::ShotTo
+        }));
         assert!(
             !issues
                 .iter()
@@ -192,6 +231,64 @@ mod tests {
                 label: "A5".into(),
                 stations: vec![a, b]
             }]
+        );
+    }
+
+    #[test]
+    fn drawing_entities_need_a_layer_and_geometry() {
+        let mut d = Document::new(ActorId(1));
+        let mut ids = SeqIds::new(1);
+        let (layer, good, bare, gone) =
+            (ids.next_id(), ids.next_id(), ids.next_id(), ids.next_id());
+        let line = Path::polyline(&[Point::new(0.0, 0.0), Point::new(1.0, 1.0)], false);
+        d.edit(vec![
+            Action::Create {
+                id: layer,
+                kind: Kind::Layer,
+            },
+            Action::Create {
+                id: good,
+                kind: Kind::Feature,
+            },
+            set(good, Field::FeatureLayer, Value::Ref(Some(layer))),
+            set(good, Field::FeaturePath, Value::Path(Some(line.clone()))),
+            Action::Create {
+                id: bare,
+                kind: Kind::Feature,
+            },
+            Action::Create {
+                id: gone,
+                kind: Kind::Feature,
+            },
+            set(gone, Field::FeatureLayer, Value::Ref(Some(ids.next_id()))),
+            set(gone, Field::FeaturePath, Value::Path(Some(line))),
+        ])
+        .unwrap();
+        let issues = validate(&d);
+        assert!(!issues.iter().any(|i| matches!(i, Issue::MissingRequired { entity, .. } | Issue::DanglingReference { entity, .. } if *entity == good)));
+        assert!(issues.contains(&Issue::MissingRequired {
+            entity: bare,
+            field: Field::FeatureLayer
+        }));
+        assert!(issues.contains(&Issue::MissingRequired {
+            entity: bare,
+            field: Field::FeaturePath
+        }));
+        assert!(
+            issues
+                .iter()
+                .any(|i| matches!(i, Issue::DanglingReference { entity, field: Field::FeatureLayer, .. } if *entity == gone))
+        );
+    }
+
+    #[test]
+    fn short_or_non_finite_paths_are_refused() {
+        let mut d = Document::new(ActorId(1));
+        let id = SeqIds::new(1).next_id();
+        let short = Path::polyline(&[Point::new(0.0, 0.0)], false);
+        assert!(
+            d.edit(vec![set(id, Field::FeaturePath, Value::Path(Some(short)))])
+                .is_err()
         );
     }
 }

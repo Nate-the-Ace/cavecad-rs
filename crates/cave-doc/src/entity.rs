@@ -73,6 +73,30 @@ impl Entity {
         matches!(self.get(f), Value::Flag(true))
     }
 
+    /// Point field; `None` means not placed.
+    pub fn point(&self, f: Field) -> Option<cave_geom::Point> {
+        match self.get(f) {
+            Value::Point(p) => p,
+            _ => None,
+        }
+    }
+
+    /// Path field; `None` means not drawn.
+    pub fn path(&self, f: Field) -> Option<cave_geom::Path> {
+        match self.get(f) {
+            Value::Path(p) => p,
+            _ => None,
+        }
+    }
+
+    /// Tag-map field (empty if unset).
+    pub fn map(&self, f: Field) -> std::collections::BTreeMap<String, String> {
+        match self.get(f) {
+            Value::Map(m) => m,
+            _ => Default::default(),
+        }
+    }
+
     /// Reference field.
     pub fn reference(&self, f: Field) -> Option<cave_id::Id> {
         match self.get(f) {

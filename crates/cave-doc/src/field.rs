@@ -1,9 +1,11 @@
 //! What can be stored on a trip, station or shot, and the value types each field holds.
 
+use cave_geom::{Path, Point};
 use cave_id::Id;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
-/// The three kinds of survey entity.
+/// The kinds of stored entity.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Debug, Serialize, Deserialize)]
 pub enum Kind {
     /// A survey trip: one visit with its own date, team and declination.
@@ -12,6 +14,14 @@ pub enum Kind {
     Station,
     /// A measurement between two stations (or a splay).
     Shot,
+    /// A drawing layer: how a group of things looks and whether it can be seen or edited.
+    Layer,
+    /// A traced line (wall, ledge, pit edge, ...).
+    Feature,
+    /// A placed symbol (stalactite, breakdown, ...).
+    Symbol,
+    /// A piece of text on the map.
+    Text,
 }
 
 /// The type of value a field holds.
@@ -25,6 +35,12 @@ pub enum ValueType {
     Flag,
     /// A reference to another entity; `None` means no reference.
     Ref,
+    /// A position; `None` means not placed.
+    Point,
+    /// A traced line; `None` means not drawn.
+    Path,
+    /// Free-form text tags, name to value.
+    Map,
 }
 
 /// A stored value.
@@ -38,6 +54,12 @@ pub enum Value {
     Flag(bool),
     /// A reference to another entity by id.
     Ref(Option<Id>),
+    /// A position, or `None` for not placed.
+    Point(Option<Point>),
+    /// A traced line, or `None` for not drawn. Stored whole; edits replace it.
+    Path(Option<Path>),
+    /// Free-form tags. Stored whole; edits replace it.
+    Map(BTreeMap<String, String>),
 }
 
 impl Value {
@@ -48,12 +70,21 @@ impl Value {
             Value::Number(_) => ValueType::Number,
             Value::Flag(_) => ValueType::Flag,
             Value::Ref(_) => ValueType::Ref,
+            Value::Point(_) => ValueType::Point,
+            Value::Path(_) => ValueType::Path,
+            Value::Map(_) => ValueType::Map,
         }
     }
 
-    /// False for numbers that are not finite; those are never stored.
-    pub fn is_finite(&self) -> bool {
-        !matches!(self, Value::Number(Some(n)) if !n.is_finite())
+    /// False for values that must never be stored: non-finite numbers or points, and paths
+    /// that fail [`Path::validate`].
+    pub fn is_valid(&self) -> bool {
+        match self {
+            Value::Number(Some(n)) => n.is_finite(),
+            Value::Point(Some(p)) => p.is_finite(),
+            Value::Path(Some(p)) => p.validate().is_ok(),
+            _ => true,
+        }
     }
 }
 
@@ -112,6 +143,62 @@ pub enum Field {
     ShotSplay,
     /// Position the stations but draw nothing.
     ShotExcludeFromPlot,
+    /// Layer name.
+    LayerName,
+    /// Layer colour as `#rrggbb`.
+    LayerColor,
+    /// Layer line weight in millimetres.
+    LayerWeight,
+    /// Layer linetype name.
+    LayerLinetype,
+    /// Layer is hidden.
+    LayerHidden,
+    /// Layer cannot be edited.
+    LayerLocked,
+    /// Layer is frozen (hidden and skipped when regenerating).
+    LayerFrozen,
+    /// The group (another layer) this layer sits under in the Layer Manager.
+    LayerGroup,
+    /// Position among siblings in the Layer Manager.
+    LayerOrder,
+    /// Layer a feature is drawn on.
+    FeatureLayer,
+    /// The traced line itself.
+    FeaturePath,
+    /// What the feature is (`wall`, `ledge`, `pit`, ...).
+    FeatureType,
+    /// How it is drawn (`plain` or a shaped-line style).
+    FeatureShape,
+    /// The trip whose ground the feature sits on.
+    FeatureTrip,
+    /// For section traces, the station the section is cut at.
+    FeatureStation,
+    /// Free-form tags.
+    FeatureTags,
+    /// Layer a symbol is drawn on.
+    SymbolLayer,
+    /// Which symbol from the palette.
+    SymbolName,
+    /// Where it is placed.
+    SymbolAt,
+    /// Rotation in degrees counter-clockwise.
+    SymbolRotation,
+    /// Scale factor (1 is natural size).
+    SymbolScale,
+    /// The trip whose ground the symbol sits on.
+    SymbolTrip,
+    /// Free-form tags (attribute values).
+    SymbolTags,
+    /// Layer a text is drawn on.
+    TextLayer,
+    /// The words.
+    TextBody,
+    /// Where the text starts.
+    TextAt,
+    /// Text height in drawing units.
+    TextHeight,
+    /// Rotation in degrees counter-clockwise.
+    TextRotation,
 }
 
 impl Field {
@@ -126,6 +213,13 @@ impl Field {
             | TripDeclinationSource
             | TripDistanceUnit => Kind::Trip,
             StationLabel | StationFixedX | StationFixedY | StationFixedZ => Kind::Station,
+            LayerName | LayerColor | LayerWeight | LayerLinetype | LayerHidden | LayerLocked
+            | LayerFrozen | LayerGroup | LayerOrder => Kind::Layer,
+            FeatureLayer | FeaturePath | FeatureType | FeatureShape | FeatureTrip
+            | FeatureStation | FeatureTags => Kind::Feature,
+            SymbolLayer | SymbolName | SymbolAt | SymbolRotation | SymbolScale | SymbolTrip
+            | SymbolTags => Kind::Symbol,
+            TextLayer | TextBody | TextAt | TextHeight | TextRotation => Kind::Text,
             _ => Kind::Shot,
         }
     }
@@ -139,14 +233,25 @@ impl Field {
             | TripTeam
             | TripDeclinationSource
             | TripDistanceUnit
-            | StationLabel => ValueType::Text,
+            | StationLabel
+            | LayerName
+            | LayerColor
+            | LayerLinetype
+            | FeatureType
+            | FeatureShape
+            | SymbolName
+            | TextBody => ValueType::Text,
             TripDeclination | StationFixedX | StationFixedY | StationFixedZ | ShotDistance
-            | ShotAzimuth | ShotInclination | ShotLeft | ShotRight | ShotUp | ShotDown => {
-                ValueType::Number
-            }
-            ShotTrip | ShotFrom | ShotTo => ValueType::Ref,
+            | ShotAzimuth | ShotInclination | ShotLeft | ShotRight | ShotUp | ShotDown
+            | LayerWeight | LayerOrder | SymbolRotation | SymbolScale | TextHeight
+            | TextRotation => ValueType::Number,
+            ShotTrip | ShotFrom | ShotTo | LayerGroup | FeatureLayer | FeatureTrip
+            | FeatureStation | SymbolLayer | SymbolTrip | TextLayer => ValueType::Ref,
+            FeaturePath => ValueType::Path,
+            SymbolAt | TextAt => ValueType::Point,
+            FeatureTags | SymbolTags => ValueType::Map,
             ShotLeftOpen | ShotRightOpen | ShotUpOpen | ShotDownOpen | ShotSplay
-            | ShotExcludeFromPlot => ValueType::Flag,
+            | ShotExcludeFromPlot | LayerHidden | LayerLocked | LayerFrozen => ValueType::Flag,
         }
     }
 
@@ -157,6 +262,9 @@ impl Field {
             ValueType::Number => Value::Number(None),
             ValueType::Flag => Value::Flag(false),
             ValueType::Ref => Value::Ref(None),
+            ValueType::Point => Value::Point(None),
+            ValueType::Path => Value::Path(None),
+            ValueType::Map => Value::Map(BTreeMap::new()),
         }
     }
 }
@@ -191,6 +299,6 @@ mod tests {
     #[test]
     fn unmeasured_is_not_zero() {
         assert_ne!(Value::Number(None), Value::Number(Some(0.0)));
-        assert!(!Value::Number(Some(f64::NAN)).is_finite());
+        assert!(!Value::Number(Some(f64::NAN)).is_valid());
     }
 }
