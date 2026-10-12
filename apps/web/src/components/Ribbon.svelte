@@ -2,6 +2,7 @@
   import { engine } from '../lib/engine';
   import { openDxf, saveDxf } from '../lib/files';
   import { cave, setUnits } from '../lib/cave.svelte';
+  import ThemeGroup from './ThemeGroup.svelte';
   import { PANELS, panelState, resetLayout, togglePanel } from '../lib/workspace.svelte';
   import { FileInput, FolderOpen, Save, Ruler, Footprints, Route, Waypoints, Pencil, Spline, PaintBucket, PanelTop, Scissors, Box, Map as MapIcon, Terminal, LayoutDashboard, Activity } from '@lucide/svelte';
   import type { Component } from 'svelte';
@@ -15,6 +16,8 @@
   interface Group {
     name: string;
     items: Item[];
+    /** A group that draws itself instead of a row of buttons. */
+    custom?: Component<any>;
   }
 
   const press = (label: string) => engine.log('info', 'ribbon', `${label}: not built yet`);
@@ -49,6 +52,7 @@
     View: [
       { name: 'Panels', items: [panelItem('map', MapIcon), panelItem('profile', Activity), panelItem('section', Scissors), panelItem('console', Terminal)] },
       { name: 'Units', items: [{ label: 'Metric', icon: Ruler, run: () => setUnits('metric'), pressed: () => cave.units === 'metric' }, { label: 'Imperial', icon: Footprints, run: () => setUnits('imperial'), pressed: () => cave.units === 'imperial' }] },
+      { name: 'Theme', items: [], custom: ThemeGroup },
       { name: 'Layout', items: [{ label: 'Reset', icon: LayoutDashboard, run: resetLayout }] },
     ],
   };
@@ -74,6 +78,7 @@
     {#each tabs[active] as g}
       <section>
         <div class="btns">
+          {#if g.custom}<g.custom />{/if}
           {#each g.items as item}
             <button class="tool" class:pressed={item.pressed?.()} onclick={item.run}>
               <item.icon size={22} strokeWidth={1.6} />

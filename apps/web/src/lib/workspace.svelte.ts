@@ -5,6 +5,7 @@
 import { createDockview, themeDark, themeLight } from 'dockview-core/dist/dockview-core.js';
 import type { DockviewApi, DockviewGroupPanel, IContentRenderer, IHeaderActionsRenderer } from 'dockview-core';
 import { mount, unmount, type Component } from 'svelte';
+import { isDark, onTheme } from './theme';
 import MapPanel from '../panels/MapPanel.svelte';
 import ConsolePanel from '../components/Console.svelte';
 import ProfilePanel from '../panels/ProfilePanel.svelte';
@@ -122,9 +123,8 @@ function restore(a: DockviewApi): boolean {
 
 /** Builds the workspace inside `el`. Returns a function that tears it down. */
 export function initWorkspace(el: HTMLElement): () => void {
-  const dark = window.matchMedia('(prefers-color-scheme: dark)');
   api = createDockview(el, {
-    theme: dark.matches ? themeDark : themeLight,
+    theme: isDark() ? themeDark : themeLight,
     createComponent: ({ name }) => new SveltePanel(PANELS[name].component),
     createRightHeaderActionComponent: () => new GroupActions(),
   });
@@ -145,13 +145,12 @@ export function initWorkspace(el: HTMLElement): () => void {
       }
     }, 300);
   });
-  const onScheme = () => a.updateOptions({ theme: dark.matches ? themeDark : themeLight });
-  dark.addEventListener('change', onScheme);
+  const offTheme = onTheme((dark) => a.updateOptions({ theme: dark ? themeDark : themeLight }));
 
   return () => {
     clearTimeout(timer);
     layoutSub.dispose();
-    dark.removeEventListener('change', onScheme);
+    offTheme();
     a.dispose();
     api = null;
   };

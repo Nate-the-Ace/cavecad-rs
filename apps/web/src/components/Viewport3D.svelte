@@ -7,6 +7,7 @@
   import { cave, changed, filter, setShown, wireFilter } from '../lib/cave.svelte';
   import { ViewCube } from '../lib/viewport/view-cube';
   import { forgetFile } from '../lib/files';
+  import { onTheme } from '../lib/theme';
   import { showPanel } from '../lib/workspace.svelte';
 
   let wrap: HTMLDivElement;
@@ -121,9 +122,7 @@
 
     const ro = new ResizeObserver(() => v.resize(wrap.clientWidth, wrap.clientHeight));
     ro.observe(wrap);
-    const dark = window.matchMedia('(prefers-color-scheme: dark)');
-    const retheme = () => v.applyTheme();
-    dark.addEventListener('change', retheme);
+    const offTheme = onTheme(() => v.applyTheme());
     loadEngine().then(() => {
       palette = engine.palette();
       v.setPalette(palette);
@@ -132,7 +131,7 @@
 
     return () => {
       ro.disconnect();
-      dark.removeEventListener('change', retheme);
+      offTheme();
       cube.dispose();
       v.dispose();
       view = null;

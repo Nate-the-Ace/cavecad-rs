@@ -4,6 +4,7 @@
   // Sections live at stations: pick one here (or click a station on the map). Sketches belong to
   // their station and follow it when the survey is adjusted.
   import { onMount, untrack } from 'svelte';
+  import { onTheme } from '../lib/theme';
   import { Pencil, Hand, Undo2, Redo2, Maximize, ChevronLeft, ChevronRight } from '@lucide/svelte';
   import { cave, changed, filter, wireFilter } from '../lib/cave.svelte';
   import { engine, loadEngine, type SectionStation, type StationSection } from '../lib/engine';
@@ -301,12 +302,11 @@
       schedule();
     });
     ro.observe(wrap);
-    const dark = window.matchMedia('(prefers-color-scheme: dark)');
-    dark.addEventListener('change', schedule);
+    const offTheme = onTheme(schedule);
     loadEngine().then(() => (ready = true));
     return () => {
       ro.disconnect();
-      dark.removeEventListener('change', schedule);
+      offTheme();
       cancelAnimationFrame(frame);
     };
   });

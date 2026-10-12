@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount, untrack } from 'svelte';
+  import { onTheme } from '../lib/theme';
   import { Pencil, Hand, Undo2, Redo2, Maximize } from '@lucide/svelte';
   import { cave, changed } from '../lib/cave.svelte';
   import { formatLength, inUnits, metresPer, niceNumber, unitName } from '../lib/units';
@@ -247,15 +248,14 @@
       schedule();
     });
     ro.observe(wrap);
-    const dark = window.matchMedia('(prefers-color-scheme: dark)');
-    dark.addEventListener('change', schedule);
+    const offTheme = onTheme(schedule);
     loadEngine().then(() => {
       ready = true;
       refresh();
     });
     return () => {
       ro.disconnect();
-      dark.removeEventListener('change', schedule);
+      offTheme();
     };
   });
 </script>

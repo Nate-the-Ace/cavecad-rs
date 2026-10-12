@@ -1,12 +1,8 @@
 :root {
   --bg: #f4f5f7; --panel: #ffffff; --panel-2: #eceef2; --line: #d9dce3; --text: #1b1f27;
-  --muted: #667085; --accent: #2563eb; --accent-bg: #e6eefc; --danger: #c2331f; --warn: #a15c00;
+  --text-strong: #0d1017; --dim: #98a2b3; --hover: #e6eefc; --field: #ffffff; --muted: #667085; --accent: #2563eb; --accent-bg: #e6eefc; --danger: #c2331f; --warn: #a15c00;
   --mono: ui-monospace, 'SF Mono', Menlo, monospace; --radius: 8px;
   font-family: system-ui, -apple-system, 'Segoe UI', sans-serif; font-size: 14px; color: var(--text);
-}
-@media (prefers-color-scheme: dark) {
-  :root { --bg: #14161a; --panel: #1c1f26; --panel-2: #242832; --line: #323744; --text: #e8eaf0;
-    --muted: #98a2b3; --accent: #6b9bff; --accent-bg: #223256; --danger: #ff7b6b; --warn: #f0b24a; }
 }
 * { box-sizing: border-box; }
 html, body, #app { height: 100%; margin: 0; background: var(--bg); }
@@ -14,3 +10,24 @@ button { font: inherit; color: inherit; }
 .dv-actions { display: flex; align-items: center; height: 100%; gap: 2px; padding-right: 6px; }
 .dv-actions button { display: grid; place-items: center; width: 24px; height: 24px; padding: 0; background: none; border: 0; border-radius: 6px; color: var(--muted); cursor: pointer; }
 .dv-actions button:hover { background: var(--panel-2); color: var(--text); }
+
+/* Everything that draws text takes the theme's colours (never the browser's own). */
+body { color: var(--text); }
+input, select, textarea { color: var(--text); background: var(--field); }
+select option { background: var(--panel); color: var(--text); }
+/* The dock's tabs and groups follow the theme's palette, not dockview's stock greys. */
+:root .dockview-theme-dark, :root .dockview-theme-light {
+  --dv-group-view-background-color: var(--panel);
+  --dv-tabs-and-actions-container-background-color: var(--bg);
+  --dv-activegroup-visiblepanel-tab-background-color: var(--panel);
+  --dv-activegroup-hiddenpanel-tab-background-color: var(--bg);
+  --dv-inactivegroup-visiblepanel-tab-background-color: var(--panel);
+  --dv-inactivegroup-hiddenpanel-tab-background-color: var(--bg);
+  --dv-tab-divider-color: var(--line);
+  --dv-activegroup-visiblepanel-tab-color: var(--text-strong);
+  --dv-activegroup-hiddenpanel-tab-color: var(--muted);
+  --dv-inactivegroup-visiblepanel-tab-color: var(--muted);
+  --dv-inactivegroup-hiddenpanel-tab-color: var(--dim);
+  --dv-separator-border: var(--line);
+  --dv-paneview-header-border-color: var(--line);
+}
