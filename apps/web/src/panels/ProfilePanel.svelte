@@ -14,7 +14,7 @@
   import { isFillKind } from '../lib/fills';
   import { cursorsFor, live as room, reportCursor } from '../lib/sync.svelte';
   import { drawCursor } from '../lib/presence-draw';
-  import { fitStroke } from '../lib/spline';
+  import { fitStroke, smooth } from '../lib/spline';
   import { tolerancePx } from '../lib/commands';
   import type { BandSection } from '../lib/engine';
   import { formatLength, inUnits, metresPer, niceNumber, unitName } from '../lib/units';
@@ -218,6 +218,10 @@
     // the rock halo: a soft glow from the passage walls out into the rock, with rock marks fading with it
     if (option('halo', true)) {
       const lines: HaloLine[] = [...band.ceiling, ...band.floor].map((l) => ({ pts: l.map((p) => toScreen(p[0], p[1])) }));
+      // walls drawn in this view count too, as you sketch them
+      for (const k of editor.display()) {
+        if (k.kind === 'wall' && k.points.length >= 2) lines.push({ pts: smooth(k.points as [number, number][], null, 8, k.closed).pts.map((p) => toScreen(p[0], p[1])), closed: k.closed });
+      }
       // where no ceiling or floor was measured the glow follows the survey line itself, so it never breaks off
       for (const l of band.legs) lines.push({ pts: [toScreen(l[0], l[1]), toScreen(l[2], l[3])] });
       const inside: [number, number][][] = [];

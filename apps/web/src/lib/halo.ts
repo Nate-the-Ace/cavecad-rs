@@ -25,7 +25,7 @@ export interface HaloOptions {
   inside?: [number, number][][];
 }
 
-const STEPS = 12;
+const STEPS = 24;
 const PEAK = 0.85; // how strong the glow is right at the wall, 0..1
 const SCALE = 0.5; // the glow is soft, so it is made at half size and stretched
 

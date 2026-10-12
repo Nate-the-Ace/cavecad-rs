@@ -3,7 +3,7 @@
   // same ring the 3D tube is built from), with a pen or mouse to sketch the real shape on top.
   // Sections live at stations: pick one here (or click a station on the map). Sketches belong to
   // their station and follow it when the survey is adjusted.
-  import { drawHalo } from '../lib/halo';
+  import { drawHalo, type HaloLine } from '../lib/halo';
   import { onMount, untrack } from 'svelte';
   import { onTheme } from '../lib/theme';
   import { Maximize, ChevronLeft, ChevronRight } from '@lucide/svelte';
@@ -17,7 +17,7 @@
   import { isFillKind } from '../lib/fills';
   import { cursorsFor, live as room, reportCursor } from '../lib/sync.svelte';
   import { drawCursor } from '../lib/presence-draw';
-  import { fitStroke } from '../lib/spline';
+  import { fitStroke, smooth } from '../lib/spline';
   import { tolerancePx } from '../lib/commands';
   import { cave, changed, option, filter, wireFilter, haloFade, haloReach } from '../lib/cave.svelte';
   import { drawScan } from '../lib/scan-draw';
@@ -171,9 +171,14 @@
     if (!s) return;
 
     // the rock halo: a soft glow from the measured walls out into the rock, with rock marks fading with it
-    if (option('halo', true) && s.outline.length >= 3) {
-      const pts = s.outline.map((p) => toScreen(p[0], p[1]));
-      drawHalo(g, width, height, [{ pts, closed: true }], { reach: Math.min(Math.max(haloReach() * 0.3 * scale, 14), 300), fade: haloFade(), tint: c.accent, ink: c.muted, toWorld, toScreen });
+    if (option('halo', true)) {
+      // the glow follows the walls as drawn (as you sketch); with none drawn yet, the measured outline
+      const drawn: HaloLine[] = editor
+        .display()
+        .filter((k) => k.kind === 'wall' && k.points.length >= 2)
+        .map((k) => ({ pts: smooth(k.points as [number, number][], null, 8, k.closed).pts.map((p) => toScreen(p[0], p[1])), closed: k.closed }));
+      const lines = drawn.length ? drawn : s.outline.length >= 3 ? [{ pts: s.outline.map((p) => toScreen(p[0], p[1])), closed: true }] : [];
+      if (lines.length) drawHalo(g, width, height, lines, { reach: Math.min(Math.max(haloReach() * 0.3 * scale, 14), 300), fade: haloFade(), tint: c.accent, ink: c.muted, toWorld, toScreen });
     }
 
     // scans placed on this section lie under everything drawn here

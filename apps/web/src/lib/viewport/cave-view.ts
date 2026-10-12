@@ -1104,6 +1104,14 @@ export class CaveView {
       if (pts.some((p) => !p)) continue;
       lines.push({ pts: pts as [number, number][] });
     }
+    // walls drawn on the map count too, as you sketch them
+    for (const k of this.displayMapLines()) {
+      if (k.kind !== 'wall' || k.points.length < 2) continue;
+      const pts = k.points.map((p) => this.project(p));
+      if (pts.some((p) => !p)) continue;
+      const curve = smooth(pts as [number, number][], null, 8, k.closed);
+      lines.push({ pts: curve.pts as [number, number][], closed: k.closed });
+    }
     // the passage surface, so the glow stays out of it (every triangle turned the same way so none cancels another)
     const inside: [number, number][][] = [];
     const pos = this.passage?.geometry.getAttribute('position');
