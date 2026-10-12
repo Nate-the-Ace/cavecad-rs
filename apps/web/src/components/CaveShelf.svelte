@@ -143,7 +143,7 @@
 
   function key(e: KeyboardEvent) {
     if (e.key === 'Escape') (menu ? (menu = null) : (shelf.open = false));
-    else if (e.key === 'Enter' && !(e.target as HTMLElement).closest('input,button')) void open();
+    else if (e.key === 'Enter' && !joining && !(e.target as HTMLElement).closest('input,button,textarea')) void open();
   }
 
   const close = () => (shelf.open = false);
@@ -151,7 +151,32 @@
 
 {#if shelf.open}
   <div class="veil" role="presentation" onclick={close}>
-    <div class="box" role="dialog" aria-modal="true" aria-label="Caves" tabindex="-1" onclick={(e) => e.stopPropagation()} onkeydown={key}>
+    <div class="box" class:joinbox={joining} role="dialog" aria-modal="true" aria-label={joining ? 'Join a live session' : 'Caves'} tabindex="-1" onclick={(e) => e.stopPropagation()} onkeydown={key}>
+      {#if joining}
+        <div class="joinpage">
+          <h2>Join a session in progress</h2>
+          <p class="stats">Someone is sharing a cave live. Paste the invite code they sent you; you get a reply code to send back; when they paste it, their cave opens here and you work on it together. Nothing goes through a server.</p>
+          <label class="field">Your name <input value={me.name} maxlength="40" onchange={(e) => rename(e.currentTarget.value)} /></label>
+          <p class="step">1. Paste the host’s invite code.</p>
+          <textarea rows="3" placeholder="CAVE1-…" bind:value={inviteText} disabled={p2p.role === 'guest'} aria-label="Invite code from the host"></textarea>
+          {#if p2p.role !== 'guest'}
+            <div><button class="go" onclick={makeReply} disabled={!inviteText.trim()}>Make my reply code</button></div>
+          {:else}
+            <p class="step">2. Send this reply code back to the host.</p>
+            <div class="replybox">
+              <textarea readonly rows="3" value={p2p.reply || 'Making the code…'} aria-label="Your reply code" onfocus={(e) => e.currentTarget.select()}></textarea>
+              <button onclick={copyReply} disabled={!p2p.reply}><Copy size={13} /> {copiedReply ? 'Copied' : 'Copy'}</button>
+            </div>
+            <p class="stats" role="status">{live.status === 'live' ? 'You are in.' : p2p.waiting || 'Waiting for the host…'}</p>
+          {/if}
+          <label class="check"><input type="checkbox" bind:checked={p2p.following} /> Follow what the host is looking at</label>
+          <label class="check" title="A public STUN service tells each device its public address so they can find each other across networks. No cave data goes through it."><input type="checkbox" bind:checked={p2p.stun} disabled={p2p.role === 'guest'} /> Connect across the internet</label>
+          {#if joinProblem}<p class="err" role="alert">{joinProblem}</p>{/if}
+          {#if p2p.error}<p class="err" role="alert">{p2p.error}</p>{/if}
+          <div class="spacer"></div>
+          <div class="foot"><span class="grow"></span><button onclick={cancelJoin}>Back to my caves</button></div>
+        </div>
+      {:else}
       <div class="rail">
         <input type="search" placeholder="Search caves" bind:value={search} aria-label="Search caves" />
         <div class="list" role="listbox" aria-label="Caves">
@@ -179,29 +204,7 @@
       </div>
 
       <div class="detail">
-        {#if joining}
-          <h2>Join a session in progress</h2>
-          <p class="stats">Someone is sharing a cave live. Paste the invite code they sent you; you get a reply code to send back; when they paste it, their cave opens here and you work on it together. Nothing goes through a server.</p>
-          <label class="field">Your name <input value={me.name} maxlength="40" onchange={(e) => rename(e.currentTarget.value)} /></label>
-          <p class="step">1. Paste the host’s invite code.</p>
-          <textarea rows="3" placeholder="CAVE1-…" bind:value={inviteText} disabled={p2p.role === 'guest'} aria-label="Invite code from the host"></textarea>
-          {#if p2p.role !== 'guest'}
-            <div><button class="go" onclick={makeReply} disabled={!inviteText.trim()}>Make my reply code</button></div>
-          {:else}
-            <p class="step">2. Send this reply code back to the host.</p>
-            <div class="replybox">
-              <textarea readonly rows="3" value={p2p.reply || 'Making the code…'} aria-label="Your reply code" onfocus={(e) => e.currentTarget.select()}></textarea>
-              <button onclick={copyReply} disabled={!p2p.reply}><Copy size={13} /> {copiedReply ? 'Copied' : 'Copy'}</button>
-            </div>
-            <p class="stats" role="status">{live.status === 'live' ? 'You are in.' : p2p.waiting || 'Waiting for the host…'}</p>
-          {/if}
-          <label class="check"><input type="checkbox" bind:checked={p2p.following} /> Follow what the host is looking at</label>
-          <label class="check" title="A public STUN service tells each device its public address so they can find each other across networks. No cave data goes through it."><input type="checkbox" bind:checked={p2p.stun} disabled={p2p.role === 'guest'} /> Connect across the internet</label>
-          {#if joinProblem}<p class="err" role="alert">{joinProblem}</p>{/if}
-          {#if p2p.error}<p class="err" role="alert">{p2p.error}</p>{/if}
-          <div class="spacer"></div>
-          <div class="foot"><span class="grow"></span><button onclick={cancelJoin}>Back to my caves</button></div>
-        {:else if (record || sample) && summary}
+        {#if (record || sample) && summary}
           <h2>{summary.name}</h2>
           <p class="stats">
             {#if summary.empty}Nothing surveyed yet.{:else}{length(summary.length_m)} surveyed · {summary.stations} stations · {summary.trips.length} trip{summary.trips.length === 1 ? '' : 's'}{#if summary.depth_m !== null && summary.depth_m > 0} · {length(summary.depth_m)} deep{/if} · {health(summary)}{/if}
@@ -241,6 +244,7 @@
           <button onclick={close}>{cave.hasCave ? 'Close' : 'Start empty'}</button>
         </div>
       </div>
+      {/if}
     </div>
   </div>
 
@@ -280,6 +284,8 @@
   .cave .sub { font-size: 11px; color: var(--muted); }
   .row { display: flex; gap: 6px; }
   .row button { flex: 1; }
+  .joinbox { width: min(640px, 96vw); height: auto; max-height: 92vh; }
+  .joinpage { flex: 1; min-width: 0; padding: 20px 24px; display: flex; flex-direction: column; gap: 10px; overflow: auto; }
   .detail { flex: 1; min-width: 0; padding: 16px 20px; display: flex; flex-direction: column; gap: 8px; }
   h2 { margin: 0; font-size: 22px; }
   .stats { margin: 0; color: var(--text); font-size: 13px; }
