@@ -153,6 +153,7 @@
   .msg { color: var(--muted); font-size: 12px; }
   .body { flex: 1; min-height: 0; display: flex; }
   .side { width: 220px; flex: none; display: flex; flex-direction: column; gap: 2px; padding: 6px; border-right: 1px solid var(--line); overflow: auto; }
+  .side > * { flex: none; }
   .head { font-size: 11px; font-weight: 600; color: var(--muted); padding: 6px 4px 2px; }
   .n { color: var(--muted); font-weight: 400; margin-left: 4px; font-size: 11px; }
   .tree { display: flex; flex-direction: column; }

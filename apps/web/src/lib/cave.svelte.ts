@@ -211,3 +211,6 @@ export function requestRefit(id: string, detail: number) {
 export function changed() {
   cave.version += 1;
 }
+
+// Dev-only handle for tests and debugging in the browser console.
+if (import.meta.env.DEV) (window as unknown as { __cave: unknown }).__cave = { cave, changed };
