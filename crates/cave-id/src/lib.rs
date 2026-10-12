@@ -81,6 +81,20 @@ impl FromStr for Id {
     }
 }
 
+impl serde::Serialize for Id {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        s.collect_str(self)
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for Id {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        let text = <std::borrow::Cow<'de, str> as serde::Deserialize>::deserialize(d)?;
+        text.parse()
+            .map_err(|e| serde::de::Error::custom(format!("bad id: {e:?}")))
+    }
+}
+
 /// Where new ids come from. The app wires this to real entropy; tests use [`SeqIds`].
 pub trait IdSource {
     /// Returns a fresh id, never one returned before by this source.

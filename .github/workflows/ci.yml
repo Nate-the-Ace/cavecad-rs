@@ -13,6 +13,6 @@ jobs:
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo test
       - name: Core builds for the browser
-        run: cargo build --target wasm32-unknown-unknown -p cave-id -p cave-store -p cave-log
+        run: cargo build --target wasm32-unknown-unknown -p cave-id -p cave-store -p cave-log -p cave-doc
       - name: Code index is current
         run: python3 tools/make_code_index.py --check
