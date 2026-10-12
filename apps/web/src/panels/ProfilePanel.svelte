@@ -189,7 +189,7 @@
     g.setLineDash([]);
     for (const l of band.legs) stroke(g, [[l[0], l[1]], [l[2], l[3]]], null, c.text, 2);
     const look = looks();
-    drawStrokes(g, editor.display(), toScreen, look, 1, cave.selected);
+    drawStrokes(g, editor.display(), toScreen, look, 1, cave.selected, (band?.stations ?? []).map((s) => [s.s, s.z] as [number, number]));
     drawHandles(g, editor.handles(), c.accent, c.bg);
     if (pickupAt && cave.tool && !live) {
       // the end of an open line the next stroke would carry on from
@@ -214,7 +214,7 @@
         g.lineTo(shell.end[0], shell.end[1]);
         g.stroke();
         g.setLineDash([]);
-        drawStrokes(g, sec.sketches, to, look);
+        drawStrokes(g, sec.sketches, to, look, 1, '', [[0, 0]]);
         g.fillStyle = c.muted;
         g.textAlign = 'center';
         g.fillText(sec.label, shell.below[0], shell.below[1]);

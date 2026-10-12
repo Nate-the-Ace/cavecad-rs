@@ -218,7 +218,7 @@ export const engine = {
   /** What a drawn line is, or null when the id is not a drawn line. */
   setLineText: (id: string, text: string): string => set_line_text(id, text),
   setLineFlip: (id: string, flip: boolean): string => set_line_flip(id, flip),
-  ornament: (kind: string, curve: [number, number][], closed: boolean, flip: boolean): { spine: boolean; lines: [number, number][][] } => JSON.parse(ornament(kind, JSON.stringify(curve), closed, flip)),
+  ornament: (kind: string, curve: [number, number][], closed: boolean, flip: boolean, id: string, survey: [number, number][]): { spine: boolean; lines: [number, number][][] } => JSON.parse(ornament(kind, JSON.stringify(curve), closed, flip, id, JSON.stringify(survey))),
   flippedLines: (): string[] => JSON.parse(flipped_lines()),
   lineInfo: (id: string): { kind: string; view: 'profile' | 'section' | 'map'; closed: boolean; flip: boolean; text: string } | null => JSON.parse(line_info(id)),
   /** Deletes a line drawn in a view. */

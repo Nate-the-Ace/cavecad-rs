@@ -8,4 +8,9 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+cave-fill = { path = "../cave-fill" }
+cave-symbols = { path = "../cave-symbols" }
 serde = { version = "1", features = ["derive"] }
+
+[dev-dependencies]
+serde_json = { version = "1", features = ["float_roundtrip"] }

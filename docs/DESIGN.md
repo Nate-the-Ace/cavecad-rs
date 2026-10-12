@@ -301,3 +301,23 @@ Profile, and it writes each stroke in its own look instead of as a line through 
   samples, the file reads back as the identical cave, and exporting twice gives the same file.
 Not done: the water tint (a solid fill is only its outline in DXF), a leader line from a section to
 its station, and per-trip layers for strokes.
+
+## 2026-10-12: Shaped lines finished (wall glyphs, automatic edging, the Map, the DXF)
+
+- `cave-shape` is now a full port of the pure geometry of the old `CsShapeLine`, with
+  `tests/golden.rs` checking stations, hachures, fans, scallop chains, automatic edging and seeded
+  glyph placements against the old app's answers on four spines. Two corrections to the first slice
+  that the golden check forced: scallops are chains of true circular arcs given by a DXF bulge
+  (positive bows right; 0.5 is about 106 degrees), not sine bumps; and a **closed** ticks or fans line
+  (a pit) puts its marks on the **inside** whichever way it was drawn, as the old pit tool did (flip
+  sends them out).
+- **Wall glyphs** (Passage lines group): a catalogue symbol (stone blocks) every 8 ft along a wall, a
+  little off it, with seeded jitter in position, turn and size. The side is decided per glyph from the
+  survey, as the old app's `autoSides` did: outside is away from the nearest station; a station nearly
+  along the wall defers to the nearest confident neighbour; passage on both faces (a fin) draws no
+  stone. "Flip side" inverts every glyph's side. The survey is whatever stations the view has in the
+  curve's own coordinates: plan stations on the Map, band stations on the Profile, the station itself
+  in a Cross Section. The seed comes from the stroke's id, so every device shows the same stones.
+- Ornament now shows on the **Map** (the plan curve's marks, lifted to the line's height) and in the
+  **DXF** (spine and marks on the side the stroke says), as well as in the Profile and Cross Section.
+  The web app caches each stroke's ornament until its curve, the survey or the flip changes.

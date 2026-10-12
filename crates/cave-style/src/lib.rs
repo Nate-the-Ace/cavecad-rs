@@ -292,6 +292,16 @@ pub const PALETTE: &[Style] = &[
         "CAVE-NARROW",
     ),
     s(
+        "glyphs",
+        "Wall glyphs",
+        Muted,
+        1.2,
+        Solid,
+        1.0,
+        0.4,
+        "CAVE-WALL-GLYPHS",
+    ),
+    s(
         "dripline",
         "Dripline",
         Text,
@@ -490,6 +500,7 @@ pub const DRAW_TOOLS: &[&str] = &[
     "presumed",
     "narrow",
     "dripline",
+    "glyphs",
     "joint",
     "fault",
     "bedding",
@@ -513,7 +524,7 @@ pub const TOOL_GROUPS: &[(&str, &[&str])] = &[
     ),
     (
         "Passage lines",
-        &["underlying", "presumed", "narrow", "dripline"],
+        &["underlying", "presumed", "narrow", "dripline", "glyphs"],
     ),
     (
         "Geology and relief",

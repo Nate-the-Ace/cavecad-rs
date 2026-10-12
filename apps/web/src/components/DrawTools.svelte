@@ -14,7 +14,7 @@
   onMount(() => {
     loadEngine().then(() => (tools = engine.drawToolGroups().find((g) => g.name === group)?.tools ?? []));
   });
-  const icons: Record<string, typeof Route> = { wall: BrickWall, ledge: Minus, pit: CircleDashed, sketch: Pencil, flowstone: Droplets, rimstone: Waves, slope: TrendingDown, text: Type, underlying: Ellipsis, presumed: Equal, narrow: MoveHorizontal, dripline: ArrowDownToLine, joint: Slash, fault: Zap, bedding: AlignJustify, contour: Mountain };
+  const icons: Record<string, typeof Route> = { wall: BrickWall, ledge: Minus, pit: CircleDashed, sketch: Pencil, flowstone: Droplets, rimstone: Waves, slope: TrendingDown, text: Type, glyphs: Mountain, underlying: Ellipsis, presumed: Equal, narrow: MoveHorizontal, dripline: ArrowDownToLine, joint: Slash, fault: Zap, bedding: AlignJustify, contour: Mountain };
 </script>
 
 <div class="tools" role="group" aria-label="Drawing tools">

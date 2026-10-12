@@ -380,6 +380,8 @@ struct Stroke<'a> {
     widths: Option<&'a [f64]>,
     closed: bool,
     text: &'a str,
+    /// The survey's stations in the stroke's coordinates (wall glyphs go away from them).
+    survey: &'a [[f64; 2]],
 }
 
 /// Samples per span when a curve is written out as a polyline.
@@ -493,8 +495,12 @@ fn draw_ornament(g: &mut Geometry, doc: &Document, s: &Stroke, curve: &[[f64; 2]
             .ok()
             .and_then(|id| doc.entity(id))
             .is_some_and(|e| e.flag(cave_doc::Field::FeatureFlip));
-    let side = if flip { -1.0 } else { 1.0 };
-    for line in cave_shape::ornament(s.kind, curve, s.closed, side, 1.0) {
+    let dress = cave_shape::Dress {
+        flip,
+        seed: cave_fill::seed_of(s.id),
+        survey: s.survey,
+    };
+    for line in cave_shape::ornament(s.kind, curve, s.closed, dress) {
         g.lwpolyline_suffixed(s.kind, suffix, &line, None);
     }
 }
@@ -539,6 +545,7 @@ fn draw_section<S: SectionLike>(
             widths: sk.widths.as_deref(),
             closed: sk.closed,
             text: &sk.text,
+            survey: &[base], // the passage is around the station the section was cut at
         };
         draw_stroke(g, doc, &stroke, suffix);
     }
@@ -576,7 +583,7 @@ impl SectionLike for cave_scene::MapSection {
 
 /// Everything drawn on the map (strokes lifted to the passage's height are written flat, in plan),
 /// and every station's cross section beside its station.
-fn draw_map_work(g: &mut Geometry, doc: &Document, adjusted: bool) {
+fn draw_map_work(g: &mut Geometry, doc: &Document, adjusted: bool, survey: &[[f64; 2]]) {
     for sk in cave_scene::map_lines_3d(doc, adjusted) {
         let pts: Vec<[f64; 2]> = sk.points.iter().map(|p| [p[0], p[1]]).collect();
         let stroke = Stroke {
@@ -586,6 +593,7 @@ fn draw_map_work(g: &mut Geometry, doc: &Document, adjusted: bool) {
             widths: sk.widths.as_deref(),
             closed: sk.closed,
             text: &sk.text,
+            survey,
         };
         draw_stroke(g, doc, &stroke, "MAP");
     }
@@ -639,6 +647,7 @@ fn draw_profiles(g: &mut Geometry, doc: &Document, adjusted: bool, plan_min: [f6
             g.point("station", None, [a[0], a[1], 0.0]);
             g.text("label", [a[0] + 0.4, a[1] + 0.4, 0.0], 1.0, &st.label);
         }
+        let band_stations: Vec<[f64; 2]> = p.stations.iter().map(|st| at(st.s, st.z)).collect();
         for sk in &p.sketches {
             let pts: Vec<[f64; 2]> = sk.points.iter().map(|q| at(q[0], q[1])).collect();
             let stroke = Stroke {
@@ -648,6 +657,7 @@ fn draw_profiles(g: &mut Geometry, doc: &Document, adjusted: bool, plan_min: [f6
                 widths: sk.widths.as_deref(),
                 closed: sk.closed,
                 text: &sk.text,
+                survey: &band_stations,
             };
             draw_stroke(g, doc, &stroke, "PROFILE");
         }
@@ -711,7 +721,12 @@ pub fn export(doc: &Document, opts: &ExportOptions) -> String {
             layers: BTreeMap::new(),
         };
         draw_scene(&mut g, doc, &scene);
-        draw_map_work(&mut g, doc, opts.adjusted);
+        let stations: Vec<[f64; 2]> = scene
+            .stations
+            .iter()
+            .map(|st| [st.at[0], st.at[1]])
+            .collect();
+        draw_map_work(&mut g, doc, opts.adjusted, &stations);
         let plan_min = scene.bounds.map_or([0.0, 0.0], |b| [b[0], b[1]]);
         draw_profiles(&mut g, doc, opts.adjusted, plan_min);
         draw_carriers(&mut g, &payload, &chunks);

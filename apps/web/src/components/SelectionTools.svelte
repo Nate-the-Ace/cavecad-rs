@@ -12,7 +12,7 @@
   onMount(() => {
     loadEngine().then(() => (tools = engine.drawTools()));
   });
-  const shaped = ['ledge', 'pit', 'flowstone', 'rimstone', 'slope', 'dripline'];
+  const shaped = ['ledge', 'pit', 'flowstone', 'rimstone', 'slope', 'dripline', 'glyphs'];
 
   const info = $derived.by(() => {
     void cave.version;

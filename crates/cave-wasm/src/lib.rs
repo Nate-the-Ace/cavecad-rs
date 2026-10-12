@@ -385,13 +385,28 @@ pub fn set_line_flip(id: &str, flip: bool) -> String {
 }
 
 /// The ornament of a shaped line: `curve` is `[[x, y], ...]` (the smooth curve, in metres), `flip`
-/// puts it on the left of travel. Returns `{spine, lines}` as JSON: whether the curve itself is drawn, and the ornament polylines (none for a type with no shape).
+/// puts it on the other side, `id` seeds anything random (wall glyphs) and `survey` is the survey's
+/// stations in the curve's own coordinates (wall glyphs go on the side away from them). Returns
+/// `{spine, lines}` as JSON: whether the curve itself is drawn, and the ornament polylines (none for
+/// a type with no shape).
 #[wasm_bindgen]
-pub fn ornament(kind: &str, curve: &str, closed: bool, flip: bool) -> String {
+pub fn ornament(
+    kind: &str,
+    curve: &str,
+    closed: bool,
+    flip: bool,
+    id: &str,
+    survey: &str,
+) -> String {
     let pts = serde_json::from_str::<Vec<[f64; 2]>>(curve).unwrap_or_default();
-    let side = if flip { -1.0 } else { 1.0 };
+    let survey = serde_json::from_str::<Vec<[f64; 2]>>(survey).unwrap_or_default();
     let spine = cave_shape::shape(kind).is_none_or(|s| !s.hide_spine);
-    let lines = cave_shape::ornament(kind, &pts, closed, side, 1.0);
+    let dress = cave_shape::Dress {
+        flip,
+        seed: cave_fill::seed_of(id),
+        survey: &survey,
+    };
+    let lines = cave_shape::ornament(kind, &pts, closed, dress);
     serde_json::json!({"spine": spine, "lines": lines}).to_string()
 }
 

@@ -131,7 +131,10 @@ dependencies = [
 name = "cave-shape"
 version = "0.0.1"
 dependencies = [
+ "cave-fill",
+ "cave-symbols",
  "serde",
+ "serde_json",
 ]
 
 [[package]]

@@ -10,7 +10,7 @@ import { drawMarks, isFillKind, marksFor } from './fills.ts';
 
 /** Where shaped-line ornament comes from (the engine sets this once it has loaded). */
 export interface OrnamentSource {
-  ornament(kind: string, curve: [number, number][], closed: boolean, flip: boolean): { spine: boolean; lines: [number, number][][] };
+  ornament(kind: string, curve: [number, number][], closed: boolean, flip: boolean, id: string, survey: [number, number][]): { spine: boolean; lines: [number, number][][] };
   flippedLines(): string[];
 }
 let source: OrnamentSource | null = null;
@@ -28,6 +28,30 @@ export function setHiddenTest(f: (kind: string) => boolean) {
 /** True when strokes of this type are switched off in the Show menu. */
 export function isKindHidden(kind: string): boolean {
   return hiddenTest(kind);
+}
+
+let flippedIds = new Set<string>();
+/** Re-reads which shaped lines are flipped (call before drawing). */
+export function refreshFlipped() {
+  flippedIds = new Set(source?.flippedLines() ?? []);
+}
+
+const ornamentCache = new Map<string, { spine: boolean; lines: [number, number][][] }>();
+const NONE = { spine: true, lines: [] as [number, number][][] };
+const pointKey = (pts: [number, number][]) => (pts.length ? `${pts.length},${pts[0]},${pts[pts.length >> 1]},${pts[pts.length - 1]}` : '0');
+
+/** The ornament of a shaped line: from the cache while the curve, the survey and the flip are unchanged. */
+export function ornamentFor(kind: string, id: string, curve: [number, number][], closed: boolean, survey: [number, number][]): { spine: boolean; lines: [number, number][][] } {
+  if (!source) return NONE;
+  const flip = !!id && flippedIds.has(id);
+  const key = `${kind}|${id}|${flip}|${closed}|${pointKey(curve)}|${kind === 'glyphs' ? pointKey(survey) : ''}`;
+  let o = ornamentCache.get(key);
+  if (!o) {
+    o = source.ornament(kind, curve, closed, flip, id, survey);
+    if (ornamentCache.size > 600) ornamentCache.clear();
+    ornamentCache.set(key, o);
+  }
+  return o;
 }
 
 export type Sketches = { points: [number, number][]; widths: number[] | null; closed?: boolean; text?: string }[];
@@ -70,10 +94,12 @@ export function drawStrokes(
   look: (kind: string) => Look,
   scale = 1,
   selected = '',
+  /** The survey's stations in the strokes' own coordinates (wall glyphs go on the side away from them). */
+  survey: [number, number][] = [],
 ): void {
   g.lineCap = 'round';
   g.lineJoin = 'round';
-  const flipped = new Set(source?.flippedLines() ?? []); // shaped lines with ornament on the left of travel
+  refreshFlipped(); // shaped lines with ornament on the other side
   for (const k of sketches) {
     if (hiddenTest(k.kind)) continue; // switched off in the Show menu
     const l = look(k.kind);
@@ -106,7 +132,7 @@ export function drawStrokes(
     );
     // Shaped lines: ornament is regenerated from the curve (in metres) every time it is drawn.
     const metres = smooth(k.points, null, 10, !!k.closed).pts;
-    const orn = source?.ornament(k.kind, metres, !!k.closed, !!k.id && flipped.has(k.id)) ?? { spine: true, lines: [] };
+    const orn = ornamentFor(k.kind, k.id ?? '', metres, !!k.closed, survey);
     const trace = (extra: number, color: string, alpha: number, dash: number[]) => {
       g.strokeStyle = color;
       g.globalAlpha = alpha;

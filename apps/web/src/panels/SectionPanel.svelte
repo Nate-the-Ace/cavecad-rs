@@ -178,7 +178,7 @@
 
     // what has been sketched
     const look = looks();
-    drawStrokes(g, editor.display(), toScreen, look, 1, cave.selected);
+    drawStrokes(g, editor.display(), toScreen, look, 1, cave.selected, [[0, 0]]);
     drawHandles(g, editor.handles(), c.accent, c.panel);
     if (pickupAt && cave.tool && !live) {
       // the end of an open line the next stroke would carry on from

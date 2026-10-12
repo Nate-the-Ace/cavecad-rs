@@ -9,7 +9,7 @@ import type { MapSection, PassageBuffers, ProfileSketch3d, Scene, TypeStyle } fr
 import { PenGuard, isEraser, widthFor } from '../pen';
 import { drawStamp, hitsStamp, isStampKind, placement } from '../symbols';
 import { drawMarks, isFillKind, marksFor } from '../fills';
-import { isKindHidden } from '../section-glyph';
+import { isKindHidden, ornamentFor, refreshFlipped } from '../section-glyph';
 import { defaultMapOffset, drawHandles, drawStrokes, glyphCurves, hits, leaderEnd } from '../section-glyph';
 import { distanceToCurve, fitStroke, nearestPoint, smooth } from '../spline';
 import { PICKUP_REACH, joinFit } from '../line-editor';
@@ -737,6 +737,8 @@ export class CaveView {
   /** Strokes 3D lines (projected to the screen) in the look of their kind. */
   private strokeLines(g: CanvasRenderingContext2D, lines: ProfileSketch3d[]) {
     const look = looks();
+    refreshFlipped();
+    const stationsXY = (this.data?.stations ?? []).map((s) => [s.at[0], s.at[1]] as [number, number]);
     const base = g.globalAlpha;
     g.lineCap = 'round';
     g.lineJoin = 'round';
@@ -791,8 +793,30 @@ export class CaveView {
         g.lineWidth = Math.max(1, l.weight * 0.7);
         drawMarks(g, marksFor(k.kind, k.id, plan), (x, y) => this.project([x, y, z]) ?? [-1e5, -1e5], pts as [number, number][]);
       }
+      // A shaped line (ledge, pit, slope, glyphs...): its marks are made from the plan curve and drawn lifted to its height.
+      let spine = true;
+      if (whole && k.points.length >= 2) {
+        const plan = smooth(k.points.map((p) => [p[0], p[1]] as [number, number]), null, 10, k.closed).pts;
+        const orn = ornamentFor(k.kind, k.id, plan, k.closed, stationsXY);
+        spine = orn.spine;
+        if (orn.lines.length) {
+          const z = k.points[0][2];
+          g.setLineDash([]);
+          g.lineWidth = Math.max(1, l.weight * 0.8);
+          for (const line of orn.lines) {
+            g.beginPath();
+            line.forEach((p, i) => {
+              const q = this.project([p[0], p[1], z]);
+              if (!q) return;
+              if (i === 0) g.moveTo(q[0], q[1]);
+              else g.lineTo(q[0], q[1]);
+            });
+            g.stroke();
+          }
+        }
+      }
       if (k.id && k.id === this.selectedLine) trace(7, 0.25, []);
-      trace(0, l.alpha, l.dash);
+      if (spine) trace(0, l.alpha, l.dash);
     }
     g.setLineDash([]);
     g.globalAlpha = base;
@@ -1035,7 +1059,7 @@ export class CaveView {
           g.stroke();
           g.setLineDash([]);
         }
-        drawStrokes(g, sec.sketches, to, looks());
+        drawStrokes(g, sec.sketches, to, looks(), 1, '', [[0, 0]]);
         g.fillStyle = css.muted;
         g.textAlign = 'center';
         g.fillText(sec.label, shell.below[0], shell.below[1]);
