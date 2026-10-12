@@ -76,7 +76,12 @@ export class CaveView {
       lastMiddle = { time: quick ? 0 : e.timeStamp, x: e.clientX, y: e.clientY };
       if (quick) this.fit();
     });
-    this.controls.addEventListener('change', () => this.requestRender());
+    this.controls.addEventListener('change', () => {
+      this.requestRender();
+      // Which lines run under another passage depends on where the camera is: ask again once it settles.
+      clearTimeout(this.shadingTimer);
+      this.shadingTimer = window.setTimeout(() => this.reshade() && this.rebuild(), 150);
+    });
     this.applyTheme();
   }
 
@@ -265,8 +270,25 @@ export class CaveView {
     this.rebuild();
   }
 
+  /** Asks for the over/under split of the lines as seen from the current camera (the engine does the work). */
+  shadingFor: ((view: [number, number, number]) => Scene['shading']) | null = null;
+  private shadingTimer = 0;
+  private shadedFrom = new THREE.Vector3(0, 0, 1);
+
+  /** Re-works the over/under split if the camera has moved; true when it changed. */
+  private reshade(): boolean {
+    if (!this.data || !this.shadingFor) return false;
+    const w = this.cameraOffset.normalize();
+    if (w.angleTo(this.shadedFrom) < 0.02) return false;
+    this.shadedFrom.copy(w);
+    this.data.shading = this.shadingFor([w.x, w.y, w.z]);
+    return true;
+  }
+
   setScene(scene: Scene | null, refit = true) {
     this.data = scene;
+    this.shadedFrom.set(0, 0, 1); // a fresh scene is shaded for the view from above
+    if (!refit) this.reshade();
     this.rebuild();
     if (refit) this.resetView();
   }

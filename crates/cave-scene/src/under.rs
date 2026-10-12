@@ -1,17 +1,18 @@
-//! Which drawn lines run *under* another passage.
+//! Which drawn lines run *under* another passage, as seen from any direction.
 //!
-//! Where one passage lies above another in plan, the lower one's lines are drawn dim and dashed so
-//! the map reads in layers without anyone sorting anything. A passage's footprint is each leg's
-//! centreline widened to the larger of its measured left/right (at least [`MIN_HALF`]); a point is
-//! under a leg when it falls inside that footprint and the leg's centreline is at least [`CLEAR`]
-//! metres higher there. Legs sharing a station with the line's own passage never count, or a
+//! Where one passage lies in front of another, the farther one's lines are drawn dim and dashed so
+//! the map reads in layers without anyone sorting anything. Everything is judged in the view: a
+//! passage is each leg's centreline as a tube of radius the larger of its measured left/right (at
+//! least [`MIN_HALF`]); a point is under a leg when it falls inside that tube's outline seen from
+//! the camera and the leg's centreline is at least [`CLEAR`] metres nearer the camera there. From
+//! straight above this is "higher passages cover lower ones". Legs sharing a station with the line's own passage never count, or a
 //! passage would shade itself on a steep stretch.
 
 use crate::Pt;
 use cave_id::Id;
 use cave_survey::{LegResult, StationLrud, Vec3};
 use serde::Serialize;
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{HashMap, HashSet};
 
 /// Narrowest footprint half-width, metres, for a leg nobody measured walls on.
 pub const MIN_HALF: f64 = 1.5;
@@ -37,6 +38,7 @@ pub struct Shading {
     pub legs_under: Vec<[f64; 6]>,
 }
 
+/// A leg seen from the camera: `[across, up, depth]` with depth growing toward the camera.
 struct Foot {
     a: Pt,
     b: Pt,
@@ -46,40 +48,63 @@ struct Foot {
 }
 
 /// All passages' footprints, built once and asked about many points.
-pub struct Footprints(Vec<Foot>);
+pub struct Footprints {
+    feet: Vec<Foot>,
+    u: Pt,
+    v: Pt,
+    w: Pt,
+}
+
+/// Looking straight down (plan view).
+pub const TOP: Pt = [0.0, 0.0, 1.0];
 
 impl Footprints {
-    /// One footprint per leg whose two stations are placed.
+    /// One footprint per leg whose two stations are placed, seen from `view` (the direction from
+    /// the cave toward the camera).
     pub fn new(
         legs: &[LegResult],
         pos: &dyn Fn(Id) -> Option<Vec3>,
         lruds: &HashMap<Id, StationLrud>,
-        placed: &BTreeMap<Id, Vec3>,
+        view: Pt,
     ) -> Self {
         let width = |s: Id| {
             lruds
                 .get(&s)
                 .map_or(0.0, |l| l.left.unwrap_or(0.0).max(l.right.unwrap_or(0.0)))
         };
-        let _ = placed;
-        Footprints(
-            legs.iter()
-                .filter_map(|l| {
-                    let (a, b) = (pos(l.from)?, pos(l.to)?);
-                    Some(Foot {
-                        a: [a.x, a.y, a.z],
-                        b: [b.x, b.y, b.z],
-                        half: width(l.from).max(width(l.to)).max(MIN_HALF),
-                        from: l.from,
-                        to: l.to,
-                    })
+        let len = (view[0] * view[0] + view[1] * view[1] + view[2] * view[2]).sqrt();
+        let w = if len < 1e-9 {
+            TOP
+        } else {
+            [view[0] / len, view[1] / len, view[2] / len]
+        };
+        let h = if w[2].abs() < 0.99 {
+            [0.0, 0.0, 1.0]
+        } else {
+            [0.0, 1.0, 0.0]
+        };
+        let u = norm(cross3(h, w));
+        let v = cross3(w, u);
+        let proj = |p: Pt| [dot(p, u), dot(p, v), dot(p, w)];
+        let feet: Vec<Foot> = legs
+            .iter()
+            .filter_map(|l| {
+                let (a, b) = (pos(l.from)?, pos(l.to)?);
+                Some(Foot {
+                    a: proj([a.x, a.y, a.z]),
+                    b: proj([b.x, b.y, b.z]),
+                    half: width(l.from).max(width(l.to)).max(MIN_HALF),
+                    from: l.from,
+                    to: l.to,
                 })
-                .collect(),
-        )
+            })
+            .collect();
+        Footprints { feet, u, v, w }
     }
 
     fn covers(&self, p: Pt, own: &HashSet<Id>) -> bool {
-        self.0.iter().any(|f| {
+        let p = [dot(p, self.u), dot(p, self.v), dot(p, self.w)];
+        self.feet.iter().any(|f| {
             if own.contains(&f.from) || own.contains(&f.to) {
                 return false;
             }
@@ -142,6 +167,23 @@ impl Footprints {
     }
 }
 
+fn dot(a: Pt, b: Pt) -> f64 {
+    a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+}
+
+fn cross3(a: Pt, b: Pt) -> Pt {
+    [
+        a[1] * b[2] - a[2] * b[1],
+        a[2] * b[0] - a[0] * b[2],
+        a[0] * b[1] - a[1] * b[0],
+    ]
+}
+
+fn norm(a: Pt) -> Pt {
+    let l = dot(a, a).sqrt().max(1e-12);
+    [a[0] / l, a[1] / l, a[2] / l]
+}
+
 fn at_mid(at: &impl Fn(usize) -> Pt, i: usize) -> Pt {
     let (p, q) = (at(i), at(i + 1));
     [
@@ -165,10 +207,17 @@ mod tests {
         }
     }
 
+    fn fp(feet: Vec<Foot>) -> Footprints {
+        // Top view: the basis is (east, north, up)... check by construction below.
+        let mut f = Footprints::new(&[], &|_| None, &HashMap::new(), TOP);
+        f.feet = feet;
+        f
+    }
+
     #[test]
     fn a_line_beneath_a_higher_passage_is_under_only_where_they_overlap() {
         // A passage 10 m up runs east along y=0, x 0..10. A low line crosses it at x=5.
-        let f = Footprints(vec![foot([0.0, 0.0, 10.0], [10.0, 0.0, 10.0], 1, 2)]);
+        let f = fp(vec![foot([0.0, 0.0, 10.0], [10.0, 0.0, 10.0], 1, 2)]);
         let (mut over, mut under) = (Vec::new(), Vec::new());
         f.split(
             &[[5.0, -6.0, 0.0], [5.0, 6.0, 0.0]],
@@ -183,7 +232,7 @@ mod tests {
 
     #[test]
     fn own_passage_and_equal_height_never_shade() {
-        let f = Footprints(vec![foot([0.0, 0.0, 10.0], [10.0, 0.0, 10.0], 1, 2)]);
+        let f = fp(vec![foot([0.0, 0.0, 10.0], [10.0, 0.0, 10.0], 1, 2)]);
         let own: HashSet<Id> = [Id::from_u128(1)].into();
         let (mut over, mut under) = (Vec::new(), Vec::new());
         f.split(
@@ -200,5 +249,32 @@ mod tests {
             &mut under,
         );
         assert!(under.is_empty(), "same height is not above");
+    }
+
+    #[test]
+    fn from_the_side_the_nearer_passage_covers_the_farther_one() {
+        // Camera looks from the north (view = +y). A passage along x at y=10 is nearer the camera
+        // than a line along x at y=0 at the same height, so the line is under it.
+        let mut f = Footprints::new(&[], &|_| None, &HashMap::new(), [0.0, 1.0, 0.0]);
+        let proj = |p: Pt| [dot(p, f.u), dot(p, f.v), dot(p, f.w)];
+        let (a, b) = (proj([0.0, 10.0, 0.0]), proj([10.0, 10.0, 0.0]));
+        f.feet = vec![foot(a, b, 1, 2)];
+        let (mut over, mut under) = (Vec::new(), Vec::new());
+        f.split(
+            &[[2.0, 0.0, 0.0], [8.0, 0.0, 0.0]],
+            &HashSet::new(),
+            &mut over,
+            &mut under,
+        );
+        assert!(!under.is_empty() && over.is_empty());
+        // And a line nearer the camera than the passage is never under it.
+        let (mut over, mut under) = (Vec::new(), Vec::new());
+        f.split(
+            &[[2.0, 20.0, 0.0], [8.0, 20.0, 0.0]],
+            &HashSet::new(),
+            &mut over,
+            &mut under,
+        );
+        assert!(under.is_empty());
     }
 }

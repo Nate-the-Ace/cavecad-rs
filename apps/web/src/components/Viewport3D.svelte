@@ -55,6 +55,7 @@
     const cube = new ViewCube(cubeHost, (dir) => v.snapTo(dir), (da, dp) => v.orbitBy(da, dp));
     v.onRender = (camera, target) => cube.sync(camera, target);
     v.onProjection = (p) => (projection = p);
+    v.shadingFor = (dir) => engine.shading(cave.adjusted, dir);
     view = v;
     if (import.meta.env.DEV) (window as unknown as { __view: CaveView }).__view = v; // for tests
 

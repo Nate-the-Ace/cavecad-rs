@@ -130,6 +130,19 @@ pub fn scene(adjusted: bool) -> String {
     })
 }
 
+/// The over/under split of the drawn lines for a camera looking from `(x, y, z)` toward the cave
+/// (z up). Asked again whenever the camera settles, so dashes follow the view.
+#[wasm_bindgen]
+pub fn shading(adjusted: bool, x: f64, y: f64, z: f64) -> String {
+    DOC.with(|d| {
+        let sh = match d.borrow().as_ref() {
+            Some(doc) => cave_scene::shading(doc, adjusted, [x, y, z]),
+            None => cave_scene::Shading::default(),
+        };
+        serde_json::to_string(&sh).unwrap_or_else(|_| "{}".to_string())
+    })
+}
+
 /// Random ids for new things, from the browser's own random source.
 fn random_ids() -> cave_id::EntropyIds<impl FnMut() -> u64> {
     cave_id::EntropyIds::new(|| {

@@ -1,5 +1,5 @@
 // Loads the Rust engine (WASM) once and re-exports the few calls the UI uses.
-import init, { start, log, console_events, console_clear, engine_version, open_demo, scene, profile_runs, profile_band, add_profile_sketch, undo, redo, edit_state, passage_mesh } from '../wasm/cave_wasm.js';
+import init, { start, log, console_events, console_clear, engine_version, open_demo, scene, profile_runs, profile_band, add_profile_sketch, undo, redo, edit_state, passage_mesh, shading } from '../wasm/cave_wasm.js';
 
 export type Level = 'debug' | 'detail' | 'info' | 'warn' | 'error';
 export interface ConsoleEvent {
@@ -81,6 +81,8 @@ export const engine = {
   clear: () => console_clear(),
   openDemo: (json: string): string => open_demo(json),
   scene: (adjusted: boolean): Scene => JSON.parse(scene(adjusted)),
+  /** Which drawn lines run under another passage, for a camera looking from `dir` toward the cave. */
+  shading: (adjusted: boolean, dir: [number, number, number]): Scene['shading'] => JSON.parse(shading(adjusted, dir[0], dir[1], dir[2])),
   profileRuns: (adjusted: boolean): RunInfo[] => JSON.parse(profile_runs(adjusted)),
   profileBand: (run: string, adjusted: boolean): ProfileScene | null => JSON.parse(profile_band(run, adjusted)),
   /** Adds a stroke drawn on a run's band; every edit goes through the document's one edit path. */
