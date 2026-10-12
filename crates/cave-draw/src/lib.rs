@@ -16,6 +16,12 @@ pub const PROFILE_SKETCH: &str = "profile-sketch";
 /// `Feature.type` of a stroke sketched on a station's cross section.
 pub const SECTION_SKETCH: &str = "section-sketch";
 
+/// `Feature.type` of the record of where a station's section sketches are placed in a view.
+pub const SECTION_PLACEMENT: &str = "section-placement";
+
+/// The views a section can be placed in by hand.
+pub const PLACEMENT_VIEWS: [&str; 2] = ["map", "profile"];
+
 /// Why a stroke could not be turned into actions.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DrawError {
@@ -166,6 +172,75 @@ pub fn section_sketch(
             value: Value::Ref(Some(trip)),
         });
     }
+    Ok((id, actions))
+}
+
+/// Actions that set where `station`'s section sketches sit in `view` (`map` or `profile`), as an
+/// offset from the station in the view's own metres (`map`: east, north, up; `profile`: along the
+/// band, elevation, unused). One record per station and view, so two people placing the same
+/// station in different views never clash, and placing again edits the same record.
+pub fn place_section(
+    doc: &Document,
+    ids: &mut impl IdSource,
+    station: Id,
+    view: &str,
+    offset: [f64; 3],
+) -> Result<(Id, Vec<Action>), DrawError> {
+    if !PLACEMENT_VIEWS.contains(&view) || offset.iter().any(|v| !v.is_finite()) {
+        return Err(DrawError::BadStroke);
+    }
+    if doc
+        .entity(station)
+        .is_none_or(|e| e.kind() != Kind::Station)
+    {
+        return Err(DrawError::NoStations);
+    }
+    let existing = doc.ids_of(Kind::Feature).into_iter().find(|id| {
+        doc.entity(*id).is_some_and(|e| {
+            e.text(Field::FeatureType) == SECTION_PLACEMENT
+                && e.text(Field::FeatureRun) == view
+                && e.reference(Field::FeatureStation) == Some(station)
+        })
+    });
+    let tags = std::collections::BTreeMap::from([
+        ("x".to_string(), offset[0].to_string()),
+        ("y".to_string(), offset[1].to_string()),
+        ("z".to_string(), offset[2].to_string()),
+    ]);
+    let mut actions = Vec::new();
+    let id = match existing {
+        Some(id) => id,
+        None => {
+            let id = ids.next_id();
+            actions.extend([
+                Action::Create {
+                    id,
+                    kind: Kind::Feature,
+                },
+                Action::Set {
+                    id,
+                    field: Field::FeatureType,
+                    value: Value::Text(SECTION_PLACEMENT.into()),
+                },
+                Action::Set {
+                    id,
+                    field: Field::FeatureRun,
+                    value: Value::Text(view.into()),
+                },
+                Action::Set {
+                    id,
+                    field: Field::FeatureStation,
+                    value: Value::Ref(Some(station)),
+                },
+            ]);
+            id
+        }
+    };
+    actions.push(Action::Set {
+        id,
+        field: Field::FeatureTags,
+        value: Value::Map(tags),
+    });
     Ok((id, actions))
 }
 
@@ -405,5 +480,48 @@ mod tests {
             field: Field::FeatureStation,
             target: a
         }));
+    }
+
+    #[test]
+    fn placing_a_section_twice_edits_one_record_per_station_and_view() {
+        let (mut doc, _, [a, b]) = cave();
+        let mut ids = SeqIds::new(1);
+        let mut history = History::new();
+        let mut place = |doc: &mut Document, st: Id, view: &str, off: [f64; 3]| {
+            let (id, actions) = place_section(doc, &mut ids, st, view, off).unwrap();
+            let edit = doc.edit(actions).unwrap();
+            history.record(&edit);
+            id
+        };
+        let first = place(&mut doc, a, "map", [1.0, 2.0, 0.0]);
+        let again = place(&mut doc, a, "map", [3.0, 4.0, 0.5]);
+        assert_eq!(first, again, "the same record is edited");
+        place(&mut doc, a, "profile", [5.0, 6.0, 0.0]);
+        place(&mut doc, b, "map", [7.0, 8.0, 0.0]);
+        assert_eq!(doc.ids_of(Kind::Feature).len(), 3);
+        let Value::Map(tags) = doc.entity(first).unwrap().get(Field::FeatureTags) else {
+            panic!("no tags")
+        };
+        assert_eq!(tags["x"], "3");
+        assert_eq!(tags["z"], "0.5");
+        assert!(validate(&doc).is_empty());
+        history.undo(&mut doc).unwrap();
+        assert_eq!(
+            doc.ids_of(Kind::Feature).len(),
+            2,
+            "undo removes the last record"
+        );
+    }
+
+    #[test]
+    fn a_placement_needs_a_station_a_known_view_and_real_numbers() {
+        let (doc, _, [a, _]) = cave();
+        let ids = &mut SeqIds::new(1);
+        assert_eq!(
+            place_section(&doc, ids, Id::from_name("x"), "map", [0.0; 3]).unwrap_err(),
+            DrawError::NoStations
+        );
+        assert!(place_section(&doc, ids, a, "sheet", [0.0; 3]).is_err());
+        assert!(place_section(&doc, ids, a, "map", [f64::NAN, 0.0, 0.0]).is_err());
     }
 }

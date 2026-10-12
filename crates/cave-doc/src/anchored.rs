@@ -147,6 +147,15 @@ impl AnchoredPath {
     /// Places the stroke from the stations' current positions. `None` when any station it hangs
     /// on is missing or two of them coincide (a stroke is placed whole or not at all).
     pub fn place(&self, position: &dyn Fn(Id) -> Option<[f64; 2]>) -> Option<Vec<[f64; 2]>> {
+        self.place_with_frames(position)
+            .map(|v| v.into_iter().map(|(_, p)| p).collect())
+    }
+
+    /// [`place`](Self::place), also saying which frame (index into `frames`) each point hangs on.
+    pub fn place_with_frames(
+        &self,
+        position: &dyn Fn(Id) -> Option<[f64; 2]>,
+    ) -> Option<Vec<(usize, [f64; 2])>> {
         let mut bases = Vec::with_capacity(self.frames.len());
         for (a, b) in &self.frames {
             let (pa, pb) = (position(*a)?, position(*b)?);
@@ -158,10 +167,13 @@ impl AnchoredPath {
                 .iter()
                 .map(|p| {
                     let (pa, d, len) = bases[p.frame as usize];
-                    [
-                        pa[0] + p.u * d[0] - p.v * d[1] / len,
-                        pa[1] + p.u * d[1] + p.v * d[0] / len,
-                    ]
+                    (
+                        p.frame as usize,
+                        [
+                            pa[0] + p.u * d[0] - p.v * d[1] / len,
+                            pa[1] + p.u * d[1] + p.v * d[0] / len,
+                        ],
+                    )
                 })
                 .collect(),
         )

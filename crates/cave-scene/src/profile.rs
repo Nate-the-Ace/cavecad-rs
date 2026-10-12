@@ -49,6 +49,24 @@ pub struct Sketch {
     pub widths: Option<Vec<f64>>,
 }
 
+/// A station's cross-section sketches as the band shows them, next to the station.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct BandSection {
+    /// The station's id as text.
+    pub id: String,
+    /// Its label.
+    pub label: String,
+    /// Where the station is on the band.
+    pub s: f64,
+    /// Its elevation.
+    pub z: f64,
+    /// The strokes, `[across, up]` metres from the station.
+    pub sketches: Vec<crate::SectionSketch>,
+    /// Where they were placed by hand: offset from the station (along the band, elevation);
+    /// `None` until placed, when the band draws them beside the station.
+    pub placement: Option<[f64; 2]>,
+}
+
 /// Everything the Profile panel draws for one run.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct ProfileScene {
@@ -66,6 +84,8 @@ pub struct ProfileScene {
     pub floor: Vec<Vec<[f64; 2]>>,
     /// Strokes sketched on this band, oldest first.
     pub sketches: Vec<Sketch>,
+    /// Cross-section sketches of the stations on this band.
+    pub sections: Vec<BandSection>,
     /// Sketches that cannot be placed because a station they hang on is not on this band.
     pub unplaced: usize,
     /// How many run stations are not on the band (side branches).
@@ -175,6 +195,22 @@ pub fn profile_scene(doc: &Document, key: &str, use_adjustment: bool) -> Option<
         })
         .collect();
 
+    let all_sketches = crate::sketches_by_station(doc, &crate::ViewFilter::default());
+    let placed = crate::placements(doc, "profile");
+    let sections: Vec<BandSection> = band
+        .stations
+        .iter()
+        .filter_map(|x| {
+            Some(BandSection {
+                id: x.id.to_string(),
+                label: x.label.clone(),
+                s: x.s,
+                z: x.z,
+                sketches: all_sketches.get(&x.id)?.clone(),
+                placement: placed.get(&x.id).map(|p| [p[0], p[1]]),
+            })
+        })
+        .collect();
     let ceiling = band.ceiling_runs();
     let floor = band.floor_runs();
     let mut pts: Vec<[f64; 2]> = band.stations.iter().map(|x| [x.s, x.z]).collect();
@@ -220,11 +256,103 @@ pub fn profile_scene(doc: &Document, key: &str, use_adjustment: bool) -> Option<
         ceiling,
         floor,
         sketches,
+        sections,
         unplaced,
         omitted: band.omitted.len(),
         note,
         bounds,
     })
+}
+
+/// A profile sketch placed in the cave itself, in the vertical plane of its run.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct Sketch3d {
+    /// The feature's id as text.
+    pub id: String,
+    /// The run (key) the stroke was drawn on.
+    pub run: String,
+    /// The stroke in the map's metres (east, north, up).
+    pub points: Vec<[f64; 3]>,
+    /// Pen weight per point, when drawn with pressure.
+    pub widths: Option<Vec<f64>>,
+}
+
+/// Every profile sketch placed along its run in 3D, so the Map can show it where it belongs: each
+/// point sits in the vertical plane through the leg it hangs on, `s` along the leg's plan
+/// direction and `z` up, relative to the leg's start station. A sketch whose stations are gone is
+/// left out. Seen from straight above or below such a drawing collapses onto the centreline, which
+/// is why the viewer hides it there.
+pub fn profile_sketches_3d(doc: &Document, use_adjustment: bool) -> Vec<Sketch3d> {
+    let s = solve(doc, use_adjustment);
+    let g = graph(&s);
+    let z_of = |id: Id| s.positions.get(&id).map(|p| p.z);
+    let grouped = group_runs(&s.labels, &s.order);
+    let ties = tie_stations(&s, &grouped);
+    let mut bands: HashMap<String, HashMap<Id, [f64; 2]>> = HashMap::new();
+    let mut out = Vec::new();
+    for id in doc.ids_of(Kind::Feature) {
+        let Some(e) = doc.entity(id) else { continue };
+        if e.text(Field::FeatureType) != cave_draw::PROFILE_SKETCH {
+            continue;
+        }
+        let key = e.text(Field::FeatureRun);
+        let Value::Anchored(Some(anchored)) = e.get(Field::FeatureAnchored) else {
+            continue;
+        };
+        let at = bands.entry(key.clone()).or_insert_with(|| {
+            grouped
+                .runs
+                .iter()
+                .find(|r| r.key == key)
+                .map(|run| {
+                    unroll_band(
+                        run,
+                        ties.get(&key).copied(),
+                        &g,
+                        &s.labels,
+                        &z_of,
+                        &s.ex.lruds,
+                    )
+                    .stations
+                    .iter()
+                    .map(|x| (x.id, [x.s, x.z]))
+                    .collect()
+                })
+                .unwrap_or_default()
+        });
+        let Some(placed) = anchored.place_with_frames(&|st| at.get(&st).copied()) else {
+            continue;
+        };
+        let mut points = Vec::with_capacity(placed.len());
+        for (frame, p) in &placed {
+            let (a, b) = anchored.frames[*frame];
+            let (Some(a3), Some(b3), Some(pa)) =
+                (s.positions.get(&a), s.positions.get(&b), at.get(&a))
+            else {
+                points.clear();
+                break;
+            };
+            // The leg's direction on the ground; a leg straight up or down has none, so north.
+            let (hx, hy) = (b3.x - a3.x, b3.y - a3.y);
+            let hl = hx.hypot(hy);
+            let (hx, hy) = if hl > 1e-6 {
+                (hx / hl, hy / hl)
+            } else {
+                (0.0, 1.0)
+            };
+            let (ds, dz) = (p[0] - pa[0], p[1] - pa[1]);
+            points.push([a3.x + hx * ds, a3.y + hy * ds, a3.z + dz]);
+        }
+        if points.len() == placed.len() {
+            out.push(Sketch3d {
+                id: id.to_string(),
+                run: key,
+                points,
+                widths: anchored.widths.clone(),
+            });
+        }
+    }
+    out
 }
 
 /// The band's consecutive station pairs with their band positions: what a new stroke anchors to.
@@ -275,6 +403,81 @@ mod tests {
             "plan length, not slope"
         );
         assert_eq!(r[0].stations, 3);
+    }
+
+    #[test]
+    fn a_profile_sketch_is_placed_in_the_vertical_plane_of_its_run() {
+        let mut doc = cave();
+        let frames = profile_frames(&doc, "A", false).unwrap();
+        // Band coordinates: the middle of A1-A2 raised 1 m, and the middle of the sloping A2-A3.
+        let run = 10.0 + 10.0 * 30f64.to_radians().cos() / 2.0;
+        let (_, actions) = cave_draw::profile_sketch(
+            &doc,
+            &mut SeqIds::new(3),
+            "A",
+            &[[5.0, 1.0], [run, -2.5]],
+            Some(vec![0.5, 1.5]),
+            &frames,
+        )
+        .unwrap();
+        doc.edit(actions).unwrap();
+        let all = profile_sketches_3d(&doc, false);
+        assert_eq!(all.len(), 1);
+        assert_eq!(
+            (all[0].run.as_str(), all[0].widths.as_deref()),
+            ("A", Some(&[0.5, 1.5][..]))
+        );
+        let near = |p: [f64; 3], x: f64, y: f64, z: f64| {
+            (p[0] - x).abs() < 1e-6 && (p[1] - y).abs() < 1e-6 && (p[2] - z).abs() < 1e-6
+        };
+        // A1-A2 runs north (so along-the-run is north); A2-A3 runs east.
+        assert!(near(all[0].points[0], 0.0, 5.0, 1.0), "{:?}", all[0].points);
+        assert!(
+            near(
+                all[0].points[1],
+                10.0 * 30f64.to_radians().cos() / 2.0,
+                10.0,
+                -2.5
+            ),
+            "{:?}",
+            all[0].points
+        );
+    }
+
+    #[test]
+    fn section_sketches_show_on_the_band_beside_their_station() {
+        let mut doc = cave();
+        let a2 = *doc
+            .ids_of(Kind::Station)
+            .iter()
+            .find(|id| doc.entity(**id).unwrap().text(Field::StationLabel) == "A2")
+            .unwrap();
+        let (_, actions) = cave_draw::section_sketch(
+            &doc,
+            &mut SeqIds::new(4),
+            a2,
+            &[[0.0, 0.0], [1.0, 0.5]],
+            None,
+            None,
+        )
+        .unwrap();
+        doc.edit(actions).unwrap();
+        let p = profile_scene(&doc, "A", false).unwrap();
+        assert_eq!(p.sections.len(), 1);
+        let sec = &p.sections[0];
+        assert_eq!(sec.label, "A2");
+        assert!((sec.s - 10.0).abs() < 1e-9);
+        assert_eq!(sec.placement, None);
+        let (_, actions) =
+            cave_draw::place_section(&doc, &mut SeqIds::new(5), a2, "profile", [3.0, 2.0, 0.0])
+                .unwrap();
+        doc.edit(actions).unwrap();
+        let sec = &profile_scene(&doc, "A", false).unwrap().sections[0];
+        assert_eq!(sec.placement, Some([3.0, 2.0]));
+        assert!(
+            profile_scene(&doc, "B", false).unwrap().sections.is_empty(),
+            "only stations on the band"
+        );
     }
 
     #[test]

@@ -237,6 +237,54 @@ pub fn section_at(adjusted: bool, station: &str, fill_gaps: bool, filter: &str) 
     })
 }
 
+/// The cross-section sketches to show on the map, next to their stations (JSON array).
+#[wasm_bindgen]
+pub fn map_sections(adjusted: bool, filter: &str) -> String {
+    let filter = parse_filter(filter);
+    DOC.with(|d| {
+        let list = match d.borrow().as_ref() {
+            Some(doc) => cave_scene::map_sections(doc, adjusted, &filter),
+            None => Vec::new(),
+        };
+        serde_json::to_string(&list).unwrap_or_else(|_| "[]".to_string())
+    })
+}
+
+/// The profile sketches placed along their runs in 3D, for the map (JSON array).
+#[wasm_bindgen]
+pub fn map_profile_sketches(adjusted: bool) -> String {
+    DOC.with(|d| {
+        let list = match d.borrow().as_ref() {
+            Some(doc) => cave_scene::profile_sketches_3d(doc, adjusted),
+            None => Vec::new(),
+        };
+        serde_json::to_string(&list).unwrap_or_else(|_| "[]".to_string())
+    })
+}
+
+/// Places a station's section sketches by hand in a view (`map` or `profile`), as an offset from
+/// the station in that view's metres. One undoable edit. Returns `ok` or `error: ...`.
+#[wasm_bindgen]
+pub fn place_section(station: &str, view: &str, a: f64, b: f64, c: f64) -> String {
+    let Ok(station_id) = station.parse::<cave_id::Id>() else {
+        return "error: no such station".into();
+    };
+    let result = DOC.with(|d| {
+        let mut slot = d.borrow_mut();
+        let doc = slot.as_mut().ok_or("no cave is open")?;
+        let (_, actions) =
+            cave_draw::place_section(doc, &mut random_ids(), station_id, view, [a, b, c])
+                .map_err(|e| format!("{e:?}"))?;
+        let edit = doc.edit(actions).map_err(|e| format!("{e:?}"))?;
+        HISTORY.with(|h| h.borrow_mut().record(&edit));
+        Ok::<(), String>(())
+    });
+    match result {
+        Ok(()) => "ok".into(),
+        Err(e) => format!("error: {e}"),
+    }
+}
+
 /// Adds a stroke sketched on the cross section at `station` (an id as text). `points` are
 /// `[across, up]` metres in the section's plane; `widths` is pen weight per point or empty. Goes
 /// through the one edit path and is undoable. Returns `ok` or `error: ...`.

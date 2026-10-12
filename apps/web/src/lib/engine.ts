@@ -1,5 +1,5 @@
 // Loads the Rust engine (WASM) once and re-exports the few calls the UI uses.
-import init, { start, log, console_events, console_clear, engine_version, open_demo, scene, profile_runs, profile_band, add_profile_sketch, undo, redo, edit_state, passage_mesh, shading, palette, open_dxf, save_dxf, section_stations, section_at, add_section_sketch } from '../wasm/cave_wasm.js';
+import init, { start, log, console_events, console_clear, engine_version, open_demo, scene, profile_runs, profile_band, add_profile_sketch, undo, redo, edit_state, passage_mesh, shading, palette, open_dxf, save_dxf, section_stations, section_at, add_section_sketch, map_sections, place_section, map_profile_sketches } from '../wasm/cave_wasm.js';
 
 export type Level = 'debug' | 'detail' | 'info' | 'warn' | 'error';
 export interface ConsoleEvent {
@@ -48,6 +48,8 @@ export interface ProfileScene {
   ceiling: [number, number][][];
   floor: [number, number][][];
   sketches: { id: string; points: [number, number][]; widths: number[] | null }[];
+  /** Cross-section sketches of the stations on this band. */
+  sections: BandSection[];
   /** Sketches that cannot be placed because a station they hang on is not on this band. */
   unplaced: number;
   omitted: number;
@@ -73,6 +75,33 @@ export interface TypeStyle {
   opacity: number;
   under_opacity: number;
   layer: string;
+}
+/** A station's cross-section sketches as the map shows them, next to the station. */
+export interface MapSection {
+  id: string;
+  label: string;
+  /** The station in the map's metres. */
+  at: Pt;
+  sketches: { id: string; points: [number, number][]; widths: number[] | null }[];
+  /** Offset from the station placed by hand (east, north, up), or null until placed. */
+  placement: Pt | null;
+}
+/** A profile sketch placed along its run in the cave: points are [east, north, up] metres. */
+export interface ProfileSketch3d {
+  id: string;
+  run: string;
+  points: [number, number, number][];
+  widths: number[] | null;
+}
+/** The same on a profile band. */
+export interface BandSection {
+  id: string;
+  label: string;
+  s: number;
+  z: number;
+  sketches: { id: string; points: [number, number][]; widths: number[] | null }[];
+  /** Offset (along the band, elevation) placed by hand, or null until placed. */
+  placement: [number, number] | null;
 }
 /** A station a cross section can be cut at. */
 export interface SectionStation {
@@ -135,6 +164,12 @@ export const engine = {
   sectionAt: (adjusted: boolean, station: string, fillGaps: boolean, filter = '{}'): StationSection | null => JSON.parse(section_at(adjusted, station, fillGaps, filter)),
   /** Adds a stroke drawn on a station's cross section; every edit goes through the document's one edit path. */
   addSectionSketch: (station: string, points: [number, number][], widths: number[] | null, adjusted: boolean): string => add_section_sketch(station, JSON.stringify(points), widths ? JSON.stringify(widths) : '', adjusted),
+  /** The cross-section sketches to show on the map. */
+  mapSections: (adjusted: boolean, filter = '{}'): MapSection[] => JSON.parse(map_sections(adjusted, filter)),
+  /** The profile sketches placed along their runs in 3D, for the map. */
+  mapProfileSketches: (adjusted: boolean): ProfileSketch3d[] => JSON.parse(map_profile_sketches(adjusted)),
+  /** Places a station's section sketches by hand in a view (an undoable edit). */
+  placeSection: (station: string, view: 'map' | 'profile', offset: [number, number, number]): string => place_section(station, view, offset[0], offset[1], offset[2]),
   /** The type palette. */
   palette: (): TypeStyle[] => JSON.parse(palette()),
   profileRuns: (adjusted: boolean): RunInfo[] => JSON.parse(profile_runs(adjusted)),

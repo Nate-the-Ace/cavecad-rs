@@ -2,7 +2,9 @@
   import { onMount, untrack } from 'svelte';
   import { onTheme } from '../lib/theme';
   import { Pencil, Hand, Undo2, Redo2, Maximize } from '@lucide/svelte';
-  import { cave, changed } from '../lib/cave.svelte';
+  import { cave, changed, setShowSections } from '../lib/cave.svelte';
+  import { defaultBandOffset, drawStrokes, hits } from '../lib/section-glyph';
+  import type { BandSection } from '../lib/engine';
   import { formatLength, inUnits, metresPer, niceNumber, unitName } from '../lib/units';
   import { engine, loadEngine, type ProfileScene, type RunInfo } from '../lib/engine';
 
@@ -22,6 +24,19 @@
   let ox = 0;
   let oy = 0;
   let frame = 0;
+  // Cross-section sketches sit beside their stations; a drag moves one, and the drop is saved.
+  const liveOffsets = new Map<string, [number, number]>();
+  let dragSection: { id: string; x: number; y: number } | null = null;
+  const offsetOf = (s: BandSection): [number, number] => liveOffsets.get(s.id) ?? s.placement ?? defaultBandOffset(s.sketches);
+  const anchorOf = (s: BandSection): [number, number] => {
+    const o = offsetOf(s);
+    return toScreen(s.s + o[0], s.z + o[1]);
+  };
+  const sectionAt = (x: number, y: number): BandSection | null => {
+    if (!cave.showSections.profile || !band) return null;
+    for (const s of [...band.sections].reverse()) if (hits(s.sketches, anchorOf(s), scale, x, y)) return s;
+    return null;
+  };
   let live: { pts: [number, number][]; widths: number[]; pressure: boolean } | null = null;
 
   const toWorld = (x: number, y: number): [number, number] => [(x - ox) / scale, (oy - y) / scale];
@@ -45,6 +60,7 @@
     void cave.version;
     void cave.adjusted;
     void cave.run;
+    void cave.showSections.profile; // sketches beside stations appear and disappear with the toggle
     void cave.units; // axis labels and run lengths redraw in the new units
     // refresh() both reads and writes panel state; only the three values above may re-trigger it.
     untrack(refresh);
@@ -140,6 +156,24 @@
     g.setLineDash([]);
     for (const l of band.legs) stroke(g, [[l[0], l[1]], [l[2], l[3]]], null, c.text, 2);
     for (const k of band.sketches) stroke(g, k.points, k.widths, c.accent);
+    if (cave.showSections.profile) {
+      for (const sec of band.sections) {
+        const st = toScreen(sec.s, sec.z);
+        const at = anchorOf(sec);
+        g.strokeStyle = c.muted;
+        g.lineWidth = 1;
+        g.setLineDash([4, 3]);
+        g.beginPath();
+        g.moveTo(st[0], st[1]);
+        g.lineTo(at[0], at[1]);
+        g.stroke();
+        g.setLineDash([]);
+        drawStrokes(g, sec.sketches, (u, v) => [at[0] + u * scale, at[1] - v * scale], c.text, 2);
+        g.fillStyle = c.muted;
+        g.textAlign = 'left';
+        g.fillText(sec.label, at[0] + 4, at[1] + 12);
+      }
+    }
     if (live && live.pts.length > 1) stroke(g, live.pts, live.pressure ? live.widths : null, c.accent);
 
     g.fillStyle = c.text;
@@ -179,6 +213,14 @@
       if (e.timeStamp - lastMiddle < 350) fit();
       lastMiddle = e.timeStamp;
     }
+    if (e.button === 0 && e.pointerType !== 'touch') {
+      const rect = canvas.getBoundingClientRect();
+      const grab = sectionAt(e.clientX - rect.left, e.clientY - rect.top);
+      if (grab) {
+        dragSection = { id: grab.id, x: e.clientX, y: e.clientY };
+        return;
+      }
+    }
     const draws = tool === 'sketch' && !middle && e.button === 0 && e.pointerType !== 'touch' && !!band;
     if (draws) {
       live = { pts: [], widths: [], pressure: e.pointerType === 'pen' };
@@ -189,7 +231,16 @@
   }
 
   function onMove(e: PointerEvent) {
-    if (live) {
+    if (dragSection) {
+      const s = band?.sections.find((k) => k.id === dragSection!.id);
+      if (s) {
+        const o = offsetOf(s);
+        liveOffsets.set(s.id, [o[0] + (e.clientX - dragSection.x) / scale, o[1] - (e.clientY - dragSection.y) / scale]);
+      }
+      dragSection.x = e.clientX;
+      dragSection.y = e.clientY;
+      schedule();
+    } else if (live) {
       // Coalesced events give every sample the pen produced between frames. Some browsers return
       // none (or no such method), so fall back to the event itself.
       const samples = e.getCoalescedEvents?.() ?? [];
@@ -205,6 +256,18 @@
 
   function onUp() {
     panning = null;
+    if (dragSection) {
+      const id = dragSection.id;
+      dragSection = null;
+      const o = liveOffsets.get(id);
+      if (o) {
+        const r = engine.placeSection(id, 'profile', [o[0], o[1], 0]);
+        if (r !== 'ok') message = r;
+        changed();
+      }
+      liveOffsets.clear();
+      return;
+    }
     if (!live) return;
     const stroked = live;
     live = null;
@@ -279,6 +342,7 @@
     </select>
     <button class:on={tool === 'sketch'} title="Sketch (pen or mouse)" onclick={() => (tool = 'sketch')}><Pencil size={15} /></button>
     <button class:on={tool === 'pan'} title="Pan" onclick={() => (tool = 'pan')}><Hand size={15} /></button>
+    <label class="show" title="Show the cross sections drawn at stations, next to their stations (drag one to place it)"><input type="checkbox" checked={cave.showSections.profile} onchange={(e) => (setShowSections('profile', e.currentTarget.checked), schedule())} /> Sections</label>
     <button title="Undo (Ctrl/Cmd+Z)" disabled={!canUndo} onclick={doUndo}><Undo2 size={15} /></button>
     <button title="Redo (Shift+Ctrl/Cmd+Z)" disabled={!canRedo} onclick={doRedo}><Redo2 size={15} /></button>
     <button title="Fit band (or double middle-click)" onclick={fit}><Maximize size={15} /></button>
@@ -296,6 +360,7 @@
   .bar { position: absolute; top: 8px; left: 8px; right: 8px; display: flex; gap: 6px; align-items: center; padding: 6px 8px; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); font-size: 12px; width: fit-content; max-width: calc(100% - 16px); }
   select, button { font: inherit; padding: 3px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--text); cursor: pointer; display: inline-grid; place-items: center; }
   select { max-width: 260px; }
+  .show { display: flex; gap: 4px; align-items: center; color: var(--muted); }
   button.on { background: var(--accent-bg); }
   button:disabled { opacity: 0.4; cursor: default; }
   .note { position: absolute; left: 8px; bottom: 8px; padding: 4px 8px; font-size: 12px; color: var(--muted); background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); }

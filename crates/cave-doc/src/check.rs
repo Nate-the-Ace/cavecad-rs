@@ -108,7 +108,9 @@ pub fn validate(doc: &Document) -> Vec<Issue> {
                 let anchored = e.get(Field::FeatureAnchored);
                 let drawn = e.path(Field::FeaturePath).is_some()
                     || matches!(anchored, Value::Anchored(Some(_)));
-                if !drawn {
+                // Some features are records about the drawing, not lines in it.
+                let record = e.text(Field::FeatureType) == "section-placement";
+                if !drawn && !record {
                     out.push(Issue::MissingRequired {
                         entity: id,
                         field: Field::FeaturePath,

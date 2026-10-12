@@ -13,7 +13,22 @@ function savedUnits(): Units {
   }
 }
 
+const SECTIONS_KEY = 'cavecad.sections';
+
+function savedSections(): { map: boolean; profile: boolean; profileSketches: boolean } {
+  try {
+    const raw = JSON.parse(localStorage.getItem(SECTIONS_KEY) ?? 'null');
+    if (raw) return { map: raw.map !== false, profile: raw.profile !== false, profileSketches: raw.profileSketches !== false };
+  } catch {
+    // nothing saved
+  }
+  return { map: true, profile: true, profileSketches: true };
+}
+
 export const cave = $state({
+  /** Whether cross-section sketches are drawn beside their stations, per view, and whether profile
+   *  sketches are drawn along their runs on the map (view settings). */
+  showSections: savedSections(),
   /** What lengths are shown in (the cave itself is always metres). Metric unless changed. */
   units: savedUnits(),
   /** Bumps whenever a cave is opened or edited. Panels re-read when it changes. */
@@ -45,6 +60,16 @@ export function setShown(kind: 'types' | 'trips', key: string, on: boolean) {
   if (!on) next.push(key);
   if (kind === 'types') filter.hiddenTypes = next;
   else filter.hiddenTrips = next;
+}
+
+/** Shows or hides the cross-section sketches in one view, and remembers it on this machine. */
+export function setShowSections(view: 'map' | 'profile' | 'profileSketches', on: boolean) {
+  cave.showSections[view] = on;
+  try {
+    localStorage.setItem(SECTIONS_KEY, JSON.stringify($state.snapshot(cave.showSections)));
+  } catch {
+    // private window
+  }
 }
 
 /** Switches the display units and remembers the choice on this machine. */

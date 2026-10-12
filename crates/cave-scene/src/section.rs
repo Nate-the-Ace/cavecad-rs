@@ -19,7 +19,7 @@ use cave_mesh::{
 };
 use cave_survey::Vec3;
 use serde::Serialize;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 /// A station a section can be cut at.
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -127,25 +127,101 @@ fn label(doc: &Document, id: Id) -> String {
         .unwrap_or_default()
 }
 
+/// Every section sketch the trip filter leaves visible, grouped by the station it is drawn on.
+pub fn sketches_by_station(
+    doc: &Document,
+    filter: &ViewFilter,
+) -> BTreeMap<Id, Vec<SectionSketch>> {
+    let mut out: BTreeMap<Id, Vec<SectionSketch>> = BTreeMap::new();
+    for id in doc.ids_of(Kind::Feature) {
+        let Some(e) = doc.entity(id) else { continue };
+        if e.text(Field::FeatureType) != cave_draw::SECTION_SKETCH
+            || !filter.trip_shown(e.reference(Field::FeatureTrip))
+        {
+            continue;
+        }
+        let (Some(station), Value::Path(Some(path))) = (
+            e.reference(Field::FeatureStation),
+            e.get(Field::FeaturePath),
+        ) else {
+            continue;
+        };
+        out.entry(station).or_default().push(SectionSketch {
+            id: id.to_string(),
+            points: path.points().iter().map(|p| [p.x, p.y]).collect(),
+            widths: path.widths().map(<[f64]>::to_vec),
+        });
+    }
+    out
+}
+
+/// Where each station's sketches were placed by hand in `view` (`map` or `profile`): the offset
+/// from the station, in that view's metres. Stations never placed are absent (the view picks a
+/// default beside the station).
+pub fn placements(doc: &Document, view: &str) -> HashMap<Id, [f64; 3]> {
+    let mut out = HashMap::new();
+    for id in doc.ids_of(Kind::Feature) {
+        let Some(e) = doc.entity(id) else { continue };
+        if e.text(Field::FeatureType) != cave_draw::SECTION_PLACEMENT
+            || e.text(Field::FeatureRun) != view
+        {
+            continue;
+        }
+        let (Some(station), Value::Map(tags)) = (
+            e.reference(Field::FeatureStation),
+            e.get(Field::FeatureTags),
+        ) else {
+            continue;
+        };
+        let get = |k: &str| {
+            tags.get(k)
+                .and_then(|v| v.parse::<f64>().ok())
+                .filter(|v| v.is_finite())
+        };
+        if let (Some(x), Some(y), Some(z)) = (get("x"), get("y"), get("z")) {
+            out.insert(station, [x, y, z]);
+        }
+    }
+    out
+}
+
 /// The sketches on `station`'s section that the trip filter leaves visible.
 fn sketches_of(doc: &Document, station: Id, filter: &ViewFilter) -> Vec<SectionSketch> {
-    doc.ids_of(Kind::Feature)
+    sketches_by_station(doc, filter)
+        .remove(&station)
+        .unwrap_or_default()
+}
+
+/// A station's section sketches as the Map shows them, next to the station.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct MapSection {
+    /// The station's id as text.
+    pub id: String,
+    /// Its label.
+    pub label: String,
+    /// The station's position in the map's metres.
+    pub at: [f64; 3],
+    /// The strokes, `[across, up]` metres from the station.
+    pub sketches: Vec<SectionSketch>,
+    /// Where they were placed by hand: offset from the station (east, north, up); `None` until
+    /// placed, when the map draws them beside the station.
+    pub placement: Option<[f64; 3]>,
+}
+
+/// Every station with section sketches, for the Map, at its position now.
+pub fn map_sections(doc: &Document, use_adjustment: bool, filter: &ViewFilter) -> Vec<MapSection> {
+    let s = solve(doc, use_adjustment);
+    let placed = placements(doc, "map");
+    sketches_by_station(doc, filter)
         .into_iter()
-        .filter_map(|id| {
-            let e = doc.entity(id)?;
-            if e.text(Field::FeatureType) != cave_draw::SECTION_SKETCH
-                || e.reference(Field::FeatureStation) != Some(station)
-                || !filter.trip_shown(e.reference(Field::FeatureTrip))
-            {
-                return None;
-            }
-            let Value::Path(Some(path)) = e.get(Field::FeaturePath) else {
-                return None;
-            };
-            Some(SectionSketch {
+        .filter_map(|(id, sketches)| {
+            let p = s.positions.get(&id)?;
+            Some(MapSection {
                 id: id.to_string(),
-                points: path.points().iter().map(|p| [p.x, p.y]).collect(),
-                widths: path.widths().map(<[f64]>::to_vec),
+                label: label(doc, id),
+                at: [p.x, p.y, p.z],
+                sketches,
+                placement: placed.get(&id).copied(),
             })
         })
         .collect()
@@ -386,6 +462,45 @@ mod tests {
             section_at(&d, false, &a2.to_string(), false, &hidden).is_none(),
             "with the trip hidden the station is not on any visible leg"
         );
+    }
+
+    #[test]
+    fn sketches_appear_on_the_map_next_to_their_station_and_remember_where_they_were_placed() {
+        let mut d = doc(BOX);
+        let a2: Id = station(&d, "A2").parse().unwrap();
+        let (_, actions) = cave_draw::section_sketch(
+            &d,
+            &mut SeqIds::new(9),
+            a2,
+            &[[0.0, 0.0], [1.0, 1.0]],
+            None,
+            None,
+        )
+        .unwrap();
+        d.edit(actions).unwrap();
+        let m = map_sections(&d, false, &all());
+        assert_eq!(m.len(), 1);
+        assert_eq!(m[0].label, "A2");
+        assert!((m[0].at[1] - 10.0).abs() < 1e-9, "A2 is 10 m north of A1");
+        assert_eq!(m[0].sketches.len(), 1);
+        assert_eq!(
+            m[0].placement, None,
+            "not placed yet: the map picks a default"
+        );
+        let (_, actions) =
+            cave_draw::place_section(&d, &mut SeqIds::new(10), a2, "map", [4.0, -2.0, 0.0])
+                .unwrap();
+        d.edit(actions).unwrap();
+        assert_eq!(
+            map_sections(&d, false, &all())[0].placement,
+            Some([4.0, -2.0, 0.0])
+        );
+        assert!(
+            placements(&d, "profile").is_empty(),
+            "each view has its own placement"
+        );
+        // the placement record is not a drawing and does not count as one
+        assert_eq!(sketches_by_station(&d, &all()).len(), 1);
     }
 
     #[test]

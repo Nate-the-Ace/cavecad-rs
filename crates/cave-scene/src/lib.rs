@@ -13,9 +13,12 @@ mod under;
 
 pub use filter::{TripInfo, ViewFilter};
 pub use mesh::{ColorMode, Mesh, passage_mesh};
-pub use profile::{ProfileScene, RunInfo, profile_frames, profile_scene, runs};
+pub use profile::{
+    ProfileScene, RunInfo, Sketch3d, profile_frames, profile_scene, profile_sketches_3d, runs,
+};
 pub use section::{
-    SectionSketch, SectionStation, StationSection, section_at, section_stations, section_trip,
+    MapSection, SectionSketch, SectionStation, StationSection, map_sections, placements,
+    section_at, section_stations, section_trip, sketches_by_station,
 };
 pub use under::Shading;
 

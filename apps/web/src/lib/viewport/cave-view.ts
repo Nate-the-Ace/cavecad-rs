@@ -5,7 +5,8 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { LineSegments2 } from 'three/addons/lines/LineSegments2.js';
 import { LineSegmentsGeometry } from 'three/addons/lines/LineSegmentsGeometry.js';
 import { LineMaterial } from 'three/addons/lines/LineMaterial.js';
-import type { PassageBuffers, Scene, TypeStyle } from '../engine';
+import type { MapSection, PassageBuffers, ProfileSketch3d, Scene, TypeStyle } from '../engine';
+import { defaultMapOffset, drawStrokes, hits } from '../section-glyph';
 import { elevationColor, inkColor, readTheme, type ViewTheme } from './theme';
 import { metresPer, niceNumber, unitName, type Units } from '../units';
 
@@ -46,6 +47,18 @@ export class CaveView {
   private showWalls = true;
   private showLabels = true;
   private selected = '';
+  /** Cross-section sketches drawn beside their stations, and whether they are shown. */
+  private sections: MapSection[] = [];
+  private showSections = true;
+  /** Profile sketches in place along their runs; they stand in a vertical plane, so they fade out
+   *  as the camera looks along it (straight down or up) and are hidden from the top or bottom. */
+  private profileSketches: ProfileSketch3d[] = [];
+  private showProfileSketches = true;
+  /** Offsets being dragged right now, before they are saved. */
+  private liveOffsets = new Map<string, [number, number, number]>();
+  private dragging: { id: string; x: number; y: number } | null = null;
+  /** Called when a section has been dropped where the person wants it. */
+  onSectionPlaced: (id: string, offset: [number, number, number]) => void = () => {};
   private units: Units = 'metric';
   /** How each type looks; set once from the engine's palette. */
   private palette = new Map<string, TypeStyle>();
@@ -88,6 +101,43 @@ export class CaveView {
       clearTimeout(this.shadingTimer);
       this.shadingTimer = window.setTimeout(() => this.reshade() && this.rebuild(), 150);
     });
+    // A section can be dragged by hand: this runs before the orbit controls see the press.
+    canvas.addEventListener(
+      'pointerdown',
+      (e) => {
+        if (e.button !== 0) return;
+        const id = this.sectionAt(e.clientX, e.clientY);
+        if (!id) return;
+        e.stopImmediatePropagation();
+        e.stopPropagation();
+        this.dragging = { id, x: e.clientX, y: e.clientY };
+        this.controls.enabled = false;
+        canvas.setPointerCapture(e.pointerId);
+        canvas.style.cursor = 'grabbing';
+      },
+      true,
+    );
+    canvas.addEventListener('pointermove', (e) => {
+      const d = this.dragging;
+      if (d) {
+        this.moveSection(d.id, e.clientX - d.x, e.clientY - d.y);
+        d.x = e.clientX;
+        d.y = e.clientY;
+      } else {
+        canvas.style.cursor = this.sectionAt(e.clientX, e.clientY) ? 'grab' : '';
+      }
+    });
+    const drop = () => {
+      const d = this.dragging;
+      if (!d) return;
+      this.dragging = null;
+      this.controls.enabled = true;
+      canvas.style.cursor = '';
+      const offset = this.liveOffsets.get(d.id);
+      if (offset) this.onSectionPlaced(d.id, offset);
+    };
+    canvas.addEventListener('pointerup', drop);
+    canvas.addEventListener('pointercancel', drop);
     this.applyTheme();
   }
 
@@ -275,6 +325,81 @@ export class CaveView {
   setShowPassage(on: boolean) {
     this.showPassage = on;
     if (this.passage) this.passage.visible = on;
+    this.requestRender();
+  }
+
+  /** The cross-section sketches to draw beside their stations. */
+  setSections(list: MapSection[]) {
+    this.sections = list;
+    this.liveOffsets.clear();
+    this.requestRender();
+  }
+
+  setProfileSketches(list: ProfileSketch3d[]) {
+    this.profileSketches = list;
+    this.requestRender();
+  }
+
+  setShowProfileSketches(on: boolean) {
+    this.showProfileSketches = on;
+    this.requestRender();
+  }
+
+  /** How clearly a vertical drawing reads from here: 1 from the side, 0 from straight above or below. */
+  get verticalDrawingVisibility(): number {
+    const up = Math.abs(this.cameraOffset.clone().normalize().z);
+    const SIDE = 0.5; // up to about 30 degrees of tilt reads fully
+    const TOP = 0.93; // beyond about 21 degrees from vertical it is hidden
+    return up <= SIDE ? 1 : up >= TOP ? 0 : (TOP - up) / (TOP - SIDE);
+  }
+
+  setShowSections(on: boolean) {
+    this.showSections = on;
+    this.requestRender();
+  }
+
+  private offsetOf(s: MapSection): [number, number, number] {
+    return this.liveOffsets.get(s.id) ?? s.placement ?? defaultMapOffset(s.sketches);
+  }
+
+  /** Pixels per metre across the screen at a world point (it varies with depth in perspective). */
+  private pixelsPerMetreAt(p: [number, number, number]): number | null {
+    const a = this.project(p);
+    const right = new THREE.Vector3().setFromMatrixColumn(this.camera.matrixWorld, 0);
+    const b = this.project([p[0] + right.x, p[1] + right.y, p[2] + right.z]);
+    return a && b ? Math.hypot(a[0] - b[0], a[1] - b[1]) : null;
+  }
+
+  private sectionAnchor(s: MapSection): { at: [number, number] | null; px: number | null } {
+    const o = this.offsetOf(s);
+    const world: [number, number, number] = [s.at[0] + o[0], s.at[1] + o[1], s.at[2] + o[2]];
+    return { at: this.project(world), px: this.pixelsPerMetreAt(world) };
+  }
+
+  /** The section under a screen point, or null. */
+  private sectionAt(clientX: number, clientY: number): string | null {
+    if (!this.showSections) return null;
+    const rect = this.canvas.getBoundingClientRect();
+    const x = clientX - rect.left;
+    const y = clientY - rect.top;
+    for (const s of [...this.sections].reverse()) {
+      const { at, px } = this.sectionAnchor(s);
+      if (at && px && hits(s.sketches, at, px, x, y)) return s.id;
+    }
+    return null;
+  }
+
+  /** Moves a section by a screen drag, in the plane the camera is looking across. */
+  private moveSection(id: string, dx: number, dy: number) {
+    const s = this.sections.find((k) => k.id === id);
+    if (!s) return;
+    const { px } = this.sectionAnchor(s);
+    if (!px) return;
+    const right = new THREE.Vector3().setFromMatrixColumn(this.camera.matrixWorld, 0);
+    const up = new THREE.Vector3().setFromMatrixColumn(this.camera.matrixWorld, 1);
+    const o = this.offsetOf(s);
+    const d = right.multiplyScalar(dx / px).addScaledVector(up, -dy / px);
+    this.liveOffsets.set(id, [o[0] + d.x, o[1] + d.y, o[2] + d.z]);
     this.requestRender();
   }
 
@@ -470,6 +595,49 @@ export class CaveView {
       for (const st of s.stations) {
         const p = this.project(st.at);
         if (p && p[0] > -20 && p[1] > -20 && p[0] < this.width + 20 && p[1] < this.height + 20) g.fillText(st.label, p[0] + 6, p[1] - 5);
+      }
+    }
+    const seen = this.verticalDrawingVisibility;
+    if (this.showProfileSketches && seen > 0) {
+      g.save();
+      g.globalAlpha = seen;
+      g.strokeStyle = `#${this.theme.accent.getHexString()}`;
+      g.lineCap = 'round';
+      g.lineJoin = 'round';
+      for (const k of this.profileSketches) {
+        const pts = k.points.map((p) => this.project(p));
+        for (let i = 1; i < pts.length; i++) {
+          const a = pts[i - 1];
+          const b = pts[i];
+          if (!a || !b) continue;
+          g.lineWidth = 2.2 * (k.widths ? (k.widths[i - 1] + k.widths[i]) / 2 : 1);
+          g.beginPath();
+          g.moveTo(a[0], a[1]);
+          g.lineTo(b[0], b[1]);
+          g.stroke();
+        }
+      }
+      g.restore();
+    }
+    if (this.showSections) {
+      for (const sec of this.sections) {
+        const st = this.project(sec.at);
+        const { at, px } = this.sectionAnchor(sec);
+        if (!at || !px) continue;
+        if (st) {
+          g.strokeStyle = css.muted;
+          g.lineWidth = 1;
+          g.setLineDash([4, 3]);
+          g.beginPath();
+          g.moveTo(st[0], st[1]);
+          g.lineTo(at[0], at[1]);
+          g.stroke();
+          g.setLineDash([]);
+        }
+        drawStrokes(g, sec.sketches, (u, v) => [at[0] + u * px, at[1] - v * px], css.text, 2);
+        g.fillStyle = css.muted;
+        g.textAlign = 'left';
+        g.fillText(sec.label, at[0] + 4, at[1] + 12);
       }
     }
     const chosen = this.selected ? s.stations.find((st) => st.id === this.selected) : undefined;
