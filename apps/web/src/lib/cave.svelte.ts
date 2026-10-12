@@ -2,6 +2,7 @@
 // only says "it changed, look again" so panels refresh together.
 
 import type { Units } from './units';
+import { setHiddenTest } from './section-glyph';
 
 const UNITS_KEY = 'cavecad.units';
 
@@ -79,7 +80,11 @@ export function setShown(kind: 'types' | 'trips', key: string, on: boolean) {
   if (!on) next.push(key);
   if (kind === 'types') filter.hiddenTypes = next;
   else filter.hiddenTrips = next;
+  cave.version += 1; // the panels redraw without what is hidden
 }
+
+// strokes in the Profile, Cross Section and Map skip what the Show menu has hidden
+setHiddenTest((kind) => filter.hiddenTypes.includes(kind));
 
 /** Shows or hides the cross-section sketches in one view, and remembers it on this machine. */
 export function setShowSections(view: 'map' | 'profile' | 'profileSketches', on: boolean) {

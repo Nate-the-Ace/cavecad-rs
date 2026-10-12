@@ -259,6 +259,20 @@ pub fn build_seen_from(
     .filter(|(_, present)| *present)
     .map(|(k, _)| k.to_string())
     .collect();
+    // what people drew, in any view: lines, text, symbols and fills (each listed once)
+    let mut drawn: Vec<String> = doc
+        .ids_of(Kind::Feature)
+        .into_iter()
+        .filter_map(|id| doc.entity(id).map(|e| e.text(Field::FeatureType)))
+        .filter(|k| !k.is_empty())
+        .collect();
+    drawn.sort();
+    drawn.dedup();
+    for k in drawn {
+        if !scene.types.contains(&k) {
+            scene.types.push(k);
+        }
+    }
     let mut trips: Vec<(f64, Id, String)> = doc
         .ids_of(Kind::Trip)
         .into_iter()
@@ -561,6 +575,42 @@ mod tests {
             assert!(s.types.iter().any(|t| t == k), "{k}");
         }
         assert!(!s.types.iter().any(|t| t == "tie"));
+    }
+
+    #[test]
+    fn what_people_drew_is_listed_once_so_the_filter_can_hide_it() {
+        use cave_doc::{Action, Field, Kind, Value};
+        use cave_id::{IdSource, SeqIds};
+        let mut doc = cave_fixture::from_shot_list(TWO_TRIPS, ActorId(1)).unwrap();
+        let mut ids = SeqIds::new(77);
+        for kind in ["sym-pit", "sym-pit", "fill-sand", "wall"] {
+            let id = ids.next_id();
+            doc.edit(vec![
+                Action::Create {
+                    id,
+                    kind: Kind::Feature,
+                },
+                Action::Set {
+                    id,
+                    field: Field::FeatureType,
+                    value: Value::Text(kind.into()),
+                },
+            ])
+            .unwrap();
+        }
+        let s = build(&doc, false);
+        for k in ["sym-pit", "fill-sand"] {
+            assert_eq!(
+                s.types.iter().filter(|t| *t == k).count(),
+                1,
+                "{k} listed once"
+            );
+        }
+        assert_eq!(
+            s.types.iter().filter(|t| *t == "wall").count(),
+            1,
+            "a drawn wall does not double the surveyed one"
+        );
     }
 
     #[test]

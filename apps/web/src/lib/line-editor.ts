@@ -36,6 +36,8 @@ export interface Hooks<T extends EditableLine> {
   /** Deletes a line (one undoable edit). */
   remove: (id: string) => void;
   redraw: () => void;
+  /** True for a type that is switched off in the Show menu (it cannot be picked, seen or erased). */
+  hidden?: (kind: string | undefined) => boolean;
 }
 
 /** How close, in pixels, a press must be to a line to select it, and to a fit point to pick it up. */
@@ -52,10 +54,16 @@ export class LineEditor<T extends EditableLine = EditableLine> {
     this.h = hooks;
   }
 
+  /** The lines that are switched on. */
+  private shown(): T[] {
+    const hide = this.h.hidden;
+    return hide ? this.h.lines().filter((l) => !hide(l.kind)) : this.h.lines();
+  }
+
   /** The lines to draw: the one being dragged shows its live points. */
   display(): T[] {
     const d = this.drag;
-    return this.h.lines().map((l) => (d && l.id === d.id ? { ...l, points: d.points, widths: d.widths } : l));
+    return this.shown().map((l) => (d && l.id === d.id ? { ...l, points: d.points, widths: d.widths } : l));
   }
 
   /** Screen positions of the selected line's fit points (empty when nothing is selected here). */
@@ -78,7 +86,7 @@ export class LineEditor<T extends EditableLine = EditableLine> {
         return true;
       }
     }
-    const lines = this.h.lines();
+    const lines = this.shown();
     for (let i = lines.length - 1; i >= 0; i--) {
       if (reach(lines[i], this.h.toScreen, x, y) <= LINE_REACH) {
         this.h.select(lines[i].id);
@@ -93,7 +101,7 @@ export class LineEditor<T extends EditableLine = EditableLine> {
 
   /** The eraser passing screen (`x`, `y`): deletes the topmost line there (one undoable edit). Returns true if it did. */
   eraseAt(x: number, y: number): boolean {
-    const lines = this.h.lines();
+    const lines = this.shown();
     for (let i = lines.length - 1; i >= 0; i--) {
       if (reach(lines[i], this.h.toScreen, x, y) <= LINE_REACH) {
         if (this.h.selected() === lines[i].id) this.h.select('');

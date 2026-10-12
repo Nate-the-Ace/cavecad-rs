@@ -273,3 +273,12 @@ and a DXF name, and the DXF export writes every pattern into its line-type table
 pattern a type uses can be written). The Draw tab groups come from `cave-style::TOOL_GROUPS`. The type
 row of a selected line became a list, since there are now fifteen kinds of line. Still not done: the
 UIS step (the existing Ledge covers it), gradient lines, and the double-line fault of the UIS list.
+
+## 2026-10-12: Everything drawn is in the Show menu
+
+The scene's type list now includes every type of stroke the cave holds (lines, text, fills, symbols),
+each once. The Show menu lists them (symbols in their own "Symbols" section under their names) and it
+re-reads when opened, so what was just drawn is there. Hiding a type hides it everywhere: the Profile,
+Cross Section and Map draw nothing of it, and it cannot be picked, edited or erased while hidden (the
+line editor, the eraser and the map's hit tests skip it). It is a view setting only: nothing is stored on
+the drawing. DXF export still writes everything, as before.

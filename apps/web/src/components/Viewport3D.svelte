@@ -3,6 +3,7 @@
   import { Home, Maximize, Box, Square, Palette, Eye } from '@lucide/svelte';
   import PanelUndo from './PanelUndo.svelte';
   import { DEMOS } from '../lib/demos';
+  import { isSymbolKind, symbolDef } from '../lib/symbols';
   import { leave } from '../lib/sync.svelte';
   import { engine, loadEngine, type Scene, type TypeStyle } from '../lib/engine';
   import { CaveView, type Projection } from '../lib/viewport/cave-view';
@@ -34,6 +35,8 @@
   let showMenu = $state(false);
   /** Palette entries the cave has something of, in palette order. */
   const listed = $derived(palette.filter((p) => scene?.types.includes(p.key)));
+  /** The symbols the cave has, each listed under its own name. */
+  const symbolTypes = $derived((scene?.types ?? []).filter(isSymbolKind).map((key) => ({ key, label: symbolDef(key)?.name ?? key })).sort((a, b) => a.label.localeCompare(b.label)));
 
   function open(id: string) {
     const d = DEMOS.find((x) => x.id === id);
@@ -83,6 +86,11 @@
     const id = cave.selected;
     view?.setSelectedLine(id);
   });
+  /** Opens or closes the Show menu; opening re-reads what the cave has, so what was just drawn is listed. */
+  function openMenu() {
+    showMenu = !showMenu;
+    if (showMenu) scene = engine.scene(cave.adjusted, wireFilter());
+  }
   function onKey(e: KeyboardEvent) {
     if (e.key === 'Escape' && showMenu) {
       showMenu = false;
@@ -249,7 +257,7 @@
       {#each DEMOS as d}<option value={d.id}>{d.title}</option>{/each}
     </select>
     <div class="menu">
-      <button class:on={showMenu || filter.hiddenTypes.length + filter.hiddenTrips.length > 0} title="Show or hide: walls, passage, sketches, sections, types and trips" aria-expanded={showMenu} onclick={() => (showMenu = !showMenu)}><Eye size={15} /> Show</button>
+      <button class:on={showMenu || filter.hiddenTypes.length + filter.hiddenTrips.length > 0} title="Show or hide: walls, passage, sketches, sections, types and trips" aria-expanded={showMenu} onclick={openMenu}><Eye size={15} /> Show</button>
       {#if showMenu}
         <div class="pop" role="group" aria-label="Show or hide">
           <h4>On the map</h4>
@@ -263,6 +271,12 @@
           {#each listed as t}
             <label><input type="checkbox" checked={!filter.hiddenTypes.includes(t.key)} onchange={(e) => (setShown('types', t.key, e.currentTarget.checked), refresh())} /> {t.label}</label>
           {/each}
+          {#if symbolTypes.length > 0}
+            <h4>Symbols</h4>
+            {#each symbolTypes as t}
+              <label><input type="checkbox" checked={!filter.hiddenTypes.includes(t.key)} onchange={(e) => (setShown('types', t.key, e.currentTarget.checked), refresh())} /> {t.label}</label>
+            {/each}
+          {/if}
           {#if scene && scene.trips.length > 0}
             <h4>Trips</h4>
             {#each scene.trips as trip}

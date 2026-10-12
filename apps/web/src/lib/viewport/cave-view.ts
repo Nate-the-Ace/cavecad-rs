@@ -9,6 +9,7 @@ import type { MapSection, PassageBuffers, ProfileSketch3d, Scene, TypeStyle } fr
 import { PenGuard, isEraser, widthFor } from '../pen';
 import { drawStamp, hitsStamp, isStampKind, placement } from '../symbols';
 import { drawMarks, isFillKind, marksFor } from '../fills';
+import { isKindHidden } from '../section-glyph';
 import { defaultMapOffset, drawHandles, drawStrokes, glyphCurves, hits, leaderEnd } from '../section-glyph';
 import { distanceToCurve, fitStroke, nearestPoint, smooth } from '../spline';
 import { PICKUP_REACH, joinFit } from '../line-editor';
@@ -613,6 +614,7 @@ export class CaveView {
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
     for (const k of [...this.mapLines].reverse()) {
+      if (isKindHidden(k.kind)) continue;
       const pts = k.points.map((p) => this.project(p)).filter((p): p is [number, number] => !!p);
       if (pts.length === k.points.length && (isStampKind(k.kind) ? hitsStamp(k.kind, k.text, pts[0], pts[1], x, y) : distanceToCurve(pts, x, y, k.closed) <= 7)) {
         this.mapLines = this.mapLines.filter((m) => m.id !== k.id);
@@ -642,6 +644,7 @@ export class CaveView {
       }
     }
     for (const k of [...this.mapLines].reverse()) {
+      if (isKindHidden(k.kind)) continue;
       const pts = screen(k);
       if (pts.length === k.points.length && (isStampKind(k.kind) ? hitsStamp(k.kind, k.text, pts[0], pts[1], x, y) : distanceToCurve(pts, x, y, k.closed) <= 7)) {
         this.onSelectLine(k.id);
@@ -738,6 +741,7 @@ export class CaveView {
     g.lineCap = 'round';
     g.lineJoin = 'round';
     for (const k of lines) {
+      if (isKindHidden(k.kind)) continue; // switched off in the Show menu
       const l = look(k.kind);
       g.strokeStyle = l.color;
       g.globalAlpha = base * l.alpha;

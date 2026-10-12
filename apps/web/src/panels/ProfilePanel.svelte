@@ -4,7 +4,7 @@
   import { Maximize } from '@lucide/svelte';
   import PanelUndo from '../components/PanelUndo.svelte';
   import { looks } from '../lib/ink';
-  import { cave, changed, option, setShowSections } from '../lib/cave.svelte';
+  import { cave, changed, filter, option, setShowSections } from '../lib/cave.svelte';
   import { defaultBandOffset, drawHandles, drawStrokes, glyphCurves, hits, leaderEnd } from '../lib/section-glyph';
   import { LineEditor, endpointNear, joinFit } from '../lib/line-editor';
   import { Touches } from '../lib/touch';
@@ -47,6 +47,7 @@
       changed();
     },
     redraw: () => schedule(),
+    hidden: (kind) => !!kind && filter.hiddenTypes.includes(kind),
   });
   $effect(() => {
     void cave.selected;

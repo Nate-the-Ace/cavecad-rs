@@ -20,6 +20,16 @@ export function setOrnamentSource(s: OrnamentSource) {
 }
 
 
+let hiddenTest: (kind: string) => boolean = () => false;
+/** Installs the test for which types the person has hidden (the Show menu). */
+export function setHiddenTest(f: (kind: string) => boolean) {
+  hiddenTest = f;
+}
+/** True when strokes of this type are switched off in the Show menu. */
+export function isKindHidden(kind: string): boolean {
+  return hiddenTest(kind);
+}
+
 export type Sketches = { points: [number, number][]; widths: number[] | null; closed?: boolean; text?: string }[];
 
 /** `[minU, minV, maxU, maxV]` around the strokes (zeros when empty). */
@@ -65,6 +75,7 @@ export function drawStrokes(
   g.lineJoin = 'round';
   const flipped = new Set(source?.flippedLines() ?? []); // shaped lines with ornament on the left of travel
   for (const k of sketches) {
+    if (hiddenTest(k.kind)) continue; // switched off in the Show menu
     const l = look(k.kind);
     if (isStampKind(k.kind) && k.points.length >= 2) {
       // A placed symbol: its first point is where it sits, its second says which way is up and how big.

@@ -55,6 +55,7 @@
       changed();
     },
     redraw: () => schedule(),
+    hidden: (kind) => !!kind && filter.hiddenTypes.includes(kind),
   });
   $effect(() => {
     void cave.selected;
