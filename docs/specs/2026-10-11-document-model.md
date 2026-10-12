@@ -19,4 +19,4 @@ adopted later behind it without changing callers.
 **Safety net.** `check::validate` reports dangling station references and duplicate station labels
 (what two offline users can create). Merges never fail on these; the Check tools surface them.
 
-**Not here yet.** Drawing entities, layers, geometry, DXF, file splitting per trip.
+**Not here yet.** Drawing entities (no layers: type and trip organise everything), geometry, DXF, file splitting per trip.

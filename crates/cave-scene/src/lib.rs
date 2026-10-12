@@ -46,6 +46,8 @@ pub enum LegStyle {
 /// A surveyed line between two stations.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct SceneLeg {
+    /// The shot this leg came from (its id as text).
+    pub shot: String,
     /// Start.
     pub from: Pt,
     /// End.
@@ -76,6 +78,8 @@ pub struct Scene {
     pub legs: Vec<SceneLeg>,
     /// Splay rays as `[x1, y1, z1, x2, y2, z2]`.
     pub splays: Vec<[f64; 6]>,
+    /// The shot of each splay, in the same order as `splays` (ids as text).
+    pub splay_shots: Vec<String>,
     /// Passage wall lines (both sides), each a run of 3D points built from LRUD and splays.
     pub walls: Vec<Vec<Pt>>,
     /// Loop and tie misclosures (as surveyed, never from adjusted coordinates).
@@ -138,6 +142,7 @@ pub fn build(doc: &Document, use_adjustment: bool) -> Scene {
                 LegKind::Tie => LegStyle::Tie,
             };
             scene.legs.push(SceneLeg {
+                shot: l.shot.to_string(),
                 from: [a.x, a.y, a.z],
                 to: [b.x, b.y, b.z],
                 style,
@@ -146,6 +151,7 @@ pub fn build(doc: &Document, use_adjustment: bool) -> Scene {
     }
     for s in ex.splays.iter().filter(|s| !s.exclude_from_plot) {
         if let Some(a) = pos(s.from) {
+            scene.splay_shots.push(s.shot.to_string());
             scene.splays.push([
                 a.x,
                 a.y,

@@ -39,22 +39,17 @@ const REFS: &[(Field, Kind)] = &[
     (Field::ShotFrom, Kind::Station),
     (Field::ShotTo, Kind::Station),
     (Field::ShotTrip, Kind::Trip),
-    (Field::LayerGroup, Kind::Layer),
-    (Field::FeatureLayer, Kind::Layer),
     (Field::FeatureTrip, Kind::Trip),
     (Field::FeatureStation, Kind::Station),
-    (Field::SymbolLayer, Kind::Layer),
     (Field::SymbolTrip, Kind::Trip),
-    (Field::TextLayer, Kind::Layer),
+    (Field::TextTrip, Kind::Trip),
+    (Field::TextTrip, Kind::Trip),
 ];
 
 /// Fields every entity of the kind must have filled in.
 const REQUIRED: &[(Field, Kind)] = &[
     (Field::ShotFrom, Kind::Shot),
-    (Field::FeatureLayer, Kind::Feature),
-    (Field::SymbolLayer, Kind::Symbol),
     (Field::SymbolAt, Kind::Symbol),
-    (Field::TextLayer, Kind::Text),
     (Field::TextAt, Kind::Text),
 ];
 
@@ -62,7 +57,6 @@ const KINDS: &[Kind] = &[
     Kind::Trip,
     Kind::Station,
     Kind::Shot,
-    Kind::Layer,
     Kind::Feature,
     Kind::Symbol,
     Kind::Text,
@@ -260,22 +254,16 @@ mod tests {
     }
 
     #[test]
-    fn drawing_entities_need_a_layer_and_geometry() {
+    fn drawing_entities_need_geometry() {
         let mut d = Document::new(ActorId(1));
         let mut ids = SeqIds::new(1);
-        let (layer, good, bare, gone) =
-            (ids.next_id(), ids.next_id(), ids.next_id(), ids.next_id());
+        let (good, bare, gone) = (ids.next_id(), ids.next_id(), ids.next_id());
         let line = Path::polyline(&[Point::new(0.0, 0.0), Point::new(1.0, 1.0)], false);
         d.edit(vec![
-            Action::Create {
-                id: layer,
-                kind: Kind::Layer,
-            },
             Action::Create {
                 id: good,
                 kind: Kind::Feature,
             },
-            set(good, Field::FeatureLayer, Value::Ref(Some(layer))),
             set(good, Field::FeaturePath, Value::Path(Some(line.clone()))),
             Action::Create {
                 id: bare,
@@ -285,7 +273,7 @@ mod tests {
                 id: gone,
                 kind: Kind::Feature,
             },
-            set(gone, Field::FeatureLayer, Value::Ref(Some(ids.next_id()))),
+            set(gone, Field::FeatureTrip, Value::Ref(Some(ids.next_id()))),
             set(gone, Field::FeaturePath, Value::Path(Some(line))),
         ])
         .unwrap();
@@ -293,16 +281,12 @@ mod tests {
         assert!(!issues.iter().any(|i| matches!(i, Issue::MissingRequired { entity, .. } | Issue::DanglingReference { entity, .. } if *entity == good)));
         assert!(issues.contains(&Issue::MissingRequired {
             entity: bare,
-            field: Field::FeatureLayer
-        }));
-        assert!(issues.contains(&Issue::MissingRequired {
-            entity: bare,
             field: Field::FeaturePath
         }));
         assert!(
             issues
                 .iter()
-                .any(|i| matches!(i, Issue::DanglingReference { entity, field: Field::FeatureLayer, .. } if *entity == gone))
+                .any(|i| matches!(i, Issue::DanglingReference { entity, field: Field::FeatureTrip, .. } if *entity == gone))
         );
     }
 

@@ -40,6 +40,15 @@ impl Document {
         serde_json::to_string_pretty(&saved).expect("document is always serializable")
     }
 
+    /// The same JSON without indentation: smaller, for embedding in other file formats.
+    pub fn to_json_compact(&self) -> String {
+        let saved = Saved {
+            schema: SCHEMA,
+            entities: self.entities.clone(),
+        };
+        serde_json::to_string(&saved).expect("document is always serializable")
+    }
+
     /// Loads a document saved by [`Document::to_json`], to be edited by `actor`.
     pub fn from_json(text: &str, actor: ActorId) -> Result<Document, JsonError> {
         let head: serde_json::Value =

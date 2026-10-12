@@ -11,13 +11,6 @@ use cave_id::{Id, IdSource};
 
 /// `Feature.type` of a stroke sketched on a profile band.
 pub const PROFILE_SKETCH: &str = "profile-sketch";
-/// The built-in layer sketches land on.
-pub const SKETCH_LAYER_NAME: &str = "Profile sketch";
-
-/// The one sketch layer. Its id is derived from its name, so every machine agrees on it.
-pub fn sketch_layer_id() -> Id {
-    Id::from_name("layer:profile-sketch")
-}
 
 /// Why a stroke could not be turned into actions.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -45,10 +38,10 @@ impl From<AnchorError> for DrawError {
 /// `points` are `(s, z)` in metres on the band (distance along the run, elevation); `frames` are
 /// the band's consecutive station pairs with their band positions, and the stroke is anchored to
 /// the nearest of them. `widths` is optional pen weight per point (1.0 is the normal weight).
-/// Creates the sketch layer first if the cave has none yet. Returns the new feature's id with the
-/// actions.
+/// Returns the new feature's id with the actions. A sketch is a feature of type `profile-sketch`;
+/// grouping and visibility come from type and trip, not from layers.
 pub fn profile_sketch(
-    doc: &Document,
+    _doc: &Document,
     ids: &mut impl IdSource,
     run: &str,
     points: &[[f64; 2]],
@@ -69,31 +62,12 @@ pub fn profile_sketch(
     let widths = widths.map(|w| kept.iter().map(|&i| w[i]).collect());
     let anchored = anchor_stroke(&pts, frames, widths)?;
 
-    let layer = sketch_layer_id();
     let mut actions = Vec::new();
-    if doc.entity(layer).is_none() {
-        actions.extend([
-            Action::Create {
-                id: layer,
-                kind: Kind::Layer,
-            },
-            Action::Set {
-                id: layer,
-                field: Field::LayerName,
-                value: Value::Text(SKETCH_LAYER_NAME.into()),
-            },
-        ]);
-    }
     let id = ids.next_id();
     actions.extend([
         Action::Create {
             id,
             kind: Kind::Feature,
-        },
-        Action::Set {
-            id,
-            field: Field::FeatureLayer,
-            value: Value::Ref(Some(layer)),
         },
         Action::Set {
             id,
@@ -151,7 +125,7 @@ mod tests {
     }
 
     #[test]
-    fn a_sketch_is_a_valid_anchored_feature_on_the_shared_layer() {
+    fn a_sketch_is_a_valid_anchored_feature_() {
         let (mut doc, frames, [a, b]) = cave();
         let (id, actions) =
             profile_sketch(&doc, &mut SeqIds::new(1), "A", &stroke(), None, &frames).unwrap();
@@ -165,10 +139,9 @@ mod tests {
             panic!("not anchored")
         };
         assert_eq!(anchored.frames, vec![(a, b)]);
-        assert!(doc.entity(sketch_layer_id()).is_some());
         assert!(
             validate(&doc).is_empty(),
-            "no dangling layer, nothing missing"
+            "nothing dangling, nothing missing"
         );
     }
 
@@ -191,31 +164,7 @@ mod tests {
     }
 
     #[test]
-    fn the_layer_is_created_once_and_a_second_stroke_reuses_it() {
-        let (mut doc, frames, _) = cave();
-        let mut ids = SeqIds::new(1);
-        let (_, first) = profile_sketch(&doc, &mut ids, "A", &stroke(), None, &frames).unwrap();
-        doc.edit(first).unwrap();
-        let (_, second) = profile_sketch(&doc, &mut ids, "A", &stroke(), None, &frames).unwrap();
-        assert!(!second.iter().any(|x| matches!(
-            x,
-            Action::Create {
-                kind: Kind::Layer,
-                ..
-            }
-        )));
-        doc.edit(second).unwrap();
-        assert_eq!(
-            (
-                doc.ids_of(Kind::Layer).len(),
-                doc.ids_of(Kind::Feature).len()
-            ),
-            (1, 2)
-        );
-    }
-
-    #[test]
-    fn two_people_creating_the_layer_independently_agree() {
+    fn two_people_sketching_independently_merge_cleanly() {
         let (base, frames, _) = cave();
         let mut a = base.clone();
         let mut b = Document::from_json(&base.to_json(), ActorId(2)).unwrap();
@@ -231,7 +180,6 @@ mod tests {
             b.apply(op).unwrap();
         }
         assert_eq!(a, b);
-        assert_eq!(a.ids_of(Kind::Layer).len(), 1, "one shared layer, not two");
         assert_eq!(a.ids_of(Kind::Feature).len(), 2);
     }
 

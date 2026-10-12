@@ -28,6 +28,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "cave-dxf"
+version = "0.0.1"
+dependencies = [
+ "cave-doc",
+ "cave-draw",
+ "cave-fixture",
+ "cave-id",
+ "cave-scene",
+]
+
+[[package]]
 name = "cave-fixture"
 version = "0.0.1"
 dependencies = [

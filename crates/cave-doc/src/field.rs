@@ -15,8 +15,6 @@ pub enum Kind {
     Station,
     /// A measurement between two stations (or a splay).
     Shot,
-    /// A drawing layer: how a group of things looks and whether it can be seen or edited.
-    Layer,
     /// A traced line (wall, ledge, pit edge, ...).
     Feature,
     /// A placed symbol (stalactite, breakdown, ...).
@@ -110,6 +108,12 @@ pub enum Field {
     TripDeclinationSource,
     /// Unit of every distance and LRUD in the trip: `ft` or `m` (empty means metres).
     TripDistanceUnit,
+    /// The cave's name (the file's first line), kept on the first trip.
+    TripCaveName,
+    /// Instruments used on the trip, free text.
+    TripInstruments,
+    /// A note about the trip's first station.
+    TripStartNote,
     /// Position of the trip among trips (smaller is earlier; ties break by id).
     TripOrder,
     /// Walls at the trip's first station (nothing arrives there, so no shot carries them).
@@ -160,6 +164,12 @@ pub enum Field {
     ShotNoAdjust,
     /// Leave this shot out of everything (a void shot, a station never found again).
     ShotExcludeFromAll,
+    /// The shot's note.
+    ShotNote,
+    /// The declination this shot's azimuth was computed with (degrees); absent means "its trip's".
+    ShotDeclination,
+    /// Leave this shot out of length totals.
+    ShotExcludeFromLength,
     /// Position of the shot in survey order (smaller is earlier; ties break by id).
     ShotOrder,
     /// Distance to the left wall at the TO station.
@@ -182,26 +192,6 @@ pub enum Field {
     ShotSplay,
     /// Position the stations but draw nothing.
     ShotExcludeFromPlot,
-    /// Layer name.
-    LayerName,
-    /// Layer colour as `#rrggbb`.
-    LayerColor,
-    /// Layer line weight in millimetres.
-    LayerWeight,
-    /// Layer linetype name.
-    LayerLinetype,
-    /// Layer is hidden.
-    LayerHidden,
-    /// Layer cannot be edited.
-    LayerLocked,
-    /// Layer is frozen (hidden and skipped when regenerating).
-    LayerFrozen,
-    /// The group (another layer) this layer sits under in the Layer Manager.
-    LayerGroup,
-    /// Position among siblings in the Layer Manager.
-    LayerOrder,
-    /// Layer a feature is drawn on.
-    FeatureLayer,
     /// The traced line itself.
     FeaturePath,
     /// What the feature is (`wall`, `ledge`, `pit`, ...).
@@ -218,8 +208,6 @@ pub enum Field {
     FeatureAnchored,
     /// Free-form tags.
     FeatureTags,
-    /// Layer a symbol is drawn on.
-    SymbolLayer,
     /// Which symbol from the palette.
     SymbolName,
     /// Where it is placed.
@@ -232,8 +220,8 @@ pub enum Field {
     SymbolTrip,
     /// Free-form tags (attribute values).
     SymbolTags,
-    /// Layer a text is drawn on.
-    TextLayer,
+    /// The trip whose ground the text sits on.
+    TextTrip,
     /// The words.
     TextBody,
     /// Where the text starts.
@@ -269,6 +257,7 @@ impl Field {
             TripDistanceUnit => (K::Trip, V::Text),
             TripTapeMode => (K::Trip, V::Text),
             TripOrder => (K::Trip, V::Number),
+            TripCaveName | TripInstruments | TripStartNote => (K::Trip, V::Text),
             TripStartLeft | TripStartRight | TripStartUp | TripStartDown => (K::Trip, V::Number),
             TripStartLeftOpen | TripStartRightOpen | TripStartUpOpen | TripStartDownOpen => {
                 (K::Trip, V::Flag)
@@ -288,6 +277,9 @@ impl Field {
             ShotAzimuthOmitted => (K::Shot, V::Flag),
             ShotNoAdjust => (K::Shot, V::Flag),
             ShotOrder => (K::Shot, V::Number),
+            ShotNote => (K::Shot, V::Text),
+            ShotDeclination => (K::Shot, V::Number),
+            ShotExcludeFromLength => (K::Shot, V::Flag),
             ShotExcludeFromAll => (K::Shot, V::Flag),
             ShotLeft => (K::Shot, V::Number),
             ShotRight => (K::Shot, V::Number),
@@ -299,16 +291,6 @@ impl Field {
             ShotDownOpen => (K::Shot, V::Flag),
             ShotSplay => (K::Shot, V::Flag),
             ShotExcludeFromPlot => (K::Shot, V::Flag),
-            LayerName => (K::Layer, V::Text),
-            LayerColor => (K::Layer, V::Text),
-            LayerWeight => (K::Layer, V::Number),
-            LayerLinetype => (K::Layer, V::Text),
-            LayerHidden => (K::Layer, V::Flag),
-            LayerLocked => (K::Layer, V::Flag),
-            LayerFrozen => (K::Layer, V::Flag),
-            LayerGroup => (K::Layer, V::Ref),
-            LayerOrder => (K::Layer, V::Number),
-            FeatureLayer => (K::Feature, V::Ref),
             FeaturePath => (K::Feature, V::Path),
             FeatureType => (K::Feature, V::Text),
             FeatureShape => (K::Feature, V::Text),
@@ -317,14 +299,13 @@ impl Field {
             FeatureRun => (K::Feature, V::Text),
             FeatureAnchored => (K::Feature, V::Anchored),
             FeatureTags => (K::Feature, V::Map),
-            SymbolLayer => (K::Symbol, V::Ref),
             SymbolName => (K::Symbol, V::Text),
             SymbolAt => (K::Symbol, V::Point),
             SymbolRotation => (K::Symbol, V::Number),
             SymbolScale => (K::Symbol, V::Number),
             SymbolTrip => (K::Symbol, V::Ref),
             SymbolTags => (K::Symbol, V::Map),
-            TextLayer => (K::Text, V::Ref),
+            TextTrip => (K::Text, V::Ref),
             TextBody => (K::Text, V::Text),
             TextAt => (K::Text, V::Point),
             TextHeight => (K::Text, V::Number),

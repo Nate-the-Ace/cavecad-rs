@@ -4,7 +4,7 @@
 //! gives the same document. That is what lets two people edit offline and merge later, and it
 //! makes undo an ordinary edit. This crate does no I/O and reads no clock; see `docs/DESIGN.md`.
 //!
-//! Layers of data: authored survey data lives here; drawing data comes next; derived data
+//! Tiers of data: authored survey data lives here; drawing data comes next; derived data
 //! (positions, adjustment, walls) is never stored and is recomputed from these.
 
 mod anchored;
