@@ -29,6 +29,8 @@ export const cave = $state({
   /** The drawing tool picked on the Draw tab (a palette type such as `wall`), or empty. While one is
    *  picked, drawing in any view makes linework of that type in that view. */
   tool: '',
+  /** The line (a feature id) selected for editing, or empty. Its fit points show as handles in the view it was drawn in. */
+  selected: '',
   /** Whether cross-section sketches are drawn beside their stations, per view, and whether profile
    *  sketches are drawn along their runs on the map (view settings). */
   showSections: savedSections(),

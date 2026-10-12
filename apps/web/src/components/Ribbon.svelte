@@ -5,7 +5,7 @@
   import DrawTools from './DrawTools.svelte';
   import ThemeGroup from './ThemeGroup.svelte';
   import { PANELS, panelState, resetLayout, togglePanel } from '../lib/workspace.svelte';
-  import { FileInput, FolderOpen, Save, Ruler, Footprints, Route, Waypoints, Pencil, Spline, PaintBucket, PanelTop, Scissors, Box, Map as MapIcon, Terminal, LayoutDashboard, Activity } from '@lucide/svelte';
+  import { FileInput, FolderOpen, Save, Ruler, Footprints, Route, Waypoints, Pencil, Spline, PaintBucket, Scissors, Map as MapIcon, Terminal, LayoutDashboard, Activity } from '@lucide/svelte';
   import type { Component } from 'svelte';
 
   interface Item {
@@ -45,10 +45,11 @@
     Home: [
       { name: 'File', items: [{ label: 'Open', icon: FolderOpen, run: open }, { label: 'Save', icon: Save, run: save }, { label: 'Save as', icon: Save, run: saveAs }] },
       { name: 'Survey', items: [stub('Import', FileInput), stub('Draw', Route), stub('Adjust', Waypoints)] },
-      { name: 'Trace', items: [stub('Feature', Pencil), stub('Shaped', Spline), stub('Fill', PaintBucket)] },
-      { name: 'Views', items: [stub('Profile', PanelTop), panelItem('section', Scissors), stub('3D', Box)] },
     ],
-    Draw: [{ name: 'Linework', items: [], custom: DrawTools }],
+    Draw: [
+      { name: 'Linework', items: [], custom: DrawTools },
+      { name: 'Trace', items: [stub('Feature', Pencil), stub('Shaped', Spline), stub('Fill', PaintBucket)] },
+    ],
     Sheets: [],
     View: [
       { name: 'Panels', items: [panelItem('map', MapIcon), panelItem('profile', Activity), panelItem('section', Scissors), panelItem('console', Terminal)] },

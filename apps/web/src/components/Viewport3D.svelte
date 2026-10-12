@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount, untrack } from 'svelte';
-  import { Home, Maximize, Box, Square, Palette, Eye } from '@lucide/svelte';
+  import { Home, Maximize, Box, Square, Palette, Eye, Undo2, Redo2 } from '@lucide/svelte';
   import { DEMOS } from '../lib/demos';
   import { engine, loadEngine, type Scene, type TypeStyle } from '../lib/engine';
   import { CaveView, type Projection } from '../lib/viewport/cave-view';
@@ -25,6 +25,7 @@
   let fillGaps = $state(true);
   let projection = $state<Projection>('perspective');
   let status = $state('');
+  let loaded = $state(false);
   let scene = $state.raw<Scene | null>(null);
   let palette = $state<TypeStyle[]>([]);
   let showMenu = $state(false);
@@ -72,6 +73,17 @@
       view?.setMapLines(engine.mapLines(cave.adjusted));
     });
   });
+
+  // The Map's own undo and redo: only what was drawn or placed on the map.
+  let mapUndo = $state({ undo: false, redo: false });
+  $effect(() => {
+    void cave.version;
+    untrack(() => {
+      mapUndo = loaded ? engine.editState('map') : { undo: false, redo: false };
+    });
+  });
+  const undoMap = () => engine.undo('map') && changed();
+  const redoMap = () => engine.redo('map') && changed();
 
   // The picked drawing tool: drawing on the map goes to its plan, from the Top or Bottom view.
   let drawHint = $state('');
@@ -162,6 +174,7 @@
     ro.observe(wrap);
     const offTheme = onTheme(() => v.applyTheme());
     loadEngine().then(() => {
+      loaded = true;
       palette = engine.palette();
       v.setPalette(palette);
       open(demo);
@@ -217,6 +230,8 @@
   <div class="cube">
     <div bind:this={cubeHost}></div>
     <div class="cubebar">
+      <button title="Undo on the map (what was drawn or placed here)" disabled={!mapUndo.undo} onclick={undoMap}><Undo2 size={15} /></button>
+      <button title="Redo on the map" disabled={!mapUndo.redo} onclick={redoMap}><Redo2 size={15} /></button>
       <button title="Home view" onclick={() => view?.home()}><Home size={15} /></button>
       <button title="Fit to cave" onclick={() => view?.fit()}><Maximize size={15} /></button>
       <button title={projection === 'perspective' ? 'Switch to orthographic' : 'Switch to perspective'} onclick={() => view?.setProjection(projection === 'perspective' ? 'orthographic' : 'perspective')}>
@@ -234,6 +249,7 @@
   .cube { position: absolute; top: 8px; right: 8px; display: flex; flex-direction: column; align-items: center; }
   .cubebar { display: flex; gap: 4px; margin-top: 2px; }
   select, button { font: inherit; padding: 3px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--text); cursor: pointer; display: inline-grid; place-items: center; }
+  button:disabled { opacity: 0.4; cursor: default; }
   button.on { background: var(--accent-bg); }
   label { display: flex; gap: 4px; align-items: center; color: var(--muted); white-space: nowrap; }
   .status { color: var(--muted); }

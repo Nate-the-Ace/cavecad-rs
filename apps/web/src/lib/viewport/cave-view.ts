@@ -6,7 +6,7 @@ import { LineSegments2 } from 'three/addons/lines/LineSegments2.js';
 import { LineSegmentsGeometry } from 'three/addons/lines/LineSegmentsGeometry.js';
 import { LineMaterial } from 'three/addons/lines/LineMaterial.js';
 import type { MapSection, PassageBuffers, ProfileSketch3d, Scene, TypeStyle } from '../engine';
-import { defaultMapOffset, drawStrokes, hits } from '../section-glyph';
+import { defaultMapOffset, drawStrokes, glyphCurves, hits, leaderEnd } from '../section-glyph';
 import { looks } from '../ink';
 import { elevationColor, inkColor, readTheme, type ViewTheme } from './theme';
 import { metresPer, niceNumber, unitName, type Units } from '../units';
@@ -710,20 +710,24 @@ export class CaveView {
         const st = this.project(sec.at);
         const { at, px } = this.sectionAnchor(sec);
         if (!at || !px) continue;
+        const to = (u: number, v: number): [number, number] => [at[0] + u * px, at[1] - v * px];
+        const shell = leaderEnd(st ?? at, glyphCurves(sec.sketches, to));
         if (st) {
+          // The leader ties the drawing to its station and stops at the drawing's outer shell.
           g.strokeStyle = css.muted;
           g.lineWidth = 1;
           g.setLineDash([4, 3]);
           g.beginPath();
           g.moveTo(st[0], st[1]);
-          g.lineTo(at[0], at[1]);
+          g.lineTo(shell.end[0], shell.end[1]);
           g.stroke();
           g.setLineDash([]);
         }
-        drawStrokes(g, sec.sketches, (u, v) => [at[0] + u * px, at[1] - v * px], looks());
+        drawStrokes(g, sec.sketches, to, looks());
         g.fillStyle = css.muted;
+        g.textAlign = 'center';
+        g.fillText(sec.label, shell.below[0], shell.below[1]);
         g.textAlign = 'left';
-        g.fillText(sec.label, at[0] + 4, at[1] + 12);
       }
     }
     const chosen = this.selected ? s.stations.find((st) => st.id === this.selected) : undefined;

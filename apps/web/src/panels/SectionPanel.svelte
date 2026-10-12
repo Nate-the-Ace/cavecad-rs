@@ -41,7 +41,7 @@
     stations = engine.sectionStations(cave.adjusted, true, wireFilter());
     if (!stations.some((s) => s.id === cave.station)) cave.station = (stations.find((s) => s.outlined) ?? stations[0])?.id ?? '';
     section = cave.station ? engine.sectionAt(cave.adjusted, cave.station, true, wireFilter()) : null;
-    const st = engine.editState();
+    const st = engine.editState('section');
     canUndo = st.undo;
     canRedo = st.redo;
     frameOnce();
@@ -256,10 +256,10 @@
   }
 
   function doUndo() {
-    if (engine.undo()) changed();
+    if (engine.undo('section')) changed();
   }
   function doRedo() {
-    if (engine.redo()) changed();
+    if (engine.redo('section')) changed();
   }
   function onKey(e: KeyboardEvent) {
     if (!(e.metaKey || e.ctrlKey) || e.key.toLowerCase() !== 'z') return;

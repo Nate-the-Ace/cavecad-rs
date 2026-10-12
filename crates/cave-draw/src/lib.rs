@@ -194,19 +194,68 @@ pub fn section_sketch(
         return Err(DrawError::NoStations);
     }
     let (pts, widths) = distinct(points, widths)?;
-    let pts: Vec<Point> = pts.iter().map(|p| Point::new(p[0], p[1])).collect();
-    let mut path = Path::polyline(&pts, false);
-    if let Some(w) = widths {
-        path = path.with_widths(w).map_err(|_| DrawError::BadStroke)?;
-    }
     let mut fields = vec![
         (Field::FeatureStation, Value::Ref(Some(station))),
-        (Field::FeaturePath, Value::Path(Some(path))),
+        (Field::FeaturePath, Value::Path(Some(spline(&pts, widths)?))),
     ];
     if let Some(trip) = trip {
         fields.push((Field::FeatureTrip, Value::Ref(Some(trip))));
     }
     Ok(feature(ids, kind, VIEW_SECTION, fields))
+}
+
+/// A smooth curve through the fit points, with pen weights when there are some.
+fn spline(pts: &[[f64; 2]], widths: Option<Vec<f64>>) -> Result<Path, DrawError> {
+    let path = Path::Spline {
+        points: pts.iter().map(|p| Point::new(p[0], p[1])).collect(),
+        closed: false,
+        widths: None,
+    };
+    match widths {
+        Some(w) => path.with_widths(w).map_err(|_| DrawError::BadStroke),
+        None => Ok(path),
+    }
+}
+
+/// What kind of drawing a feature is, if it is linework drawn in a view: `(view, kind)`.
+fn drawn_in(doc: &Document, id: Id) -> Option<(String, String)> {
+    let e = doc.entity(id).filter(|e| e.kind() == Kind::Feature)?;
+    let view = e.text(Field::FeatureView);
+    [VIEW_PROFILE, VIEW_SECTION, VIEW_MAP]
+        .contains(&view.as_str())
+        .then(|| (view, e.text(Field::FeatureType)))
+}
+
+/// Actions that move the fit points of an existing stroke (its curve is redrawn through them).
+///
+/// `points` are in the same space the stroke was drawn in (band metres for a profile stroke, plan
+/// metres for a map stroke, section metres for a section stroke). For profile and map strokes
+/// `frames` re-anchor it to the survey, as when it was drawn; a section stroke ignores them.
+pub fn edit_stroke(
+    doc: &Document,
+    id: Id,
+    points: &[[f64; 2]],
+    widths: Option<Vec<f64>>,
+    frames: &[Frame],
+) -> Result<Vec<Action>, DrawError> {
+    let (view, _) = drawn_in(doc, id).ok_or(DrawError::NoStations)?;
+    let (pts, widths) = distinct(points, widths)?;
+    let (field, value) = if view == VIEW_SECTION {
+        (Field::FeaturePath, Value::Path(Some(spline(&pts, widths)?)))
+    } else {
+        let anchored = anchor_stroke(&pts, frames, widths)?;
+        (Field::FeatureAnchored, Value::Anchored(Some(anchored)))
+    };
+    Ok(vec![Action::Set { id, field, value }])
+}
+
+/// Actions that delete a stroke drawn in a view.
+pub fn remove_stroke(doc: &Document, id: Id) -> Result<Vec<Action>, DrawError> {
+    drawn_in(doc, id).ok_or(DrawError::NoStations)?;
+    Ok(vec![Action::Remove {
+        id,
+        kind: Kind::Feature,
+    }])
 }
 
 /// Actions that set where `station`'s section sketches sit in `view` (`map` or `profile`), as an
@@ -615,5 +664,88 @@ mod tests {
         );
         assert!(place_section(&doc, ids, a, "sheet", [0.0; 3]).is_err());
         assert!(place_section(&doc, ids, a, "map", [f64::NAN, 0.0, 0.0]).is_err());
+    }
+
+    #[test]
+    fn strokes_are_splines_and_their_fit_points_can_be_moved_deleted_and_undone() {
+        let (mut doc, frames, [a, _]) = cave();
+        let mut history = History::new();
+        let ids = &mut SeqIds::new(1);
+        // A section stroke: a spline whose points can be moved.
+        let (sec, actions) = section_sketch(
+            &doc,
+            ids,
+            "wall",
+            a,
+            &[[0.0, 0.0], [1.0, 1.0], [2.0, 0.0]],
+            Some(vec![1.0, 1.5, 1.0]),
+            None,
+        )
+        .unwrap();
+        history.record(&doc.edit(actions).unwrap());
+        let Value::Path(Some(Path::Spline { points, .. })) =
+            doc.entity(sec).unwrap().get(Field::FeaturePath)
+        else {
+            panic!("a section stroke is a spline")
+        };
+        assert_eq!(points.len(), 3);
+        let moved = [[0.0, 0.0], [1.0, 2.5], [2.0, 0.0]];
+        history.record(
+            &doc.edit(edit_stroke(&doc, sec, &moved, Some(vec![1.0, 1.5, 1.0]), &[]).unwrap())
+                .unwrap(),
+        );
+        let Value::Path(Some(p)) = doc.entity(sec).unwrap().get(Field::FeaturePath) else {
+            panic!()
+        };
+        assert_eq!(p.points()[1], Point::new(1.0, 2.5), "the vertex moved");
+        // A profile stroke is re-anchored to the survey when its points move.
+        let (prof, actions) = profile_sketch(
+            &doc,
+            ids,
+            "ledge",
+            "A",
+            &[[1.0, 1.0], [5.0, 1.0], [9.0, 2.0]],
+            None,
+            &frames,
+        )
+        .unwrap();
+        history.record(&doc.edit(actions).unwrap());
+        history.record(
+            &doc.edit(
+                edit_stroke(
+                    &doc,
+                    prof,
+                    &[[1.0, 1.0], [5.0, 3.0], [9.0, 2.0]],
+                    None,
+                    &frames,
+                )
+                .unwrap(),
+            )
+            .unwrap(),
+        );
+        let Value::Anchored(Some(an)) = doc.entity(prof).unwrap().get(Field::FeatureAnchored)
+        else {
+            panic!()
+        };
+        let placed = an
+            .place(&|st| {
+                frames
+                    .iter()
+                    .find_map(|f| (f.a == st).then_some(f.pa).or((f.b == st).then_some(f.pb)))
+            })
+            .unwrap();
+        assert!((placed[1][1] - 3.0).abs() < 1e-9, "{placed:?}");
+        // Delete, then undo brings it back.
+        history.record(&doc.edit(remove_stroke(&doc, prof).unwrap()).unwrap());
+        assert!(doc.entity(prof).is_none());
+        history.undo(&mut doc).unwrap();
+        assert!(
+            doc.entity(prof).is_some(),
+            "undo restores the deleted stroke"
+        );
+        assert!(validate(&doc).is_empty());
+        // Only drawn linework can be edited or deleted.
+        assert!(edit_stroke(&doc, a, &moved, None, &frames).is_err());
+        assert!(remove_stroke(&doc, a).is_err());
     }
 }

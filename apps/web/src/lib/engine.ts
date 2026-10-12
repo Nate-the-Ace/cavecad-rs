@@ -1,7 +1,10 @@
 // Loads the Rust engine (WASM) once and re-exports the few calls the UI uses.
-import init, { start, log, console_events, console_clear, engine_version, open_demo, scene, profile_runs, profile_band, add_profile_sketch, undo, redo, edit_state, passage_mesh, shading, palette, open_dxf, save_dxf, section_stations, section_at, add_section_sketch, map_sections, place_section, map_profile_sketches, add_map_line, map_lines, draw_tools } from '../wasm/cave_wasm.js';
+import init, { start, log, console_events, console_clear, engine_version, open_demo, scene, profile_runs, profile_band, add_profile_sketch, undo, redo, edit_state, passage_mesh, shading, palette, open_dxf, save_dxf, section_stations, section_at, add_section_sketch, map_sections, place_section, map_profile_sketches, add_map_line, map_lines, draw_tools, edit_line, delete_line } from '../wasm/cave_wasm.js';
 
 import { setInkPalette } from './ink';
+
+/** The panels that keep their own undo history. */
+export type Scope = 'profile' | 'section' | 'map';
 
 export type Level = 'debug' | 'detail' | 'info' | 'warn' | 'error';
 export interface ConsoleEvent {
@@ -180,6 +183,10 @@ export const engine = {
   placeSection: (station: string, view: 'map' | 'profile', offset: [number, number, number]): string => place_section(station, view, offset[0], offset[1], offset[2]),
   /** Adds a line of `kind` drawn in plan on the map (anchored to the survey, undoable). */
   addMapLine: (kind: string, points: [number, number][], widths: number[] | null, adjusted: boolean): string => add_map_line(kind, JSON.stringify(points), widths ? JSON.stringify(widths) : '', adjusted),
+  /** Moves the fit points of a line already drawn (in the space it was drawn in); re-anchors it to the survey. */
+  editLine: (id: string, points: [number, number][], widths: number[] | null, adjusted: boolean): string => edit_line(id, JSON.stringify(points), widths ? JSON.stringify(widths) : '', adjusted),
+  /** Deletes a line drawn in a view. */
+  deleteLine: (id: string): string => delete_line(id),
   /** The linework drawn in plan on the map, lifted to the passage's elevation. */
   mapLines: (adjusted: boolean): ProfileSketch3d[] => JSON.parse(map_lines(adjusted)),
   /** The drawing tools the Draw tab offers. */
@@ -196,9 +203,10 @@ export const engine = {
     m.free();
     return out;
   },
-  undo: (): boolean => undo(),
-  redo: (): boolean => redo(),
-  editState: (): { undo: boolean; redo: boolean } => JSON.parse(edit_state()),
+  /** Undo and redo belong to a panel: each only touches what was done in that panel. */
+  undo: (scope: Scope): boolean => undo(scope),
+  redo: (scope: Scope): boolean => redo(scope),
+  editState: (scope: Scope): { undo: boolean; redo: boolean } => JSON.parse(edit_state(scope)),
 };
 
 /** What build is this page running? Always fetched fresh. */

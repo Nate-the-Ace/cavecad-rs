@@ -7,6 +7,7 @@ use cave_doc::{ActorId, Document, History};
 use cave_log::{BufferLayer, LogBuffer};
 use serde::Serialize;
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::sync::OnceLock;
 use tracing_subscriber::layer::SubscriberExt;
 use wasm_bindgen::prelude::*;
@@ -17,7 +18,9 @@ thread_local! {
     /// The cave currently open. The browser is single-threaded, so this is the one document.
     static DOC: RefCell<Option<Document>> = const { RefCell::new(None) };
     /// Undo and redo for the person at this browser.
-    static HISTORY: RefCell<History> = RefCell::new(History::new());
+    /// One undo history per panel (`profile`, `section`, `map`), so a panel's Undo and Redo only
+    /// touch what was done in that panel.
+    static HISTORY: RefCell<HashMap<String, History>> = RefCell::new(HashMap::new());
 }
 
 fn console() -> &'static LogBuffer {
@@ -108,7 +111,7 @@ pub fn open_demo(json: &str) -> String {
             );
             tracing::info!(source = "import", "opened demo cave: {summary}");
             DOC.with(|d| *d.borrow_mut() = Some(doc));
-            HISTORY.with(|h| *h.borrow_mut() = History::new());
+            HISTORY.with(|h| h.borrow_mut().clear());
             summary
         }
         Err(e) => {
@@ -153,7 +156,7 @@ pub fn open_dxf(text: &str) -> String {
                     );
                     tracing::info!(source = "file", "opened a DXF: {message}");
                     DOC.with(|d| *d.borrow_mut() = Some(doc));
-                    HISTORY.with(|h| *h.borrow_mut() = History::new());
+                    HISTORY.with(|h| h.borrow_mut().clear());
                     OpenResult {
                         ok: true,
                         message,
@@ -283,7 +286,7 @@ pub fn add_map_line(kind: &str, points: &str, widths: &str, adjusted: bool) -> S
             cave_draw::map_line(doc, &mut random_ids(), kind, &points, widths, &frames)
                 .map_err(|e| format!("{e:?}"))?;
         let edit = doc.edit(actions).map_err(|e| format!("{e:?}"))?;
-        HISTORY.with(|h| h.borrow_mut().record(&edit));
+        record_edit("map", &edit);
         Ok::<(), String>(())
     });
     match result {
@@ -291,6 +294,71 @@ pub fn add_map_line(kind: &str, points: &str, widths: &str, adjusted: bool) -> S
             tracing::info!(source = "sketch", "added a {kind} line to the map");
             "ok".into()
         }
+        Err(e) => format!("error: {e}"),
+    }
+}
+
+/// Moves the fit points of a line already drawn (`points` in the space it was drawn in: band
+/// metres, plan metres or section metres). Profile and map lines are re-anchored to the survey.
+/// One undoable edit. Returns `ok` or `error: ...`.
+#[wasm_bindgen]
+pub fn edit_line(id: &str, points: &str, widths: &str, adjusted: bool) -> String {
+    let Ok(points) = serde_json::from_str::<Vec<[f64; 2]>>(points) else {
+        return "error: unreadable stroke".into();
+    };
+    let widths: Option<Vec<f64>> = if widths.is_empty() {
+        None
+    } else {
+        serde_json::from_str(widths).ok()
+    };
+    let Ok(line) = id.parse::<cave_id::Id>() else {
+        return "error: no such line".into();
+    };
+    let result = DOC.with(|d| {
+        let mut slot = d.borrow_mut();
+        let doc = slot.as_mut().ok_or("no cave is open")?;
+        let e = doc.entity(line).ok_or("no such line")?;
+        let scope = e.text(cave_doc::Field::FeatureView);
+        let frames = match scope.as_str() {
+            "profile" => {
+                cave_scene::profile_frames(doc, &e.text(cave_doc::Field::FeatureRun), adjusted)
+                    .unwrap_or_default()
+            }
+            "map" => cave_scene::map_frames(doc, adjusted),
+            _ => Vec::new(),
+        };
+        let actions = cave_draw::edit_stroke(doc, line, &points, widths, &frames)
+            .map_err(|e| format!("{e:?}"))?;
+        let edit = doc.edit(actions).map_err(|e| format!("{e:?}"))?;
+        record_edit(&scope, &edit);
+        Ok::<(), String>(())
+    });
+    match result {
+        Ok(()) => "ok".into(),
+        Err(e) => format!("error: {e}"),
+    }
+}
+
+/// Deletes a line drawn in a view. One undoable edit. Returns `ok` or `error: ...`.
+#[wasm_bindgen]
+pub fn delete_line(id: &str) -> String {
+    let Ok(line) = id.parse::<cave_id::Id>() else {
+        return "error: no such line".into();
+    };
+    let result = DOC.with(|d| {
+        let mut slot = d.borrow_mut();
+        let doc = slot.as_mut().ok_or("no cave is open")?;
+        let scope = doc
+            .entity(line)
+            .map(|e| e.text(cave_doc::Field::FeatureView))
+            .unwrap_or_default();
+        let actions = cave_draw::remove_stroke(doc, line).map_err(|e| format!("{e:?}"))?;
+        let edit = doc.edit(actions).map_err(|e| format!("{e:?}"))?;
+        record_edit(&scope, &edit);
+        Ok::<(), String>(())
+    });
+    match result {
+        Ok(()) => "ok".into(),
         Err(e) => format!("error: {e}"),
     }
 }
@@ -327,7 +395,7 @@ pub fn place_section(station: &str, view: &str, a: f64, b: f64, c: f64) -> Strin
             cave_draw::place_section(doc, &mut random_ids(), station_id, view, [a, b, c])
                 .map_err(|e| format!("{e:?}"))?;
         let edit = doc.edit(actions).map_err(|e| format!("{e:?}"))?;
-        HISTORY.with(|h| h.borrow_mut().record(&edit));
+        record_edit(view, &edit);
         Ok::<(), String>(())
     });
     match result {
@@ -373,7 +441,7 @@ pub fn add_section_sketch(
         )
         .map_err(|e| format!("{e:?}"))?;
         let edit = doc.edit(actions).map_err(|e| format!("{e:?}"))?;
-        HISTORY.with(|h| h.borrow_mut().record(&edit));
+        record_edit("section", &edit);
         Ok::<(), String>(())
     });
     match result {
@@ -490,7 +558,7 @@ pub fn add_profile_sketch(
             cave_draw::profile_sketch(doc, &mut random_ids(), kind, run, &points, widths, &frames)
                 .map_err(|e| format!("{e:?}"))?;
         let edit = doc.edit(actions).map_err(|e| format!("{e:?}"))?;
-        HISTORY.with(|h| h.borrow_mut().record(&edit));
+        record_edit("profile", &edit);
         Ok::<(), String>(())
     });
     match result {
@@ -502,52 +570,76 @@ pub fn add_profile_sketch(
     }
 }
 
-/// Undoes this person's last edit. Returns whether anything changed.
+/// Puts an edit on a panel's undo history (`profile`, `section` or `map`).
+fn record_edit(scope: &str, edit: &cave_doc::Edit) {
+    HISTORY.with(|h| {
+        h.borrow_mut()
+            .entry(scope.to_string())
+            .or_default()
+            .record(edit)
+    });
+}
+
+/// Undoes this person's last edit in a panel (`profile`, `section` or `map`). Returns whether
+/// anything changed.
 #[wasm_bindgen]
-pub fn undo() -> bool {
+pub fn undo(scope: &str) -> bool {
     DOC.with(|d| {
         let mut slot = d.borrow_mut();
         let Some(doc) = slot.as_mut() else {
             return false;
         };
         let done = HISTORY
-            .with(|h| h.borrow_mut().undo(doc))
+            .with(|h| {
+                h.borrow_mut()
+                    .entry(scope.to_string())
+                    .or_default()
+                    .undo(doc)
+            })
             .ok()
             .flatten()
             .is_some();
         if done {
-            tracing::info!(source = "edit", "undo");
+            tracing::info!(source = "edit", "undo in {scope}");
         }
         done
     })
 }
 
-/// Redoes the last undone edit. Returns whether anything changed.
+/// Redoes the last undone edit in a panel. Returns whether anything changed.
 #[wasm_bindgen]
-pub fn redo() -> bool {
+pub fn redo(scope: &str) -> bool {
     DOC.with(|d| {
         let mut slot = d.borrow_mut();
         let Some(doc) = slot.as_mut() else {
             return false;
         };
         let done = HISTORY
-            .with(|h| h.borrow_mut().redo(doc))
+            .with(|h| {
+                h.borrow_mut()
+                    .entry(scope.to_string())
+                    .or_default()
+                    .redo(doc)
+            })
             .ok()
             .flatten()
             .is_some();
         if done {
-            tracing::info!(source = "edit", "redo");
+            tracing::info!(source = "edit", "redo in {scope}");
         }
         done
     })
 }
 
-/// Whether undo and redo have anything to do, as JSON `{"undo":bool,"redo":bool}`.
+/// Whether a panel's undo and redo have anything to do, as JSON `{"undo":bool,"redo":bool}`.
 #[wasm_bindgen]
-pub fn edit_state() -> String {
+pub fn edit_state(scope: &str) -> String {
     HISTORY.with(|h| {
         let h = h.borrow();
-        format!("{{\"undo\":{},\"redo\":{}}}", h.can_undo(), h.can_redo())
+        let (undo, redo) = h
+            .get(scope)
+            .map_or((false, false), |h| (h.can_undo(), h.can_redo()));
+        format!("{{\"undo\":{undo},\"redo\":{redo}}}")
     })
 }
 

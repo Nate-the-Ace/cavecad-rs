@@ -4,7 +4,7 @@
   import { Undo2, Redo2, Maximize } from '@lucide/svelte';
   import { looks } from '../lib/ink';
   import { cave, changed, setShowSections } from '../lib/cave.svelte';
-  import { defaultBandOffset, drawStrokes, hits } from '../lib/section-glyph';
+  import { defaultBandOffset, drawStrokes, glyphCurves, hits, leaderEnd } from '../lib/section-glyph';
   import type { BandSection } from '../lib/engine';
   import { formatLength, inUnits, metresPer, niceNumber, unitName } from '../lib/units';
   import { engine, loadEngine, type ProfileScene, type RunInfo } from '../lib/engine';
@@ -49,7 +49,7 @@
     runs = engine.profileRuns(cave.adjusted);
     if (!runs.some((r) => r.key === cave.run)) cave.run = runs[0]?.key ?? '';
     band = cave.run ? engine.profileBand(cave.run, cave.adjusted) : null;
-    const state = engine.editState();
+    const state = engine.editState('profile');
     canUndo = state.undo;
     canRedo = state.redo;
     schedule();
@@ -161,18 +161,22 @@
       for (const sec of band.sections) {
         const st = toScreen(sec.s, sec.z);
         const at = anchorOf(sec);
+        const to = (u: number, v: number): [number, number] => [at[0] + u * scale, at[1] - v * scale];
+        const shell = leaderEnd(st, glyphCurves(sec.sketches, to));
+        // The leader ties the drawing to its station and stops at the drawing's outer shell.
         g.strokeStyle = c.muted;
         g.lineWidth = 1;
         g.setLineDash([4, 3]);
         g.beginPath();
         g.moveTo(st[0], st[1]);
-        g.lineTo(at[0], at[1]);
+        g.lineTo(shell.end[0], shell.end[1]);
         g.stroke();
         g.setLineDash([]);
-        drawStrokes(g, sec.sketches, (u, v) => [at[0] + u * scale, at[1] - v * scale], look);
+        drawStrokes(g, sec.sketches, to, look);
         g.fillStyle = c.muted;
+        g.textAlign = 'center';
+        g.fillText(sec.label, shell.below[0], shell.below[1]);
         g.textAlign = 'left';
-        g.fillText(sec.label, at[0] + 4, at[1] + 12);
       }
     }
     if (live && live.pts.length > 1) drawStrokes(g, [{ kind: cave.tool || 'sketch', points: live.pts, widths: live.pressure ? live.widths : null }], toScreen, look);
@@ -293,10 +297,10 @@
   }
 
   function doUndo() {
-    if (engine.undo()) changed();
+    if (engine.undo('profile')) changed();
   }
   function doRedo() {
-    if (engine.redo()) changed();
+    if (engine.redo('profile')) changed();
   }
   function onKey(e: KeyboardEvent) {
     if (!(e.metaKey || e.ctrlKey) || e.key.toLowerCase() !== 'z') return;
