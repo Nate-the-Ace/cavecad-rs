@@ -4,6 +4,9 @@
   --mono: ui-monospace, 'SF Mono', Menlo, monospace; --radius: 8px;
   font-family: system-ui, -apple-system, 'Segoe UI', sans-serif; font-size: 14px; color: var(--text);
 }
+/* The ribbon has one fixed height, whatever tab is showing, so the panels below never move. Every
+   group and every control inside it is sized from these: the bar, a group's body, a group's name. */
+:root { --ribbon-h: 98px; --ribbon-name: 20px; --ribbon-body: 59px; }
 * { box-sizing: border-box; }
 html, body, #app { height: 100%; margin: 0; background: var(--bg); }
 button { font: inherit; color: inherit; }

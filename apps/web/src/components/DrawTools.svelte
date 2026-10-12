@@ -25,8 +25,8 @@
 </div>
 
 <style>
-  .tools { display: flex; gap: 4px; }
-  .tool { display: flex; flex-direction: column; align-items: center; gap: 4px; min-width: 58px; padding: 6px 8px; background: none; border: 0; border-radius: var(--radius); cursor: pointer; font-size: 12px; color: var(--text); }
+  .tools { display: flex; align-items: center; gap: 4px; height: 100%; }
+  .tool { display: flex; flex-direction: column; align-items: center; gap: 4px; min-width: 58px; box-sizing: border-box; height: calc(var(--ribbon-body) - 1px); justify-content: center; overflow: hidden; padding: 4px 8px; background: none; border: 0; border-radius: var(--radius); cursor: pointer; font-size: 12px; color: var(--text); }
   .tool:hover { background: var(--panel-2); }
   .tool.pressed { background: var(--accent-bg); outline: 1px solid var(--accent); }
 </style>

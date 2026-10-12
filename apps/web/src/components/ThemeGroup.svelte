@@ -35,9 +35,9 @@
 </div>
 
 <style>
-  .theme { display: flex; align-items: center; gap: 14px; }
+  .theme { display: flex; align-items: center; gap: 14px; height: 100%; }
   .modes { display: flex; gap: 4px; }
-  .tool { display: flex; flex-direction: column; align-items: center; gap: 4px; min-width: 58px; padding: 6px 8px; background: none; border: 0; border-radius: var(--radius); cursor: pointer; font-size: 12px; color: var(--text); }
+  .tool { display: flex; flex-direction: column; align-items: center; gap: 4px; min-width: 58px; box-sizing: border-box; height: calc(var(--ribbon-body) - 1px); justify-content: center; overflow: hidden; padding: 4px 8px; background: none; border: 0; border-radius: var(--radius); cursor: pointer; font-size: 12px; color: var(--text); }
   .tool:hover { background: var(--panel-2); }
   .tool.pressed { background: var(--accent-bg); }
   .swatches { display: grid; grid-template-columns: repeat(6, 22px); gap: 6px; }

@@ -44,11 +44,11 @@
 </div>
 
 <style>
-  .sel { display: flex; align-items: flex-start; gap: 14px; }
+  .sel { display: flex; align-items: center; gap: 14px; height: 100%; }
   .types { display: flex; gap: 4px; }
   .curve { display: flex; flex-direction: column; align-items: center; gap: 2px; }
-  .tool { display: flex; flex-direction: column; align-items: center; gap: 4px; min-width: 58px; padding: 6px 8px; background: none; border: 0; border-radius: var(--radius); cursor: pointer; font-size: 12px; color: var(--text); }
+  .tool { display: flex; flex-direction: column; align-items: center; gap: 4px; min-width: 58px; box-sizing: border-box; height: calc(var(--ribbon-body) - 1px); justify-content: center; overflow: hidden; padding: 4px 8px; background: none; border: 0; border-radius: var(--radius); cursor: pointer; font-size: 12px; color: var(--text); }
   .tool:hover { background: var(--panel-2); }
   .tool.pressed { background: var(--accent-bg); outline: 1px solid var(--accent); }
-  .msg { font-size: 11px; color: var(--danger); max-width: 130px; }
+  .msg { font-size: 11px; color: var(--danger); max-width: 130px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 </style>

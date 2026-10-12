@@ -91,3 +91,7 @@ A panel that can be drawn on or otherwise edited (Map, Profile, Cross Section, a
 
 When a command is running the ribbon shows a tab for it with its common options. Define a command's options in `apps/web/src/lib/commands.ts` (`optionsFor`), read them with `option(id, default)` from `lib/cave.svelte.ts`, and never add per-panel buttons for them. Give the tab a Done path too (the Done button, and Escape).
 
+## The ribbon has one fixed height (standing rule from Nathan, 2026-10-12)
+
+The ribbon never changes height, whatever tab or contextual tab is showing, so the panels below it never move. `--ribbon-h` (the bar), `--ribbon-body` (a group's controls) and `--ribbon-name` (a group's name) in `apps/web/src/app.css` set it, and everything inside is sized from them: the bar clips, each group fills its height, a button is `calc(var(--ribbon-body) - 1px)` tall. New ribbon content (a group, a custom component, a contextual tab) must fit inside `--ribbon-body` (two short rows of controls at most) and use these variables; never rely on content to set the ribbon's height.
+

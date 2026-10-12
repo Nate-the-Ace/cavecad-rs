@@ -170,12 +170,12 @@
   .tabs button { background: none; border: 0; padding: 6px 14px; color: var(--muted); border-radius: var(--radius) var(--radius) 0 0; cursor: pointer; }
   .tabs button.ctx { color: var(--accent); margin-left: 10px; box-shadow: inset 0 2px 0 var(--accent); }
   .tabs button.on { color: var(--text); background: var(--accent-bg); font-weight: 500; }
-  .bar { display: flex; padding: 8px 10px; border-top: 1px solid var(--line); min-height: 76px; }
-  section { display: flex; flex-direction: column; align-items: center; padding: 0 12px; border-right: 1px solid var(--line); }
-  .btns { display: flex; gap: 4px; }
-  .tool { display: flex; flex-direction: column; align-items: center; gap: 4px; min-width: 58px; padding: 6px 8px; background: none; border: 0; border-radius: var(--radius); cursor: pointer; font-size: 12px; }
+  .bar { display: flex; box-sizing: border-box; height: var(--ribbon-h); overflow: hidden; padding: 6px 10px; border-top: 1px solid var(--line); }
+  section { display: flex; flex-direction: column; align-items: center; height: 100%; padding: 0 12px; border-right: 1px solid var(--line); }
+  .btns { display: flex; align-items: center; gap: 4px; height: var(--ribbon-body); overflow: hidden; }
+  .tool { display: flex; flex-direction: column; align-items: center; gap: 4px; min-width: 58px; box-sizing: border-box; height: calc(var(--ribbon-body) - 1px); justify-content: center; overflow: hidden; padding: 4px 8px; background: none; border: 0; border-radius: var(--radius); cursor: pointer; font-size: 12px; }
   .tool:hover { background: var(--panel-2); }
   .tool:active, .tool.pressed { background: var(--accent-bg); }
-  .gname { font-size: 11px; color: var(--muted); margin-top: 4px; }
+  .gname { height: var(--ribbon-name); line-height: var(--ribbon-name); font-size: 11px; color: var(--muted); white-space: nowrap; }
   .empty { color: var(--muted); margin: 0; align-self: center; }
 </style>
