@@ -80,6 +80,13 @@ export function hitsSymbol(p0: [number, number], p1: [number, number], x: number
   return Math.hypot(x - pl.cx, y - pl.cy) <= Math.max(pl.r, 6) + pad;
 }
 
+/** Draws a survey station the way a cave map shows one: a triangle, with a dot in it when the station is
+ *  fixed (an anchor of the survey). `r` is its size in pixels; the caller sets the ink and line width. */
+export function drawStationMarker(g: CanvasRenderingContext2D, x: number, y: number, fixed: boolean, r = 6): void {
+  g.setLineDash([]);
+  drawSymbol(g, fixed ? 'sym-fixed-point' : 'sym-uis-survey-point', [x, y], [x, y - r]);
+}
+
 /** True for a type that is placed by a click and a drag rather than drawn: a symbol, text or a callout. */
 export function isStampKind(kind: string | undefined): boolean {
   return isSymbolKind(kind) || kind === 'text' || kind === 'callout';

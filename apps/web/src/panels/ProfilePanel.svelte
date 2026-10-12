@@ -9,7 +9,7 @@
   import { LineEditor, endpointNear, joinFit } from '../lib/line-editor';
   import { Touches } from '../lib/touch';
   import { PenGuard, isEraser, widthFor } from '../lib/pen';
-  import { isStampKind, needsWords } from '../lib/symbols';
+  import { drawStationMarker, isStampKind, needsWords } from '../lib/symbols';
   import { isFillKind } from '../lib/fills';
   import { cursorsFor, live as room, reportCursor } from '../lib/sync.svelte';
   import { drawCursor } from '../lib/presence-draw';
@@ -25,6 +25,8 @@
   let height = $state(0);
   let runs = $state<RunInfo[]>([]);
   let band = $state<ProfileScene | null>(null);
+  /** Labels of the survey's fixed stations (drawn with a dot in their triangle). */
+  let fixed = new Set<string>();
   let message = $state('');
 
   // View: pixels per metre (uniform, so the profile is true to scale), and where s=0, z=0 sits.
@@ -95,6 +97,7 @@
     runs = engine.profileRuns(cave.adjusted);
     if (!runs.some((r) => r.key === cave.run)) cave.run = runs[0]?.key ?? '';
     band = cave.run ? engine.profileBand(cave.run, cave.adjusted) : null;
+    fixed = new Set(band ? engine.scene(cave.adjusted).stations.filter((x) => x.anchor).map((x) => x.label) : []);
     schedule();
   }
 
@@ -248,9 +251,9 @@
     g.textAlign = 'left';
     for (const st of band.stations) {
       const [x, y] = toScreen(st.s, st.z);
-      g.beginPath();
-      g.arc(x, y, 3, 0, Math.PI * 2);
-      g.fill();
+      g.strokeStyle = fixed.has(st.label) ? c.accent : c.text;
+      g.lineWidth = 1.3;
+      drawStationMarker(g, x, y, fixed.has(st.label), 5);
       g.fillStyle = c.muted;
       g.fillText(st.label, x + 5, y - 6);
       g.fillStyle = c.text;

@@ -7,7 +7,7 @@ import { LineSegmentsGeometry } from 'three/addons/lines/LineSegmentsGeometry.js
 import { LineMaterial } from 'three/addons/lines/LineMaterial.js';
 import type { MapSection, PassageBuffers, ProfileSketch3d, Scene, TypeStyle } from '../engine';
 import { PenGuard, isEraser, widthFor } from '../pen';
-import { drawStamp, hitsStamp, isStampKind, placement } from '../symbols';
+import { drawStamp, drawStationMarker, hitsStamp, isStampKind, placement } from '../symbols';
 import { drawMarks, isFillKind, marksFor } from '../fills';
 import { isKindHidden, ornamentFor, refreshFlipped } from '../section-glyph';
 import { drawCursor } from '../presence-draw';
@@ -983,17 +983,6 @@ export class CaveView {
     lines(legs('tie'), 'tie');
     lines(legs('closure'), 'closure');
 
-    const pos = new Float32Array(s.stations.length * 3);
-    const col = new Float32Array(s.stations.length * 3);
-    s.stations.forEach((st, i) => {
-      pos.set(st.at, i * 3);
-      const c = st.anchor ? t.accent : this.elevationColors ? shade(st.at[2]) : inkColor(t, this.palette.get('station')?.ink ?? 'text');
-      col.set(c.toArray(), i * 3);
-    });
-    const pgeo = new THREE.BufferGeometry();
-    pgeo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-    pgeo.setAttribute('color', new THREE.BufferAttribute(col, 3));
-    this.content.add(new THREE.Points(pgeo, new THREE.PointsMaterial({ size: 6, sizeAttenuation: false, vertexColors: true, map: dotTexture(), alphaTest: 0.5, transparent: true })));
     this.updateDashes();
     this.requestRender();
   }
@@ -1041,6 +1030,16 @@ export class CaveView {
     g.font = '11px system-ui, sans-serif';
     g.textAlign = 'left';
 
+    const zmin = s.bounds?.[2] ?? 0;
+    const zspan = Math.max(1e-6, (s.bounds?.[5] ?? 0) - zmin);
+    // stations: the survey point triangle (a dot in it when fixed), over the survey line
+    g.lineWidth = 1.3;
+    for (const st of s.stations) {
+      const p = this.project(st.at);
+      if (!p || p[0] < -20 || p[1] < -20 || p[0] > this.width + 20 || p[1] > this.height + 20) continue;
+      g.strokeStyle = st.anchor ? `#${this.theme.accent.getHexString()}` : this.elevationColors ? `#${elevationColor((st.at[2] - zmin) / zspan).getHexString()}` : css.text;
+      drawStationMarker(g, p[0], p[1], st.anchor, 5);
+    }
     if (pxPerM > 3 && this.showLabels) {
       g.fillStyle = css.muted;
       for (const st of s.stations) {
@@ -1143,18 +1142,4 @@ export class CaveView {
     this.controls.dispose();
     this.renderer.dispose();
   }
-}
-
-let dot: THREE.CanvasTexture | null = null;
-function dotTexture(): THREE.CanvasTexture {
-  if (dot) return dot;
-  const c = document.createElement('canvas');
-  c.width = c.height = 32;
-  const g = c.getContext('2d')!;
-  g.fillStyle = '#fff';
-  g.beginPath();
-  g.arc(16, 16, 15, 0, Math.PI * 2);
-  g.fill();
-  dot = new THREE.CanvasTexture(c);
-  return dot;
 }

@@ -39,7 +39,29 @@ function savedSections(): { map: boolean; profile: boolean; profileSketches: boo
   return { map: true, profile: true, profileSketches: true };
 }
 
+const COMPACT_KEY = 'cavecad.ribbon.compact';
+
+function savedCompact(): boolean {
+  try {
+    return localStorage.getItem(COMPACT_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+/** Sets whether the ribbon folds every group into a dropdown (remembered on this machine). */
+export function setCompactRibbon(on: boolean) {
+  cave.compactRibbon = on;
+  try {
+    localStorage.setItem(COMPACT_KEY, on ? '1' : '0');
+  } catch {
+    // not remembered
+  }
+}
+
 export const cave = $state({
+  /** The ribbon folds every group into a dropdown, whatever the width. */
+  compactRibbon: savedCompact(),
   /** Settings of running commands (curve detail, pen pressure, ...), remembered on this machine. */
   options: savedOptions() as Record<string, number | boolean | string>,
   /** The drawing tool picked on the Draw tab (a palette type such as `wall`), or empty. While one is

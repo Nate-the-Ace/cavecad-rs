@@ -12,7 +12,7 @@
   import { LineEditor, endpointNear, joinFit } from '../lib/line-editor';
   import { Touches } from '../lib/touch';
   import { PenGuard, isEraser, widthFor } from '../lib/pen';
-  import { isStampKind, needsWords } from '../lib/symbols';
+  import { drawStationMarker, isStampKind, needsWords } from '../lib/symbols';
   import { isFillKind } from '../lib/fills';
   import { cursorsFor, live as room, reportCursor } from '../lib/sync.svelte';
   import { drawCursor } from '../lib/presence-draw';
@@ -82,11 +82,15 @@
   const toWorld = (x: number, y: number): [number, number] => [(x - ox) / scale, (oy - y) / scale];
   const toScreen = (u: number, v: number): [number, number] => [ox + u * scale, oy - v * scale];
 
+  /** The station shown is a fixed one of the survey (its triangle gets a dot). */
+  let fixedHere = false;
+
   function refresh() {
     if (!ready) return;
     stations = engine.sectionStations(cave.adjusted, true, wireFilter());
     if (!stations.some((s) => s.id === cave.station)) cave.station = (stations.find((s) => s.outlined) ?? stations[0])?.id ?? '';
     section = cave.station ? engine.sectionAt(cave.adjusted, cave.station, true, wireFilter()) : null;
+    fixedHere = !!cave.station && engine.scene(cave.adjusted).stations.some((x) => x.id === cave.station && x.anchor);
     frameOnce();
     schedule();
   }
@@ -153,16 +157,11 @@
     const s = section;
     if (!s) return;
 
-    // axis cross at the station
+    // the station: its survey point triangle, where the section is cut
     const [cx, cy] = toScreen(0, 0);
-    g.strokeStyle = c.line;
-    g.lineWidth = 1;
-    g.beginPath();
-    g.moveTo(cx - 14, cy);
-    g.lineTo(cx + 14, cy);
-    g.moveTo(cx, cy - 14);
-    g.lineTo(cx, cy + 14);
-    g.stroke();
+    g.strokeStyle = c.text;
+    g.lineWidth = 1.6;
+    drawStationMarker(g, cx, cy, fixedHere, 9);
 
     // the measured outline: a guide to trace against, never the passage itself
     if (s.outline.length >= 3) {

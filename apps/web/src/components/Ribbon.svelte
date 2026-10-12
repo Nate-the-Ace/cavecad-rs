@@ -1,7 +1,7 @@
 <script lang="ts">
   import { engine, loadEngine } from '../lib/engine';
   import { openDxf, saveDxf } from '../lib/files';
-  import { cave, setUnits } from '../lib/cave.svelte';
+  import { cave, setCompactRibbon, setUnits } from '../lib/cave.svelte';
   import DrawTools from './DrawTools.svelte';
   import ThemeGroup from './ThemeGroup.svelte';
   import ContextOptions from './ContextOptions.svelte';
@@ -14,7 +14,7 @@
   import { fillLabel } from '../lib/fills';
   import { onMount } from 'svelte';
   import { PANELS, panelState, resetLayout, showPanel, togglePanel } from '../lib/workspace.svelte';
-  import { Check, Trash2, FileInput, FolderOpen, Save, Ruler, Footprints, Route, Waypoints, Scissors, Map as MapIcon, Terminal, LayoutDashboard, Activity, Shapes, Table2, FileText } from '@lucide/svelte';
+  import { Check, Trash2, FileInput, FolderOpen, Save, Ruler, Footprints, Route, Waypoints, Scissors, Map as MapIcon, Terminal, LayoutDashboard, Activity, Shapes, Table2, FileText, ChevronDown, PanelTop } from '@lucide/svelte';
   import type { Component } from 'svelte';
 
   interface Item {
@@ -76,6 +76,7 @@
       { name: 'Theme', items: [], custom: ThemeGroup },
       { name: 'Live editing', items: [], custom: CollaborateGroup },
       { name: 'Layout', items: [{ label: 'Reset', icon: LayoutDashboard, run: resetLayout }] },
+      { name: 'Ribbon settings', items: [{ label: 'Compact layout', icon: PanelTop, run: () => setCompactRibbon(!cave.compactRibbon), pressed: () => cave.compactRibbon }] },
     ],
   };
   let active = $state('Home');
@@ -137,7 +138,46 @@
   });
   const shownGroups = $derived(active === CONTEXT ? (mode === 'selection' ? selectionGroups : commandGroups) : (tabs[active] ?? []));
 
+  // Groups that do not fit the width fold into one button each (the rightmost first); the button opens
+  // a popup under it with the group's buttons, two to a row.
+  const FOLDED = 96; // width of a folded group
+  let barW = $state(0);
+  let widths = $state<number[]>([]);
+  let openAt = $state<{ i: number; x: number; y: number } | null>(null);
+  const collapsed = $derived.by(() => {
+    const out = new Set<number>();
+    const room = barW - 20;
+    let total = shownGroups.reduce((n, _, i) => n + (widths[i] ?? 0), 0);
+    for (let i = shownGroups.length - 1; i >= 0 && (cave.compactRibbon || total > room); i--) {
+      const w = widths[i] ?? 0;
+      if (w <= FOLDED) continue;
+      total += FOLDED - w;
+      out.add(i);
+    }
+    return out;
+  });
+  $effect(() => {
+    void active;
+    void collapsed;
+    if (openAt && !collapsed.has(openAt.i)) openAt = null;
+  });
+  function toggleMore(i: number, button: HTMLElement) {
+    if (openAt?.i === i) {
+      openAt = null;
+      return;
+    }
+    const r = button.closest('section')!.getBoundingClientRect();
+    openAt = { i, x: Math.max(4, Math.min(r.left, window.innerWidth - 340)), y: r.bottom + 2 };
+  }
+  function outside(e: PointerEvent) {
+    if (openAt && !(e.target as Element).closest('.more, section.collapsed')) openAt = null;
+  }
+
   function keys(e: KeyboardEvent) {
+    if (e.key === 'Escape' && openAt) {
+      openAt = null;
+      return;
+    }
     if (e.key === 'Escape' && (cave.tool || cave.selected)) {
       if (cave.tool) cave.tool = '';
       else cave.selected = '';
@@ -150,7 +190,22 @@
   }
 </script>
 
-<svelte:window onkeydown={keys} />
+{#snippet full(g: Group)}
+  <section>
+    <div class="btns">
+      {#if g.custom}<g.custom {...(g.props ?? {})} />{/if}
+      {#each g.items as item}
+        <button class="tool" class:pressed={item.pressed?.()} onclick={item.run}>
+          <item.icon size={22} strokeWidth={1.6} />
+          <span>{item.label}</span>
+        </button>
+      {/each}
+    </div>
+    <div class="gname">{g.name}</div>
+  </section>
+{/snippet}
+
+<svelte:window onkeydown={keys} onpointerdown={outside} onresize={() => (openAt = null)} />
 
 <header>
   <nav class="tabs">
@@ -162,24 +217,53 @@
     {/if}
     <Avatars />
   </nav>
-  <div class="bar">
-    {#each shownGroups as g}
-      <section>
-        <div class="btns">
-          {#if g.custom}<g.custom {...(g.props ?? {})} />{/if}
-          {#each g.items as item}
-            <button class="tool" class:pressed={item.pressed?.()} onclick={item.run}>
-              <item.icon size={22} strokeWidth={1.6} />
-              <span>{item.label}</span>
+  <div class="bar" bind:clientWidth={barW}>
+    {#each shownGroups as g, i (g.name)}
+      {#if collapsed.has(i)}
+        <section class="collapsed">
+          <div class="btns">
+            <button class="tool" class:pressed={openAt?.i === i} aria-haspopup="true" aria-expanded={openAt?.i === i} title={`${g.name}: show the buttons`} onclick={(e) => toggleMore(i, e.currentTarget)}>
+              <ChevronDown size={22} strokeWidth={1.6} />
+              <span>{g.name}</span>
             </button>
-          {/each}
-        </div>
-        <div class="gname">{g.name}</div>
-      </section>
+          </div>
+          <div class="gname">{g.name}</div>
+        </section>
+      {:else}
+        {@render full(g)}
+      {/if}
     {:else}
       <p class="empty">Nothing here yet.</p>
     {/each}
+    <!-- every group at full size, unseen, so we know how wide each wants to be -->
+    <div class="measure" aria-hidden="true" inert>
+      {#each shownGroups as g, i (g.name)}
+        <section bind:offsetWidth={widths[i]}>
+          <div class="btns">
+            {#if g.custom}<g.custom {...(g.props ?? {})} />{/if}
+            {#each g.items as item}
+              <button class="tool" tabindex="-1"><item.icon size={22} strokeWidth={1.6} /><span>{item.label}</span></button>
+            {/each}
+          </div>
+          <div class="gname">{g.name}</div>
+        </section>
+      {/each}
+    </div>
   </div>
+  {#if openAt && shownGroups[openAt.i]}
+    {@const g = shownGroups[openAt.i]}
+    <div class="more" role="menu" style:left="{openAt.x}px" style:top="{openAt.y}px">
+      <div class="grid">
+        {#if g.custom}<g.custom {...(g.props ?? {})} />{/if}
+        {#each g.items as item}
+          <button class="tool" class:pressed={item.pressed?.()} role="menuitem" onclick={() => { item.run(); openAt = null; }}>
+            <item.icon size={16} strokeWidth={1.6} />
+            <span>{item.label}</span>
+          </button>
+        {/each}
+      </div>
+    </div>
+  {/if}
 </header>
 
 <style>
@@ -188,12 +272,19 @@
   .tabs button { background: none; border: 0; padding: 6px 14px; color: var(--muted); border-radius: var(--radius) var(--radius) 0 0; cursor: pointer; }
   .tabs button.ctx { color: var(--accent); margin-left: 10px; box-shadow: inset 0 2px 0 var(--accent); }
   .tabs button.on { color: var(--text); background: var(--accent-bg); font-weight: 500; }
-  .bar { display: flex; box-sizing: border-box; height: var(--ribbon-h); overflow: hidden; padding: 6px 10px; border-top: 1px solid var(--line); }
+  .bar { position: relative; display: flex; box-sizing: border-box; height: var(--ribbon-h); overflow: hidden; padding: 6px 10px; border-top: 1px solid var(--line); }
   section { display: flex; flex-direction: column; align-items: center; height: 100%; padding: 0 12px; border-right: 1px solid var(--line); }
   .btns { display: flex; align-items: center; gap: 4px; height: var(--ribbon-body); overflow: hidden; }
   .tool { display: flex; flex-direction: column; align-items: center; gap: 4px; min-width: 58px; box-sizing: border-box; height: calc(var(--ribbon-body) - 1px); justify-content: center; overflow: hidden; padding: 4px 8px; background: none; border: 0; border-radius: var(--radius); cursor: pointer; font-size: 12px; }
   .tool:hover { background: var(--panel-2); }
   .tool:active, .tool.pressed { background: var(--accent-bg); }
   .gname { height: var(--ribbon-name); line-height: var(--ribbon-name); font-size: 11px; color: var(--muted); white-space: nowrap; }
+  section.collapsed { width: 96px; box-sizing: border-box; padding: 0 8px; }
+  .measure { position: absolute; left: 0; top: 0; display: flex; visibility: hidden; pointer-events: none; white-space: nowrap; height: 100%; padding: 6px 10px; box-sizing: border-box; }
+  .more { position: fixed; z-index: 50; width: 330px; box-sizing: border-box; padding: 6px; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: 0 6px 20px rgb(0 0 0 / 0.3); max-height: 70vh; overflow: auto; }
+  .more .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 2px; }
+  .more .grid > .tool, .more :global(.tools) > :global(.tool) { flex-direction: row; justify-content: flex-start; gap: 8px; min-width: 0; height: 30px; padding: 4px 10px; font-size: 13px; text-align: left; }
+  .more :global(.tools) { display: grid; grid-template-columns: 1fr 1fr; gap: 2px; height: auto; grid-column: 1 / -1; }
+  .more .grid > :global(div) { grid-column: 1 / -1; }
   .empty { color: var(--muted); margin: 0; align-self: center; }
 </style>

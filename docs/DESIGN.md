@@ -413,3 +413,13 @@ Not done: the old trip-planner packet (printable card), and the stations.json si
 - Sheet settings are kept in this browser (like view settings), not in the cave.
 - Not done: several sheets / tiling a big cave, elevation sheets, legend, detail boxes, magnetic north arm
   (declination is not stored yet), sheet templates, putting the sheet in the DXF, dragging pieces around.
+
+## 2026-10-12: Ribbon folds to fit, stations are survey-point triangles
+- A ribbon group that does not fit the width folds into one dropdown button (rightmost first, so at least
+  one button of every group always stays); its popup opens under it with the group's buttons two to a row
+  (groups made of forms, such as the Sheets fields, appear as they are). Widths are measured from an unseen
+  full-size copy of the groups, so folding follows what each group really needs. View > Ribbon settings >
+  Compact layout folds every group whatever the width (kept on this machine).
+- Survey stations are drawn as the UIS survey point (a triangle, with a dot when the station is a fixed
+  anchor of the survey) in the Map, the Profile, and as the station's own mark in the Cross Section,
+  replacing the round dots and the axis cross. Size is in pixels, the same at every zoom.
