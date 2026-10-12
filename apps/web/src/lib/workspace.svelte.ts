@@ -10,6 +10,7 @@ import MapPanel from '../panels/MapPanel.svelte';
 import ConsolePanel from '../components/Console.svelte';
 import ProfilePanel from '../panels/ProfilePanel.svelte';
 import SectionPanel from '../panels/SectionPanel.svelte';
+import SymbolsPanel from '../panels/SymbolsPanel.svelte';
 
 const LAYOUT_KEY = 'cavecad.layout.v1';
 
@@ -27,7 +28,8 @@ export const PANELS: Record<string, PanelDef> = {
   map: { title: 'Map', component: MapPanel },
   profile: { title: 'Profile', component: ProfilePanel, width: 460 },
   section: { title: 'Cross Section', component: SectionPanel, width: 460 },
-  console: { title: 'Console', component: ConsolePanel, height: 220 },
+  symbols: { title: 'Symbols', component: SymbolsPanel, width: 300 },
+  console: { title: 'Console', component: ConsolePanel, height: 260 },
 };
 
 /** Which panels are open right now (drives the View tab's toggles). */
@@ -113,6 +115,8 @@ function defaultLayout(a: DockviewApi) {
   a.addPanel({ id: 'section', component: 'section', title: PANELS.section.title, position: { referencePanel: 'profile', direction: 'within' } });
   a.panels.find((p) => p.id === 'profile')?.api.setActive();
   a.addPanel({ id: 'console', component: 'console', title: PANELS.console.title, position: { referencePanel: 'map', direction: 'below' }, initialHeight: PANELS.console.height });
+  // The palette is a wide strip: tiles flow across the bottom, beside the console.
+  a.addPanel({ id: 'symbols', component: 'symbols', title: PANELS.symbols.title, position: { referencePanel: 'console', direction: 'within' } });
 }
 
 function restore(a: DockviewApi): boolean {

@@ -272,6 +272,22 @@ impl Geometry<'_> {
         self.lwpolyline_on(layer, color, pts, widths);
     }
 
+    /// A placed symbol as polylines on its catalogue layer (with `suffix`, as other profile
+    /// linework has).
+    fn symbol(&mut self, sym: &cave_symbols::Symbol, at: [f64; 2], aim: [f64; 2], suffix: &str) {
+        let layer = format!("{}-{suffix}", sym.layer);
+        let color = dxf_color(cave_style::Ink::Text);
+        self.layers
+            .insert(layer_name(&layer), (color, cave_style::Linetype::Solid));
+        for (mut pts, closed) in sym.placed(at, aim) {
+            if closed {
+                // the polylines written here are open, so a closed shape repeats its first point
+                pts.push(pts[0]);
+            }
+            self.lwpolyline_on(layer.clone(), color, &pts, None);
+        }
+    }
+
     fn lwpolyline_on(
         &mut self,
         layer: String,
@@ -383,6 +399,11 @@ fn draw_profiles(g: &mut Geometry, doc: &Document, adjusted: bool, plan_min: [f6
         }
         for sk in &p.sketches {
             let pts: Vec<[f64; 2]> = sk.points.iter().map(|q| at(q[0], q[1])).collect();
+            if let (Some(sym), [a, b, ..]) = (cave_symbols::symbol(&sk.kind), pts.as_slice()) {
+                // A placed symbol: its drawing on the symbol's own layer, not a line between two points.
+                g.symbol(sym, *a, *b, "PROFILE");
+                continue;
+            }
             g.lwpolyline_suffixed(&sk.kind, "PROFILE", &pts, sk.widths.as_deref());
         }
         base_y -= (b[3] - b[1]) + 60.0;

@@ -7,6 +7,7 @@ import { LineSegmentsGeometry } from 'three/addons/lines/LineSegmentsGeometry.js
 import { LineMaterial } from 'three/addons/lines/LineMaterial.js';
 import type { MapSection, PassageBuffers, ProfileSketch3d, Scene, TypeStyle } from '../engine';
 import { PenGuard, isEraser, widthFor } from '../pen';
+import { drawSymbol, hitsSymbol, isSymbolKind, placement } from '../symbols';
 import { defaultMapOffset, drawHandles, drawStrokes, glyphCurves, hits, leaderEnd } from '../section-glyph';
 import { distanceToCurve, fitStroke, nearestPoint, smooth } from '../spline';
 import { PICKUP_REACH, joinFit } from '../line-editor';
@@ -76,10 +77,10 @@ export class CaveView {
   /** Where the next stroke would carry an open line on from, on screen, while a tool waits. */
   private pickupAt: [number, number] | null = null;
   /** How a drawn stroke is turned into a curve: the fit tolerance in pixels, and whether pen pressure counts. */
-  private drawOptions = { tolerancePx: 2.5, pressure: true, close: false, finger: true };
+  private drawOptions = { tolerancePx: 2.5, pressure: true, close: false, finger: true, symbolSize: 1.5 };
   /** Fingers on the map now: a second one means a gesture, so a stroke the first began is dropped. */
   private fingers = new Set<number>();
-  setDrawOptions(o: { tolerancePx: number; pressure: boolean; close: boolean; finger: boolean }) {
+  setDrawOptions(o: { tolerancePx: number; pressure: boolean; close: boolean; finger: boolean; symbolSize: number }) {
     this.drawOptions = o;
   }
   /** Called with a plan stroke (east, north metres) when the person lifts the pen. */
@@ -223,6 +224,12 @@ export class CaveView {
           e.stopPropagation();
           this.controls.enabled = false;
           canvas.setPointerCapture(e.pointerId);
+          if (isSymbolKind(this.drawTool)) {
+            // A symbol: press where it goes, drag to say which way is up and how big.
+            this.liveLine = { pts: [p, [p[0], p[1]]], widths: [1, 1], pressure: false, z: this.controls.target.z };
+            this.requestRender();
+            return;
+          }
           this.liveLine = { pts: [p], widths: [e.pointerType === 'pen' && this.drawOptions.pressure ? widthFor(e.pressure) : 1], pressure: e.pointerType === 'pen' && this.drawOptions.pressure, z: this.controls.target.z };
           this.requestRender();
           return;
@@ -257,6 +264,12 @@ export class CaveView {
         return;
       }
       const line = this.liveLine;
+      if (line && isSymbolKind(this.drawTool)) {
+        const p = this.planPoint(e.clientX, e.clientY);
+        if (p) line.pts[1] = p;
+        this.requestRender();
+        return;
+      }
       if (line) {
         for (const ev of e.getCoalescedEvents?.().length ? e.getCoalescedEvents() : [e]) {
           const p = this.planPoint(ev.clientX, ev.clientY);
@@ -301,6 +314,16 @@ export class CaveView {
       if (line) {
         this.liveLine = null;
         this.controls.enabled = true;
+        if (isSymbolKind(this.drawTool) && line.pts.length === 2) {
+          const a = this.project([line.pts[0][0], line.pts[0][1], line.z]);
+          const b = this.project([line.pts[1][0], line.pts[1][1], line.z]);
+          // Just a click: a symbol of the chosen size, pointing north.
+          const tap = !a || !b || Math.hypot(a[0] - b[0], a[1] - b[1]) < 6;
+          const p1: [number, number] = tap ? [line.pts[0][0], line.pts[0][1] + this.drawOptions.symbolSize] : line.pts[1];
+          this.onLineDrawn([line.pts[0], p1], null, false);
+          this.requestRender();
+          return;
+        }
         if (line.pts.length >= 2) {
           // A freehand stroke becomes a smooth curve through a few fit points.
           const px = this.pixelsPerMetreAt([line.pts[0][0], line.pts[0][1], line.z]) ?? 1;
@@ -547,7 +570,7 @@ export class CaveView {
     let best: { line: ProfileSketch3d; atStart: boolean; at: [number, number] } | null = null;
     let bestD = PICKUP_REACH;
     for (const k of this.mapLines) {
-      if (k.closed || k.kind !== this.drawTool || k.points.length < 2) continue;
+      if (k.closed || k.kind !== this.drawTool || k.points.length < 2 || isSymbolKind(k.kind)) continue;
       for (const atStart of [false, true]) {
         const at = this.project(atStart ? k.points[0] : k.points[k.points.length - 1]);
         if (!at) continue;
@@ -585,7 +608,7 @@ export class CaveView {
     const y = e.clientY - rect.top;
     for (const k of [...this.mapLines].reverse()) {
       const pts = k.points.map((p) => this.project(p)).filter((p): p is [number, number] => !!p);
-      if (pts.length === k.points.length && distanceToCurve(pts, x, y, k.closed) <= 7) {
+      if (pts.length === k.points.length && (isSymbolKind(k.kind) ? hitsSymbol(pts[0], pts[1], x, y) : distanceToCurve(pts, x, y, k.closed) <= 7)) {
         this.mapLines = this.mapLines.filter((m) => m.id !== k.id);
         this.onLineErased(k.id);
         this.requestRender();
@@ -614,7 +637,7 @@ export class CaveView {
     }
     for (const k of [...this.mapLines].reverse()) {
       const pts = screen(k);
-      if (pts.length === k.points.length && distanceToCurve(pts, x, y, k.closed) <= 7) {
+      if (pts.length === k.points.length && (isSymbolKind(k.kind) ? hitsSymbol(pts[0], pts[1], x, y) : distanceToCurve(pts, x, y, k.closed) <= 7)) {
         this.onSelectLine(k.id);
         return;
       }
@@ -714,6 +737,24 @@ export class CaveView {
       g.globalAlpha = base * l.alpha;
       g.setLineDash(l.dash);
       const projected = k.points.map((p) => this.project(p));
+      if (isSymbolKind(k.kind)) {
+        // A placed symbol: first point where it sits, second says which way is up and how big.
+        const [a, b] = projected;
+        if (a && b) {
+          g.setLineDash([]);
+          g.lineWidth = Math.max(1, l.weight * 0.7);
+          if (k.id && k.id === this.selectedLine) {
+            const pl = placement(a, b);
+            g.globalAlpha = base * 0.25;
+            g.beginPath();
+            g.arc(pl.cx, pl.cy, pl.r + 5, 0, Math.PI * 2);
+            g.stroke();
+            g.globalAlpha = base * l.alpha;
+          }
+          drawSymbol(g, k.kind, a, b);
+        }
+        continue;
+      }
       // A curve through the fit points (straight where part of it is behind the camera).
       const whole = projected.every((p) => !!p);
       const curve = whole ? smooth(projected as [number, number][], k.widths, 10, k.closed) : { pts: projected, widths: k.widths };

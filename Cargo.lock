@@ -37,6 +37,7 @@ dependencies = [
  "cave-id",
  "cave-scene",
  "cave-style",
+ "cave-symbols",
 ]
 
 [[package]]
@@ -143,6 +144,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "cave-symbols"
+version = "0.0.1"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "cave-walls"
 version = "0.0.1"
 dependencies = [
@@ -167,6 +176,7 @@ dependencies = [
  "cave-scene",
  "cave-shape",
  "cave-style",
+ "cave-symbols",
  "js-sys",
  "serde",
  "serde_json",

@@ -2,8 +2,10 @@
 // later) gets a contextual tab in the ribbon listing its options, defined here as data so the
 // ribbon can show any command's settings the same way and every consumer reads the same values.
 
+import { formatLength, type Units } from './units.ts';
+
 export type OptionDef =
-  | { id: string; label: string; hint: string; kind: 'range'; min: number; max: number; step: number; default: number; show: (v: number) => string }
+  | { id: string; label: string; hint: string; kind: 'range'; min: number; max: number; step: number; default: number; show: (v: number, units: Units) => string }
   | { id: string; label: string; hint: string; kind: 'toggle'; default: boolean };
 
 /** How closely a drawn curve follows the hand: the tolerance, in screen pixels, a freehand stroke is reduced within. */
@@ -48,7 +50,24 @@ export const DRAW_OPTIONS: OptionDef[] = [
   },
 ];
 
+/** The options of a placing-a-symbol command: how big a click makes it (a drag sets size and direction). */
+export const SYMBOL_OPTIONS: OptionDef[] = [
+  {
+    id: 'symbolSize',
+    label: 'Symbol size',
+    hint: 'How big a symbol is when you just click. Drag instead to set its size and which way it points: the line you drag is its radius and its up.',
+    kind: 'range',
+    min: 0.25,
+    max: 6,
+    step: 0.25,
+    default: 1.5,
+    show: (v, units) => formatLength(v, units, 2),
+  },
+  DRAW_OPTIONS.find((o) => o.id === 'finger')!,
+];
+
 /** The options of a running command (`wall`, `ledge`, ...), or none. */
 export function optionsFor(command: string): OptionDef[] {
-  return command ? DRAW_OPTIONS : [];
+  if (!command) return [];
+  return command.startsWith('sym-') ? SYMBOL_OPTIONS : DRAW_OPTIONS;
 }

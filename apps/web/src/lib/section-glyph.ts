@@ -5,6 +5,7 @@
 
 import type { Look } from './ink';
 import { smooth } from './spline.ts';
+import { drawSymbol, isSymbolKind, placement } from './symbols.ts';
 
 /** Where shaped-line ornament comes from (the engine sets this once it has loaded). */
 export interface OrnamentSource {
@@ -64,6 +65,27 @@ export function drawStrokes(
   const flipped = new Set(source?.flippedLines() ?? []); // shaped lines with ornament on the left of travel
   for (const k of sketches) {
     const l = look(k.kind);
+    if (isSymbolKind(k.kind) && k.points.length >= 2) {
+      // A placed symbol: its first point is where it sits, its second says which way is up and how big.
+      const p0 = to(k.points[0][0], k.points[0][1]);
+      const p1 = to(k.points[1][0], k.points[1][1]);
+      g.strokeStyle = l.color;
+      g.globalAlpha = l.alpha;
+      g.setLineDash([]);
+      g.lineWidth = Math.max(1, l.weight * scale * 0.7);
+      if (selected && k.id === selected) {
+        const pl = placement(p0, p1);
+        g.globalAlpha = 0.25;
+        g.lineWidth = 2;
+        g.beginPath();
+        g.arc(pl.cx, pl.cy, pl.r + 5, 0, Math.PI * 2);
+        g.stroke();
+        g.globalAlpha = l.alpha;
+        g.lineWidth = Math.max(1, l.weight * scale * 0.7);
+      }
+      drawSymbol(g, k.kind, p0, p1);
+      continue;
+    }
     const curve = smooth(
       k.points.map((p) => to(p[0], p[1])),
       k.widths,

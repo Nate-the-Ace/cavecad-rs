@@ -174,3 +174,32 @@ and Cross Section all use it.
 Not built: tilt (nothing uses it yet), a barrel-button action, hover cursor for the eraser, the
 `cave-ink` crate (pressure curve, smoothing, resampling), a variable-width ribbon renderer and DXF
 variable-width export, and an eraser that splits a line instead of deleting it whole.
+
+## 2026-10-12: Symbols (the original app's set, placing, and a way to add more sets)
+
+**What the original did.** The old app kept every symbol as a `SYM_*` block in its NSS template, with
+a catalogue (`CsSymbols.CATALOG`: NSS name, UIS alias, home layer, category) and a palette panel: a grid
+of pictures, click to arm, click in a view to place, drag to aim.
+**What is built.**
+- `tools/extract_symbols.mjs` pulls all 80 of those blocks and their catalogue entries into
+  `crates/cave-symbols/data/symbols.json` (lines, arcs, circles and bulged polylines flattened to
+  polylines and circles, each scaled to unit radius, y up). The new crate `cave-symbols` serves the
+  catalogue; tests check every drawing is finite and unit-sized and the keys are unique.
+- A placed symbol is an ordinary stroke of type `sym-<name>` with two points: where it sits, and a
+  second point whose direction is the symbol's "up" and whose distance is its radius. Because it is a
+  stroke it gets, with no new plumbing: anchoring to the survey, per-panel undo, the type and trip
+  filters' data, selection, moving and resizing by its two handles, the eraser, and live editing
+  between devices. A click places it at the Symbol size setting (contextual tab, default 1.5 m radius);
+  a drag sets size and direction. Works in the Map (plan), Profile and Cross Section.
+- Symbols panel (a tab beside the Console, also on the View tab and a Draw tab button): search,
+  grouped by category, hover shows the UIS name.
+- DXF: a symbol on the Profile exports as its drawing (polylines) on the symbol's own layer.
+- `tools/import_symbol_set.mjs`: adds another set from a folder of SVG files (paths with curves and
+  arcs, shapes, transforms, solid fills), and reports which symbols the catalogue already has by name
+  so only missing ones are added. Checked with `npm test` (`tools/check_import_symbols.mjs`).
+**Not done.** The UIS and USGS artwork itself: this build has no route to those downloads, and the
+only USGS point-symbol set that turned up in a search is for geologic maps, so it needs the exact
+files from the cartographer. The old app's own audit found no UIS or NSS point symbol that Therion
+lacked apart from rigging, which the original already shipped. Also not done: symbol types in the Show
+menu's type list, symbols in the Map and Cross Section DXF export (those views export nothing yet),
+a colour per category, scaling by sheet scale instead of metres.

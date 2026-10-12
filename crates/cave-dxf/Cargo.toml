@@ -12,6 +12,7 @@ cave-id = { path = "../cave-id" }
 cave-doc = { path = "../cave-doc" }
 cave-scene = { path = "../cave-scene" }
 cave-style = { path = "../cave-style" }
+cave-symbols = { path = "../cave-symbols" }
 
 [dev-dependencies]
 cave-draw = { path = "../cave-draw" }

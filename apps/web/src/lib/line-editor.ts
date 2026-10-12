@@ -3,6 +3,13 @@
 // that draws on a canvas (Profile, Cross Section). The view says where its lines are and how
 // world and screen relate; this decides what a press, a drag and a key do.
 import { distanceToCurve, insertionAt, nearestPoint, type Pt } from './spline.ts';
+import { hitsSymbol, isSymbolKind } from './symbols.ts';
+
+/** How near, in pixels, a point is to a line (a symbol counts as its whole body). */
+function reach(l: { points: Pt[]; closed?: boolean; kind?: string }, toScreen: (p: Pt) => Pt, x: number, y: number): number {
+  if (isSymbolKind(l.kind) && l.points.length >= 2) return hitsSymbol(toScreen(l.points[0]), toScreen(l.points[1]), x, y) ? 0 : Infinity;
+  return distanceToCurve(l.points.map(toScreen), x, y, !!l.closed);
+}
 
 export interface EditableLine {
   id: string;
@@ -71,7 +78,7 @@ export class LineEditor<T extends EditableLine = EditableLine> {
     }
     const lines = this.h.lines();
     for (let i = lines.length - 1; i >= 0; i--) {
-      if (distanceToCurve(lines[i].points.map(this.h.toScreen), x, y, !!lines[i].closed) <= LINE_REACH) {
+      if (reach(lines[i], this.h.toScreen, x, y) <= LINE_REACH) {
         this.h.select(lines[i].id);
         this.h.redraw();
         return false;
@@ -86,7 +93,7 @@ export class LineEditor<T extends EditableLine = EditableLine> {
   eraseAt(x: number, y: number): boolean {
     const lines = this.h.lines();
     for (let i = lines.length - 1; i >= 0; i--) {
-      if (distanceToCurve(lines[i].points.map(this.h.toScreen), x, y, !!lines[i].closed) <= LINE_REACH) {
+      if (reach(lines[i], this.h.toScreen, x, y) <= LINE_REACH) {
         if (this.h.selected() === lines[i].id) this.h.select('');
         this.h.remove(lines[i].id);
         this.h.redraw();

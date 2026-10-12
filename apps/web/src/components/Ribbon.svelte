@@ -8,9 +8,10 @@
   import SelectionTools from './SelectionTools.svelte';
   import CollaborateGroup from './CollaborateGroup.svelte';
   import Avatars from './Avatars.svelte';
+  import { symbolDef } from '../lib/symbols';
   import { onMount } from 'svelte';
-  import { PANELS, panelState, resetLayout, togglePanel } from '../lib/workspace.svelte';
-  import { Check, Trash2, FileInput, FolderOpen, Save, Ruler, Footprints, Route, Waypoints, Pencil, Spline, PaintBucket, Scissors, Map as MapIcon, Terminal, LayoutDashboard, Activity } from '@lucide/svelte';
+  import { PANELS, panelState, resetLayout, showPanel, togglePanel } from '../lib/workspace.svelte';
+  import { Check, Trash2, FileInput, FolderOpen, Save, Ruler, Footprints, Route, Waypoints, Pencil, Spline, PaintBucket, Scissors, Map as MapIcon, Terminal, LayoutDashboard, Activity, Shapes } from '@lucide/svelte';
   import type { Component } from 'svelte';
 
   interface Item {
@@ -53,11 +54,12 @@
     ],
     Draw: [
       { name: 'Linework', items: [], custom: DrawTools },
+      { name: 'Symbols', items: [{ label: 'Symbols', icon: Shapes, run: () => showPanel('symbols'), pressed: () => !!panelState.visible.symbols }] },
       { name: 'Trace', items: [stub('Feature', Pencil), stub('Shaped', Spline), stub('Fill', PaintBucket)] },
     ],
     Sheets: [],
     View: [
-      { name: 'Panels', items: [panelItem('map', MapIcon), panelItem('profile', Activity), panelItem('section', Scissors), panelItem('console', Terminal)] },
+      { name: 'Panels', items: [panelItem('map', MapIcon), panelItem('profile', Activity), panelItem('section', Scissors), panelItem('symbols', Shapes), panelItem('console', Terminal)] },
       { name: 'Units', items: [{ label: 'Metric', icon: Ruler, run: () => setUnits('metric'), pressed: () => cave.units === 'metric' }, { label: 'Imperial', icon: Footprints, run: () => setUnits('imperial'), pressed: () => cave.units === 'imperial' }] },
       { name: 'Theme', items: [], custom: ThemeGroup },
       { name: 'Live editing', items: [], custom: CollaborateGroup },
@@ -87,7 +89,7 @@
   });
   const mode = $derived(cave.tool ? 'command' : selection ? 'selection' : '');
   const contextName = $derived(
-    mode === 'command' ? (toolLabels[cave.tool] ?? cave.tool) : mode === 'selection' ? `Edit ${toolLabels[selection!.kind] ?? selection!.kind}` : '',
+    mode === 'command' ? (toolLabels[cave.tool] ?? symbolDef(cave.tool)?.name ?? cave.tool) : mode === 'selection' ? `Edit ${toolLabels[selection!.kind] ?? symbolDef(selection!.kind)?.name ?? selection!.kind}` : '',
   );
   const commandGroups: Group[] = [
     { name: 'Settings', items: [], custom: ContextOptions },

@@ -17,6 +17,7 @@
     void cave.version;
     return cave.selected ? engine.lineInfo(cave.selected) : null;
   });
+  const isSymbol = $derived(!!info && info.kind.startsWith('sym-'));
   let message = $state('');
 
   const run = (r: string) => {
@@ -26,6 +27,7 @@
 </script>
 
 <div class="sel">
+  {#if !isSymbol}
   <div class="types" role="group" aria-label="What this line is">
     {#each tools as t}
       {@const Icon = icons[t.key] ?? Route}
@@ -35,11 +37,15 @@
       </button>
     {/each}
   </div>
+  {/if}
   <div class="curve">
+    {#if !isSymbol}
     <button class="tool" class:pressed={info?.closed} aria-pressed={info?.closed} title={info?.closed ? 'Open the curve: it stops at its last point' : 'Close the curve: it runs from its last point back to its first (needs three points)'} onclick={() => info && run(engine.setLineClosed(cave.selected, !info.closed))}>
       <Spline size={22} strokeWidth={1.6} />
       <span>{info?.closed ? 'Open' : 'Close'}</span>
     </button>
+    {/if}
+    {#if isSymbol}<span class="msg">Drag the dot to move it, the square to turn and resize it.</span>{/if}
     {#if info && shaped.includes(info.kind)}
       <button class="tool" class:pressed={info.flip} aria-pressed={info.flip} title="Put the marks on the other side of the line" onclick={() => run(engine.setLineFlip(cave.selected, !info.flip))}>
         <FlipHorizontal2 size={22} strokeWidth={1.6} />

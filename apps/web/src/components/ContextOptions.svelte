@@ -15,8 +15,8 @@
       {@const v = option(d.id, d.default)}
       <label class="opt" title={d.hint}>
         <span class="name">{d.label}</span>
-        <input type="range" min={d.min} max={d.max} step={d.step} value={v} oninput={(e) => setOption(d.id, Number(e.currentTarget.value))} aria-label={d.label} aria-valuetext={d.show(v)} />
-        <span class="val">{d.show(v)}</span>
+        <input type="range" min={d.min} max={d.max} step={d.step} value={v} oninput={(e) => setOption(d.id, Number(e.currentTarget.value))} aria-label={d.label} aria-valuetext={d.show(v, cave.units)} />
+        <span class="val">{d.show(v, cave.units)}</span>
       </label>
     {/if}
   {/each}

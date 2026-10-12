@@ -512,6 +512,12 @@ pub fn map_lines(adjusted: bool) -> String {
     })
 }
 
+/// Every point symbol the palette offers, with its drawing (JSON array).
+#[wasm_bindgen]
+pub fn symbols() -> String {
+    serde_json::to_string(cave_symbols::catalogue()).unwrap_or_else(|_| "[]".to_string())
+}
+
 /// The drawing tools the Draw tab offers (JSON array of palette styles).
 #[wasm_bindgen]
 pub fn draw_tools() -> String {
