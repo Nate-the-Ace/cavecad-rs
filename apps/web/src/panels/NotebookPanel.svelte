@@ -34,8 +34,8 @@
       if (!ready) return;
       trips = engine.notebookTrips();
       if (!trips.some((t) => t.id === cave.trip)) cave.trip = trips[0]?.id ?? '';
+      // Cells are updated in place (not rebuilt) so the focus stays where it is and Tab goes to the next cell.
       page = cave.trip ? engine.notebookPage(cave.trip) : null;
-      redraw += 1;
     });
   });
 
@@ -188,7 +188,7 @@
                 <tr id="nb-row-{i}" class="gap"><td colspan="13"></td></tr>
               {:else if r.kind === 'station'}
                 <tr id="nb-row-{i}" class="station" class:sel={cave.pick.kind === 'station' && cave.pick.id === r.station} onclick={() => pick(r)}>
-                  <td class="st"><input value={r.label} aria-label="Station name" maxlength="40" onchange={(e) => rename(r, e.currentTarget.value)} onkeydown={enter} />{#if r.anchor}<span class="tag" title="Where a chain starts; nothing on this page arrives here">start</span>{/if}</td>
+                  <td class="st"><input value={r.label} tabindex="-1" title="Click to rename the station (Tab skips it, so entry flows tape, compass, clino, then L R U D)" aria-label="Station name" maxlength="40" onchange={(e) => rename(r, e.currentTarget.value)} onkeydown={enter} />{#if r.anchor}<span class="tag" title="Where a chain starts; nothing on this page arrives here">start</span>{/if}</td>
                   <td colspan="6"></td>
                   {#each SIDES as s}
                     <td class="lr">
@@ -213,7 +213,7 @@
                   <td class="num total">{r.total === null ? '' : formatLength(r.total, units, 1)}</td>
                   <td colspan="4"></td>
                   <td class="notes">{#if r.kind === 'splay' && r.note_source}<input value={r.note} maxlength="400" aria-label="Note on {r.label}" onchange={(e) => note(r, e.currentTarget.value)} onkeydown={enter} />{/if}</td>
-                  <td><button class="icon" title="Delete this shot" aria-label="Delete shot" onclick={(e) => { e.stopPropagation(); if (r.shot) run(engine.notebookRemoveShot(r.shot)); }}><Trash2 size={13} /></button></td>
+                  <td><button class="icon" tabindex="-1" title="Delete this shot" aria-label="Delete shot" onclick={(e) => { e.stopPropagation(); if (r.shot) run(engine.notebookRemoveShot(r.shot)); }}><Trash2 size={13} /></button></td>
                 </tr>
               {/if}
             {:else}
