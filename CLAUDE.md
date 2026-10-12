@@ -39,7 +39,7 @@ the index useful; `missing_docs` is a warning for that reason.
 Toolchain: use rustup's, not Homebrew's `rustc` (no wasm32 target). Put it first on PATH:
 `export PATH=/opt/homebrew/opt/rustup/bin:$PATH`. Local browser-build check:
 
-    cargo build --target wasm32-unknown-unknown -p cave-id -p cave-store -p cave-log -p cave-geom -p cave-doc
+    cargo build --target wasm32-unknown-unknown -p cave-id -p cave-store -p cave-log -p cave-geom -p cave-doc -p cave-survey
 
 ## Web app (apps/web)
 
@@ -56,3 +56,7 @@ Panels: `apps/web/src/lib/workspace.svelte.ts` (dockview). Add a panel by adding
 Panels are dockable, resizable, tabbable, floatable, maximizable, minimizable and closable; the
 View tab brings closed ones back; layout is remembered in localStorage (a stale layout is dropped).
 Dockview styles only ship in its all-in-one bundle, so the import path is deliberate.
+
+## Reuse the old math, prove it with the old answers
+
+The QCAD-era app already solved the survey math. Port from `~/Documents/github/cavecad-main/cave-survey/scripts/CaveSurvey/Core/` (read the comments: they record hard-won decisions), then prove parity: `tools/golden/gen_survey_golden.mjs` runs the OLD JavaScript on its synthetic test caves and writes answers to `crates/*/tests/golden/`; Rust tests must match them. The old `tests/js_unit.js` has hand-solved numbers worth porting as unit tests.

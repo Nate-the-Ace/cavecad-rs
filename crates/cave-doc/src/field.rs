@@ -101,11 +101,13 @@ pub enum Field {
     TripDeclination,
     /// Where the declination came from: `file`, `user`, `igrf`, or empty.
     TripDeclinationSource,
-    /// Unit of every distance and LRUD in the trip: `ft` or `m`.
+    /// Unit of every distance and LRUD in the trip: `ft` or `m` (empty means metres).
     TripDistanceUnit,
+    /// How the tape was held: `slope` (default, empty means slope) or `horizontal`.
+    TripTapeMode,
     /// Station label shown to people (not its identity).
     StationLabel,
-    /// Fixed easting/x, when this station is a fixed point.
+    /// Fixed easting/x in metres, when this station is a fixed point.
     StationFixedX,
     /// Fixed northing/y.
     StationFixedY,
@@ -123,6 +125,18 @@ pub enum Field {
     ShotAzimuth,
     /// Inclination in degrees, positive up.
     ShotInclination,
+    /// Backsight bearing, if one was read.
+    ShotBackAzimuth,
+    /// Backsight inclination, if one was read (reads sign-flipped).
+    ShotBackInclination,
+    /// The notes record no bearing for this shot (a plumbed pitch).
+    ShotAzimuthOmitted,
+    /// Hold this leg rigid when adjusting loops.
+    ShotNoAdjust,
+    /// Leave this shot out of everything (a void shot, a station never found again).
+    ShotExcludeFromAll,
+    /// Position of the shot in survey order (smaller is earlier; ties break by id).
+    ShotOrder,
     /// Distance to the left wall at the TO station.
     ShotLeft,
     /// Distance to the right wall.
@@ -204,54 +218,81 @@ pub enum Field {
 impl Field {
     /// The kind of entity this field belongs to.
     pub fn kind(self) -> Kind {
-        use Field::*;
-        match self {
-            TripName
-            | TripDate
-            | TripTeam
-            | TripDeclination
-            | TripDeclinationSource
-            | TripDistanceUnit => Kind::Trip,
-            StationLabel | StationFixedX | StationFixedY | StationFixedZ => Kind::Station,
-            LayerName | LayerColor | LayerWeight | LayerLinetype | LayerHidden | LayerLocked
-            | LayerFrozen | LayerGroup | LayerOrder => Kind::Layer,
-            FeatureLayer | FeaturePath | FeatureType | FeatureShape | FeatureTrip
-            | FeatureStation | FeatureTags => Kind::Feature,
-            SymbolLayer | SymbolName | SymbolAt | SymbolRotation | SymbolScale | SymbolTrip
-            | SymbolTags => Kind::Symbol,
-            TextLayer | TextBody | TextAt | TextHeight | TextRotation => Kind::Text,
-            _ => Kind::Shot,
-        }
+        self.meta().0
     }
 
     /// The type of value this field holds.
     pub fn value_type(self) -> ValueType {
+        self.meta().1
+    }
+
+    /// The one place that says which kind and value type each field has.
+    fn meta(self) -> (Kind, ValueType) {
         use Field::*;
+        use Kind as K;
+        use ValueType as V;
         match self {
-            TripName
-            | TripDate
-            | TripTeam
-            | TripDeclinationSource
-            | TripDistanceUnit
-            | StationLabel
-            | LayerName
-            | LayerColor
-            | LayerLinetype
-            | FeatureType
-            | FeatureShape
-            | SymbolName
-            | TextBody => ValueType::Text,
-            TripDeclination | StationFixedX | StationFixedY | StationFixedZ | ShotDistance
-            | ShotAzimuth | ShotInclination | ShotLeft | ShotRight | ShotUp | ShotDown
-            | LayerWeight | LayerOrder | SymbolRotation | SymbolScale | TextHeight
-            | TextRotation => ValueType::Number,
-            ShotTrip | ShotFrom | ShotTo | LayerGroup | FeatureLayer | FeatureTrip
-            | FeatureStation | SymbolLayer | SymbolTrip | TextLayer => ValueType::Ref,
-            FeaturePath => ValueType::Path,
-            SymbolAt | TextAt => ValueType::Point,
-            FeatureTags | SymbolTags => ValueType::Map,
-            ShotLeftOpen | ShotRightOpen | ShotUpOpen | ShotDownOpen | ShotSplay
-            | ShotExcludeFromPlot | LayerHidden | LayerLocked | LayerFrozen => ValueType::Flag,
+            TripName => (K::Trip, V::Text),
+            TripDate => (K::Trip, V::Text),
+            TripTeam => (K::Trip, V::Text),
+            TripDeclination => (K::Trip, V::Number),
+            TripDeclinationSource => (K::Trip, V::Text),
+            TripDistanceUnit => (K::Trip, V::Text),
+            TripTapeMode => (K::Trip, V::Text),
+            StationLabel => (K::Station, V::Text),
+            StationFixedX => (K::Station, V::Number),
+            StationFixedY => (K::Station, V::Number),
+            StationFixedZ => (K::Station, V::Number),
+            ShotTrip => (K::Shot, V::Ref),
+            ShotFrom => (K::Shot, V::Ref),
+            ShotTo => (K::Shot, V::Ref),
+            ShotDistance => (K::Shot, V::Number),
+            ShotAzimuth => (K::Shot, V::Number),
+            ShotInclination => (K::Shot, V::Number),
+            ShotBackAzimuth => (K::Shot, V::Number),
+            ShotBackInclination => (K::Shot, V::Number),
+            ShotAzimuthOmitted => (K::Shot, V::Flag),
+            ShotNoAdjust => (K::Shot, V::Flag),
+            ShotOrder => (K::Shot, V::Number),
+            ShotExcludeFromAll => (K::Shot, V::Flag),
+            ShotLeft => (K::Shot, V::Number),
+            ShotRight => (K::Shot, V::Number),
+            ShotUp => (K::Shot, V::Number),
+            ShotDown => (K::Shot, V::Number),
+            ShotLeftOpen => (K::Shot, V::Flag),
+            ShotRightOpen => (K::Shot, V::Flag),
+            ShotUpOpen => (K::Shot, V::Flag),
+            ShotDownOpen => (K::Shot, V::Flag),
+            ShotSplay => (K::Shot, V::Flag),
+            ShotExcludeFromPlot => (K::Shot, V::Flag),
+            LayerName => (K::Layer, V::Text),
+            LayerColor => (K::Layer, V::Text),
+            LayerWeight => (K::Layer, V::Number),
+            LayerLinetype => (K::Layer, V::Text),
+            LayerHidden => (K::Layer, V::Flag),
+            LayerLocked => (K::Layer, V::Flag),
+            LayerFrozen => (K::Layer, V::Flag),
+            LayerGroup => (K::Layer, V::Ref),
+            LayerOrder => (K::Layer, V::Number),
+            FeatureLayer => (K::Feature, V::Ref),
+            FeaturePath => (K::Feature, V::Path),
+            FeatureType => (K::Feature, V::Text),
+            FeatureShape => (K::Feature, V::Text),
+            FeatureTrip => (K::Feature, V::Ref),
+            FeatureStation => (K::Feature, V::Ref),
+            FeatureTags => (K::Feature, V::Map),
+            SymbolLayer => (K::Symbol, V::Ref),
+            SymbolName => (K::Symbol, V::Text),
+            SymbolAt => (K::Symbol, V::Point),
+            SymbolRotation => (K::Symbol, V::Number),
+            SymbolScale => (K::Symbol, V::Number),
+            SymbolTrip => (K::Symbol, V::Ref),
+            SymbolTags => (K::Symbol, V::Map),
+            TextLayer => (K::Text, V::Ref),
+            TextBody => (K::Text, V::Text),
+            TextAt => (K::Text, V::Point),
+            TextHeight => (K::Text, V::Number),
+            TextRotation => (K::Text, V::Number),
         }
     }
 
