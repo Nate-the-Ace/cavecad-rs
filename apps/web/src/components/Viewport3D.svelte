@@ -4,6 +4,7 @@
   import PanelUndo from './PanelUndo.svelte';
   import { DEMOS } from '../lib/demos';
   import { isSymbolKind, symbolDef } from '../lib/symbols';
+  import { cursorsFor, live as room, reportCursor } from '../lib/sync.svelte';
   import { leave } from '../lib/sync.svelte';
   import { engine, loadEngine, type Scene, type TypeStyle } from '../lib/engine';
   import { CaveView, type Projection } from '../lib/viewport/cave-view';
@@ -79,6 +80,14 @@
       if (view && profileOn) view.setProfileSketches(engine.mapProfileSketches(cave.adjusted));
       view?.setMapLines(engine.mapLines(cave.adjusted));
     });
+  });
+
+  // Other people's pointers on the plan.
+  $effect(() => {
+    for (const o of Object.values(room.cursors)) void o.seen;
+    void room.people.length;
+    const list = cursorsFor('map', '').map((o) => ({ x: o.x, y: o.y, name: o.person?.name ?? '', color: o.person?.color ?? '#888888' }));
+    untrack(() => view?.setRemoteCursors(list));
   });
 
   // The selected line gets a halo and, on the map, handles; Delete removes a selected map line.
@@ -198,6 +207,7 @@
       if (r !== 'ok') engine.log('warn', 'draw', r);
       changed();
     };
+    v.onCursor = (x, y) => reportCursor('map', '', x, y, cave.tool);
     v.onLineErased = (id) => {
       if (cave.selected === id) cave.selected = '';
       engine.deleteLine(id);

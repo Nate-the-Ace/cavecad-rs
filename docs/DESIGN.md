@@ -321,3 +321,24 @@ its station, and per-trip layers for strokes.
 - Ornament now shows on the **Map** (the plan curve's marks, lifted to the line's height) and in the
   **DXF** (spine and marks on the side the stroke says), as well as in the Profile and Cross Section.
   The web app caches each stroke's ornament until its curve, the survey or the flip changes.
+
+## 2026-10-12: Presence and reconnecting
+
+- **Pointers.** While sharing, each device tells the others where its pointer is, in the view's own
+  metres, with which view and run or station it is looking at and which tool it has. The relay passes
+  these on (stamped with the sender's own id, never stored, so a late joiner is not sent stale ones, and
+  capped in size) and the Map, Profile and Cross Section draw other people's pointers as a small arrow
+  in their colour with their name, only in the view, run or station they are in; a pointer not heard
+  from for six seconds is dropped. Reports are rate limited (about 14 a second). The avatar's tooltip
+  says what each person is doing ("Bo is drawing ledge in the Profile").
+- **Reconnecting.** If the connection drops, this device keeps its cave and carries on ("Reconnecting,
+  your edits are kept"), retrying after 1, 2, 4, 8, then every 15 seconds. On return it applies whatever
+  the room has that it missed and sends what it made while away; ops merge in any order, so nothing is
+  lost or doubled. If the relay was restarted (an empty room), the first device back supplies the cave
+  from its own copy. A first connection that never gets through says so instead of retrying forever.
+- Checked: `tests/relay.check.mjs` (presence is forwarded under the sender's id, not stored, size
+  capped) and two real browsers: one hears the other's pointer in the right view and run; with one
+  browser's connection closed under it, each drew a stroke, and after it reconnected both held
+  identical documents with both strokes.
+Not done: following another person's view, a notification when someone joins, and a stored room log
+(a restarted relay only recovers from the devices that are still open).

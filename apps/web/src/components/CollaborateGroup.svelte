@@ -28,6 +28,7 @@
   {/if}
   <div class="status" role="status" class:bad={!!live.error && !on}>
     {#if live.status === 'live'}Live in {live.room} · {live.people.length} {live.people.length === 1 ? 'person' : 'people'}
+    {:else if live.status === 'reconnecting'}Reconnecting… your edits are kept
     {:else if live.status === 'connecting'}Connecting…
     {:else if live.error}{live.error}
     {:else}Not shared{/if}

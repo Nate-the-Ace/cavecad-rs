@@ -1,7 +1,7 @@
 <script lang="ts">
   // Who is in the room, as round avatars at the right end of the tab bar. This device is first and
   // ringed; hovering one shows the name. Nothing shows when nobody is sharing.
-  import { live } from '../lib/sync.svelte';
+  import { activityOf, live } from '../lib/sync.svelte';
 
   const initials = (name: string) => {
     const w = name.trim().split(/\s+/).filter(Boolean);
@@ -10,10 +10,10 @@
   const people = $derived([...live.people].sort((a, b) => (a.id === live.me ? -1 : b.id === live.me ? 1 : 0)));
 </script>
 
-{#if live.status === 'live' && people.length}
+{#if (live.status === 'live' || live.status === 'reconnecting') && people.length}
   <div class="avatars" role="list" aria-label="People editing this cave">
     {#each people as p (p.id)}
-      <span class="avatar" class:me={p.id === live.me} role="listitem" style="--c:{p.color}" title={p.id === live.me ? `${p.name} (you)` : p.name}>{initials(p.name)}</span>
+      <span class="avatar" class:me={p.id === live.me} role="listitem" style="--c:{p.color}" title={p.id === live.me ? `${p.name} (you)` : activityOf(p.id) ? `${p.name} is ${activityOf(p.id)}` : p.name}>{initials(p.name)}</span>
     {/each}
   </div>
 {/if}

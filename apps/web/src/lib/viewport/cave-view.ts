@@ -10,6 +10,7 @@ import { PenGuard, isEraser, widthFor } from '../pen';
 import { drawStamp, hitsStamp, isStampKind, placement } from '../symbols';
 import { drawMarks, isFillKind, marksFor } from '../fills';
 import { isKindHidden, ornamentFor, refreshFlipped } from '../section-glyph';
+import { drawCursor } from '../presence-draw';
 import { defaultMapOffset, drawHandles, drawStrokes, glyphCurves, hits, leaderEnd } from '../section-glyph';
 import { distanceToCurve, fitStroke, nearestPoint, smooth } from '../spline';
 import { PICKUP_REACH, joinFit } from '../line-editor';
@@ -86,6 +87,14 @@ export class CaveView {
     this.drawOptions = o;
   }
   /** Called with a plan stroke (east, north metres) when the person lifts the pen. */
+  /** Where this pointer is on the plan, in the map's metres: told to the others when sharing. */
+  onCursor: (x: number, y: number) => void = () => {};
+  private remoteCursors: { x: number; y: number; name: string; color: string }[] = [];
+  /** Other people's pointers on the plan. */
+  setRemoteCursors(list: { x: number; y: number; name: string; color: string }[]) {
+    this.remoteCursors = list;
+    this.requestRender();
+  }
   /** The eraser end of a pen passed over a line: delete it. */
   onLineErased: (id: string) => void = () => {};
   private guard = new PenGuard();
@@ -251,6 +260,10 @@ export class CaveView {
       true,
     );
     canvas.addEventListener('pointermove', (e) => {
+      if (e.pointerType !== 'touch') {
+        const cp = this.planPoint(e.clientX, e.clientY);
+        if (cp) this.onCursor(cp[0], cp[1]);
+      }
       if (e.pointerType === 'pen') {
         this.guard.pen(e);
         if (this.erasing) {
@@ -1024,6 +1037,10 @@ export class CaveView {
       g.restore();
     }
     this.strokeLines(g, this.displayMapLines());
+    for (const r of this.remoteCursors) {
+      const q = this.project([r.x, r.y, this.controls.target.z]);
+      if (q) drawCursor(g, q[0], q[1], r.name, r.color);
+    }
     const editing = this.displayMapLines().find((k) => k.id === this.selectedLine);
     if (editing) {
       const hs = editing.points.map((p) => this.project(p)).filter((p): p is [number, number] => !!p);

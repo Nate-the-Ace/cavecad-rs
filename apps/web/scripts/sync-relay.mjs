@@ -43,6 +43,12 @@ export function createRelay() {
         room.peers.add(ws);
         send(ws, { t: 'welcome', log: room.log, seed });
         announce(room);
+      } else if (msg.t === 'presence' && room && ws.person) {
+        // Where a person is and what they are doing: passed on to the others, never stored, and
+        // stamped with the sender's id here so nobody can speak for someone else.
+        const { t: _t, ...rest } = msg;
+        const note = JSON.stringify({ ...rest, t: 'presence', id: ws.person.id });
+        if (note.length <= 2000) for (const p of room.peers) if (p !== ws && p.readyState === p.OPEN) p.send(note);
       } else if (msg.t === 'ops' && room && Array.isArray(msg.ops) && msg.ops.length) {
         room.log.push(...msg.ops);
         if (room.seeder === ws) room.seeder = null;

@@ -49,9 +49,15 @@ eq((await b.next('ops')).ops, [{ n: 1 }, { n: 2 }], 'ops reach the other device'
 b.send({ t: 'ops', ops: [{ n: 3 }] });
 eq((await a.next('ops')).ops, [{ n: 3 }], 'and back');
 
+// presence: passed on to the others, stamped with the sender's own id, and never kept
+a.send({ t: 'presence', id: 'someone-else', view: 'profile', ctx: 'A', x: 3, y: 4, tool: 'wall' });
+const pres = await b.next('presence');
+eq([pres.id, pres.view, pres.x, pres.y, pres.tool], ['a1', 'profile', 3, 4, 'wall'], 'presence reaches the others under the sender\'s own id');
+a.send({ t: 'presence', pad: 'x'.repeat(5000) });
 const c = await client();
 c.send({ t: 'join', room: 'cave' });
-eq((await c.next('welcome')).log, [{ n: 1 }, { n: 2 }, { n: 3 }], 'a late device catches up on everything');
+const wc = await c.next('welcome');
+eq(wc.log, [{ n: 1 }, { n: 2 }, { n: 3 }], 'a late device catches up on everything, and presence is not part of it');
 
 const other = await client();
 other.send({ t: 'join', room: 'elsewhere' });

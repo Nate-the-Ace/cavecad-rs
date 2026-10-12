@@ -11,6 +11,8 @@
   import { PenGuard, isEraser, widthFor } from '../lib/pen';
   import { isStampKind } from '../lib/symbols';
   import { isFillKind } from '../lib/fills';
+  import { cursorsFor, live as room, reportCursor } from '../lib/sync.svelte';
+  import { drawCursor } from '../lib/presence-draw';
   import { fitStroke } from '../lib/spline';
   import { tolerancePx } from '../lib/commands';
   import type { BandSection } from '../lib/engine';
@@ -51,6 +53,12 @@
   });
   $effect(() => {
     void cave.selected;
+    schedule();
+  });
+  // other people's pointers move
+  $effect(() => {
+    for (const o of Object.values(room.cursors)) void o.seen;
+    void room.people.length;
     schedule();
   });
 
@@ -222,6 +230,11 @@
       }
     }
     if (live && live.pts.length > 1) drawStrokes(g, [{ kind: cave.tool || 'sketch', points: live.pts, widths: live.pressure ? live.widths : null, closed: false }], toScreen, look);
+    // other people's pointers in this view
+    for (const o of cursorsFor('profile', cave.run)) {
+      const [ox, oy] = toScreen(o.x, o.y);
+      drawCursor(g, ox, oy, o.person?.name ?? '', o.person?.color ?? '#888888');
+    }
 
     g.fillStyle = c.text;
     g.textAlign = 'left';
@@ -336,6 +349,12 @@
   }
 
   function onMove(e: PointerEvent) {
+    if (e.pointerType !== 'touch') {
+      // tell the others where this pointer is (rate limited; nothing happens when not sharing)
+      const rr = canvas.getBoundingClientRect();
+      const w = toWorld(e.clientX - rr.left, e.clientY - rr.top);
+      reportCursor('profile', cave.run, w[0], w[1], cave.tool);
+    }
     if (e.pointerType === 'pen') {
       guard.pen(e);
       if (erasing) {
