@@ -13,8 +13,9 @@
   import { formatLength } from '../lib/units';
   import type { TripChoice } from '../lib/notebook';
   import { countDone, filesUnder, foldersOf, treeRows, withoutComplete, type TreeRow } from '../lib/scan-tree';
-  import { addFiles, align, dropItems, trimming, checkRemembered, have, forgetCopy, pickFolder, realRoot, setRealRoot, reopenRemembered, scans, select, setFolders, toggleFolder } from '../lib/scans.svelte';
+  import { addFiles, align, dropItems, trimming, checkRemembered, have, forgetCopy, pickFolder, revealReal, realRoot, setRealRoot, reopenRemembered, scans, select, setFolders, toggleFolder } from '../lib/scans.svelte';
   import { showPanel } from '../lib/workspace.svelte';
+  import { isDesktop } from '../lib/desktop';
   import { cleanRoot, copyPathHint, fullPath, osOf, revealHint, revealLabel } from '../lib/scan-location';
 
   let ready = $state(false);
@@ -239,6 +240,11 @@
   /** Hands back the real path of a page or folder (asking once where the folder lives), copied for pasting into Finder or Explorer. */
   async function reveal(path: string) {
     menu = null;
+    if (isDesktop() && scans.root) {
+      // The desktop app knows the real folder (it was captured when the folder was picked): open the file manager on it.
+      void revealReal(path);
+      return;
+    }
     const root = realRoot(scans.folder);
     if (!root) {
       asking = { path };
@@ -439,6 +445,7 @@
           <button class="file" class:sel={scans.selected === p} class:gone={!have(p)} title={have(p) ? p : `${p} is not in the open folder`} onclick={() => select(p)}>{p.slice(p.lastIndexOf('/') + 1)}</button>
         {/each}
       {/if}
+      {#if scans.loading}<div class="kept" role="status">{scans.loading}</div>{/if}
       <div class="head">{scans.folder || 'Scans'} {#if scans.paths.length}<span class="n">{scans.paths.length}</span>{/if}</div>
       {#if scans.keptBytes}
         <div class="kept" title="This browser keeps a copy of your scans so a refresh does not lose them. It stays on this machine.">

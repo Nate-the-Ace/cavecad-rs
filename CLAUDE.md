@@ -57,6 +57,15 @@ Panels are dockable, resizable, tabbable, floatable, maximizable, minimizable an
 View tab brings closed ones back; layout is remembered in localStorage (a stale layout is dropped).
 Dockview styles only ship in its all-in-one bundle, so the import path is deliberate.
 
+## Desktop app (apps/desktop)
+
+The same web app in a native Tauri window (decided 2026-10-11), for what a browser may not do: the real path of a picked folder, pages read straight from it, Reveal in Finder/Explorer. It is NOT in the engine's workspace (own `[workspace]`; the engine must build for the browser). In the web app, `lib/desktop.ts` is the only door (`isDesktop()`); every caller keeps a browser fallback. Commands live in `apps/desktop/src-tauri/src/lib.rs`; the path-safety and folder reading are in `files.rs` with tests.
+
+    cd apps/desktop && npm install && npm run build:debug     # builds apps/web, then the app (target/debug/bundle/macos/CaveCAD.app)
+    cd apps/desktop/src-tauri && cargo test && cargo clippy --all-targets -- -D warnings
+
+The build removes `apps/web/dist/local` (real cave data, never committed) before bundling. Add the two commands above to the checks before a commit that touches `apps/desktop`.
+
 ## Reuse the old math, prove it with the old answers
 
 The QCAD-era app already solved the survey math. Port from `~/Documents/github/cavecad-main/cave-survey/scripts/CaveSurvey/Core/` (read the comments: they record hard-won decisions), then prove parity: `tools/golden/gen_survey_golden.mjs` runs the OLD JavaScript on its synthetic test caves and writes answers to `crates/*/tests/golden/`; Rust tests must match them. The old `tests/js_unit.js` has hand-solved numbers worth porting as unit tests.

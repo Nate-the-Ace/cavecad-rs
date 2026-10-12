@@ -3,6 +3,7 @@
 // into the cave (a trip's list of scans, see `cave-scans`). Where the browser can remember a folder
 // (Chromium), it is offered again next time with one click (the browser insists on a click to
 // let a page read it again).
+import { baseName, isDesktop, listScansNative, pickFolderNative, readScanNative, revealNative, typeOf } from './desktop';
 import { isDerived, scanKind, type ScanKind } from './scan-tree';
 
 interface DirHandle {
@@ -33,6 +34,10 @@ export const scans = $state({
   restored: false,
   /** Bytes of the kept copy, or 0. */
   keptBytes: 0,
+  /** The real path of the folder the pages were read from (desktop app only), or ''. */
+  root: '',
+  /** Pages read so far while a folder is being read from disk, as `n of m`, or ''. */
+  loading: '',
 });
 
 const files = new Map<string, File>();
@@ -170,6 +175,17 @@ export function checkRemembered(): Promise<void> {
   // Once only, however many parts of the app ask: the app at start-up (so scans are on the maps
   // before the panel is ever opened) and the panel.
   starting ??= (async () => {
+    if (isDesktop()) {
+      // The desktop app reads the folder from where it really is, fresh every time.
+      let last = '';
+      try {
+        last = localStorage.getItem(LAST_ROOT_KEY) ?? '';
+      } catch {
+        /* nothing remembered */
+      }
+      if (last && scans.paths.length === 0 && (await openNative(last))) return;
+      scans.message = '';
+    }
     if (scans.paths.length === 0) await restoreCopy(); // pages kept from last time come back by themselves
     remembered = await recall();
     scans.remembered = remembered?.name ?? '';
@@ -206,8 +222,65 @@ function load(name: string, found: Map<string, File>, saveCopy = true) {
   if (saveCopy && found.size) void keepCopy(name, found);
 }
 
+const LAST_ROOT_KEY = 'cavecad.scans.lastRoot';
+
+/**
+ * Desktop app: reads a folder straight from disk by its real path. The path is remembered (so the
+ * folder comes back fresh on every start, with nothing to pick, and a changed page is the changed
+ * page), and is what Reveal opens. No copy is kept in the browser.
+ */
+export async function openNative(root: string): Promise<boolean> {
+  scans.loading = 'Reading the folder…';
+  try {
+    const list = (await listScansNative(root)).filter((e) => scanKind(e.path));
+    const found = new Map<string, File>();
+    let next = 0;
+    let done = 0;
+    const worker = async () => {
+      while (next < list.length) {
+        const e = list[next++];
+        const bytes = await readScanNative(root, e.path);
+        found.set(e.path, new File([bytes], e.path.slice(e.path.lastIndexOf('/') + 1), { type: typeOf(e.path) }));
+        done += 1;
+        if (done % 10 === 0) scans.loading = `Reading the scans: ${done} of ${list.length}`;
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(6, list.length) }, worker));
+    load(baseName(root), found, false);
+    scans.root = root;
+    scans.keptBytes = 0;
+    setRealRoot(scans.folder, root);
+    try {
+      localStorage.setItem(LAST_ROOT_KEY, root);
+    } catch {
+      /* not remembered */
+    }
+    return true;
+  } catch (e) {
+    scans.message = `The folder could not be read: ${e instanceof Error ? e.message : String(e)}`;
+    return false;
+  } finally {
+    scans.loading = '';
+  }
+}
+
+/** Desktop app: opens Finder or Explorer on a page or folder of the scans folder (the real one). */
+export async function revealReal(rel: string): Promise<boolean> {
+  try {
+    await revealNative(scans.root, rel);
+    return true;
+  } catch (e) {
+    scans.message = `Could not show it: ${e instanceof Error ? e.message : String(e)}`;
+    return false;
+  }
+}
+
 /** Picks a scans folder and reads its picture and PDF files. Returns false if the person cancelled. */
 export async function pickFolder(): Promise<boolean> {
+  if (isDesktop()) {
+    const root = await pickFolderNative();
+    return root ? openNative(root) : false;
+  }
   const p = window as unknown as Picker;
   // Inside a frame (the hosted copy) the directory picker is refused, and the plain folder input must
   // be opened straight from the click, so it is used from the start.
