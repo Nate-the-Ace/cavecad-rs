@@ -132,8 +132,23 @@ mod tests {
 
     #[test]
     fn the_original_apps_symbols_are_all_here() {
-        assert_eq!(catalogue().len(), 80);
+        assert_eq!(catalogue().iter().filter(|s| s.set == "nss").count(), 80);
         assert!(symbol("sym-stalactite").is_some() && symbol("sym-bolt").is_some());
+    }
+
+    #[test]
+    fn the_other_sets_are_in_and_say_where_they_came_from() {
+        for set in ["uis", "usgs"] {
+            let n = catalogue().iter().filter(|s| s.set == set).count();
+            assert!(n > 0, "no {set} symbols");
+        }
+        // a symbol in a later set never takes over a name's key from the original set
+        assert!(symbol("sym-uis-stalactite").is_some() && symbol("sym-stalactite").is_some());
+        assert!(
+            catalogue()
+                .iter()
+                .all(|s| s.set == "nss" || s.key.starts_with(&format!("sym-{}-", s.set)))
+        );
     }
 
     #[test]

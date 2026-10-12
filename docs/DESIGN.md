@@ -203,3 +203,27 @@ files from the cartographer. The old app's own audit found no UIS or NSS point s
 lacked apart from rigging, which the original already shipped. Also not done: symbol types in the Show
 menu's type list, symbols in the Map and Cross Section DXF export (those views export nothing yet),
 a colour per category, scaling by sheet scale instead of metres.
+
+**Symbols, second pass: the UIS and USGS sets** (2026-10-12; Nathan supplied the carto.net page for the
+official UIS list and the USGS OFR 95-526 zip).
+- *UIS.* The page lists 42 entries with names, translations and example pictures (plan and profile) but
+  the pictures are map fragments, not clean artwork, and many entries are line styles or area fills
+  (outline of a gallery, underlying passage, presumed dimensions, ceiling form, dripline, step, contours,
+  joints and faults; water, sump, sinter pools, flowstone, sand, clay-covered walls) or text (height of a
+  room, elevation difference, altitude figure). `tools/make_uis_symbols.mjs` redraws the 35 UIS point
+  symbols the catalogue lacked as vectors (set `uis`): entrance arrow, chimney, pit mark, chimney-pit,
+  wavy stream arrow, seepage, ice, cauliflower calcite, disc, stalagmite, stalactite, curtain, pillar,
+  helictite, soda straw, crystal, moonmilk, wall calcite, flowstone dashes, pebbles, guano, bone,
+  anastomosis, karren, scallop, flute, paleoflow, inclined joint, human activity, camp, altitude point,
+  survey point, north arrow, air draught, section direction arrow. They sit beside the original NSS-style
+  drawings (marked UIS in the palette) rather than replacing them: a cartographer picks the set.
+- *USGS.* OFR 95-526 is the geologic map symbol standard (about 900 symbols on 28 EPS sheets, public
+  domain). It holds almost nothing cave specific, and the sheets give drawings and cartographic
+  specifications but mostly not the symbols' names (those are in the printed OFR 95-525), so a symbol is
+  added by naming its reference number in `tools/usgs_picks.json` and running
+  `tools/add_usgs_symbols.mjs`. Added so far: Rapids (2.44.1) and Falls (2.44.2), the two named water
+  features on sheet 23 that a cave map uses. `tools/extract_usgs_eps.mjs` reads the Illustrator EPS
+  directly (no PostScript tool needed). Strike and dip, joint and bedding symbols (sheets 5 to 6 and
+  others) need names confirmed and carry a dip number, so they wait for the cartographer's picks and for
+  a text label on a placed symbol.
+- The dev server now rebuilds the engine when a `crates/*/data/*.json` file changes.

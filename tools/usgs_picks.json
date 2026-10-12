@@ -1,0 +1,4 @@
+[
+  { "sheet": "GSTSYM23.EPS", "ref": "2.44.1", "name": "Rapids", "category": "Water", "layer": "WATER-RAPIDS-FALLS" },
+  { "sheet": "GSTSYM23.EPS", "ref": "2.44.2", "name": "Falls", "category": "Water", "layer": "WATER-RAPIDS-FALLS" }
+]

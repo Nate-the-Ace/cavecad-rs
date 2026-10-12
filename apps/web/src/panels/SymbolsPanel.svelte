@@ -59,9 +59,9 @@
       <h3>{g.name}</h3>
       <div class="grid">
         {#each g.items as s (s.key)}
-          <button class="tile" class:armed={cave.tool === s.key} aria-pressed={cave.tool === s.key} title="{s.name}{s.uis !== s.name ? ` (UIS: ${s.uis})` : ''}" onclick={() => setTool(s.key)}>
+          <button class="tile" class:armed={cave.tool === s.key} aria-pressed={cave.tool === s.key} title="{s.name}{s.uis !== s.name ? ` (UIS: ${s.uis})` : ''}{s.set !== 'nss' ? ` · ${s.set.toUpperCase()} set` : ''}" onclick={() => setTool(s.key)}>
             <canvas use:thumb={s} aria-hidden="true"></canvas>
-            <span>{s.name}</span>
+            <span>{s.name}{#if s.set !== 'nss'} <small>{s.set.toUpperCase()}</small>{/if}</span>
           </button>
         {/each}
       </div>
@@ -83,5 +83,6 @@
   .tile:hover { background: var(--panel-2); }
   .tile.armed { background: var(--accent-bg); border-color: var(--accent); }
   .tile canvas { width: 44px; height: 44px; color: var(--text); }
+  small { display: block; font-size: 9px; color: var(--muted); letter-spacing: 0.05em; }
   .none { color: var(--muted); font-size: 13px; }
 </style>

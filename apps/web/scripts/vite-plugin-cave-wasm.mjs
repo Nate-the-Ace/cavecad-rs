@@ -1,7 +1,7 @@
 // Builds crates/cave-wasm with wasm-pack and keeps it fresh while you develop.
 //
 // Goal: after you edit Rust, a plain browser refresh shows the new code, never a stale copy.
-//  - Watches crates/**/*.rs and Cargo.toml, rebuilds, then reloads open pages.
+//  - Watches crates/**/*.rs, Cargo.toml and crates/*/data/*.json (data compiled into the engine), rebuilds, then reloads open pages.
 //  - While a rebuild is running, every request waits for it, so a refresh mid-build still gets
 //    the NEW wasm (never the old one).
 //  - Serves /build-info.json (build time, git hash, last error) so the page can say what it runs.
@@ -95,7 +95,7 @@ export default function caveWasm() {
       };
 
       watch(path.join(repo, 'crates'), { recursive: true }, (_e, file) => {
-        if (!file || file.includes('target') || !(file.endsWith('.rs') || file.endsWith('Cargo.toml'))) return;
+        if (!file || file.includes('target') || !(file.endsWith('.rs') || file.endsWith('Cargo.toml') || /[\\/]data[\\/].*\.json$/.test(file))) return;
         if (!building && !timer) pending = new Promise((r) => (release = r));
         clearTimeout(timer);
         timer = setTimeout(() => {
