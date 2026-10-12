@@ -4,6 +4,13 @@
 //! there. What the cave keeps is only the link, a trip's list of paths relative to that folder, so
 //! sharing a cave never shares a scan, and a path can never point outside the scans folder.
 
+mod align;
+
+pub use align::{
+    Alignment, Anchor, Fit, FitMode, Pair, Placed, add_anchor, alignment, fit, placements,
+    remove_anchor, set_alignment, set_mode,
+};
+
 use cave_doc::{Action, Document, Field, Kind, Value};
 use cave_id::Id;
 use serde::Serialize;
@@ -16,6 +23,8 @@ pub const MAX_PATH: usize = 300;
 pub enum ScanError {
     /// There is no such trip.
     NoSuchTrip,
+    /// A match names a station that is not in the cave.
+    NoSuchStation,
     /// The path is empty, absolute, climbs out of the folder, or is otherwise not a plain relative path.
     BadPath,
 }
@@ -106,7 +115,10 @@ pub fn unlink(doc: &Document, trip: Id, path: &str) -> Result<Vec<Action>, ScanE
         return Ok(Vec::new());
     }
     let kept: Vec<String> = now.into_iter().filter(|p| *p != path).collect();
-    Ok(write(trip, &kept))
+    let mut actions = write(trip, &kept);
+    // A scan taken off the trip takes its placement with it.
+    actions.extend(align::set_alignment(doc, trip, &path, None)?);
+    Ok(actions)
 }
 
 #[cfg(test)]
@@ -192,5 +204,81 @@ mod tests {
             .document
             .unwrap();
         assert_eq!(links(&back), links(&doc));
+    }
+
+    #[test]
+    fn matches_are_stored_placed_undone_and_dropped_with_the_link() {
+        use std::collections::HashMap;
+        let (mut doc, trips) = cave();
+        let st = doc.ids_of(Kind::Station);
+        let mut h = History::new();
+        macro_rules! run {
+            ($doc:ident, $actions:expr) => {{
+                let a = $actions;
+                let e = $doc.edit(a).unwrap();
+                h.record(&e);
+            }};
+        }
+        run!(doc, link(&doc, trips[0], "p1.png").unwrap());
+        run!(
+            doc,
+            add_anchor(&doc, trips[0], "p1.png", 0.0, 0.0, st[0]).unwrap()
+        );
+        run!(
+            doc,
+            add_anchor(&doc, trips[0], "p1.png", 100.0, 0.0, st[1]).unwrap()
+        );
+        let al = alignment(&doc, trips[0], "p1.png").unwrap();
+        assert_eq!((al.mode, al.anchors.len()), (FitMode::Warp, 2));
+        let pos: HashMap<_, _> = [(st[0], (10.0, 20.0)), (st[1], (11.0, 20.0))].into();
+        let placed = placements(&doc, &pos);
+        assert_eq!(placed.len(), 1);
+        assert!((placed[0].matrix[0] - 0.01).abs() < 1e-9 && placed[0].used == 2);
+        // The survey moves (adjusted): the same matches place the scan somewhere else.
+        let moved: HashMap<_, _> = [(st[0], (0.0, 0.0)), (st[1], (2.0, 0.0))].into();
+        assert!((placements(&doc, &moved)[0].matrix[0] - 0.02).abs() < 1e-9);
+        // One spot is not a placement; a station that is gone from the map is skipped.
+        assert!(placements(&doc, &[(st[0], (0.0, 0.0))].into()).is_empty());
+        run!(
+            doc,
+            set_mode(&doc, trips[0], "p1.png", FitMode::Rigid).unwrap()
+        );
+        assert_eq!(
+            alignment(&doc, trips[0], "p1.png").unwrap().mode,
+            FitMode::Rigid
+        );
+        run!(doc, remove_anchor(&doc, trips[0], "p1.png", 0).unwrap());
+        assert_eq!(
+            alignment(&doc, trips[0], "p1.png").unwrap().anchors.len(),
+            1
+        );
+        run!(doc, unlink(&doc, trips[0], "p1.png").unwrap());
+        assert!(
+            alignment(&doc, trips[0], "p1.png").is_none(),
+            "unlinking drops the placement"
+        );
+        assert!(placements(&doc, &pos).is_empty());
+        assert_eq!(
+            add_anchor(&doc, trips[0], "p1.png", 1.0, 1.0, trips[1]),
+            Err(ScanError::NoSuchStation)
+        );
+    }
+
+    #[test]
+    fn matches_survive_a_saved_file() {
+        let (mut doc, trips) = cave();
+        let st = doc.ids_of(Kind::Station);
+        doc.edit(link(&doc, trips[0], "p1.png").unwrap()).unwrap();
+        doc.edit(add_anchor(&doc, trips[0], "p1.png", 12.5, 30.25, st[3]).unwrap())
+            .unwrap();
+        let text = cave_dxf::export(&doc, &cave_dxf::ExportOptions::default());
+        let back = cave_dxf::import(&text, ActorId(2))
+            .unwrap()
+            .document
+            .unwrap();
+        assert_eq!(
+            alignment(&back, trips[0], "p1.png"),
+            alignment(&doc, trips[0], "p1.png")
+        );
     }
 }

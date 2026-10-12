@@ -119,6 +119,9 @@ pub enum Field {
     /// The scanned field-book pages that go with the trip: relative paths in the person's scans
     /// folder, one per line. Only the names are kept; the pictures stay on the person's machine.
     TripScans,
+    /// How each linked scan is placed under the map: scan path to `mode;px,py,station;...` (see
+    /// `cave-scans`). The anchors are kept, never the resulting transform, so a scan follows the survey.
+    TripScanAlign,
     /// Walls at the trip's first station (nothing arrives there, so no shot carries them).
     TripStartLeft,
     /// See `TripStartLeft`.
@@ -277,6 +280,7 @@ impl Field {
             TripTapeMode => (K::Trip, V::Text),
             TripOrder => (K::Trip, V::Number),
             TripCaveName | TripInstruments | TripStartNote | TripScans => (K::Trip, V::Text),
+            TripScanAlign => (K::Trip, V::Map),
             TripStartLeft | TripStartRight | TripStartUp | TripStartDown => (K::Trip, V::Number),
             TripStartLeftOpen | TripStartRightOpen | TripStartUpOpen | TripStartDownOpen => {
                 (K::Trip, V::Flag)

@@ -1529,3 +1529,98 @@ pub fn scan_unlink(trip: &str, path: &str) -> String {
     };
     scoped_edit("scans", |doc| cave_scans::unlink(doc, trip, path))
 }
+
+/// Where each aligned scan sits under the map now (JSON `[{trip, path, matrix, used, rms, mode}]`),
+/// from the stations' positions (adjusted when asked).
+#[wasm_bindgen]
+pub fn scan_placements(adjusted: bool) -> String {
+    DOC.with(|d| {
+        let slot = d.borrow();
+        let Some(doc) = slot.as_ref() else {
+            return "[]".into();
+        };
+        let positions: std::collections::HashMap<cave_id::Id, (f64, f64)> =
+            cave_scene::build(doc, adjusted)
+                .stations
+                .iter()
+                .filter_map(|s| Some((s.id.parse().ok()?, (s.at[0], s.at[1]))))
+                .collect();
+        serde_json::to_string(&cave_scans::placements(doc, &positions))
+            .unwrap_or_else(|_| "[]".into())
+    })
+}
+
+/// A scan's matches on a trip: JSON `{mode, anchors: [{px, py, station, label}]}`, or `null`.
+#[wasm_bindgen]
+pub fn scan_alignment(trip: &str, path: &str) -> String {
+    #[derive(Serialize)]
+    struct A {
+        px: f64,
+        py: f64,
+        station: String,
+        label: String,
+    }
+    #[derive(Serialize)]
+    struct Out {
+        mode: cave_scans::FitMode,
+        anchors: Vec<A>,
+    }
+    DOC.with(|d| {
+        let slot = d.borrow();
+        let out = parse_id(trip).zip(slot.as_ref()).and_then(|(t, doc)| {
+            cave_scans::alignment(doc, t, path).map(|al| Out {
+                mode: al.mode,
+                anchors: al
+                    .anchors
+                    .iter()
+                    .map(|a| A {
+                        px: a.px,
+                        py: a.py,
+                        station: a.station.to_string(),
+                        label: doc
+                            .entity(a.station)
+                            .map(|e| e.text(cave_doc::Field::StationLabel))
+                            .unwrap_or_default(),
+                    })
+                    .collect(),
+            })
+        });
+        serde_json::to_string(&out).unwrap_or_else(|_| "null".into())
+    })
+}
+
+/// Matches a spot on a scan (pixels from its top left) with the station it is.
+#[wasm_bindgen]
+pub fn scan_add_anchor(trip: &str, path: &str, px: f64, py: f64, station: &str) -> String {
+    let (Some(trip), Some(station)) = (parse_id(trip), parse_id(station)) else {
+        return "error: no such trip or station".into();
+    };
+    scoped_edit("scans", |doc| {
+        cave_scans::add_anchor(doc, trip, path, px, py, station)
+    })
+}
+
+/// Takes away a scan's match (by its place in the list).
+#[wasm_bindgen]
+pub fn scan_remove_anchor(trip: &str, path: &str, index: usize) -> String {
+    let Some(trip) = parse_id(trip) else {
+        return "error: no such trip".into();
+    };
+    scoped_edit("scans", |doc| {
+        cave_scans::remove_anchor(doc, trip, path, index)
+    })
+}
+
+/// Chooses how a scan's matches are fitted: `rigid` or `warp`.
+#[wasm_bindgen]
+pub fn scan_set_mode(trip: &str, path: &str, mode: &str) -> String {
+    let Some(trip) = parse_id(trip) else {
+        return "error: no such trip".into();
+    };
+    let mode = if mode == "rigid" {
+        cave_scans::FitMode::Rigid
+    } else {
+        cave_scans::FitMode::Warp
+    };
+    scoped_edit("scans", |doc| cave_scans::set_mode(doc, trip, path, mode))
+}

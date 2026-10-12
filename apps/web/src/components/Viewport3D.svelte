@@ -16,6 +16,7 @@
   import { onTheme } from '../lib/theme';
   import { panelState, showPanel } from '../lib/workspace.svelte';
   import { setActiveView } from '../lib/snapshot';
+  import { have, mapUrl, scans } from '../lib/scans.svelte';
 
   let wrap: HTMLDivElement;
   let gl: HTMLCanvasElement;
@@ -89,6 +90,27 @@
       if (view && on) view.setSections(engine.mapSections(cave.adjusted, wireFilter()));
       if (view && profileOn) view.setProfileSketches(engine.mapProfileSketches(cave.adjusted));
       view?.setMapLines(engine.mapLines(cave.adjusted));
+    });
+  });
+
+  // Scans placed under the map follow every edit, adjustment, filter, and the settings in the Scans panel.
+  $effect(() => {
+    void cave.version;
+    void cave.adjusted;
+    void filter.hiddenTrips.length;
+    void scans.paths.length;
+    const on = option('showScans', true);
+    const opacity = option('scanOpacity', 0.5);
+    untrack(() => {
+      if (!view) return;
+      const z = (scene?.bounds?.[2] ?? 0) - 0.5;
+      const list = on
+        ? engine
+            .scanPlacements(cave.adjusted)
+            .filter((p) => !filter.hiddenTrips.includes(p.trip) && have(p.path))
+            .map((p) => ({ key: `${p.trip}/${p.path}`, url: mapUrl(p.path)!, matrix: p.matrix, z, opacity }))
+        : [];
+      view.setScans(list);
     });
   });
 

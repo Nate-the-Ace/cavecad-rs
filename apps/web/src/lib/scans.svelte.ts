@@ -32,6 +32,8 @@ export const scans = $state({
 });
 
 const files = new Map<string, File>();
+/** Object URLs of scans the map draws, kept so they are made once. */
+const mapUrls = new Map<string, string>();
 const DB = 'cavecad-scans';
 
 function db(): Promise<IDBDatabase> {
@@ -94,6 +96,8 @@ async function walk(dir: DirHandle, prefix: string, out: Map<string, File>, budg
 
 function load(name: string, found: Map<string, File>) {
   forgetSelection();
+  for (const u of mapUrls.values()) URL.revokeObjectURL(u);
+  mapUrls.clear();
   files.clear();
   for (const [p, f] of found) files.set(p, f);
   scans.folder = name;
@@ -172,6 +176,21 @@ function forgetSelection() {
   scans.url = '';
   scans.selected = '';
 }
+
+/** A URL the map can load a scan from (made once per scan), or `null` when the scan is not in the open folder. */
+export function mapUrl(path: string): string | null {
+  const f = files.get(path);
+  if (!f) return null;
+  let u = mapUrls.get(path);
+  if (!u) {
+    u = URL.createObjectURL(f);
+    mapUrls.set(path, u);
+  }
+  return u;
+}
+
+/** Aligning: a spot on the scan waiting for the station it is. */
+export const align = $state({ on: false, pending: null as { px: number; py: number } | null });
 
 /** True when the scan is in the folder now open. */
 export const have = (path: string) => files.has(path);

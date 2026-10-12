@@ -554,6 +554,70 @@ export class CaveView {
     this.rebuild();
   }
 
+  private readonly scans = new Map<string, { mesh: THREE.Mesh; url: string }>();
+
+  /**
+   * Draws scans placed under the map. Each is a picture whose pixels are carried to the map by
+   * `matrix` (pixel from the top left, y down, to east and north in metres), shown at `opacity` and
+   * at height `z`. Drawn before the lines and without depth, so the passage never hides it and the
+   * survey is drawn over it.
+   */
+  setScans(list: { key: string; url: string; matrix: number[]; z: number; opacity: number }[]) {
+    const keep = new Set(list.map((l) => l.key));
+    for (const [key, s] of this.scans) {
+      if (!keep.has(key)) this.removeScan(key, s);
+    }
+    for (const item of list) {
+      const have = this.scans.get(item.key);
+      if (have && have.url === item.url) {
+        this.placeScan(have.mesh, item);
+        continue;
+      }
+      if (have) this.removeScan(item.key, have);
+      new THREE.TextureLoader().load(item.url, (tex) => {
+        if (this.scans.has(item.key)) tex.dispose();
+        else if (!keep.has(item.key)) tex.dispose();
+        else {
+          tex.colorSpace = THREE.SRGBColorSpace;
+          tex.anisotropy = 4;
+          const w = tex.image.width as number;
+          const h = tex.image.height as number;
+          const geo = new THREE.BufferGeometry();
+          geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array([0, 0, 0, w, 0, 0, w, h, 0, 0, h, 0]), 3));
+          geo.setAttribute('uv', new THREE.BufferAttribute(new Float32Array([0, 1, 1, 1, 1, 0, 0, 0]), 2));
+          geo.setIndex([0, 1, 2, 0, 2, 3]);
+          const mat = new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthTest: false, depthWrite: false, side: THREE.DoubleSide });
+          const mesh = new THREE.Mesh(geo, mat);
+          mesh.matrixAutoUpdate = false;
+          mesh.renderOrder = -10;
+          mesh.frustumCulled = false;
+          this.scans.set(item.key, { mesh, url: item.url });
+          this.placeScan(mesh, item);
+          this.scene.add(mesh);
+        }
+        this.requestRender();
+      });
+    }
+    this.requestRender();
+  }
+
+  private placeScan(mesh: THREE.Mesh, item: { matrix: number[]; z: number; opacity: number }) {
+    const m = item.matrix;
+    mesh.matrix.set(m[0], m[1], 0, m[2], m[3], m[4], 0, m[5], 0, 0, 1, item.z, 0, 0, 0, 1);
+    mesh.matrixWorldNeedsUpdate = true;
+    (mesh.material as THREE.MeshBasicMaterial).opacity = item.opacity;
+    this.requestRender();
+  }
+
+  private removeScan(key: string, s: { mesh: THREE.Mesh }) {
+    this.scene.remove(s.mesh);
+    s.mesh.geometry.dispose();
+    const mat = s.mesh.material as THREE.MeshBasicMaterial;
+    mat.map?.dispose();
+    mat.dispose();
+    this.scans.delete(key);
+  }
+
   /** Shows the passage surface (or clears it with `null`). The buffers are flat triangles. */
   setPassage(buffers: PassageBuffers | null) {
     if (this.passage) {

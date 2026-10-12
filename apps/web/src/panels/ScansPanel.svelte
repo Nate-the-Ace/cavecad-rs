@@ -5,14 +5,15 @@
   // to a trip's page brings up its scan and picking a linked scan turns the notebook to its trip. The
   // pictures are never uploaded and never go into the cave.
   import { untrack } from 'svelte';
-  import { ChevronDown, ChevronRight, FolderOpen, Folder, Link2, Unlink2, BookOpen } from '@lucide/svelte';
+  import { ChevronDown, ChevronRight, FolderOpen, Folder, Link2, Unlink2, BookOpen, Crosshair, X } from '@lucide/svelte';
   import PanelUndo from '../components/PanelUndo.svelte';
   import ScanViewer from '../components/ScanViewer.svelte';
-  import { cave, changed } from '../lib/cave.svelte';
-  import { engine, loadEngine } from '../lib/engine';
+  import { cave, changed, clearPick, option, setOption, setPick } from '../lib/cave.svelte';
+  import { engine, loadEngine, type ScanAlignment } from '../lib/engine';
+  import { formatLength } from '../lib/units';
   import type { TripChoice } from '../lib/notebook';
   import { treeRows } from '../lib/scan-tree';
-  import { addFiles, checkRemembered, have, pickFolder, reopenRemembered, scans, select, toggleFolder } from '../lib/scans.svelte';
+  import { addFiles, align, checkRemembered, have, pickFolder, reopenRemembered, scans, select, toggleFolder } from '../lib/scans.svelte';
   import { showPanel } from '../lib/workspace.svelte';
 
   let ready = $state(false);
@@ -20,6 +21,10 @@
   let links = $state<{ trip: string; path: string }[]>([]);
   let filter = $state('');
   let over = $state(false);
+  let al = $state<ScanAlignment | null>(null);
+  let stations = $state<{ id: string; station: string }[]>([]);
+  let chosen = $state('');
+  let placed = $state<{ used: number; rms: number } | null>(null);
   loadEngine().then(() => (ready = true));
   checkRemembered();
 
@@ -32,6 +37,10 @@
       trips = engine.notebookTrips();
       links = engine.scanLinks();
       if (!trips.some((t) => t.id === cave.trip)) cave.trip = trips[0]?.id ?? '';
+      stations = engine.stationRows(cave.adjusted).map((r) => ({ id: r.id, station: r.station })).filter((r) => r.id);
+      al = scans.selected && cave.trip ? engine.scanAlignment(cave.trip, scans.selected) : null;
+      const p = engine.scanPlacements(cave.adjusted).find((x) => x.trip === cave.trip && x.path === scans.selected);
+      placed = p ? { used: p.used, rms: p.rms } : null;
     });
   });
 
@@ -59,6 +68,50 @@
       if (owners.length === 1 && owners[0] !== cave.trip) cave.trip = owners[0];
     });
   });
+
+  // A different scan or trip: whatever was half done is dropped.
+  $effect(() => {
+    void scans.selected;
+    void cave.trip;
+    align.pending = null;
+  });
+
+  /** A spot on the scan was clicked: it waits for its station (click it on the Map, or choose it here). */
+  function picked(px: number, py: number) {
+    align.pending = { px, py };
+    chosen = '';
+    clearPick();
+  }
+
+  function match(station: string) {
+    const p = align.pending;
+    if (!p || !station || !scans.selected) return;
+    const r = engine.scanAddAnchor(cave.trip, scans.selected, p.px, p.py, station);
+    scans.message = r.startsWith('error') ? r.replace(/^error: /, '') : '';
+    align.pending = null;
+    changed();
+  }
+
+  // The station clicked on the Map completes a match.
+  $effect(() => {
+    const pick = cave.pick;
+    untrack(() => {
+      if (align.on && align.pending && pick.kind === 'station' && pick.id) match(pick.id);
+    });
+  });
+
+  function unmatch(i: number) {
+    engine.scanRemoveAnchor(cave.trip, scans.selected, i);
+    changed();
+  }
+
+  const setMode = (warp: boolean) => {
+    engine.scanSetMode(cave.trip, scans.selected, warp ? 'warp' : 'rigid');
+    changed();
+  };
+
+  const showUnder = $derived(option('showScans', true));
+  const opacity = $derived(option('scanOpacity', 0.5));
 
   function toggleLink() {
     if (!scans.selected || !cave.trip) return;
@@ -102,10 +155,36 @@
     <button onclick={toggleLink} disabled={!scans.selected || !cave.trip} title={linkedHere ? 'Take this scan off the trip' : 'Link this scan to the trip, so the notebook page and the scan stay together'}>
       {#if linkedHere}<Unlink2 size={14} /> Unlink{:else}<Link2 size={14} /> Link to trip{/if}
     </button>
+    <button class:on={align.on} onclick={() => (align.on = !align.on)} disabled={!linkedHere} title={linkedHere ? 'Match spots on this scan to stations so it lies under the Map and you can trace over it' : 'Link the scan to the trip first'}><Crosshair size={14} /> Align under map</button>
+    <label title="Draw aligned scans under the Map"><input type="checkbox" checked={showUnder} onchange={(e) => setOption('showScans', e.currentTarget.checked)} /> Show under map</label>
+    <label title="How much of the scan shows through under the Map">Strength <input type="range" min="0.1" max="1" step="0.05" value={opacity} oninput={(e) => setOption('scanOpacity', +e.currentTarget.value)} /></label>
     <button onclick={() => showPanel('notebook')} title="Show the notebook page for this trip"><BookOpen size={14} /> Notebook</button>
     {#if scans.message}<span class="msg" role="status">{scans.message}</span>{/if}
   </div>
 
+  {#if align.on && linkedHere}
+    <div class="alignbar" role="group" aria-label="Align under the map">
+      <span class="hint">
+        {#if align.pending}
+          Now click that spot's station on the Map, or choose it:
+          <select bind:value={chosen} aria-label="Station" onchange={() => match(chosen)}>
+            <option value="">Station…</option>
+            {#each stations as s}<option value={s.id}>{s.station}</option>{/each}
+          </select>
+          <button onclick={() => (align.pending = null)}>Cancel</button>
+        {:else}
+          Click a spot on the scan that you can find on the Map (a station mark). {#if !al || al.anchors.length < 2}Two matches place the scan; more fit it better.{/if}
+        {/if}
+      </span>
+      {#each al?.anchors ?? [] as a, i}
+        <span class="match">{a.label || '?'}<button class="x" aria-label="Remove the match at {a.label}" onclick={() => unmatch(i)}><X size={11} /></button></span>
+      {/each}
+      {#if al && al.anchors.length >= 3}
+        <label title="Also stretch and skew across and down to take out scanner distortion"><input type="checkbox" checked={al.mode === 'warp'} onchange={(e) => setMode(e.currentTarget.checked)} /> Stretch to fit</label>
+      {/if}
+      {#if placed}<span class="rms" title="How far, on average, the matched spots land from their stations">off by {formatLength(placed.rms, cave.units, 2)} on average</span>{/if}
+    </div>
+  {/if}
   <div class="body">
     <div class="side">
       {#if mine.length}
@@ -135,7 +214,7 @@
       </div>
     </div>
     {#if scans.url}
-      {#key scans.url}<ScanViewer url={scans.url} kind={scans.kind} name={scans.selected} />{/key}
+      {#key scans.url}<ScanViewer url={scans.url} kind={scans.kind} name={scans.selected} marks={align.on && linkedHere ? (al?.anchors ?? []).map((a) => ({ px: a.px, py: a.py, label: a.label })) : []} pending={align.on ? align.pending : null} picking={align.on && linkedHere} onpick={picked} />{/key}
     {:else}
       <div class="empty">{scans.paths.length ? 'Pick a scan to see it.' : ''}</div>
     {/if}
@@ -151,6 +230,11 @@
   button:disabled { opacity: 0.5; cursor: default; }
   input, select { font: inherit; font-size: 12px; padding: 3px 6px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel-2); color: var(--text); min-width: 0; }
   .msg { color: var(--muted); font-size: 12px; }
+  .alignbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 5px 10px; border-bottom: 1px solid var(--line); background: var(--accent-bg); font-size: 12px; }
+  .match { display: inline-flex; align-items: center; gap: 2px; padding: 0 3px 0 8px; border: 1px solid var(--line); border-radius: 999px; background: var(--panel); }
+  .match .x { border: none; background: none; padding: 2px; }
+  .rms { color: var(--muted); }
+  button.on { background: var(--accent-bg); border-color: var(--accent); }
   .body { flex: 1; min-height: 0; display: flex; }
   .side { width: 220px; flex: none; display: flex; flex-direction: column; gap: 2px; padding: 6px; border-right: 1px solid var(--line); overflow: auto; }
   .side > * { flex: none; }
