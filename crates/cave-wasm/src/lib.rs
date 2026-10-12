@@ -211,6 +211,32 @@ pub fn save_dxf(adjusted: bool) -> String {
     })
 }
 
+/// The legs a cross section can be cut along (JSON array), in survey order.
+#[wasm_bindgen]
+pub fn section_legs(adjusted: bool, filter: &str) -> String {
+    let filter = parse_filter(filter);
+    DOC.with(|d| {
+        let legs = match d.borrow().as_ref() {
+            Some(doc) => cave_scene::section_legs(doc, adjusted, &filter),
+            None => Vec::new(),
+        };
+        serde_json::to_string(&legs).unwrap_or_else(|_| "[]".to_string())
+    })
+}
+
+/// The cross section across `shot`, `t` (0 to 1) of the way along it (JSON), or `null`.
+#[wasm_bindgen]
+pub fn section_cut(adjusted: bool, shot: &str, t: f64, fill_gaps: bool, filter: &str) -> String {
+    let filter = parse_filter(filter);
+    DOC.with(|d| {
+        let cut = d
+            .borrow()
+            .as_ref()
+            .and_then(|doc| cave_scene::section_cut(doc, adjusted, shot, t, fill_gaps, &filter));
+        serde_json::to_string(&cut).unwrap_or_else(|_| "null".to_string())
+    })
+}
+
 /// The view filter the viewer sends (JSON); anything unreadable hides nothing.
 fn parse_filter(json: &str) -> cave_scene::ViewFilter {
     serde_json::from_str(json).unwrap_or_default()

@@ -7,12 +7,14 @@
 mod filter;
 mod mesh;
 mod profile;
+mod section;
 mod solved;
 mod under;
 
 pub use filter::{TripInfo, ViewFilter};
 pub use mesh::{ColorMode, Mesh, passage_mesh};
 pub use profile::{ProfileScene, RunInfo, profile_frames, profile_scene, runs};
+pub use section::{Section, SectionLeg, section_cut, section_legs};
 pub use under::Shading;
 
 use cave_doc::{Document, Field, Kind};

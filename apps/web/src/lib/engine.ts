@@ -1,5 +1,5 @@
 // Loads the Rust engine (WASM) once and re-exports the few calls the UI uses.
-import init, { start, log, console_events, console_clear, engine_version, open_demo, scene, profile_runs, profile_band, add_profile_sketch, undo, redo, edit_state, passage_mesh, shading, palette, open_dxf, save_dxf } from '../wasm/cave_wasm.js';
+import init, { start, log, console_events, console_clear, engine_version, open_demo, scene, profile_runs, profile_band, add_profile_sketch, undo, redo, edit_state, passage_mesh, shading, palette, open_dxf, save_dxf, section_legs, section_cut } from '../wasm/cave_wasm.js';
 
 export type Level = 'debug' | 'detail' | 'info' | 'warn' | 'error';
 export interface ConsoleEvent {
@@ -74,6 +74,35 @@ export interface TypeStyle {
   under_opacity: number;
   layer: string;
 }
+/** A leg a cross section can be cut along. */
+export interface SectionLeg {
+  shot: string;
+  from: string;
+  to: string;
+  /** Metres. */
+  length: number;
+}
+/** One cut across the passage. Points are [across, up] in metres from the axis. */
+export interface Section {
+  shot: string;
+  from: string;
+  to: string;
+  t: number;
+  length: number;
+  along: number;
+  nearest: string;
+  nearest_distance: number;
+  at_station: boolean;
+  outline: [number, number][];
+  from_points: [number, number][];
+  to_points: [number, number][];
+  from_inferred: boolean;
+  to_inferred: boolean;
+  /** What "up the page" means: 'up', or 'north' in a shaft. */
+  up_means: 'up' | 'north';
+  /** Why there is no outline. */
+  note: string | null;
+}
 export interface BuildInfo {
   builtAt: string | null;
   git: string;
@@ -101,6 +130,10 @@ export const engine = {
   openDxf: (text: string): { ok: boolean; message: string; warnings: string[] } => JSON.parse(open_dxf(text)),
   /** The open cave as DXF text (the whole cave is inside the file). */
   saveDxf: (adjusted: boolean): string => save_dxf(adjusted),
+  /** The legs a cross section can be cut along. */
+  sectionLegs: (adjusted: boolean, filter = '{}'): SectionLeg[] => JSON.parse(section_legs(adjusted, filter)),
+  /** The cross section `t` (0..1) of the way along a leg. */
+  sectionCut: (adjusted: boolean, shot: string, t: number, fillGaps: boolean, filter = '{}'): Section | null => JSON.parse(section_cut(adjusted, shot, t, fillGaps, filter)),
   /** The type palette. */
   palette: (): TypeStyle[] => JSON.parse(palette()),
   profileRuns: (adjusted: boolean): RunInfo[] => JSON.parse(profile_runs(adjusted)),

@@ -281,9 +281,77 @@ fn direction_at(
     (n > 0).then(|| normalize(sum)).flatten()
 }
 
+/// The two end rings of one ordinary leg, as the mesh used them.
+#[derive(Clone, Debug)]
+pub struct LegRings {
+    /// The leg's shot.
+    pub shot: Id,
+    /// Start station.
+    pub from: Id,
+    /// End station.
+    pub to: Id,
+    /// Start position.
+    pub a: Vec3,
+    /// End position.
+    pub b: Vec3,
+    /// Ring at the start (measured points, or an inferred section when `inferred_a`).
+    pub ring_a: Vec<RingPoint>,
+    /// Ring at the end.
+    pub ring_b: Vec<RingPoint>,
+    /// The start ring is an inference from neighbours, not a measurement.
+    pub inferred_a: bool,
+    /// The end ring is an inference from neighbours, not a measurement.
+    pub inferred_b: bool,
+}
+
+/// A cut across a passage between two rings, `t` of the way from the first to the second
+/// (0 = at the start station, 1 = at the end): `(angle, world point)` around the axis, using every
+/// measured point of both rings (the same rule as the tube's full lofting, so a cut at a station is
+/// the tube's own ring there). `None` when a ring the cut needs has fewer than three points.
+pub fn cut_outline(rings: &LegRings, t: f64) -> Option<Vec<(f64, Vec3)>> {
+    const AT_END: f64 = 1e-6;
+    let (need_a, need_b) = (t < 1.0 - AT_END, t > AT_END);
+    if (need_a && rings.ring_a.len() < 3) || (need_b && rings.ring_b.len() < 3) {
+        return None;
+    }
+    // At a station the cut is that station's own ring, with no extra vertices from the far end.
+    if !need_b || !need_a {
+        let (ring, centre) = if need_a {
+            (&rings.ring_a, rings.a)
+        } else {
+            (&rings.ring_b, rings.b)
+        };
+        let e = envelope(ring, centre);
+        return (e.angles.len() >= 3).then(|| e.angles.into_iter().zip(e.points).collect());
+    }
+    let (ea, eb) = (
+        envelope(&rings.ring_a, rings.a),
+        envelope(&rings.ring_b, rings.b),
+    );
+    if ea.angles.len() < 3 || eb.angles.len() < 3 {
+        return None;
+    }
+    let mut angles: Vec<f64> = ea.angles.iter().chain(&eb.angles).copied().collect();
+    angles.sort_by(|x, y| x.partial_cmp(y).unwrap_or(std::cmp::Ordering::Equal));
+    angles.dedup_by(|x, y| (*x - *y).abs() < 1e-9);
+    let at = |e: &Envelope, th: f64| cyclic_interp(&e.angles, &e.points, th, lerp3);
+    Some(
+        angles
+            .into_iter()
+            .map(|th| (th, lerp3(at(&ea, th), at(&eb, th), t)))
+            .collect(),
+    )
+}
+
 /// Builds the passage surface. Only ordinary ("new") legs are lofted; closures and ties draw no
 /// surface of their own.
 pub fn build(input: &MeshInput) -> Mesh {
+    build_with_rings(input, &mut |_| {})
+}
+
+/// [`build`], also handing each ordinary leg's two end rings to `sink` (whether or not they are
+/// complete enough to draw), so a cross-section can be cut from the very same rings.
+pub fn build_with_rings(input: &MeshInput, sink: &mut dyn FnMut(&LegRings)) -> Mesh {
     let mut mesh = Mesh::default();
     let axes = stations_axes(input.stations, input.legs, AXIS_TOLERANCE_DEG);
     let mut counts: HashMap<Id, usize> = HashMap::new();
@@ -498,6 +566,17 @@ pub fn build(input: &MeshInput) -> Mesh {
         let (dir_a, dir_b) = (dir_of(leg.from), dir_of(leg.to));
         let ((ring_a, inf_a), (ring_b, inf_b)) =
             (ring_for(leg.from, a, dir_a), ring_for(leg.to, b, dir_b));
+        sink(&LegRings {
+            shot: leg.shot,
+            from: leg.from,
+            to: leg.to,
+            a,
+            b,
+            ring_a: ring_a.clone(),
+            ring_b: ring_b.clone(),
+            inferred_a: inf_a,
+            inferred_b: inf_b,
+        });
         if ring_a.len() >= 3 && ring_b.len() >= 3 {
             let (mut col_a, mut col_b) = (color_at(leg.from, a), color_at(leg.to, b));
             if inf_a || inf_b {
