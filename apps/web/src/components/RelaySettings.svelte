@@ -1,9 +1,10 @@
 <script lang="ts">
-  import { relay, saveRelay, testRelay } from '../lib/p2p-relay.svelte';
+  import { relay, relayBuiltIn, saveRelay, testRelay } from '../lib/p2p-relay.svelte';
 </script>
 
 <details class="relay">
-  <summary>Relay for strict networks (optional)</summary>
+  <summary>{relayBuiltIn ? 'Strict networks: handled for you (advanced)' : 'Relay for strict networks (optional)'}</summary>
+  {#if relayBuiltIn}<p class="fine">CaveCAD already includes a relay, used automatically when a direct connection is blocked. You do not need to do anything. Only fill this in to use your own relay instead.</p>{/if}
   <p class="fine">
     Some networks block direct connections. A relay server (for example a free Metered account) passes the already-encrypted data along as a fallback; it cannot read it. Direct is always tried first. These details stay in this browser.
   </p>

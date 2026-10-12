@@ -18,6 +18,9 @@ function load(): Relay {
 /** The relay link built into this copy of the app (set when it is built, from a repository secret); people can still use their own. */
 const BUILT_IN: string = (import.meta.env.VITE_RELAY_URL as string | undefined)?.trim() ?? '';
 
+/** True when this copy of the app came with a relay built in, so people need to set nothing up. */
+export const relayBuiltIn = BUILT_IN !== '';
+
 export const relay = $state<Relay & { testing: boolean; result: string }>({ ...load(), testing: false, result: '' });
 
 export function saveRelay() {
