@@ -15,6 +15,7 @@
   let demo = $state(DEMOS[0].id);
   let adjusted = $state(true);
   let depthColor = $state(false);
+  let walls = $state(true);
   let projection = $state<Projection>('perspective');
   let status = $state('');
   let scene: Scene | null = null;
@@ -66,6 +67,7 @@
       {#each DEMOS as d}<option value={d.id}>{d.title}</option>{/each}
     </select>
     <label><input type="checkbox" bind:checked={adjusted} onchange={refresh} /> Adjusted</label>
+    <label><input type="checkbox" bind:checked={walls} onchange={() => view?.setShowWalls(walls)} /> Walls</label>
     <button class:on={depthColor} title="Colour by elevation" onclick={() => ((depthColor = !depthColor), view?.setElevationColors(depthColor))}><Palette size={15} /></button>
     {#if status}<span class="status">{status}</span>{/if}
   </div>

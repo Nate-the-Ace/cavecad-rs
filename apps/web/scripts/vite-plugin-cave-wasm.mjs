@@ -50,7 +50,13 @@ export default function caveWasm() {
   const info = { builtAt: null, ...describeTree(), error: null };
 
   async function run(release) {
-    const r = await buildWasm(release);
+    let r = await buildWasm(release);
+    // A build that fails once is often a blip (two cargo runs touching the same output); only a
+    // failure that repeats is worth showing.
+    if (!r.ok) {
+      await new Promise((done) => setTimeout(done, 600));
+      r = await buildWasm(release);
+    }
     Object.assign(info, describeTree(), { builtAt: new Date().toISOString(), error: r.ok ? null : lastError(r.log) });
     if (!r.ok) console.error(`\n[cave-wasm] build failed:\n${info.error}\n`);
     else console.log(`[cave-wasm] built ${info.git}${info.dirty ? '+' : ''} at ${info.builtAt}`);

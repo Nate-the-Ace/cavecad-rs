@@ -69,6 +69,8 @@ pub struct Scene {
     pub legs: Vec<SceneLeg>,
     /// Splay rays as `[x1, y1, z1, x2, y2, z2]`.
     pub splays: Vec<[f64; 6]>,
+    /// Passage wall lines (both sides), each a run of 3D points built from LRUD and splays.
+    pub walls: Vec<Vec<Pt>>,
     /// Loop and tie misclosures (as surveyed, never from adjusted coordinates).
     pub closures: Vec<SceneClosure>,
     /// `[min_x, min_y, min_z, max_x, max_y, max_z]`, or `None` when empty.
@@ -147,6 +149,24 @@ pub fn build(doc: &Document, use_adjustment: bool) -> Scene {
             ]);
         }
     }
+    let placed: std::collections::BTreeMap<Id, cave_survey::Vec3> = r
+        .stations
+        .keys()
+        .filter_map(|id| pos(*id).map(|p| (*id, p)))
+        .collect();
+    let walls = cave_walls::wall_runs(&cave_walls::WallInput {
+        stations: &placed,
+        legs: &r.legs,
+        readings: &ex.readings,
+        lruds: &ex.lruds,
+        start_lruds: &ex.start_lruds,
+        splays: &ex.splays,
+    });
+    for run in walls.left.iter().chain(&walls.right) {
+        scene
+            .walls
+            .push(run.points.iter().map(|p| [p.x, p.y, p.z]).collect());
+    }
     for c in &r.closures {
         if let Some(p) = pos(c.at) {
             scene.closures.push(SceneClosure {
@@ -159,6 +179,7 @@ pub fn build(doc: &Document, use_adjustment: bool) -> Scene {
     }
     let mut pts: Vec<Pt> = scene.stations.iter().map(|s| s.at).collect();
     pts.extend(scene.splays.iter().map(|s| [s[3], s[4], s[5]]));
+    pts.extend(scene.walls.iter().flatten().copied());
     scene.bounds = pts.iter().fold(None, |b: Option<[f64; 6]>, p| {
         Some(match b {
             None => [p[0], p[1], p[2], p[0], p[1], p[2]],
@@ -237,6 +258,23 @@ mod tests {
         );
         let b = s.bounds.unwrap();
         assert!(b[2] <= 0.0 + 1e-9 && b[5] >= 5.0 - 1e-9);
+    }
+
+    #[test]
+    fn measured_walls_become_wall_lines_in_3d() {
+        let text = r#"{"unit":"m","name":"w","shots":[
+            {"from":"A","to":"B","distance":10,"azimuth":0,"inclination":0,"left":1,"right":2},
+            {"from":"B","to":"C","distance":10,"azimuth":0,"inclination":10,"left":1,"right":2}]}"#;
+        let doc = cave_fixture::from_shot_list(text, ActorId(1)).unwrap();
+        let s = build(&doc, false);
+        assert_eq!(s.walls.len(), 2, "one run per side");
+        let left = s
+            .walls
+            .iter()
+            .find(|w| w[0][0] < 0.0)
+            .expect("left wall is west of a north-running passage");
+        assert!((left[0][0] + 1.0).abs() < 1e-9 && (left[1][0] + 1.0).abs() < 1e-9);
+        assert!(left[1][2] > left[0][2], "the wall climbs with the passage");
     }
 
     #[test]

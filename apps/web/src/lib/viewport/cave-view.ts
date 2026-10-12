@@ -42,6 +42,7 @@ export class CaveView {
   private anim = 0;
   private extent = 1;
   private elevationColors = false;
+  private showWalls = true;
   /** Called after every render so the view cube can follow the camera. */
   onRender: (camera: THREE.Camera, target: THREE.Vector3) => void = () => {};
   onProjection: (p: Projection) => void = () => {};
@@ -226,6 +227,11 @@ export class CaveView {
     this.rebuild();
   }
 
+  setShowWalls(on: boolean) {
+    this.showWalls = on;
+    this.rebuild();
+  }
+
   setScene(scene: Scene | null, refit = true) {
     this.data = scene;
     this.rebuild();
@@ -266,8 +272,13 @@ export class CaveView {
       this.materials.push(mat);
     };
     const legs = (style: string) => s.legs.filter((l) => l.style === style).map((l) => [...l.from, ...l.to]);
-    lines(s.splays, t.muted, 1, { opacity: 0.55 });
-    lines(legs('new'), t.text, 2.2);
+    const walls = this.showWalls && s.walls.length > 0;
+    // Walls are the drawing; once they are there the surveyed centreline steps back.
+    lines(s.splays, t.muted, 1, { opacity: 0.45 });
+    lines(legs('new'), walls ? t.muted : t.text, walls ? 1.4 : 2.2);
+    if (walls) {
+      lines(s.walls.flatMap((run) => run.slice(1).map((p, i) => [...run[i], ...p])), t.text, 2.4);
+    }
     lines(legs('tie'), t.warn, 2, { dashed: true });
     lines(legs('closure'), t.accent, 2, { dashed: true });
 

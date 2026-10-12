@@ -14,6 +14,8 @@ export interface Scene {
   legs: { from: Pt; to: Pt; style: 'new' | 'closure' | 'tie' }[];
   /** [x1, y1, z1, x2, y2, z2] */
   splays: [number, number, number, number, number, number][];
+  /** Passage wall lines (both sides); each is a run of 3D points. */
+  walls: Pt[][];
   closures: { at: Pt; horizontal: number; vertical: number; percent: number | null }[];
   /** [minX, minY, minZ, maxX, maxY, maxZ] */
   bounds: [number, number, number, number, number, number] | null;
