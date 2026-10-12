@@ -3,6 +3,7 @@
   import { Home, Maximize, Box, Square, Palette, Eye } from '@lucide/svelte';
   import PanelUndo from './PanelUndo.svelte';
   import { DEMOS } from '../lib/demos';
+  import { leave } from '../lib/sync.svelte';
   import { engine, loadEngine, type Scene, type TypeStyle } from '../lib/engine';
   import { CaveView, type Projection } from '../lib/viewport/cave-view';
   import { cave, changed, filter, option, setShowSections, setShown, wireFilter } from '../lib/cave.svelte';
@@ -37,6 +38,7 @@
   function open(id: string) {
     const d = DEMOS.find((x) => x.id === id);
     if (!d || !view) return;
+    leave(); // a different cave: stop sharing the old one
     status = engine.openDemo(d.json);
     cave.fileName = `${d.id}.dxf`;
     forgetFile();

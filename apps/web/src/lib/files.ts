@@ -4,6 +4,7 @@
 // downloads a copy.
 import { engine } from './engine';
 import { cave, changed } from './cave.svelte';
+import { leave } from './sync.svelte';
 
 /** The subset of the File System Access API this file uses. */
 interface Handle {
@@ -53,6 +54,7 @@ export async function openDxf(): Promise<{ ok: boolean; message: string } | null
   if (!picked) return null;
   const r = engine.openDxf(picked.text);
   if (!r.ok) return { ok: false, message: r.message };
+  leave(); // a different cave: stop sharing the old one
   handle = picked.handle;
   cave.fileName = picked.name;
   for (const w of r.warnings) engine.log('warn', 'file', w);

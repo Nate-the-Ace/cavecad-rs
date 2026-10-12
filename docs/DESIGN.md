@@ -117,3 +117,40 @@ the old app did. The marks lie on the right of travel; `Field::FeatureFlip` and 
 button in the selected-line tab move them to the left (one undoable edit in the line's own panel).
 Not yet: Wall Glyphs and automatic outside-of-wall sides (`autoSides`), ornament in the 3D map
 view, ornament in DXF export (the spine exports; marks do not yet), per-line spacing and scale.
+
+## 2026-10-12: Live editing test setup (laptop plus iPad)
+
+Goal: two real devices editing one cave at once, to find out what breaks before the real
+transport is built. It reuses what the document already had (ops with actor and logical clock,
+order-independent merge, undo as ordinary edits) and adds only plumbing.
+- `cave-doc`: `Document` keeps an outbox of local ops (`take_outbox`, undo and redo included),
+  can describe itself as ops (`snapshot`) so a joiner rebuilds it with every stamp intact, and
+  can change its editor (`set_actor`). Every device gets its own random actor when a cave is
+  opened; two devices that shared an actor could stamp different edits identically.
+- Found by the first two-browser run: serde_json reads some floats one digit off, which left the
+  devices holding slightly different caves. `float_roundtrip` is on in `cave-doc` and `cave-wasm`,
+  with a test that fails without it.
+- Relay (`apps/web/scripts/sync-relay.mjs`, served at `/sync` by the dev and preview servers): a
+  dumb forwarder. Devices join a named room; the first into an empty room supplies the cave, later
+  ones receive the room's whole op log, then ops are passed on. It never reads an op and keeps the
+  log only in memory while the server runs. Nothing leaves the machine the server runs on.
+- Web: View tab, "Live editing" group (room name, Join, Leave, who is in). Local edits are sent
+  every 80 ms; opening another cave leaves the room. `npm run dev` now listens on the network.
+- To try it: run `npm run dev` on the laptop, open the "Network" address it prints (for example
+  `http://192.168.1.20:5173`) on both the laptop and the iPad, open View, type the same room name
+  on both and press Join. The published artifact link cannot do this (it is a static page with no
+  relay behind it).
+- Checked: `cave-doc/tests/sync.rs` (join by snapshot, concurrent edits, undo sent as an edit,
+  bit-exact floats), `tests/relay.check.mjs` (real sockets), and two browsers drawing in turn
+  ended with identical documents.
+Not built yet (in this order): see other people (presence, who is editing what, their cursors),
+a reconnect that catches up after a dropped connection, a stored log so a room survives a server
+restart, trimming the log, per-key merge for tags and a text type for long notes, and a relay that
+is not the laptop (the same protocol served from a small always-on server).
+
+**Avatars** (2026-10-12, Nathan): while live, everyone in the room shows as a round avatar (initials on
+their colour) at the right end of the tab bar, this device first and ringed; hover for the name. A
+device's name defaults to what it is (Laptop, iPad, Phone) and can be changed in View, Live editing;
+the colour comes from its id. The relay passes each device's name and colour on as plain text and
+sends everyone the roster whenever someone joins or leaves. Not yet: what each person is editing,
+their cursors, or choosing a picture.

@@ -42,6 +42,11 @@ impl Clock {
         self.actor
     }
 
+    /// Stamps as a different editor from now on (the counter keeps going).
+    pub fn set_actor(&mut self, actor: ActorId) {
+        self.actor = actor;
+    }
+
     /// The next stamp for a local edit.
     pub fn tick(&mut self) -> Stamp {
         self.counter += 1;

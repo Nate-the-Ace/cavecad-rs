@@ -1,5 +1,5 @@
 // Loads the Rust engine (WASM) once and re-exports the few calls the UI uses.
-import init, { start, log, console_events, console_clear, engine_version, open_demo, scene, profile_runs, profile_band, add_profile_sketch, undo, redo, edit_state, passage_mesh, shading, palette, open_dxf, save_dxf, section_stations, section_at, add_section_sketch, map_sections, place_section, map_profile_sketches, add_map_line, map_lines, draw_tools, edit_line, delete_line, set_line_closed, set_line_kind, line_info, set_line_flip, ornament, flipped_lines } from '../wasm/cave_wasm.js';
+import init, { start, log, console_events, console_clear, engine_version, open_demo, scene, profile_runs, profile_band, add_profile_sketch, undo, redo, edit_state, passage_mesh, shading, palette, open_dxf, save_dxf, section_stations, section_at, add_section_sketch, map_sections, place_section, map_profile_sketches, add_map_line, map_lines, draw_tools, edit_line, delete_line, set_line_closed, set_line_kind, line_info, set_line_flip, ornament, flipped_lines, sync_outbox, sync_apply, sync_snapshot, sync_load } from '../wasm/cave_wasm.js';
 
 import { setInkPalette } from './ink';
 import { setOrnamentSource } from './section-glyph';
@@ -167,6 +167,14 @@ export const engine = {
   events: (since: number): ConsoleEvent[] => JSON.parse(console_events(BigInt(since))),
   clear: () => console_clear(),
   openDemo: (json: string): string => open_demo(json),
+  /** Local edits since the last call (JSON ops, as a string; `[]` when none). */
+  syncOutbox: (): string => sync_outbox(),
+  /** Applies ops made on another device; returns how many applied. */
+  syncApply: (ops: string): number => sync_apply(ops),
+  /** The whole cave as JSON ops. */
+  syncSnapshot: (): string => sync_snapshot(),
+  /** Replaces the open cave with one rebuilt from ops; `ok` or `error: ...`. */
+  syncLoad: (ops: string): string => sync_load(ops),
   scene: (adjusted: boolean, filter = '{}'): Scene => JSON.parse(scene(adjusted, filter)),
   /** Which drawn lines run under another passage, for a camera looking from `dir` toward the cave (for perspective, `dir` is the eye's position). */
   shading: (adjusted: boolean, dir: [number, number, number], perspective: boolean, filter = '{}'): Scene['shading'] => JSON.parse(shading(adjusted, dir[0], dir[1], dir[2], perspective, filter)),

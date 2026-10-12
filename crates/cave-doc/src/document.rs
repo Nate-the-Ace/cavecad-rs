@@ -1,6 +1,6 @@
 //! The document: every entity, and the one rule for changing them.
 
-use crate::clock::{ActorId, Clock};
+use crate::clock::{ActorId, Clock, Stamp};
 use crate::entity::{Entity, Lww};
 use crate::field::{Kind, Value};
 use crate::op::{Action, Op};
@@ -32,6 +32,8 @@ pub struct Edit {
 pub struct Document {
     pub(crate) entities: BTreeMap<Id, Entity>,
     pub(crate) clock: Clock,
+    /// Local ops not yet taken for sending (see `take_outbox`).
+    outbox: Vec<Op>,
 }
 
 impl PartialEq for Document {
@@ -47,12 +49,61 @@ impl Document {
         Document {
             entities: BTreeMap::new(),
             clock: Clock::new(actor),
+            outbox: Vec::new(),
         }
     }
 
     /// The editor making local changes.
     pub fn actor(&self) -> ActorId {
         self.clock.actor()
+    }
+
+    /// Becomes a different editor from now on. Every device editing the same cave needs its own
+    /// actor, or two of them could stamp different edits identically.
+    pub fn set_actor(&mut self, actor: ActorId) {
+        self.clock.set_actor(actor);
+    }
+
+    /// The ops made locally (including by undo and redo) since the last call, oldest first.
+    /// A sync layer sends these to the other editors.
+    pub fn take_outbox(&mut self) -> Vec<Op> {
+        std::mem::take(&mut self.outbox)
+    }
+
+    /// The whole document as ops: applying them to an empty document (any actor) rebuilds it, with
+    /// every stamp intact, so it merges cleanly with whatever the others do next.
+    pub fn snapshot(&self) -> Vec<Op> {
+        let mut ops = Vec::new();
+        for (id, e) in &self.entities {
+            if e.exists.stamp > Stamp::ZERO {
+                let action = if e.exists.value {
+                    Action::Create {
+                        id: *id,
+                        kind: e.kind,
+                    }
+                } else {
+                    Action::Remove {
+                        id: *id,
+                        kind: e.kind,
+                    }
+                };
+                ops.push(Op {
+                    stamp: e.exists.stamp,
+                    action,
+                });
+            }
+            for (field, l) in &e.fields {
+                ops.push(Op {
+                    stamp: l.stamp,
+                    action: Action::Set {
+                        id: *id,
+                        field: *field,
+                        value: l.value.clone(),
+                    },
+                });
+            }
+        }
+        ops
     }
 
     /// A live entity, or `None` if absent or removed.
@@ -139,6 +190,7 @@ impl Document {
                 action,
             };
             self.apply(&op)?;
+            self.outbox.push(op.clone());
             ops.push(op);
         }
         inverse.reverse();

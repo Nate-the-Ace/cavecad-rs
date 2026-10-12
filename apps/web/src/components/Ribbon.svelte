@@ -6,6 +6,8 @@
   import ThemeGroup from './ThemeGroup.svelte';
   import ContextOptions from './ContextOptions.svelte';
   import SelectionTools from './SelectionTools.svelte';
+  import CollaborateGroup from './CollaborateGroup.svelte';
+  import Avatars from './Avatars.svelte';
   import { onMount } from 'svelte';
   import { PANELS, panelState, resetLayout, togglePanel } from '../lib/workspace.svelte';
   import { Check, Trash2, FileInput, FolderOpen, Save, Ruler, Footprints, Route, Waypoints, Pencil, Spline, PaintBucket, Scissors, Map as MapIcon, Terminal, LayoutDashboard, Activity } from '@lucide/svelte';
@@ -58,6 +60,7 @@
       { name: 'Panels', items: [panelItem('map', MapIcon), panelItem('profile', Activity), panelItem('section', Scissors), panelItem('console', Terminal)] },
       { name: 'Units', items: [{ label: 'Metric', icon: Ruler, run: () => setUnits('metric'), pressed: () => cave.units === 'metric' }, { label: 'Imperial', icon: Footprints, run: () => setUnits('imperial'), pressed: () => cave.units === 'imperial' }] },
       { name: 'Theme', items: [], custom: ThemeGroup },
+      { name: 'Live editing', items: [], custom: CollaborateGroup },
       { name: 'Layout', items: [{ label: 'Reset', icon: LayoutDashboard, run: resetLayout }] },
     ],
   };
@@ -143,6 +146,7 @@
     {#if mode}
       <button class="ctx" class:on={active === CONTEXT} onclick={() => (active = CONTEXT)}>{contextName}</button>
     {/if}
+    <Avatars />
   </nav>
   <div class="bar">
     {#each shownGroups as g}
@@ -166,7 +170,7 @@
 
 <style>
   header { background: var(--panel); }
-  .tabs { display: flex; gap: 2px; padding: 6px 10px 0; }
+  .tabs { display: flex; gap: 2px; padding: 6px 10px 0; align-items: flex-end; }
   .tabs button { background: none; border: 0; padding: 6px 14px; color: var(--muted); border-radius: var(--radius) var(--radius) 0 0; cursor: pointer; }
   .tabs button.ctx { color: var(--accent); margin-left: 10px; box-shadow: inset 0 2px 0 var(--accent); }
   .tabs button.on { color: var(--text); background: var(--accent-bg); font-weight: 500; }

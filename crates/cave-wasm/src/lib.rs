@@ -95,6 +95,22 @@ pub fn console_clear() {
     console().clear();
 }
 
+/// Makes `doc` the open cave. This device edits it under its own actor (so edits made on two
+/// devices never carry the same stamp), and what loading it did is not sent anywhere.
+fn install(mut doc: Document) {
+    doc.set_actor(random_actor());
+    doc.take_outbox();
+    DOC.with(|d| *d.borrow_mut() = Some(doc));
+    HISTORY.with(|h| h.borrow_mut().clear());
+}
+
+/// A new editor identity for this device (53 bits, so it survives a trip through JavaScript).
+fn random_actor() -> ActorId {
+    let hi = (js_sys::Math::random() * 2_097_152.0) as u64;
+    let lo = (js_sys::Math::random() * 4_294_967_296.0) as u64;
+    ActorId((hi << 32) | lo | 1)
+}
+
 /// Opens a demo cave from shot-list JSON (the synthetic test caves). Returns a one-line summary,
 /// or an error message starting with `error:`.
 #[wasm_bindgen]
@@ -110,8 +126,7 @@ pub fn open_demo(json: &str) -> String {
                 scene.closures.len()
             );
             tracing::info!(source = "import", "opened demo cave: {summary}");
-            DOC.with(|d| *d.borrow_mut() = Some(doc));
-            HISTORY.with(|h| h.borrow_mut().clear());
+            install(doc);
             summary
         }
         Err(e) => {
@@ -155,8 +170,7 @@ pub fn open_dxf(text: &str) -> String {
                         scene.closures.len()
                     );
                     tracing::info!(source = "file", "opened a DXF: {message}");
-                    DOC.with(|d| *d.borrow_mut() = Some(doc));
-                    HISTORY.with(|h| h.borrow_mut().clear());
+                    install(doc);
                     OpenResult {
                         ok: true,
                         message,
@@ -890,4 +904,64 @@ mod tests {
         );
         assert!(add_section_sketch(&id, "wall", "garbage", "", false, false).starts_with("error"));
     }
+}
+
+/// Local edits made since the last call, as JSON ops (`[]` when there are none). Includes undo
+/// and redo. A sync layer sends these to the other devices.
+#[wasm_bindgen]
+pub fn sync_outbox() -> String {
+    DOC.with(|d| {
+        let ops = d
+            .borrow_mut()
+            .as_mut()
+            .map(Document::take_outbox)
+            .unwrap_or_default();
+        serde_json::to_string(&ops).unwrap_or_else(|_| "[]".into())
+    })
+}
+
+/// Applies ops made on another device. Returns how many changed anything it could apply; ones
+/// that make no sense are skipped, never half-applied.
+#[wasm_bindgen]
+pub fn sync_apply(ops: &str) -> u32 {
+    let Ok(ops) = serde_json::from_str::<Vec<cave_doc::Op>>(ops) else {
+        return 0;
+    };
+    DOC.with(|d| {
+        let mut slot = d.borrow_mut();
+        let Some(doc) = slot.as_mut() else {
+            return 0;
+        };
+        ops.iter().filter(|op| doc.apply(op).is_ok()).count() as u32
+    })
+}
+
+/// The whole open cave as JSON ops, to hand to a device that is joining.
+#[wasm_bindgen]
+pub fn sync_snapshot() -> String {
+    DOC.with(|d| {
+        let ops = d
+            .borrow()
+            .as_ref()
+            .map(Document::snapshot)
+            .unwrap_or_default();
+        serde_json::to_string(&ops).unwrap_or_else(|_| "[]".into())
+    })
+}
+
+/// Replaces the open cave with one rebuilt from a snapshot (or a room's whole log). Returns
+/// `ok` or `error: ...`; on an error the open cave is left alone.
+#[wasm_bindgen]
+pub fn sync_load(ops: &str) -> String {
+    let Ok(ops) = serde_json::from_str::<Vec<cave_doc::Op>>(ops) else {
+        return "error: unreadable cave from the room".into();
+    };
+    let mut doc = Document::new(ActorId(1));
+    for op in &ops {
+        if doc.apply(op).is_err() {
+            return "error: the room's cave does not fit this version of CaveCAD".into();
+        }
+    }
+    install(doc);
+    "ok".into()
 }
