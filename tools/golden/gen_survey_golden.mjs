@@ -43,7 +43,11 @@ for (const name of FIXTURES) {
           var key = g.order[i], run = g.runs[key];
           var tie = (h.ties[key] !== null && h.ties[key] !== undefined && r.stations.hasOwnProperty(h.ties[key])) ? h.ties[key] : null;
           var b = CsProfile.unrollBand(run, tie, r, null, { adjacency: adj, legIndex: idx });
+          var w = CsProfile.bandWallRuns(b, s, r, {});
+          var xy = function(p){ return [p.x, p.y]; };
           bands[key] = { tie: b.tie, stopped: b.stopped, stoppedReason: b.stoppedReason, omitted: b.omitted,
+                         walls: { ceiling: w.ceiling.map(function(l){ return l.map(xy); }), floor: w.floor.map(function(l){ return l.map(xy); }),
+                                  flat: w.flat.map(function(f){ return { at: [f.x, f.y], station: f.station }; }), skipped: w.skipped },
                          stations: b.stations.map(function(x){ return [x.name, x.x, x.y]; }), runStations: run.stations };
         }
         return { order: g.order, ungrouped: g.ungrouped, bands: bands, hierarchy: { parents: h.parents, ties: h.ties, bandOrder: h.order } };

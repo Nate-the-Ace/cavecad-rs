@@ -176,6 +176,12 @@
 
     g.setLineDash([5, 4]);
     for (const line of [...band.ceiling, ...band.floor]) stroke(g, line, null, c.muted, 1.2);
+    // near-level splays: real wall hits that say nothing about the ceiling or floor, so ticks, not line points
+    g.fillStyle = c.muted;
+    for (const [s, z] of band.flat) {
+      const [x, y] = toScreen(s, z);
+      g.fillRect(x - 1.5, y - 1.5, 3, 3);
+    }
     g.setLineDash([]);
     for (const l of band.legs) stroke(g, [[l[0], l[1]], [l[2], l[3]]], null, c.text, 2);
     const look = looks();

@@ -372,6 +372,10 @@ fn draw_profiles(g: &mut Geometry, doc: &Document, adjusted: bool, plan_min: [f6
             let pts: Vec<[f64; 2]> = line.iter().map(|q| at(q[0], q[1])).collect();
             g.lwpolyline("profile-wall", &pts, None);
         }
+        for q in &p.flat {
+            let a = at(q[0], q[1]);
+            g.point("profile-wall", None, [a[0], a[1], 0.0]);
+        }
         for st in &p.stations {
             let a = at(st.s, st.z);
             g.point("station", None, [a[0], a[1], 0.0]);

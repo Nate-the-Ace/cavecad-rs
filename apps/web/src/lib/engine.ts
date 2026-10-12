@@ -52,6 +52,8 @@ export interface ProfileScene {
   legs: [number, number, number, number][];
   ceiling: [number, number][][];
   floor: [number, number][][];
+  /** Near-level splays as [s, z] ticks. */
+  flat: [number, number][];
   sketches: { id: string; kind: string; points: [number, number][]; widths: number[] | null; closed: boolean }[];
   /** Cross-section sketches of the stations on this band. */
   sections: BandSection[];

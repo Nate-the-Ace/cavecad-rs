@@ -91,6 +91,7 @@ dependencies = [
  "cave-fixture",
  "cave-id",
  "cave-survey",
+ "cave-walls",
  "serde_json",
 ]
 

@@ -4,7 +4,9 @@
 
 use cave_doc::{ActorId, Field};
 use cave_id::Id;
-use cave_profile::{Graph, LegInfo, group_runs, hierarchy, unroll_band};
+use cave_profile::{
+    FLAT_SPLAY_DEG, Graph, LegInfo, WallInput, band_wall_runs, group_runs, hierarchy, unroll_band,
+};
 use cave_survey::{extract, resolve};
 use serde_json::Value;
 use std::collections::HashMap;
@@ -91,6 +93,34 @@ fn check(file: &str) {
         );
     }
     let z_of = |id: Id| r.stations.get(&id).map(|p| p.pos.z);
+    // What the walls of a band are read from: splays by station, readings, and where lines break.
+    let positions: std::collections::BTreeMap<Id, cave_survey::Vec3> =
+        r.stations.iter().map(|(id, p)| (*id, p.pos)).collect();
+    let axes = cave_walls::stations_axes(&positions, &r.legs, cave_walls::AXIS_TOLERANCE_DEG);
+    let mut counts: HashMap<Id, usize> = HashMap::new();
+    for l in &r.legs {
+        *counts.entry(l.from).or_default() += 1;
+        *counts.entry(l.to).or_default() += 1;
+    }
+    let is_junction = |n: Id| {
+        axes.get(&n).map_or_else(
+            || counts.get(&n).copied().unwrap_or(0) > 2,
+            |a| a.is_junction(),
+        )
+    };
+    let mut splays_at: HashMap<Id, Vec<cave_survey::Splay>> = HashMap::new();
+    for sp in ex.splays.iter().filter(|s| !s.exclude_from_plot) {
+        splays_at.entry(sp.from).or_default().push(*sp);
+    }
+    let wall_input = WallInput {
+        splays_at: &splays_at,
+        readings: &ex.readings,
+        lruds: &ex.lruds,
+        start_lruds: &ex.start_lruds,
+        legs: &r.legs,
+        is_junction: &is_junction,
+        flat_deg: FLAT_SPLAY_DEG,
+    };
 
     for run in &runs.runs {
         let w = &want["bands"][&run.key];
@@ -141,6 +171,51 @@ fn check(file: &str) {
             "{file} run {}: stopped",
             run.key
         );
+        // The ceiling, floor and flat splay ticks match the old app's.
+        let walls = band_wall_runs(&band, &wall_input);
+        let ww = &w["walls"];
+        for (name, got) in [("ceiling", &walls.ceiling), ("floor", &walls.floor)] {
+            let want = ww[name].as_array().unwrap();
+            assert_eq!(
+                got.len(),
+                want.len(),
+                "{file} run {} {name}: lines",
+                run.key
+            );
+            for (g, w) in got.iter().zip(want) {
+                let w = w.as_array().unwrap();
+                assert_eq!(g.len(), w.len(), "{file} run {} {name}: points", run.key);
+                for (g, w) in g.iter().zip(w) {
+                    let (s, z) = (w[0].as_f64().unwrap() * FEET, w[1].as_f64().unwrap() * FEET);
+                    assert!(
+                        (g[0] - s).abs() < 1e-6 && (g[1] - z).abs() < 1e-6,
+                        "{file} run {} {name}: ({:.4},{:.4}) vs ({s:.4},{z:.4})",
+                        run.key,
+                        g[0],
+                        g[1]
+                    );
+                }
+            }
+        }
+        let want_flat = ww["flat"].as_array().unwrap();
+        assert_eq!(
+            walls.flat.len(),
+            want_flat.len(),
+            "{file} run {}: flat ticks",
+            run.key
+        );
+        for (g, w) in walls.flat.iter().zip(want_flat) {
+            let (s, z) = (
+                w["at"][0].as_f64().unwrap() * FEET,
+                w["at"][1].as_f64().unwrap() * FEET,
+            );
+            assert!(
+                (g.at[0] - s).abs() < 1e-6 && (g.at[1] - z).abs() < 1e-6,
+                "{file} run {}: flat tick",
+                run.key
+            );
+            assert_eq!(label(&g.station), w["station"].as_str().unwrap());
+        }
         let omitted: Vec<String> = band.omitted.iter().map(label).collect();
         let want_omitted: Vec<&str> = w["omitted"]
             .as_array()

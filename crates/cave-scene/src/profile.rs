@@ -5,7 +5,9 @@
 use crate::solved::{Solved, solve};
 use cave_doc::{Document, Field, Frame, Kind, Value};
 use cave_id::Id;
-use cave_profile::{Graph, LegInfo, group_runs, hierarchy, unroll_band};
+use cave_profile::{
+    FLAT_SPLAY_DEG, Graph, LegInfo, WallInput, band_wall_runs, group_runs, hierarchy, unroll_band,
+};
 use cave_survey::LegKind;
 use serde::Serialize;
 use std::collections::HashMap;
@@ -86,6 +88,8 @@ pub struct ProfileScene {
     pub ceiling: Vec<Vec<[f64; 2]>>,
     /// Floor lines.
     pub floor: Vec<Vec<[f64; 2]>>,
+    /// Near-level splays, as `(s, z)` ticks: real wall hits that say nothing about the ceiling or floor.
+    pub flat: Vec<[f64; 2]>,
     /// Strokes sketched on this band, oldest first.
     pub sketches: Vec<Sketch>,
     /// Cross-section sketches of the stations on this band.
@@ -98,6 +102,44 @@ pub struct ProfileScene {
     pub note: Option<String>,
     /// `[min_s, min_z, max_s, max_z]` around everything, or `None` when empty.
     pub bounds: Option<[f64; 4]>,
+}
+
+/// The ceiling and floor of a band, with splays: the survey's own LRUD and every splay that points
+/// up or down, as the old app drew them. Lines break at junctions, closures and stations with no
+/// vertical evidence.
+fn band_walls(s: &Solved, band: &cave_profile::Band) -> cave_profile::BandWalls {
+    let axes = cave_walls::stations_axes(
+        &s.positions,
+        &s.resolved.legs,
+        cave_walls::AXIS_TOLERANCE_DEG,
+    );
+    let mut counts: HashMap<Id, usize> = HashMap::new();
+    for l in &s.resolved.legs {
+        *counts.entry(l.from).or_default() += 1;
+        *counts.entry(l.to).or_default() += 1;
+    }
+    let is_junction = |n: Id| {
+        axes.get(&n).map_or_else(
+            || counts.get(&n).copied().unwrap_or(0) > 2,
+            |a| a.is_junction(),
+        )
+    };
+    let mut splays_at: HashMap<Id, Vec<cave_survey::Splay>> = HashMap::new();
+    for sp in s.ex.splays.iter().filter(|sp| !sp.exclude_from_plot) {
+        splays_at.entry(sp.from).or_default().push(*sp);
+    }
+    band_wall_runs(
+        band,
+        &WallInput {
+            splays_at: &splays_at,
+            readings: &s.ex.readings,
+            lruds: &s.ex.lruds,
+            start_lruds: &s.ex.start_lruds,
+            legs: &s.resolved.legs,
+            is_junction: &is_junction,
+            flat_deg: FLAT_SPLAY_DEG,
+        },
+    )
 }
 
 fn leg_infos(s: &Solved) -> Vec<LegInfo> {
@@ -217,10 +259,12 @@ pub fn profile_scene(doc: &Document, key: &str, use_adjustment: bool) -> Option<
             })
         })
         .collect();
-    let ceiling = band.ceiling_runs();
-    let floor = band.floor_runs();
+    let walls = band_walls(&s, &band);
+    let (ceiling, floor) = (walls.ceiling, walls.floor);
+    let flat: Vec<[f64; 2]> = walls.flat.iter().map(|f| f.at).collect();
     let mut pts: Vec<[f64; 2]> = band.stations.iter().map(|x| [x.s, x.z]).collect();
     pts.extend(ceiling.iter().chain(&floor).flatten().copied());
+    pts.extend(flat.iter().copied());
     pts.extend(sketches.iter().flat_map(|k| k.points.iter().copied()));
     let bounds = pts.iter().fold(None, |b: Option<[f64; 4]>, p| {
         Some(match b {
@@ -261,6 +305,7 @@ pub fn profile_scene(doc: &Document, key: &str, use_adjustment: bool) -> Option<
             .collect(),
         ceiling,
         floor,
+        flat,
         sketches,
         sections,
         unplaced,
@@ -491,6 +536,47 @@ mod tests {
         assert!(
             profile_scene(&doc, "B", false).unwrap().sections.is_empty(),
             "only stations on the band"
+        );
+    }
+
+    #[test]
+    fn splays_shape_the_ceiling_and_floor_and_level_ones_are_ticks() {
+        let text = r#"{"unit":"m","name":"w","shots":[
+            {"from":"A1","to":"A2","distance":10,"azimuth":90,"inclination":0,"up":2,"down":1},
+            {"from":"A2","to":"A3","distance":10,"azimuth":90,"inclination":0,"up":2,"down":1},
+            {"from":"A2","to":"","distance":6,"azimuth":90,"inclination":60,"splay":true},
+            {"from":"A2","to":"","distance":4,"azimuth":90,"inclination":-45,"splay":true},
+            {"from":"A2","to":"","distance":5,"azimuth":0,"inclination":3,"splay":true},
+            {"from":"A3","to":"A4","distance":10,"azimuth":90,"inclination":0,"up":2,"down":1}]}"#;
+        let doc = cave_fixture::from_shot_list(text, ActorId(1)).unwrap();
+        let p = profile_scene(&doc, "A", false).unwrap();
+        let near = |a: [f64; 2], s: f64, z: f64| (a[0] - s).abs() < 1e-6 && (a[1] - z).abs() < 1e-6;
+        // A2 is 10 m along the run. The 60-degree splay (6 m, heading along the run) reaches 3 m
+        // further on and 6 sin 60 up: it is a ceiling point between the LRUD ones, in order.
+        assert_eq!(p.ceiling.len(), 1);
+        let up = 6.0 * 60f64.to_radians().sin();
+        assert!(
+            p.ceiling[0]
+                .iter()
+                .any(|c| near(*c, 10.0 + 6.0 * 60f64.to_radians().cos(), up)),
+            "{:?}",
+            p.ceiling
+        );
+        assert!(
+            p.floor[0].iter().any(|c| near(
+                *c,
+                10.0 + 4.0 * 45f64.to_radians().cos(),
+                -4.0 * 45f64.to_radians().sin()
+            )),
+            "{:?}",
+            p.floor
+        );
+        // the near-level splay (3 degrees) is a tick, not part of either line; it is across the passage so s stays at the station
+        assert_eq!(p.flat.len(), 1);
+        assert!((p.flat[0][0] - 10.0).abs() < 1e-6);
+        assert!(
+            p.ceiling[0].windows(2).all(|w| w[0][0] <= w[1][0] + 1e-9),
+            "lines run forward along the band"
         );
     }
 
