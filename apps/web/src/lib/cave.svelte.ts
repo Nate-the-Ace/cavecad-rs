@@ -2,6 +2,7 @@
 // only says "it changed, look again" so panels refresh together.
 
 import type { Units } from './units';
+import { engine } from './engine';
 import { setHiddenTest } from './section-glyph';
 
 const UNITS_KEY = 'cavecad.units';
@@ -128,6 +129,29 @@ export function option<T extends number | boolean | string>(id: string, fallback
 /** Picks a drawing tool; picking the one already active puts it down. */
 export function setTool(key: string) {
   cave.tool = cave.tool === key ? '' : key;
+}
+
+/** The cave's revision at the last open or save: what "nothing unsaved" means. */
+let savedRevision = 0;
+
+/** Says the cave on screen is the one just opened, loaded or saved: nothing is unsaved now. */
+export function markSaved() {
+  try {
+    savedRevision = engine.revision();
+  } catch {
+    savedRevision = 0; // the engine is not loaded yet
+  }
+  cave.version += 1; // whatever shows "unsaved" re-reads
+}
+
+/** True when the cave has changed since it was last opened or saved. Reads `cave.version`, so it is reactive. */
+export function unsaved(): boolean {
+  void cave.version;
+  try {
+    return engine.revision() !== savedRevision;
+  } catch {
+    return false;
+  }
 }
 
 export function changed() {

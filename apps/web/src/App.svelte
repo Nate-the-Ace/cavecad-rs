@@ -3,6 +3,8 @@
   import Ribbon from './components/Ribbon.svelte';
   import { initWorkspace } from './lib/workspace.svelte';
   import { engine, loadEngine, loadBuildInfo, type BuildInfo } from './lib/engine';
+  import { unsaved } from './lib/cave.svelte';
+  import { guardUnload } from './lib/files';
 
   let version = $state('loading engine…');
   let info = $state<BuildInfo | null>(null);
@@ -11,6 +13,7 @@
 
   onMount(() => {
     const teardown = initWorkspace(host);
+    const unguard = guardUnload();
     (async () => {
       try {
         await loadEngine();
@@ -20,7 +23,15 @@
       }
       info = await loadBuildInfo();
     })();
-    return teardown;
+    return () => {
+      unguard();
+      teardown();
+    };
+  });
+
+  const dirty = $derived(unsaved());
+  $effect(() => {
+    document.title = `${dirty ? '• ' : ''}CaveCAD`; // a dot in the tab says there is something unsaved
   });
 
   const built = $derived(info?.builtAt ? new Date(info.builtAt).toLocaleTimeString() : '');
@@ -35,6 +46,7 @@
   <div class="workspace" bind:this={host}></div>
   <footer>
     <span>{version}</span>
+    {#if dirty}<span class="unsaved" title="Changes since the cave was opened or last saved. Save with Ctrl/Cmd+S.">Unsaved changes</span>{/if}
     {#if info}<span>build {info.git}{info.dirty ? '+' : ''} · {built}</span>{/if}
   </footer>
 </div>
@@ -45,6 +57,7 @@
   .err, .banner { color: var(--danger); margin: 0; }
   .banner { background: var(--accent-bg); padding: 8px 12px; }
   .banner pre { margin: 4px 0 0; font-family: var(--mono); font-size: 12px; white-space: pre-wrap; }
+  .unsaved { color: var(--warn); font-weight: 600; }
   footer { display: flex; gap: 16px; padding: 4px 12px; font-size: 12px; color: var(--muted);
     border-top: 1px solid var(--line); background: var(--panel); }
 </style>

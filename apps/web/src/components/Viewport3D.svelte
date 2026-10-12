@@ -4,11 +4,12 @@
   import PanelUndo from './PanelUndo.svelte';
   import { DEMOS } from '../lib/demos';
   import { isSymbolKind, symbolDef } from '../lib/symbols';
+  import { confirmDiscard } from '../lib/files';
   import { cursorsFor, live as room, reportCursor } from '../lib/sync.svelte';
   import { leave } from '../lib/sync.svelte';
   import { engine, loadEngine, type Scene, type TypeStyle } from '../lib/engine';
   import { CaveView, type Projection } from '../lib/viewport/cave-view';
-  import { cave, changed, filter, option, setShowSections, setShown, wireFilter } from '../lib/cave.svelte';
+  import { cave, changed, filter, markSaved, option, setShowSections, setShown, wireFilter } from '../lib/cave.svelte';
   import { tolerancePx } from '../lib/commands';
   import { ViewCube } from '../lib/viewport/view-cube';
   import { forgetFile } from '../lib/files';
@@ -24,6 +25,8 @@
   /** The picker's value while the cave on screen came from a file, not a demo. */
   const FROM_FILE = '__file';
   let demo = $state(DEMOS[0].id);
+  /** What the picker showed before the person changed it. */
+  let shownDemo = DEMOS[0].id;
   let depthColor = $state(false);
   let walls = $state(true);
   let passage = $state(true);
@@ -42,8 +45,14 @@
   function open(id: string) {
     const d = DEMOS.find((x) => x.id === id);
     if (!d || !view) return;
+    if (!confirmDiscard()) {
+      demo = shownDemo; // declined: the picker goes back to what is on screen
+      return;
+    }
+    shownDemo = id;
     leave(); // a different cave: stop sharing the old one
     status = engine.openDemo(d.json);
+    markSaved();
     cave.fileName = `${d.id}.dxf`;
     forgetFile();
     show();
@@ -169,6 +178,7 @@
       if (n === seenOpen) return;
       seenOpen = n;
       demo = FROM_FILE;
+      shownDemo = FROM_FILE;
       status = '';
       show();
     });

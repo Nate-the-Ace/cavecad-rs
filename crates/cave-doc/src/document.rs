@@ -34,6 +34,8 @@ pub struct Document {
     pub(crate) clock: Clock,
     /// Local ops not yet taken for sending (see `take_outbox`).
     outbox: Vec<Op>,
+    /// How many ops have changed something so far (see `revision`).
+    revision: u64,
 }
 
 impl PartialEq for Document {
@@ -50,6 +52,7 @@ impl Document {
             entities: BTreeMap::new(),
             clock: Clock::new(actor),
             outbox: Vec::new(),
+            revision: 0,
         }
     }
 
@@ -62,6 +65,13 @@ impl Document {
     /// actor, or two of them could stamp different edits identically.
     pub fn set_actor(&mut self, actor: ActorId) {
         self.clock.set_actor(actor);
+    }
+
+    /// A number that goes up every time an op actually changes something (an op already applied, or
+    /// older than what is there, does not count). Equal numbers mean no change in between, which is how
+    /// the app knows whether there is anything unsaved.
+    pub fn revision(&self) -> u64 {
+        self.revision
     }
 
     /// The ops made locally (including by undo and redo) since the last call, oldest first.
@@ -154,6 +164,7 @@ impl Document {
                     .or_insert_with(|| Entity::blank(*kind));
                 if stamp > e.exists.stamp {
                     e.exists = Lww { value: live, stamp };
+                    self.revision += 1;
                 }
             }
             Action::Set { id, field, value } => {
@@ -169,6 +180,7 @@ impl Document {
                             stamp,
                         },
                     );
+                    self.revision += 1;
                 }
             }
         }

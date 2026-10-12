@@ -3,7 +3,7 @@
 // local edit (including undo and redo) is sent as ops and every op from the others is applied. The
 // ops merge in any order, so nothing here decides who wins: that is the document's job.
 import { engine } from './engine';
-import { cave, changed } from './cave.svelte';
+import { cave, changed, markSaved } from './cave.svelte';
 
 /** Someone in the room. */
 export interface Person {
@@ -205,6 +205,7 @@ function connect(rejoin: boolean) {
         }
         cave.fileName = `room ${roomName}`;
         cave.opened += 1; // the canvas re-reads and re-frames
+        markSaved(); // the room's cave replaced this one: nothing of the person's is unsaved
       }
       live.status = 'live';
       live.error = '';

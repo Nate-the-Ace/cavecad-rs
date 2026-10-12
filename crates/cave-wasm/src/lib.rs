@@ -983,6 +983,14 @@ mod tests {
     }
 }
 
+/// A number that goes up whenever the open cave really changes (an edit, undo, or an op from
+/// another device that was news). The app compares it with its value at the last open or save to
+/// know whether anything is unsaved. Zero when no cave is open.
+#[wasm_bindgen]
+pub fn revision() -> f64 {
+    DOC.with(|d| d.borrow().as_ref().map_or(0.0, |doc| doc.revision() as f64))
+}
+
 /// Local edits made since the last call, as JSON ops (`[]` when there are none). Includes undo
 /// and redo. A sync layer sends these to the other devices.
 #[wasm_bindgen]

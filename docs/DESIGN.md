@@ -342,3 +342,16 @@ its station, and per-trip layers for strokes.
   identical documents with both strokes.
 Not done: following another person's view, a notification when someone joins, and a stored room log
 (a restarted relay only recovers from the devices that are still open).
+
+## 2026-10-12: The unsaved-changes warning
+
+`Document::revision()` is a number that goes up each time an op really changes something (an op
+already applied, or older than what is there, does not count, so a reconnect that hands back the whole
+log does not make the cave look edited). The web app remembers the revision at the last open, load or
+save; when they differ the cave has unsaved changes: the footer says "Unsaved changes", the tab title
+gets a dot, closing or reloading the page asks first (the browser words the question), and replacing the
+cave (opening a file, picking another demo) asks "This cave has changes you have not saved. Replace it
+anyway?"; declining puts the picker back. Edits from other people in a live room count as changes too
+(the file on this machine is not what they were saving). Joining a room replaces the cave and counts as
+clean. Not done: autosave to the browser's storage, and a "save, discard or cancel" choice (the browser
+confirm has only two buttons).

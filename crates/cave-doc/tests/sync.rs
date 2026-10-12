@@ -164,3 +164,39 @@ fn ops_survive_the_wire_bit_for_bit() {
         serde_json::from_str(&serde_json::to_string(&ops).unwrap()).unwrap();
     assert_eq!(ops, back);
 }
+
+#[test]
+fn the_revision_moves_only_when_something_really_changes() {
+    let mut ids = SeqIds::new(4);
+    let s = ids.next_id();
+    let mut a = Document::new(ActorId(1));
+    assert_eq!(a.revision(), 0);
+    a.edit(vec![
+        Action::Create {
+            id: s,
+            kind: Kind::Station,
+        },
+        label(s, "x"),
+    ])
+    .unwrap();
+    let r = a.revision();
+    assert!(r > 0);
+    // hearing the same ops again (a reconnect hands back the whole log) changes nothing
+    let all = a.snapshot();
+    for op in &all {
+        a.apply(op).unwrap();
+    }
+    assert_eq!(a.revision(), r, "re-applied ops are not a change");
+    // an older write loses and so is not a change either
+    let mut b = join(&a, 2);
+    let old = b.edit(vec![label(s, "later")]).unwrap().ops;
+    a.edit(vec![label(s, "a newer one")]).unwrap();
+    a.edit(vec![label(s, "newest")]).unwrap();
+    let r2 = a.revision();
+    a.apply(&old[0]).unwrap();
+    assert_eq!(
+        a.revision(),
+        r2,
+        "an op that loses to what is there is not a change"
+    );
+}

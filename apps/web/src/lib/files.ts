@@ -3,7 +3,7 @@
 // open file is remembered so Save writes back to it; elsewhere Open uses a file input and Save
 // downloads a copy.
 import { engine } from './engine';
-import { cave, changed } from './cave.svelte';
+import { cave, changed, markSaved, unsaved } from './cave.svelte';
 import { leave } from './sync.svelte';
 
 /** The subset of the File System Access API this file uses. */
@@ -48,10 +48,28 @@ async function chooseFile(): Promise<{ text: string; name: string; handle: Handl
   });
 }
 
+/** Asks before a cave on screen with unsaved changes is replaced. True means go ahead. */
+export function confirmDiscard(): boolean {
+  if (!unsaved()) return true;
+  return window.confirm('This cave has changes you have not saved. Replace it anyway?');
+}
+
+/** Warns before the page is closed or reloaded with unsaved changes (the browser words the question). */
+export function guardUnload() {
+  const onUnload = (e: BeforeUnloadEvent) => {
+    if (!unsaved()) return;
+    e.preventDefault();
+    e.returnValue = ''; // some browsers need this to show their prompt
+  };
+  window.addEventListener('beforeunload', onUnload);
+  return () => window.removeEventListener('beforeunload', onUnload);
+}
+
 /** Asks for a DXF and opens it. Returns what to tell the person, or `null` if they cancelled. */
 export async function openDxf(): Promise<{ ok: boolean; message: string } | null> {
   const picked = await chooseFile();
   if (!picked) return null;
+  if (!confirmDiscard()) return null;
   const r = engine.openDxf(picked.text);
   if (!r.ok) return { ok: false, message: r.message };
   leave(); // a different cave: stop sharing the old one
@@ -60,6 +78,7 @@ export async function openDxf(): Promise<{ ok: boolean; message: string } | null
   for (const w of r.warnings) engine.log('warn', 'file', w);
   cave.opened += 1; // the canvas re-reads and re-frames
   changed();
+  markSaved();
   return { ok: true, message: `Opened ${picked.name}: ${r.message}` };
 }
 
@@ -74,6 +93,7 @@ export async function saveDxf(saveAs = false): Promise<string | null> {
       await w.write(text);
       await w.close();
       cave.fileName = handle.name;
+      markSaved();
       return `Saved ${handle.name}`;
     }
   } catch (e) {
@@ -87,6 +107,7 @@ export async function saveDxf(saveAs = false): Promise<string | null> {
   a.download = cave.fileName;
   a.click();
   URL.revokeObjectURL(url);
+  markSaved();
   return `Downloaded ${cave.fileName}`;
 }
 
