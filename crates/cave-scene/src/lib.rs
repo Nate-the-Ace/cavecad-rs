@@ -176,9 +176,11 @@ pub fn build(doc: &Document, use_adjustment: bool) -> Scene {
         splays: &ex.splays,
     });
     for run in walls.left.iter().chain(&walls.right) {
+        // Only the outside of the shell: loops where the line doubles back are dropped.
+        let shell = cave_walls::outer_shell(&run.points);
         scene
             .walls
-            .push(run.points.iter().map(|p| [p.x, p.y, p.z]).collect());
+            .push(shell.iter().map(|p| [p.x, p.y, p.z]).collect());
     }
     for c in &r.closures {
         if let Some(p) = pos(c.at) {

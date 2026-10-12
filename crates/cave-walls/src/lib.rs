@@ -17,6 +17,7 @@
 mod axes;
 mod points;
 mod runs;
+mod shell;
 
 pub use axes::{
     AXIS_TOLERANCE_DEG, Axes, COINCIDENT_PLAN, Dir, THROUGH_SEPARATION_DEG, cluster_bearings,
@@ -24,3 +25,4 @@ pub use axes::{
 };
 pub use points::{Side, has_plan_evidence, side_open, station_wall_points, tick_azimuth, tick_end};
 pub use runs::{Run, WallInput, Walls, wall_runs};
+pub use shell::outer_shell;
