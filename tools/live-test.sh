@@ -5,7 +5,7 @@ set -e
 cd "$(dirname "$0")/../apps/web"
 export PATH="/opt/homebrew/opt/rustup/bin:$HOME/.cargo/bin:$PATH"
 
-[ -d node_modules ] || npm install
+npm install --no-audit --no-fund # quick when nothing changed; picks up new dependencies
 
 # The laptop's address on the local network (Mac first, then Linux).
 ip=""
