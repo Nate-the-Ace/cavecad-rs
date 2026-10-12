@@ -508,8 +508,10 @@ pub fn export(doc: &Document, opts: &ExportOptions) -> String {
             w.tag(100, sub);
             w.tag(2, name);
         };
-    let lt = table(&mut w, "LTYPE", 4);
-    for name in ["ByBlock", "ByLayer", "Continuous", "DASHED"] {
+    let mut names = vec!["ByBlock", "ByLayer", "Continuous"];
+    names.extend(cave_style::LINETYPES.iter().map(|l| l.dxf_name()));
+    let lt = table(&mut w, "LTYPE", names.len());
+    for name in names {
         record(&mut w, "LTYPE", None, &lt, "AcDbLinetypeTableRecord", name);
         w.tag(70, "0");
         w.tag(
@@ -517,21 +519,27 @@ pub fn export(doc: &Document, opts: &ExportOptions) -> String {
             match name {
                 "Continuous" => "Solid line",
                 "DASHED" => "Dashed ____ ____ ____",
+                "LONGDASH" => "Long dash ________ ________",
+                "SPARSE" => "Sparse dash __   __   __",
+                "DASHDOT" => "Dash dot __ . __ . __ .",
                 _ => "",
             },
         );
         w.tag(72, "65");
-        if name == "DASHED" {
-            // Pattern: a 0.5 m dash, then a 0.3 m gap.
-            w.tag(73, "2");
-            w.tag(40, "0.8");
-            w.tag(49, "0.5");
-            w.tag(74, "0");
-            w.tag(49, "-0.3");
-            w.tag(74, "0");
-        } else {
+        let pattern = cave_style::LINETYPES
+            .iter()
+            .find(|l| l.dxf_name() == name)
+            .map_or(&[][..], |l| l.pattern());
+        if pattern.is_empty() {
             w.tag(73, "0");
             w.tag(40, "0.0");
+        } else {
+            w.tag(73, pattern.len().to_string());
+            w.tag(40, pattern.iter().map(|x| x.abs()).sum::<f64>().to_string());
+            for x in pattern {
+                w.tag(49, x.to_string());
+                w.tag(74, "0");
+            }
         }
     }
     w.tag(0, "ENDTAB");
@@ -543,13 +551,7 @@ pub fn export(doc: &Document, opts: &ExportOptions) -> String {
         // The carrier layer is frozen: its points hold data, not drawing.
         w.tag(70, if name == CARRIER_LAYER { "1" } else { "0" });
         w.tag(62, color.to_string());
-        w.tag(
-            6,
-            match linetype {
-                Linetype::Solid => "Continuous",
-                Linetype::Dashed => "DASHED",
-            },
-        );
+        w.tag(6, linetype.dxf_name());
     }
     w.tag(0, "ENDTAB");
     let st = table(&mut w, "STYLE", 1);

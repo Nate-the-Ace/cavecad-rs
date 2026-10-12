@@ -260,3 +260,16 @@ the Map, Profile or Cross Section (a fill is always a loop; too small a loop is 
 - Marks are true size (a pebble pattern is the old app's feet-sized pebbles, in metres), so they look
   like dots at the scale of a whole cave profile and fill in as you zoom, as on paper at a large scale.
 - The selected fill's tab changes its kind from a list. DXF export of fills is part of the DXF work.
+
+## 2026-10-12: Line styles from the UIS list
+
+The UIS entries that are line styles are now drawing tools in two new Draw tab groups, **Passage
+lines** (underlying passage: short dashes, wide gaps; presumed dimensions: long dashes, narrow gaps;
+too narrow to pass: dashes; dripline: the hachure line, a shaped line) and **Geology and relief**
+(joint: dash-dot; fault: solid, heavier; bedding plane: dashes; contour line: thin). Geology draws in
+a magenta, as on the UIS list (a new ink role, `geology`, with a light and a dark shade). Line
+patterns are real: `Linetype` gained `LongDash`, `Sparse` and `DashDot`, each with a pattern in metres
+and a DXF name, and the DXF export writes every pattern into its line-type table (a test checks every
+pattern a type uses can be written). The Draw tab groups come from `cave-style::TOOL_GROUPS`. The type
+row of a selected line became a list, since there are now fifteen kinds of line. Still not done: the
+UIS step (the existing Ledge covers it), gradient lines, and the double-line fault of the UIS list.

@@ -2,7 +2,7 @@
   // What can be done to the selected line: change what it is, close or open its curve. (Delete and
   // Done sit in the tab's Command group.) Each is one undoable edit in the view the line was drawn in.
   import { onMount } from 'svelte';
-  import { BrickWall, Minus, CircleDashed, Pencil, Route, Spline, FlipHorizontal2, Droplets, Waves, TrendingDown, Type } from '@lucide/svelte';
+  import { Spline, FlipHorizontal2 } from '@lucide/svelte';
   import { cave, changed } from '../lib/cave.svelte';
   import { engine, loadEngine, type TypeStyle } from '../lib/engine';
   import { isStampKind } from '../lib/symbols';
@@ -12,8 +12,7 @@
   onMount(() => {
     loadEngine().then(() => (tools = engine.drawTools()));
   });
-  const icons: Record<string, typeof Route> = { wall: BrickWall, ledge: Minus, pit: CircleDashed, sketch: Pencil, flowstone: Droplets, rimstone: Waves, slope: TrendingDown, text: Type };
-  const shaped = ['ledge', 'pit', 'flowstone', 'rimstone', 'slope'];
+  const shaped = ['ledge', 'pit', 'flowstone', 'rimstone', 'slope', 'dripline'];
 
   const info = $derived.by(() => {
     void cave.version;
@@ -38,14 +37,10 @@
       <span class="tip">Drag a point to reshape the area: it refills.</span>
     </div>
   {:else if !isSymbol}
-  <div class="types" role="group" aria-label="What this line is">
-    {#each tools as t}
-      {@const Icon = icons[t.key] ?? Route}
-      <button class="tool" class:pressed={info?.kind === t.key} aria-pressed={info?.kind === t.key} title="Make this line a {t.label}" onclick={() => info && run(engine.setLineKind(cave.selected, t.key))}>
-        <Icon size={22} strokeWidth={1.6} />
-        <span>{t.label}</span>
-      </button>
-    {/each}
+  <div class="types">
+    <select class="kind" value={info?.kind ?? ''} aria-label="What this line is" title="Change what this line is" onchange={(e) => info && run(engine.setLineKind(cave.selected, e.currentTarget.value))}>
+      {#each tools.filter((t) => t.key !== 'text') as t}<option value={t.key}>{t.label}</option>{/each}
+    </select>
   </div>
   {/if}
   <div class="curve">

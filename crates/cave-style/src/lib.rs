@@ -27,6 +27,8 @@ pub enum Ink {
     Danger,
     /// Survey stations.
     Station,
+    /// Geology (joints, faults, bedding): a magenta, as on the UIS list.
+    Geology,
 }
 
 /// How a line is broken up.
@@ -37,6 +39,44 @@ pub enum Linetype {
     Solid,
     /// Dashes.
     Dashed,
+    /// Long dashes with narrow gaps (presumed dimensions of a space).
+    LongDash,
+    /// Short dashes with wide gaps (a passage running underneath another).
+    Sparse,
+    /// A dash and a dot, repeated (joints, bedding planes).
+    DashDot,
+}
+
+/// Every line pattern, in the order the DXF line-type table lists them.
+pub const LINETYPES: &[Linetype] = &[
+    Linetype::Dashed,
+    Linetype::LongDash,
+    Linetype::Sparse,
+    Linetype::DashDot,
+];
+
+impl Linetype {
+    /// The name of the pattern in a DXF file's line-type table.
+    pub fn dxf_name(self) -> &'static str {
+        match self {
+            Linetype::Solid => "Continuous",
+            Linetype::Dashed => "DASHED",
+            Linetype::LongDash => "LONGDASH",
+            Linetype::Sparse => "SPARSE",
+            Linetype::DashDot => "DASHDOT",
+        }
+    }
+
+    /// The pattern in metres: a positive length is a dash, a negative one a gap, zero a dot.
+    pub fn pattern(self) -> &'static [f64] {
+        match self {
+            Linetype::Solid => &[],
+            Linetype::Dashed => &[0.5, -0.3],
+            Linetype::LongDash => &[1.2, -0.2],
+            Linetype::Sparse => &[0.3, -0.9],
+            Linetype::DashDot => &[0.8, -0.25, 0.0, -0.25],
+        }
+    }
 }
 
 /// How one type looks.
@@ -221,6 +261,86 @@ pub const PALETTE: &[Style] = &[
         0.4,
         "CAVE-FILL-BONES",
     ),
+    s(
+        "underlying",
+        "Underlying passage",
+        Text,
+        1.6,
+        Sparse,
+        1.0,
+        0.4,
+        "CAVE-UNDERLYING",
+    ),
+    s(
+        "presumed",
+        "Presumed dimensions",
+        Text,
+        1.6,
+        LongDash,
+        1.0,
+        0.4,
+        "CAVE-PRESUMED",
+    ),
+    s(
+        "narrow",
+        "Too narrow to pass",
+        Text,
+        1.6,
+        Dashed,
+        1.0,
+        0.4,
+        "CAVE-NARROW",
+    ),
+    s(
+        "dripline",
+        "Dripline",
+        Text,
+        1.4,
+        Solid,
+        1.0,
+        0.4,
+        "CAVE-DRIPLINE",
+    ),
+    s(
+        "joint",
+        "Joint / fracture",
+        Geology,
+        1.4,
+        DashDot,
+        1.0,
+        0.4,
+        "CAVE-JOINTS",
+    ),
+    s(
+        "fault",
+        "Fault",
+        Geology,
+        2.0,
+        Solid,
+        1.0,
+        0.4,
+        "CAVE-FAULTS",
+    ),
+    s(
+        "bedding",
+        "Bedding plane",
+        Geology,
+        1.4,
+        Dashed,
+        1.0,
+        0.4,
+        "CAVE-BEDDING",
+    ),
+    s(
+        "contour",
+        "Contour line",
+        Muted,
+        1.0,
+        Solid,
+        1.0,
+        0.4,
+        "CAVE-CONTOURS",
+    ),
     s("text", "Text", Text, 1.4, Solid, 1.0, 0.4, "CAVE-TEXT"),
     s(
         "flowstone",
@@ -366,6 +486,39 @@ pub const DRAW_TOOLS: &[&str] = &[
     "slope",
     "sketch",
     "text",
+    "underlying",
+    "presumed",
+    "narrow",
+    "dripline",
+    "joint",
+    "fault",
+    "bedding",
+    "contour",
+];
+
+/// How the Draw tab groups the drawing tools: a group name and the tools in it, in order.
+pub const TOOL_GROUPS: &[(&str, &[&str])] = &[
+    (
+        "Linework",
+        &[
+            "wall",
+            "ledge",
+            "pit",
+            "flowstone",
+            "rimstone",
+            "slope",
+            "sketch",
+            "text",
+        ],
+    ),
+    (
+        "Passage lines",
+        &["underlying", "presumed", "narrow", "dripline"],
+    ),
+    (
+        "Geology and relief",
+        &["joint", "fault", "bedding", "contour"],
+    ),
 ];
 
 /// The styles of the drawing tools.
@@ -395,6 +548,7 @@ pub fn dxf_color(ink: Ink) -> i32 {
         Warn => 30,
         Danger => 1,
         Station => 3,
+        Geology => 6,
     }
 }
 
@@ -433,6 +587,42 @@ mod tests {
             assert_eq!(style(k).key, *k, "{k} has its own style");
         }
         assert_eq!(draw_tools().len(), DRAW_TOOLS.len());
+    }
+
+    #[test]
+    fn the_tool_groups_hold_every_drawing_tool_once() {
+        let mut grouped: Vec<&str> = TOOL_GROUPS
+            .iter()
+            .flat_map(|(_, t)| t.iter().copied())
+            .collect();
+        grouped.sort_unstable();
+        let mut all: Vec<&str> = DRAW_TOOLS.to_vec();
+        all.sort_unstable();
+        assert_eq!(grouped, all);
+    }
+
+    #[test]
+    fn every_line_pattern_a_type_uses_can_be_written_to_a_dxf() {
+        for p in PALETTE.iter().filter(|p| p.linetype != Linetype::Solid) {
+            assert!(
+                LINETYPES.contains(&p.linetype),
+                "{} uses a pattern the DXF table lacks",
+                p.key
+            );
+        }
+        for l in LINETYPES {
+            // a dash, a gap, optionally dots: lengths alternate in sign, and a pattern is never empty
+            let pat = l.pattern();
+            assert!(
+                pat.len() >= 2 && pat.iter().any(|x| *x > 0.0) && pat.iter().any(|x| *x < 0.0),
+                "{l:?}"
+            );
+        }
+        let names: Vec<&str> = LINETYPES.iter().map(|l| l.dxf_name()).collect();
+        let mut unique = names.clone();
+        unique.sort_unstable();
+        unique.dedup();
+        assert_eq!(unique.len(), names.len());
     }
 
     #[test]

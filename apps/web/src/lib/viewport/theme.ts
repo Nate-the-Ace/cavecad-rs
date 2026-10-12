@@ -1,5 +1,6 @@
 // Colours for the 3D view, read from the app's CSS variables so light and dark both work.
 import * as THREE from 'three';
+import { isDark } from '../theme';
 
 export interface ViewTheme {
   bg: THREE.Color;
@@ -13,7 +14,8 @@ export interface ViewTheme {
 }
 
 /** The theme colour for a palette ink. */
-export function inkColor(t: ViewTheme, ink: 'text' | 'muted' | 'accent' | 'warn' | 'danger' | 'station'): THREE.Color {
+export function inkColor(t: ViewTheme, ink: 'text' | 'muted' | 'accent' | 'warn' | 'danger' | 'station' | 'geology'): THREE.Color {
+  if (ink === 'geology') return new THREE.Color(isDark() ? '#e57fd0' : '#b0138a');
   return ink === 'station' ? t.text : t[ink];
 }
 

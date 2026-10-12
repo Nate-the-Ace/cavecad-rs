@@ -52,6 +52,13 @@ pub const SHAPES: &[Shape] = &[
         hide_spine: false,
     },
     Shape {
+        key: "dripline",
+        kind: Kind::Ticks,
+        spacing: 0.4,
+        size: 0.22,
+        hide_spine: false,
+    },
+    Shape {
         key: "pit",
         kind: Kind::Ticks,
         spacing: 3.0 * FT,

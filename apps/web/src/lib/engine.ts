@@ -1,5 +1,5 @@
 // Loads the Rust engine (WASM) once and re-exports the few calls the UI uses.
-import init, { start, log, console_events, console_clear, engine_version, open_demo, scene, profile_runs, profile_band, add_profile_sketch, undo, redo, edit_state, passage_mesh, shading, palette, open_dxf, save_dxf, section_stations, section_at, add_section_sketch, map_sections, place_section, map_profile_sketches, add_map_line, map_lines, draw_tools, edit_line, delete_line, set_line_closed, set_line_kind, line_info, set_line_flip, set_line_text, ornament, flipped_lines, symbols, fills, fill_marks, sync_outbox, sync_apply, sync_snapshot, sync_load } from '../wasm/cave_wasm.js';
+import init, { start, log, console_events, console_clear, engine_version, open_demo, scene, profile_runs, profile_band, add_profile_sketch, undo, redo, edit_state, passage_mesh, shading, palette, open_dxf, save_dxf, section_stations, section_at, add_section_sketch, map_sections, place_section, map_profile_sketches, add_map_line, map_lines, draw_tools, edit_line, delete_line, set_line_closed, set_line_kind, line_info, set_line_flip, set_line_text, ornament, flipped_lines, symbols, fills, fill_marks, draw_tool_groups, sync_outbox, sync_apply, sync_snapshot, sync_load } from '../wasm/cave_wasm.js';
 
 import { setInkPalette } from './ink';
 import { setOrnamentSource } from './section-glyph';
@@ -79,9 +79,9 @@ export interface PassageBuffers {
 export interface TypeStyle {
   key: string;
   label: string;
-  ink: 'text' | 'muted' | 'accent' | 'warn' | 'danger' | 'station';
+  ink: 'text' | 'muted' | 'accent' | 'warn' | 'danger' | 'station' | 'geology';
   weight: number;
-  linetype: 'solid' | 'dashed';
+  linetype: 'solid' | 'dashed' | 'longdash' | 'sparse' | 'dashdot';
   opacity: number;
   under_opacity: number;
   layer: string;
@@ -227,6 +227,8 @@ export const engine = {
   mapLines: (adjusted: boolean): ProfileSketch3d[] => JSON.parse(map_lines(adjusted)),
   /** The drawing tools the Draw tab offers. */
   drawTools: (): TypeStyle[] => JSON.parse(draw_tools()),
+  /** The drawing tools as the Draw tab groups them. */
+  drawToolGroups: (): { name: string; tools: TypeStyle[] }[] => JSON.parse(draw_tool_groups()),
   /** The type palette. */
   palette: (): TypeStyle[] => JSON.parse(palette()),
   profileRuns: (adjusted: boolean): RunInfo[] => JSON.parse(profile_runs(adjusted)),

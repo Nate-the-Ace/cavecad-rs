@@ -590,11 +590,7 @@ fn layers_get_their_colour_and_linetype_from_the_type_palette() {
         }
         let (color, lt) = layer_look(&text, st.layer);
         assert_eq!(color, cave_style::dxf_color(st.ink).to_string(), "{key}");
-        let want = match st.linetype {
-            cave_style::Linetype::Solid => "Continuous",
-            cave_style::Linetype::Dashed => "DASHED",
-        };
-        assert_eq!(lt, want, "{key}");
+        assert_eq!(lt, st.linetype.dxf_name(), "{key}");
     }
     assert!(text.contains("CAVE-WALLS"), "Pitfall has walls");
 }

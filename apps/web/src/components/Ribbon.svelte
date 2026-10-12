@@ -27,6 +27,8 @@
     items: Item[];
     /** A group that draws itself instead of a row of buttons. */
     custom?: Component<any>;
+    /** What the custom component is given. */
+    props?: Record<string, unknown>;
   }
 
   const press = (label: string) => engine.log('info', 'ribbon', `${label}: not built yet`);
@@ -55,7 +57,9 @@
       { name: 'Survey', items: [stub('Import', FileInput), stub('Draw', Route), stub('Adjust', Waypoints)] },
     ],
     Draw: [
-      { name: 'Linework', items: [], custom: DrawTools },
+      { name: 'Linework', items: [], custom: DrawTools, props: { group: 'Linework' } },
+      { name: 'Passage lines', items: [], custom: DrawTools, props: { group: 'Passage lines' } },
+      { name: 'Geology and relief', items: [], custom: DrawTools, props: { group: 'Geology and relief' } },
       { name: 'Symbols', items: [{ label: 'Symbols', icon: Shapes, run: () => showPanel('symbols'), pressed: () => !!panelState.visible.symbols }] },
       { name: 'Area fill', items: [], custom: FillTools },
     ],
@@ -156,7 +160,7 @@
     {#each shownGroups as g}
       <section>
         <div class="btns">
-          {#if g.custom}<g.custom />{/if}
+          {#if g.custom}<g.custom {...(g.props ?? {})} />{/if}
           {#each g.items as item}
             <button class="tool" class:pressed={item.pressed?.()} onclick={item.run}>
               <item.icon size={22} strokeWidth={1.6} />

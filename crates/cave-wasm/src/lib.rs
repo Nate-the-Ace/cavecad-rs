@@ -547,6 +547,20 @@ pub fn fill_marks(kind: &str, curve: &str, id: &str) -> String {
         .unwrap_or_else(|_| "{}".into())
 }
 
+/// How the Draw tab groups the drawing tools (JSON array of `{name, tools}`, each tool a palette style).
+#[wasm_bindgen]
+pub fn draw_tool_groups() -> String {
+    let groups: Vec<serde_json::Value> = cave_style::TOOL_GROUPS
+        .iter()
+        .map(|(name, tools)| {
+            let styles: Vec<&cave_style::Style> =
+                tools.iter().map(|k| cave_style::style(k)).collect();
+            serde_json::json!({"name": name, "tools": styles})
+        })
+        .collect();
+    serde_json::Value::Array(groups).to_string()
+}
+
 /// The drawing tools the Draw tab offers (JSON array of palette styles).
 #[wasm_bindgen]
 pub fn draw_tools() -> String {
