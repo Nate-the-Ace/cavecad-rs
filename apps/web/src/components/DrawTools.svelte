@@ -2,7 +2,6 @@
   // The drawing tools. Pick one, then draw in whichever view you like: the line goes to that view's
   // context (the open profile, the cross-section station, the map plan). Pick it again, or press
   // Escape, to put it down.
-  import { onMount } from 'svelte';
   import { BrickWall, Minus, CircleDashed, Pencil, Route, Droplets, Waves, TrendingDown, Type, Ellipsis, Equal, MoveHorizontal, ArrowDownToLine, Slash, Zap, AlignJustify, Mountain } from '@lucide/svelte';
   import { cave, setTool } from '../lib/cave.svelte';
   import { engine, loadEngine, type TypeStyle } from '../lib/engine';
@@ -11,8 +10,10 @@
   let { group = 'Linework' }: { group?: string } = $props();
 
   let tools = $state<TypeStyle[]>([]);
-  onMount(() => {
-    loadEngine().then(() => (tools = engine.drawToolGroups().find((g) => g.name === group)?.tools ?? []));
+  // Re-read when the group changes: the collapsed menu reuses this one component for every group.
+  $effect(() => {
+    const wanted = group;
+    loadEngine().then(() => (tools = engine.drawToolGroups().find((g) => g.name === wanted)?.tools ?? []));
   });
   const icons: Record<string, typeof Route> = { wall: BrickWall, ledge: Minus, pit: CircleDashed, sketch: Pencil, flowstone: Droplets, rimstone: Waves, slope: TrendingDown, text: Type, glyphs: Mountain, underlying: Ellipsis, presumed: Equal, narrow: MoveHorizontal, dripline: ArrowDownToLine, joint: Slash, fault: Zap, bedding: AlignJustify, contour: Mountain };
 </script>
