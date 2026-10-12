@@ -1052,6 +1052,13 @@ export class CaveView {
     if (!this.pending) this.pending = requestAnimationFrame(() => ((this.pending = 0), this.render()));
   }
 
+  /** Draws the view right now, so its canvas holds the picture (for a screenshot). */
+  renderNow() {
+    if (this.pending) cancelAnimationFrame(this.pending);
+    this.pending = 0;
+    this.render();
+  }
+
   private render() {
     // A lamp on the camera lights whatever you are looking at, from any angle.
     this.headlamp.position.copy(this.camera.position);

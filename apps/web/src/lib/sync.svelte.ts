@@ -64,7 +64,79 @@ export const live = $state({
   error: '',
   /** The others' pointers, by id. */
   cursors: {} as Record<string, Cursor>,
+  /** This device owns the room (it started it, and can make invites). */
+  owner: false,
+  /** The id of the room's owner, when the owner is here. */
+  ownerId: '',
+  /** Only people with an invite can join. */
+  locked: false,
+  /** The invites the owner has made. */
+  invites: [] as Invite[],
+  /** An invite link this page was opened with: the room and token waiting for the person to press Join. */
+  pending: null as { room: string; invite: string } | null,
+  /** The token of the invite just made, so its link can be shown. */
+  made: '',
 });
+
+/** An invite the owner made. */
+export interface Invite {
+  token: string;
+  label: string;
+  /** When it stops working (ms since 1970). */
+  expires: number;
+  /** How many people can use it; 0 is anyone with the link. */
+  uses: number;
+  used: number;
+}
+
+const OWNER_KEYS = 'cavecad.roomKeys';
+const ownerKeyOf = (room: string): string => {
+  try {
+    return JSON.parse(localStorage.getItem(OWNER_KEYS) ?? '{}')[room] ?? '';
+  } catch {
+    return '';
+  }
+};
+const keepOwnerKey = (room: string, key: string) => {
+  try {
+    const all = JSON.parse(localStorage.getItem(OWNER_KEYS) ?? '{}');
+    all[room] = key;
+    localStorage.setItem(OWNER_KEYS, JSON.stringify(all));
+  } catch {
+    /* not remembered: the owner just cannot reclaim the room later */
+  }
+};
+
+/** The link that lets someone into the room this device owns. */
+export function inviteLink(token: string): string {
+  const u = new URL(location.href);
+  return `${u.origin}${u.pathname}?join=${encodeURIComponent(live.room)}&invite=${token}`;
+}
+
+/** Reads an invite link the page was opened with (and tidies the address bar). */
+export function readInviteFromUrl() {
+  const q = new URLSearchParams(location.search);
+  const room = q.get('join');
+  if (!room) return;
+  live.pending = { room, invite: q.get('invite') ?? '' };
+  history.replaceState(null, '', location.pathname + location.hash);
+}
+
+function ask(msg: object) {
+  if (socket && socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(msg));
+}
+/** The owner makes an invite: for how many hours, for how many people (0: anyone with the link). */
+export function createInvite(label: string, hours: number, uses: number) {
+  ask({ t: 'invite', label, hours, uses });
+}
+/** The owner takes an invite back. */
+export function revokeInvite(token: string) {
+  ask({ t: 'revoke', token });
+}
+/** The owner opens or closes the room to people without an invite. */
+export function setLocked(on: boolean) {
+  ask({ t: 'lock', on });
+}
 
 const FLUSH_MS = 80;
 const PRESENCE_MS = 70;
@@ -78,6 +150,7 @@ let retry: ReturnType<typeof setTimeout> | undefined;
 let attempts = 0;
 let wanted = false;
 let roomName = '';
+let inviteToken = '';
 let lastPresence = 0;
 
 function flush() {
@@ -128,12 +201,18 @@ export function leave() {
   live.status = 'off';
   live.people = [];
   live.cursors = {};
+  live.owner = false;
+  live.ownerId = '';
+  live.locked = false;
+  live.invites = [];
   if (s && s.readyState <= WebSocket.OPEN) s.close();
 }
 
 /** Joins (or starts) a room. */
-export function join(room: string) {
+export function join(room: string, invite = '') {
   leave();
+  inviteToken = invite;
+  live.pending = null;
   const name = room.trim();
   if (!name) {
     live.error = 'Give the room a name first.';
@@ -163,7 +242,7 @@ function connect(rejoin: boolean) {
     return;
   }
   socket = ws;
-  ws.onopen = () => ws.send(JSON.stringify({ t: 'join', room: roomName, id: myId, name: me.name.trim() || deviceName(), color: me.color }));
+  ws.onopen = () => ws.send(JSON.stringify({ t: 'join', room: roomName, id: myId, name: me.name.trim() || deviceName(), color: me.color, invite: inviteToken, ownerKey: ownerKeyOf(roomName) }));
   ws.onerror = () => {
     if (socket === ws && live.status === 'connecting') live.error = 'Could not reach the sync server. Live editing needs the dev server (npm run dev) on one of the devices.';
   };
@@ -185,13 +264,16 @@ function connect(rejoin: boolean) {
     retry = setTimeout(() => wanted && connect(true), wait);
   };
   ws.onmessage = (ev) => {
-    let m: { t: string; log?: unknown[]; seed?: boolean; ops?: unknown[]; people?: Person[]; message?: string } & Partial<Cursor>;
+    let m: { t: string; log?: unknown[]; seed?: boolean; ops?: unknown[]; people?: Person[]; message?: string; owner?: boolean | string; ownerKey?: string; locked?: boolean; invites?: Invite[]; made?: string } & Partial<Cursor>;
     try {
       m = JSON.parse(String(ev.data));
     } catch {
       return;
     }
     if (m.t === 'welcome') {
+      live.owner = m.owner === true;
+      if (m.ownerKey) keepOwnerKey(roomName, m.ownerKey);
+      live.invites = m.invites ?? [];
       if (m.seed) {
         engine.syncOutbox(); // everything is in the snapshot already
         ws.send(`{"t":"ops","ops":${engine.syncSnapshot()}}`);
@@ -219,11 +301,16 @@ function connect(rejoin: boolean) {
       changed();
     } else if (m.t === 'peers') {
       live.people = m.people ?? [];
+      live.ownerId = typeof m.owner === 'string' ? m.owner : '';
+      live.locked = !!m.locked;
       // pointers of people who left go with them
       const here = new Set(live.people.map((p) => p.id));
       for (const id of Object.keys(live.cursors)) if (!here.has(id)) delete live.cursors[id];
     } else if (m.t === 'presence' && m.id && m.id !== myId) {
       live.cursors[m.id] = { id: m.id, view: m.view ?? '', ctx: m.ctx ?? '', x: Number(m.x), y: Number(m.y), tool: m.tool ?? '', seen: Date.now() };
+    } else if (m.t === 'invites') {
+      live.invites = m.invites ?? [];
+      if (m.made) live.made = m.made;
     } else if (m.t === 'error') {
       giveUp(m.message ?? 'The room refused this device.');
     }

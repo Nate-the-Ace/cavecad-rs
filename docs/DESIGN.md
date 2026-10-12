@@ -470,3 +470,17 @@ Not done: the old trip-planner packet (printable card), and the stations.json si
   `feedback/` folder; the hosted artifact has no such address, so there Send says so and the person saves
   the report. Where reports should go in production (a server, an email address, an issue tracker) is a
   decision for Nathan; nothing is sent anywhere without a click.
+
+## 2026-10-12: Screenshots without permission; room owners make invites
+- The screenshot is made by the page itself (`lib/snapshot.ts`: the browser draws the elements, the canvases
+  are copied on top where they sit, the 3D map is redrawn just before it is copied), so it needs no
+  permission and works in the hosted page and on tablets. The first version used the browser's screen
+  capture, which is blocked or absent in many places, and did not work for Nathan.
+- Rooms have an owner: the first device in. It is given a key (kept in this browser per room) that lets it
+  come back, and it can make invites from its user window: a secret link that works for 1 hour to 7 days and
+  for one person, up to five, or anyone with the link, with a label ("for Sam"), and can take one back. Making
+  the first invite closes the room to people without one (the owner can reopen it); a person who was admitted
+  can reconnect without using the invite again. The relay checks all of this (`tests/relay.check.mjs`); the
+  link opens the app with the room filled in and a Join button. Invites live in the relay's memory like the
+  rooms do: they end when the server restarts. They need a relay, so the hosted artifact (which has none)
+  cannot start rooms.

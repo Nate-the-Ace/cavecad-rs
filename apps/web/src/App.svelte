@@ -6,6 +6,7 @@
   import { unsaved } from './lib/cave.svelte';
   import { guardUnload } from './lib/files';
   import { installDiagnostics } from './lib/diagnostics';
+  import { readInviteFromUrl } from './lib/sync.svelte';
 
   let version = $state('loading engine…');
   let info = $state<BuildInfo | null>(null);
@@ -15,6 +16,7 @@
   onMount(() => {
     const teardown = initWorkspace(host);
     installDiagnostics();
+    readInviteFromUrl();
     const unguard = guardUnload();
     (async () => {
       try {

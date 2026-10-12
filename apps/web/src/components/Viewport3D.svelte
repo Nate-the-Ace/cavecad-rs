@@ -15,6 +15,7 @@
   import { forgetFile } from '../lib/files';
   import { onTheme } from '../lib/theme';
   import { panelState, showPanel } from '../lib/workspace.svelte';
+  import { setActiveView } from '../lib/snapshot';
 
   let wrap: HTMLDivElement;
   let gl: HTMLCanvasElement;
@@ -271,6 +272,7 @@
     v.shadingFor = (dir, persp) => engine.shading(cave.adjusted, dir, persp, wireFilter());
     view = v;
     if (import.meta.env.DEV) (window as unknown as { __view: CaveView }).__view = v; // for tests
+    setActiveView(v);
 
     const ro = new ResizeObserver(() => v.resize(wrap.clientWidth, wrap.clientHeight));
     ro.observe(wrap);

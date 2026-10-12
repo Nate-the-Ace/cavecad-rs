@@ -82,30 +82,6 @@ export async function buildReport(d: Draft): Promise<{ name: string; zip: Uint8A
   return { name: `cavecad-feedback-${stamp}.zip`, zip: zip(files, when), text };
 }
 
-/** Takes a picture of this tab with the browser's screen capture (it asks first). Null if declined or unavailable. */
-export async function captureScreen(): Promise<Blob | null> {
-  const md = navigator.mediaDevices as MediaDevices & { getDisplayMedia?: (o?: object) => Promise<MediaStream> };
-  if (!md?.getDisplayMedia) return null;
-  let stream: MediaStream | null = null;
-  try {
-    stream = await md.getDisplayMedia({ video: true, preferCurrentTab: true, selfBrowserSurface: 'include' });
-    const video = document.createElement('video');
-    video.srcObject = stream;
-    video.muted = true;
-    await video.play();
-    await new Promise((r) => setTimeout(r, 250)); // let the first real frame arrive
-    const c = document.createElement('canvas');
-    c.width = video.videoWidth;
-    c.height = video.videoHeight;
-    c.getContext('2d')?.drawImage(video, 0, 0);
-    return await new Promise((res) => c.toBlob(res, 'image/png'));
-  } catch {
-    return null;
-  } finally {
-    stream?.getTracks().forEach((t) => t.stop());
-  }
-}
-
 /** Saves bytes as a file download. */
 export function download(name: string, bytes: Uint8Array, type = 'application/zip') {
   const url = URL.createObjectURL(new Blob([bytes as BlobPart], { type }));

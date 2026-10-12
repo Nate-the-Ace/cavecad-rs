@@ -3,12 +3,13 @@
   // session, everyone else), your name and a few options, and a way to report a problem or send an idea
   // with the log and a screenshot attached.
   import { onMount } from 'svelte';
-  import { Users, LogOut, Camera, Trash2, Copy, Download, Send, ImagePlus } from '@lucide/svelte';
+  import { Users, LogOut, Camera, Trash2, Copy, Download, Send, ImagePlus, Link, Lock } from '@lucide/svelte';
   import { cave, setCompactRibbon } from '../lib/cave.svelte';
-  import { activityOf, join, leave, live, me, rename } from '../lib/sync.svelte';
+  import { activityOf, createInvite, inviteLink, join, leave, live, me, rename, revokeInvite, setLocked } from '../lib/sync.svelte';
   import { setUnits } from '../lib/cave.svelte';
   import { resetLayout } from '../lib/workspace.svelte';
-  import { KIND_LABEL, buildReport, captureScreen, download, logText, send, type FeedbackKind } from '../lib/feedback';
+  import { snapshotPage } from '../lib/snapshot';
+  import { KIND_LABEL, buildReport, download, logText, send, type FeedbackKind } from '../lib/feedback';
 
   let open = $state(false);
   let tab = $state<'people' | 'options' | 'feedback'>('people');
@@ -22,6 +23,30 @@
   const others = $derived(shared ? Math.max(0, live.people.length - 1) : 0);
   const people = $derived([...live.people].sort((a, b) => (a.id === live.me ? -1 : b.id === live.me ? 1 : 0)));
   let room = $state('pitfall');
+  // invites (the owner of a room makes them)
+  let label = $state('');
+  let hours = $state(24);
+  let uses = $state(1);
+  let copied = $state('');
+  const made = $derived(live.invites.find((i) => i.token === live.made));
+  async function copyLink(token: string) {
+    await navigator.clipboard.writeText(inviteLink(token)).catch(() => {});
+    copied = token;
+    setTimeout(() => copied === token && (copied = ''), 2500);
+  }
+  const leftText = (i: { expires: number; uses: number; used: number }) => {
+    const h = Math.max(0, Math.round((i.expires - Date.now()) / 3600_000));
+    const when = h >= 48 ? `${Math.round(h / 24)} days left` : h >= 1 ? `${h} h left` : 'under an hour left';
+    return `${i.uses === 0 ? 'anyone' : `${i.used}/${i.uses} used`} · ${when}`;
+  };
+  // a page opened from an invite link shows it straight away
+  $effect(() => {
+    if (live.pending) {
+      open = true;
+      tab = 'people';
+      room = live.pending.room;
+    }
+  });
   const on = $derived(live.status !== 'off');
 
   // ---- feedback ----
@@ -42,12 +67,12 @@
   }
   async function capture() {
     note = '';
-    hidden = true;
+    hidden = true; // the window steps aside so it is not in the picture
     await new Promise((r) => setTimeout(r, 120));
-    const b = await captureScreen();
+    const b = await snapshotPage();
     hidden = false;
     if (b) setShot(b);
-    else note = 'The screenshot did not happen (this browser or page may not allow it). Attach or paste an image instead.';
+    else note = 'The screenshot did not work in this browser. Attach or paste an image instead.';
   }
   function attach(files: FileList | null | undefined) {
     const f = [...(files ?? [])].find((x) => x.type.startsWith('image/'));
@@ -117,18 +142,55 @@
               {#each people as p (p.id)}
                 <li>
                   <span class="face" style="--c:{p.color}">{initials(p.name)}</span>
-                  <span class="pn">{p.name}{p.id === live.me ? ' (you)' : ''}</span>
+                  <span class="pn">{p.name}{p.id === live.me ? ' (you)' : ''}{p.id === live.ownerId ? ' · owner' : ''}</span>
                   <span class="act">{p.id === live.me ? '' : (activityOf(p.id) ?? '')}</span>
                 </li>
               {/each}
             </ul>
             <div class="status" role="status">{live.status === 'reconnecting' ? 'Reconnecting… your edits are kept' : live.status === 'connecting' ? 'Connecting…' : `${live.people.length} ${live.people.length === 1 ? 'person' : 'people'} in ${live.room}`}</div>
+            {#if live.owner}
+              <div class="invites">
+                <div class="sec"><Link size={14} /> Invite people</div>
+                <div class="row"><input class="room" bind:value={label} maxlength="60" aria-label="Who is the invite for" placeholder="Who is it for? (optional)" /></div>
+                <div class="row">
+                  <select bind:value={hours} aria-label="How long it works">
+                    <option value={1}>For 1 hour</option><option value={24}>For 1 day</option><option value={168}>For 7 days</option>
+                  </select>
+                  <select bind:value={uses} aria-label="Who can use it">
+                    <option value={1}>One person</option><option value={5}>Up to 5 people</option><option value={0}>Anyone with the link</option>
+                  </select>
+                  <button class="btn primary" onclick={() => createInvite(label, hours, uses)}>Make invite</button>
+                </div>
+                {#if made}
+                  <div class="link" role="status">
+                    <input readonly value={inviteLink(made.token)} aria-label="The invite link" onfocus={(e) => e.currentTarget.select()} />
+                    <button class="btn" onclick={() => copyLink(made.token)}><Copy size={14} /> {copied === made.token ? 'Copied' : 'Copy'}</button>
+                  </div>
+                {/if}
+                {#if live.invites.length}
+                  <ul class="list" aria-label="Invites you made">
+                    {#each live.invites as i (i.token)}
+                      <li>
+                        <span class="pn">{i.label || 'Invite'}<span class="act"> · {leftText(i)}</span></span>
+                        <button class="btn small" title="Copy this invite's link" onclick={() => copyLink(i.token)}>{copied === i.token ? 'Copied' : 'Copy link'}</button>
+                        <button class="btn small" title="Stop this invite working" onclick={() => revokeInvite(i.token)}><Trash2 size={13} /></button>
+                      </li>
+                    {/each}
+                  </ul>
+                {/if}
+                <label class="check"><input type="checkbox" checked={live.locked} onchange={(e) => setLocked(e.currentTarget.checked)} /> <span><Lock size={12} /> Only people with an invite can join</span></label>
+              </div>
+            {/if}
             <button class="btn" onclick={leave}><LogOut size={15} /> Leave this session</button>
           {:else}
-            <p class="hint">Share this cave live: everyone who joins the same room sees each other's edits as they happen.</p>
+            {#if live.pending}
+              <p class="hint">You were invited to <strong>{live.pending.room}</strong>. Check your name above, then join.</p>
+            {:else}
+              <p class="hint">Share this cave live: start a room, then invite people from here.</p>
+            {/if}
             <div class="row">
-              <input class="room" bind:value={room} aria-label="Room name" placeholder="Room name" onkeydown={(e) => e.key === 'Enter' && !on && join(room)} />
-              <button class="btn" onclick={() => join(room)}><Users size={15} /> Join</button>
+              <input class="room" bind:value={room} aria-label="Room name" placeholder="Room name" onkeydown={(e) => e.key === 'Enter' && !on && join(room, live.pending?.room === room ? live.pending.invite : '')} />
+              <button class="btn primary" onclick={() => join(room, live.pending?.room === room ? live.pending.invite : '')}><Users size={15} /> {live.pending ? 'Join the room' : 'Start or join'}</button>
             </div>
             {#if live.error}<div class="status bad" role="alert">{live.error}</div>{/if}
           {/if}
@@ -221,4 +283,8 @@
   .shot { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
   .shot img { max-width: 100%; max-height: 130px; border: 1px solid var(--line); border-radius: 6px; }
   .actions { flex-wrap: wrap; }
+  .invites { display: flex; flex-direction: column; gap: 8px; padding-top: 10px; border-top: 1px solid var(--line); }
+  .sec { display: flex; align-items: center; gap: 6px; font-weight: 600; color: var(--text-strong); }
+  .link { display: flex; gap: 6px; }
+  .link input { flex: 1; min-width: 0; font: inherit; font-size: 11px; background: var(--panel-2); color: var(--text); border: 1px solid var(--line); border-radius: var(--radius); padding: 4px 6px; }
 </style>
