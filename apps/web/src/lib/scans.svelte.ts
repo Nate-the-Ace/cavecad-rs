@@ -427,3 +427,30 @@ export function toggleFolder(path: string) {
 
 // Dev-only handle for tests and debugging in the browser console.
 if (import.meta.env.DEV) (window as unknown as { __scans: unknown }).__scans = { addFiles, select, scans, align };
+
+const ROOTS_KEY = 'cavecad.scans.roots';
+
+function roots(): Record<string, string> {
+  try {
+    const raw = JSON.parse(localStorage.getItem(ROOTS_KEY) ?? 'null');
+    if (raw && typeof raw === 'object') return raw;
+  } catch {
+    /* nothing saved */
+  }
+  return {};
+}
+
+/** Where the folder called `name` really lives on this computer, as the person told us (this browser only), or ''. */
+export const realRoot = (name: string): string => roots()[name] ?? '';
+
+/** Remembers where the folder called `name` lives. An empty path forgets it. */
+export function setRealRoot(name: string, path: string) {
+  const all = roots();
+  if (path) all[name] = path;
+  else delete all[name];
+  try {
+    localStorage.setItem(ROOTS_KEY, JSON.stringify(all));
+  } catch {
+    /* not remembered: private window */
+  }
+}

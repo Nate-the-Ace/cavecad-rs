@@ -13,8 +13,9 @@
   import { formatLength } from '../lib/units';
   import type { TripChoice } from '../lib/notebook';
   import { countDone, filesUnder, foldersOf, treeRows, withoutComplete, type TreeRow } from '../lib/scan-tree';
-  import { addFiles, align, dropItems, trimming, checkRemembered, have, forgetCopy, pickFolder, reopenRemembered, scans, select, setFolders, toggleFolder } from '../lib/scans.svelte';
+  import { addFiles, align, dropItems, trimming, checkRemembered, have, forgetCopy, pickFolder, realRoot, setRealRoot, reopenRemembered, scans, select, setFolders, toggleFolder } from '../lib/scans.svelte';
   import { showPanel } from '../lib/workspace.svelte';
+  import { cleanRoot, copyPathHint, fullPath, osOf, revealHint, revealLabel } from '../lib/scan-location';
 
   let ready = $state(false);
   let trips = $state<TripChoice[]>([]);
@@ -25,6 +26,58 @@
   /** Pages marked complete, and whether the tree hides them (to see what still needs attention). */
   let done = $state<Set<string>>(new Set());
   let hideDone = $state(false);
+  /** Width of the tree, dragged by the person and remembered on this machine. */
+  const WIDTH_KEY = 'cavecad.scans.treeWidth';
+  let treeWidth = $state(
+    (() => {
+      try {
+        const n = Number(localStorage.getItem(WIDTH_KEY));
+        return Number.isFinite(n) && n >= 120 ? n : 220;
+      } catch {
+        return 220;
+      }
+    })(),
+  );
+  let body = $state<HTMLDivElement>();
+
+  /** Sets the tree's width, kept between 120 px and most of the panel. */
+  function setTreeWidth(w: number, save = true) {
+    const max = Math.max(160, (body?.clientWidth ?? 600) - 160);
+    treeWidth = Math.round(Math.min(Math.max(w, 120), max));
+    if (!save) return;
+    try {
+      localStorage.setItem(WIDTH_KEY, String(treeWidth));
+    } catch {
+      /* not remembered */
+    }
+  }
+
+  function dragTree(e: PointerEvent) {
+    e.preventDefault();
+    const handle = e.currentTarget as HTMLElement;
+    handle.setPointerCapture(e.pointerId);
+    const left = body!.getBoundingClientRect().left;
+    const move = (m: PointerEvent) => setTreeWidth(m.clientX - left, false);
+    const up = () => {
+      handle.removeEventListener('pointermove', move);
+      handle.removeEventListener('pointerup', up);
+      setTreeWidth(treeWidth);
+    };
+    handle.addEventListener('pointermove', move);
+    handle.addEventListener('pointerup', up);
+  }
+
+  function nudgeTree(e: KeyboardEvent) {
+    if (e.key === 'ArrowLeft') setTreeWidth(treeWidth - 20);
+    else if (e.key === 'ArrowRight') setTreeWidth(treeWidth + 20);
+    else return;
+    e.preventDefault();
+  }
+  const os = osOf(navigator.platform ?? '', navigator.userAgent ?? '');
+  /** Revealing a page or folder: asking where the scans folder lives, and the path handed back. */
+  let asking = $state<{ path: string } | null>(null);
+  let rootText = $state('');
+  let revealed = $state<{ full: string; copied: boolean } | null>(null);
   /** The right-click menu: what it is for and where it is. */
   let menu = $state<{ row: TreeRow | { kind: 'file'; path: string; name: string; depth: number; count: number; collapsed: boolean }; x: number; y: number } | null>(null);
   let stations = $state<{ id: string; station: string }[]>([]);
@@ -183,6 +236,38 @@
     menu = null;
   }
 
+  /** Hands back the real path of a page or folder (asking once where the folder lives), copied for pasting into Finder or Explorer. */
+  async function reveal(path: string) {
+    menu = null;
+    const root = realRoot(scans.folder);
+    if (!root) {
+      asking = { path };
+      rootText = '';
+      return;
+    }
+    const full = fullPath(root, path);
+    let copied = false;
+    try {
+      await navigator.clipboard.writeText(full);
+      copied = true;
+    } catch {
+      /* not allowed here: the path is shown to copy by hand */
+    }
+    revealed = { full, copied };
+  }
+
+  function saveRoot() {
+    const root = cleanRoot(rootText);
+    if (!root || !asking) {
+      scans.message = 'That is not a full path (it should start with / or a drive letter).';
+      return;
+    }
+    setRealRoot(scans.folder, root);
+    const path = asking.path;
+    asking = null;
+    void reveal(path);
+  }
+
   function openMenu(e: MouseEvent, r: TreeRow) {
     e.preventDefault();
     menu = { row: r, x: Math.min(e.clientX, window.innerWidth - 200), y: Math.min(e.clientY, window.innerHeight - 90) };
@@ -255,6 +340,8 @@
       <button role="menuitem" onclick={() => menu && mark(menu.row as TreeRow, true)}>Mark complete</button>
     {/if}
     <hr />
+    <button role="menuitem" title="Shows the real location on your computer, not the copy this browser keeps" onclick={() => menu && reveal(menu.row.path)}>{revealLabel(os)}</button>
+    <hr />
     <button role="menuitem" onclick={() => fold('', false)}>Expand all folders</button>
     <button role="menuitem" onclick={() => fold('', true)}>Collapse all folders</button>
   </div>
@@ -291,6 +378,23 @@
     {#if scans.message}<span class="msg" role="status">{scans.message}</span>{/if}
   </div>
 
+  {#if asking}
+    <div class="alignbar" role="group" aria-label="Where the scans folder is">
+      <span class="hint">
+        Where is “{scans.folder}” on this computer? Paste its full path once and every page can be shown in its real place. {copyPathHint(os)}
+      </span>
+      <input class="rootbox" bind:value={rootText} placeholder={os === 'windows' ? 'C:\\Users\\you\\Documents\\scans' : '/Users/you/Documents/scans'} aria-label="Full path of the scans folder" onkeydown={(e) => e.key === 'Enter' && saveRoot()} />
+      <button onclick={saveRoot}>Save and {revealLabel(os).toLowerCase()}</button>
+      <button onclick={() => (asking = null)}>Cancel</button>
+    </div>
+  {/if}
+  {#if revealed}
+    <div class="alignbar" role="status">
+      <span class="hint"><b>{revealed.copied ? 'Copied the real location:' : 'Real location (copy it):'}</b> <code>{revealed.full}</code><br />{revealHint(os)}</span>
+      <button onclick={() => { asking = { path: '' }; rootText = realRoot(scans.folder); revealed = null; }} title="The folder moved, or the path was wrong">Change folder location</button>
+      <button onclick={() => (revealed = null)}>Dismiss</button>
+    </div>
+  {/if}
   {#if trimming.on && linkedHere}
     <div class="alignbar" role="group" aria-label="Trim to an outline">
       <span class="hint">Drag a loop round the part to keep, or click its corners one by one, then close the outline.</span>
@@ -327,8 +431,8 @@
       {#if placed}<span class="rms" title="How far, on average, the matched spots land from their stations">off by {formatLength(placed.rms, cave.units, 2)} on average</span>{/if}
     </div>
   {/if}
-  <div class="body">
-    <div class="side">
+  <div class="body" bind:this={body}>
+    <div class="side" style="width: {treeWidth}px">
       {#if mine.length}
         <div class="head">This trip's scans</div>
         {#each mine as p}
@@ -363,6 +467,8 @@
         {/each}
       </div>
     </div>
+    <!-- svelte-ignore a11y_no_noninteractive_tabindex: the divider is a keyboard-adjustable separator -->
+    <div class="split" role="separator" aria-orientation="vertical" aria-label="Resize the scan tree" aria-valuenow={treeWidth} tabindex="0" title="Drag to resize the tree (double-click to reset)" onpointerdown={dragTree} onkeydown={nudgeTree} ondblclick={() => setTreeWidth(220)}></div>
     {#if scans.url}
       {#key scans.url}<ScanViewer url={scans.url} kind={scans.kind} name={scans.selected} marks={align.on && linkedHere ? (al?.anchors ?? []).map((a) => ({ px: a.px, py: a.py, label: a.label || `${formatLength(a.x ?? 0, cave.units, 1)}, ${formatLength(a.y ?? 0, cave.units, 1)}` })) : []} pending={align.on ? align.pending : null} picking={(align.on || trimming.on) && linkedHere} onpick={picked} trim={linkedHere ? savedTrim : null} draft={trimming.on ? trimming.draft : []} tracing={trimming.on && linkedHere} onstroke={saveTrim} />{/key}
     {:else}
@@ -380,13 +486,15 @@
   button:disabled { opacity: 0.5; cursor: default; }
   input, select { font: inherit; font-size: 12px; padding: 3px 6px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel-2); color: var(--text); min-width: 0; }
   .msg { color: var(--muted); font-size: 12px; }
+  .split { flex: none; width: 5px; cursor: col-resize; background: var(--line); touch-action: none; }
+  .split:hover, .split:focus-visible { background: var(--accent); outline: none; }
   .alignbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 5px 10px; border-bottom: 1px solid var(--line); background: var(--accent-bg); font-size: 12px; }
   .match { display: inline-flex; align-items: center; gap: 2px; padding: 0 3px 0 8px; border: 1px solid var(--line); border-radius: 999px; background: var(--panel); }
   .match .x { border: none; background: none; padding: 2px; }
   .rms { color: var(--muted); }
   button.on { background: var(--accent-bg); border-color: var(--accent); }
   .body { flex: 1; min-height: 0; display: flex; }
-  .side { width: 220px; flex: none; display: flex; flex-direction: column; gap: 2px; padding: 6px; border-right: 1px solid var(--line); overflow: auto; }
+  .side { flex: none; display: flex; flex-direction: column; gap: 2px; padding: 6px; border-right: 1px solid var(--line); overflow: auto; }
   .side > * { flex: none; }
   .head { font-size: 11px; font-weight: 600; color: var(--muted); padding: 6px 4px 2px; }
   .n { color: var(--muted); font-weight: 400; margin-left: 4px; font-size: 11px; }
@@ -408,6 +516,8 @@
   .menu button:hover { background: var(--accent-bg); }
   .kept { font-size: 11px; color: var(--muted); padding: 0 4px 4px; }
   .kept .link { border: none; background: none; color: var(--accent); padding: 0 2px; font-size: 11px; cursor: pointer; text-decoration: underline; }
+  .rootbox { flex: 1; min-width: 240px; font-family: var(--mono, monospace); }
+  code { font-family: var(--mono, monospace); user-select: all; word-break: break-all; }
   .none { color: var(--muted); font-size: 12px; padding: 8px 4px; }
   .empty { flex: 1; display: grid; place-items: center; color: var(--muted); }
 </style>
