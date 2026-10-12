@@ -5,6 +5,7 @@
 import { engine } from './engine';
 import { cave, changed, markSaved, markUnsaved, unsaved } from './cave.svelte';
 import { leave } from './sync.svelte';
+import { shelf as shelfState, storeOpenCave } from './shelf.svelte';
 
 /** The subset of the File System Access API this file uses. */
 interface Handle {
@@ -85,9 +86,13 @@ export function startCave(name: string, unit: 'ft' | 'm'): { ok: boolean; messag
   cave.trip = '';
   cave.run = '';
   cave.station = '';
+  cave.hasCave = true;
+  cave.name = clean;
+  shelf0();
   cave.opened += 1; // the canvas re-reads and re-frames
   changed();
   markUnsaved();
+  void storeOpenCave(); // a new cave goes on the shelf at once, and is kept as it grows
   return { ok: true, message: `Started ${clean}` };
 }
 
@@ -103,10 +108,14 @@ export async function openDxf(): Promise<{ ok: boolean; message: string } | null
   leave(); // a different cave: stop sharing the old one
   handle = imported ? null : picked.handle; // an imported survey has no DXF to save back to
   cave.fileName = imported ? picked.name.replace(/\.json$/i, '.dxf') : picked.name;
+  cave.hasCave = true;
+  cave.name = picked.name.replace(/\.(dxf|json)$/i, '');
+  shelf0();
   for (const w of r.warnings) engine.log('warn', 'file', w);
   cave.opened += 1; // the canvas re-reads and re-frames
   changed();
   markSaved();
+  void storeOpenCave(picked.name); // a file opened is kept on the shelf (the same file again updates its record)
   return { ok: true, message: `Opened ${picked.name}: ${r.message}` };
 }
 
@@ -142,4 +151,9 @@ export async function saveDxf(saveAs = false): Promise<string | null> {
 /** The next demo or file that opens starts with no remembered file to save back to. */
 export function forgetFile() {
   handle = null;
+}
+
+/** A different cave is now open: it is not any record of the shelf until it is stored. */
+function shelf0() {
+  shelfState.currentId = '';
 }

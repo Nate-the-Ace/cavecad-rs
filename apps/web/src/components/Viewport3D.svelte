@@ -1,18 +1,15 @@
 <script lang="ts">
   import { onMount, untrack } from 'svelte';
-  import { Home, Maximize, Box, Square, Palette, Eye } from '@lucide/svelte';
+  import { Home, Maximize, Box, Square, Palette, Eye, Library } from '@lucide/svelte';
   import PanelUndo from './PanelUndo.svelte';
-  import { DEMOS } from '../lib/demos';
+  import { shelf } from '../lib/shelf.svelte';
   import { isSymbolKind, needsWords, symbolDef } from '../lib/symbols';
-  import { confirmDiscard } from '../lib/files';
   import { cursorsFor, live as room, reportCursor } from '../lib/sync.svelte';
-  import { leave } from '../lib/sync.svelte';
   import { engine, loadEngine, type Scene, type TypeStyle } from '../lib/engine';
   import { CaveView, type Projection } from '../lib/viewport/cave-view';
-  import { cave, changed, filter, markSaved, option, setPick, setShowSections, setShown, wireFilter } from '../lib/cave.svelte';
+  import { cave, changed, filter, option, setPick, setShowSections, setShown, wireFilter } from '../lib/cave.svelte';
   import { tolerancePx } from '../lib/commands';
   import { ViewCube } from '../lib/viewport/view-cube';
-  import { forgetFile } from '../lib/files';
   import { onTheme } from '../lib/theme';
   import { panelState, showPanel } from '../lib/workspace.svelte';
   import { setActiveView } from '../lib/snapshot';
@@ -24,11 +21,6 @@
   let cubeHost: HTMLDivElement;
   let view: CaveView | null = null;
 
-  /** The picker's value while the cave on screen came from a file, not a demo. */
-  const FROM_FILE = '__file';
-  let demo = $state(DEMOS[0].id);
-  /** What the picker showed before the person changed it. */
-  let shownDemo = DEMOS[0].id;
   let depthColor = $state(false);
   let walls = $state(true);
   let passage = $state(true);
@@ -43,22 +35,6 @@
   const listed = $derived(palette.filter((p) => scene?.types.includes(p.key)));
   /** The symbols the cave has, each listed under its own name. */
   const symbolTypes = $derived((scene?.types ?? []).filter(isSymbolKind).map((key) => ({ key, label: symbolDef(key)?.name ?? key })).sort((a, b) => a.label.localeCompare(b.label)));
-
-  function open(id: string) {
-    const d = DEMOS.find((x) => x.id === id);
-    if (!d || !view) return;
-    if (!confirmDiscard()) {
-      demo = shownDemo; // declined: the picker goes back to what is on screen
-      return;
-    }
-    shownDemo = id;
-    leave(); // a different cave: stop sharing the old one
-    status = engine.openDemo(d.json);
-    markSaved();
-    cave.fileName = `${d.id}.dxf`;
-    forgetFile();
-    show();
-  }
 
   /** Draws whichever cave the engine has open, framed from the home view. */
   function show() {
@@ -225,8 +201,6 @@
     untrack(() => {
       if (n === seenOpen) return;
       seenOpen = n;
-      demo = FROM_FILE;
-      shownDemo = FROM_FILE;
       status = '';
       show();
     });
@@ -303,7 +277,7 @@
       loaded = true;
       palette = engine.palette();
       v.setPalette(palette);
-      open(demo);
+      show(); // a clean slate until a cave is chosen from the Cave Shelf
     });
 
     return () => {
@@ -321,10 +295,7 @@
   <canvas bind:this={gl} onpointerdown={onDown} onpointerup={onUp}></canvas>
   <canvas bind:this={overlay} class="overlay"></canvas>
   <div class="bar">
-    <select bind:value={demo} onchange={() => open(demo)} aria-label="Demo cave">
-      {#if demo === FROM_FILE}<option value={FROM_FILE}>{cave.fileName}</option>{/if}
-      {#each DEMOS as d}<option value={d.id}>{d.title}</option>{/each}
-    </select>
+    <button class="caves" title="The Cave Shelf: open a cave, start a new one, add a trip" onclick={() => (shelf.open = true)}><Library size={15} /> {cave.hasCave ? cave.name || 'Cave' : 'Caves'}</button>
     <div class="menu">
       <button class:on={showMenu || filter.hiddenTypes.length + filter.hiddenTrips.length > 0} title="Show or hide: walls, passage, sketches, sections, types and trips" aria-expanded={showMenu} onclick={openMenu}><Eye size={15} /> Show</button>
       {#if showMenu}
@@ -381,7 +352,8 @@
   .bar { position: absolute; top: 8px; left: 8px; max-width: calc(100% - 160px); flex-wrap: wrap; display: flex; gap: 6px 10px; align-items: center; padding: 6px 8px; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); font-size: 12px; }
   .cube { position: absolute; top: 8px; right: 8px; display: flex; flex-direction: column; align-items: center; }
   .cubebar { display: flex; gap: 4px; margin-top: 2px; }
-  select, button { font: inherit; padding: 3px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--text); cursor: pointer; display: inline-grid; place-items: center; }
+  button { font: inherit; padding: 3px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--text); cursor: pointer; display: inline-grid; place-items: center; }
+  button.caves { display: inline-flex; gap: 5px; align-items: center; font-weight: 600; }
   button:disabled { opacity: 0.4; cursor: default; }
   button.on { background: var(--accent-bg); }
   label { display: flex; gap: 4px; align-items: center; color: var(--muted); white-space: nowrap; }

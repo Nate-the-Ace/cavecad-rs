@@ -77,6 +77,18 @@ pub fn from_shot_list(text: &str, actor: ActorId) -> Result<Document, String> {
                 value: number(&t["declination"]),
             });
         }
+        if i == 0
+            && let Some(cave_name) = json["caveName"]
+                .as_str()
+                .or(json["name"].as_str())
+                .filter(|n| !n.is_empty())
+        {
+            actions.push(Action::Set {
+                id,
+                field: Field::TripCaveName,
+                value: Value::Text(cave_name.into()),
+            });
+        }
         let start = &t["startLrud"];
         for (key, field) in [
             ("left", Field::TripStartLeft),

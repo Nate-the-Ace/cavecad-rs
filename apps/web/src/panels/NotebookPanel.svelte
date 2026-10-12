@@ -51,10 +51,20 @@
   let toTyped = false;
   /** After a shot is added: put the cursor in its tape cell once the page has redrawn. */
   let focusNewShot = false;
+  /** Which trip and last station From was worked out for: it is set again only when that changes (not on every redraw). */
+  let fromKey = '';
   $effect(() => {
     const last = [...(page?.rows ?? [])].reverse().find((r) => r.kind === 'station');
-    from = last?.label ?? (page ? 'A1' : ''); // a page with nothing on it starts at A1
-    toTyped = false;
+    const key = `${page?.trip ?? ''}|${last?.label ?? ''}`;
+    untrack(() => {
+      if (key === fromKey) return;
+      fromKey = key;
+      // A new trip picked up from an open end starts there; a page with nothing on it otherwise starts at A1.
+      const hint = cave.tripFrom;
+      from = last?.label ?? (hint && page ? hint : page ? 'A1' : '');
+      toTyped = false;
+      if (!last && hint && page) cave.tripFrom = ''; // used once
+    });
   });
   $effect(() => {
     const f = from;

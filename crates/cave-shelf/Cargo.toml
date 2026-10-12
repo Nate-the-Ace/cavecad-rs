@@ -1,0 +1,18 @@
+[package]
+name = "cave-shelf"
+edition.workspace = true
+version.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+cave-id = { path = "../cave-id" }
+cave-doc = { path = "../cave-doc" }
+cave-notebook = { path = "../cave-notebook" }
+cave-scene = { path = "../cave-scene" }
+serde = { version = "1", features = ["derive"] }
+
+[dev-dependencies]
+cave-fixture = { path = "../cave-fixture" }

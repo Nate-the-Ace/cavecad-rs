@@ -104,6 +104,12 @@ export const cave = $state({
   run: '',
   /** The New cave dialog is open. */
   newDialog: false,
+  /** A cave is open (false on a clean slate, before one is chosen from the Cave Shelf). */
+  hasCave: false,
+  /** The open cave's name, for the title of the map. */
+  name: '',
+  /** A station a new trip should start from (picked on the Cave Shelf), used once by the Notebook. */
+  tripFrom: '',
   /** The trip (id) the Notebook and the Scans panel are both on, so a page and its scans stay together. */
   trip: '',
   /** A request to bring the Map to a station (from the Stations panel). */

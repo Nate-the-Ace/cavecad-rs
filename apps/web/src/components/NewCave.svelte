@@ -5,6 +5,7 @@
   import { engine } from '../lib/engine';
   import { startCave } from '../lib/files';
   import { workLayout } from '../lib/workspace.svelte';
+  import { shelf } from '../lib/shelf.svelte';
 
   let name = $state('');
   let unit = $state<'ft' | 'm'>(cave.units === 'imperial' ? 'ft' : 'm');
@@ -26,6 +27,7 @@
     // What people read and type follows what the notes are written in, so numbers go in as written.
     setUnits(unit === 'ft' ? 'imperial' : 'metric');
     cave.newDialog = false;
+    shelf.open = false;
     name = '';
     workLayout(); // scans and notebook side by side, ready to start typing
   }

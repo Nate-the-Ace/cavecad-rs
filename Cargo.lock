@@ -172,6 +172,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "cave-shelf"
+version = "0.0.1"
+dependencies = [
+ "cave-doc",
+ "cave-fixture",
+ "cave-id",
+ "cave-notebook",
+ "cave-scene",
+ "serde",
+]
+
+[[package]]
 name = "cave-store"
 version = "0.0.1"
 dependencies = [
@@ -230,6 +242,7 @@ dependencies = [
  "cave-scene",
  "cave-shape",
  "cave-sheet",
+ "cave-shelf",
  "cave-style",
  "cave-symbols",
  "js-sys",

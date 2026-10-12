@@ -4,10 +4,12 @@
   import NewCave from './components/NewCave.svelte';
   import { initWorkspace } from './lib/workspace.svelte';
   import { engine, loadEngine, loadBuildInfo, type BuildInfo } from './lib/engine';
-  import { unsaved } from './lib/cave.svelte';
+  import { cave, unsaved } from './lib/cave.svelte';
   import { guardUnload } from './lib/files';
   import { installDiagnostics } from './lib/diagnostics';
-  import { readInviteFromUrl } from './lib/sync.svelte';
+  import { live, readInviteFromUrl } from './lib/sync.svelte';
+  import CaveShelf from './components/CaveShelf.svelte';
+  import { autosaveSoon, flush, loadShelf, shelf } from './lib/shelf.svelte';
   import { checkRemembered } from './lib/scans.svelte';
 
   let version = $state('loading engine…');
@@ -21,10 +23,15 @@
     readInviteFromUrl();
     void checkRemembered(); // the scans kept from last time come back before any panel is opened
     const unguard = guardUnload();
+    document.addEventListener('visibilitychange', keepNow);
+    window.addEventListener('pagehide', keepNow);
     (async () => {
       try {
         await loadEngine();
         version = engine.version();
+        await loadShelf();
+        // A clean slate: the shelf opens first, unless someone sent an invite to a room.
+        if (!cave.hasCave && shelf.startup && !live.pending) shelf.open = true;
       } catch (e) {
         failed = String(e);
       }
@@ -32,9 +39,18 @@
     })();
     return () => {
       unguard();
+      document.removeEventListener('visibilitychange', keepNow);
+      window.removeEventListener('pagehide', keepNow);
       teardown();
     };
   });
+
+  // Edits are kept on the shelf a moment after they are made.
+  $effect(() => {
+    void cave.version;
+    autosaveSoon();
+  });
+  const keepNow = () => void flush();
 
   const dirty = $derived(unsaved());
   $effect(() => {
@@ -47,6 +63,7 @@
 <div class="shell">
   <Ribbon />
   <NewCave />
+  <CaveShelf />
   {#if info?.error}
     <div class="banner">Rust build failed. The page is showing the last good build.<pre>{info.error}</pre></div>
   {/if}

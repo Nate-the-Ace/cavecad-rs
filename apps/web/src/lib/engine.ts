@@ -1,5 +1,5 @@
 // Loads the Rust engine (WASM) once and re-exports the few calls the UI uses.
-import init, { start, log, console_events, console_clear, engine_version, open_demo, scene, profile_runs, profile_band, add_profile_sketch, undo, redo, edit_state, passage_mesh, shading, palette, open_dxf, save_dxf, section_stations, section_at, add_section_sketch, map_sections, place_section, map_profile_sketches, add_map_line, map_lines, draw_tools, edit_line, delete_line, set_line_closed, set_line_kind, line_info, set_line_flip, set_line_text, ornament, callout, sheet_options, sheet_plan, flipped_lines, revision, station_rows, set_station_mark, station_detail, shot_detail, set_shot, set_station_walls, set_station_note, set_station_benchmark, symbols, fills, fill_marks, draw_tool_groups, sync_outbox, sync_apply, sync_snapshot, sync_load, notebook_trips, notebook_page, notebook_set_reading, notebook_set_walls, notebook_set_note, notebook_set_trip_field, notebook_set_declination, notebook_add_shot, notebook_remove_shot, notebook_rename_station, notebook_new_trip, scan_links, scan_link, scan_unlink, scan_placements, scan_alignment, scan_add_anchor, scan_remove_anchor, scan_set_mode, scan_trim, scan_set_trim, scan_view_stations, new_cave, scan_completed, scan_set_complete } from '../wasm/cave_wasm.js';
+import init, { start, log, console_events, console_clear, engine_version, open_demo, scene, profile_runs, profile_band, add_profile_sketch, undo, redo, edit_state, passage_mesh, shading, palette, open_dxf, save_dxf, section_stations, section_at, add_section_sketch, map_sections, place_section, map_profile_sketches, add_map_line, map_lines, draw_tools, edit_line, delete_line, set_line_closed, set_line_kind, line_info, set_line_flip, set_line_text, ornament, callout, sheet_options, sheet_plan, flipped_lines, revision, station_rows, set_station_mark, station_detail, shot_detail, set_shot, set_station_walls, set_station_note, set_station_benchmark, symbols, fills, fill_marks, draw_tool_groups, sync_outbox, sync_apply, sync_snapshot, sync_load, notebook_trips, notebook_page, notebook_set_reading, notebook_set_walls, notebook_set_note, notebook_set_trip_field, notebook_set_declination, notebook_add_shot, notebook_remove_shot, notebook_rename_station, notebook_new_trip, scan_links, scan_link, scan_unlink, scan_placements, scan_alignment, scan_add_anchor, scan_remove_anchor, scan_set_mode, scan_trim, scan_set_trim, scan_view_stations, new_cave, scan_completed, scan_set_complete, shelf_summary, shelf_summarize } from '../wasm/cave_wasm.js';
 
 import { setInkPalette } from './ink';
 import { setOrnamentSource } from './section-glyph';
@@ -246,6 +246,35 @@ export interface ScanAlignment {
   mode: 'rigid' | 'warp';
   anchors: { px: number; py: number; station: string; label: string; x: number | null; y: number | null }[];
 }
+/** One trip's line in the Cave Shelf. */
+export interface ShelfTrip {
+  id: string;
+  index: number;
+  name: string;
+  date: string;
+  team: string;
+  declination: number | null;
+  unit: 'ft' | 'm';
+  shots: number;
+  length_m: number;
+  start: string;
+  end: string;
+  ends: string[];
+}
+/** What the Cave Shelf shows about a cave. */
+export interface CaveSummary {
+  name: string;
+  unit: 'ft' | 'm';
+  length_m: number;
+  depth_m: number | null;
+  stations: number;
+  shots: number;
+  trips: ShelfTrip[];
+  ends: { station: string; trip: number }[];
+  loops: number;
+  worst_percent: number | null;
+  empty: boolean;
+}
 export interface BuildInfo {
   builtAt: string | null;
   git: string;
@@ -335,6 +364,10 @@ export const engine = {
   scanCompleted: (): string[] => JSON.parse(scan_completed()),
   /** Marks pages complete or incomplete (one undoable edit in the Scans history). */
   scanSetComplete: (paths: string[], complete: boolean): string => scan_set_complete(JSON.stringify(paths), complete),
+  /** What the shelf shows about the open cave, or null when none is open. */
+  shelfSummary: (): CaveSummary | null => JSON.parse(shelf_summary()),
+  /** The same for a cave kept as DXF text, without opening it (null when it is not a cave). */
+  shelfSummarize: (dxf: string): CaveSummary | null => JSON.parse(shelf_summarize(dxf)),
   /** Starts a brand new cave with one empty trip (`ft` or `m`); returns `ok` or `error: ...`. */
   newCave: (name: string, trip: string, unit: 'ft' | 'm'): string => new_cave(name, trip, unit),
   /** Goes up whenever the open cave really changes; compared with the value at the last save. */

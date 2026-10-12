@@ -1792,3 +1792,25 @@ pub fn scan_set_complete(paths: &str, complete: bool) -> String {
         cave_scans::set_complete(doc, &paths, complete)
     })
 }
+
+// ---- Cave Shelf -----------------------------------------------------------------------------
+
+/// What the shelf shows about the open cave (JSON), or `null` when none is open.
+#[wasm_bindgen]
+pub fn shelf_summary() -> String {
+    DOC.with(|d| {
+        let v = d.borrow().as_ref().map(cave_shelf::summarize);
+        serde_json::to_string(&v).unwrap_or_else(|_| "null".into())
+    })
+}
+
+/// What the shelf shows about a cave kept as DXF text, without opening it (the open cave is not
+/// touched). `null` when the text is not a cave.
+#[wasm_bindgen]
+pub fn shelf_summarize(dxf: &str) -> String {
+    let doc = cave_dxf::import(dxf, ActorId(1))
+        .ok()
+        .and_then(|i| i.document);
+    serde_json::to_string(&doc.as_ref().map(cave_shelf::summarize))
+        .unwrap_or_else(|_| "null".into())
+}
