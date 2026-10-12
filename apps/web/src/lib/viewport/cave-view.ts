@@ -789,10 +789,14 @@ export class CaveView {
           g.lineWidth = Math.max(1, l.weight * 0.7);
           if (k.id && k.id === this.selectedLine) {
             const pl = placement(a, b);
-            g.globalAlpha = base * 0.25;
+            g.strokeStyle = `#${this.theme.accent.getHexString()}`;
+            g.globalAlpha = base * 0.9;
+            g.lineWidth = 3;
             g.beginPath();
-            g.arc(pl.cx, pl.cy, pl.r + 5, 0, Math.PI * 2);
+            g.arc(pl.cx, pl.cy, pl.r + 6, 0, Math.PI * 2);
             g.stroke();
+            g.strokeStyle = l.color;
+            g.lineWidth = Math.max(1, l.weight * 0.7);
             g.globalAlpha = base * l.alpha;
           }
           drawStamp(g, k.kind, a, b, k.text);
@@ -847,11 +851,58 @@ export class CaveView {
           }
         }
       }
-      if (k.id && k.id === this.selectedLine) trace(7, 0.25, []);
+      if (k.id && k.id === this.selectedLine) {
+        g.strokeStyle = `#${this.theme.accent.getHexString()}`;
+        trace(9, 0.6, []);
+        g.strokeStyle = l.color;
+      }
       if (spine) trace(0, l.alpha, l.dash);
     }
     g.setLineDash([]);
     g.globalAlpha = base;
+  }
+
+  private selectedShot = '';
+  /** The leg or splay (shot id) to light up on the map. */
+  setSelectedShot(id: string) {
+    this.selectedShot = id;
+    this.requestRender();
+  }
+
+  /** The leg or splay under a screen point (within `radius` pixels), or null. A leg wins over a splay that is no closer. */
+  pickShot(clientX: number, clientY: number, radius = 7): { kind: 'leg' | 'splay'; id: string } | null {
+    const s = this.data;
+    if (!s) return null;
+    const rect = this.canvas.getBoundingClientRect();
+    const x = clientX - rect.left;
+    const y = clientY - rect.top;
+    let best: { kind: 'leg' | 'splay'; id: string } | null = null;
+    let bestD = radius;
+    const near = (a: [number, number, number], b: [number, number, number], bias: number) => {
+      const p = this.project(a);
+      const q = this.project(b);
+      if (!p || !q) return Infinity;
+      const dx = q[0] - p[0];
+      const dy = q[1] - p[1];
+      const len2 = dx * dx + dy * dy;
+      const t = len2 < 1e-9 ? 0 : Math.max(0, Math.min(1, ((x - p[0]) * dx + (y - p[1]) * dy) / len2));
+      return Math.hypot(x - (p[0] + t * dx), y - (p[1] + t * dy)) + bias;
+    };
+    for (const l of s.legs) {
+      const d = near(l.from, l.to, 0);
+      if (d <= bestD) {
+        bestD = d;
+        best = { kind: 'leg', id: l.shot };
+      }
+    }
+    s.splays.forEach((sp, i) => {
+      const d = near([sp[0], sp[1], sp[2]], [sp[3], sp[4], sp[5]], 1.5);
+      if (d <= bestD && s.splay_shots[i]) {
+        bestD = d;
+        best = { kind: 'splay', id: s.splay_shots[i] };
+      }
+    });
+    return best;
   }
 
   /** The station (id) to ring on the map, e.g. the one the Cross Section panel shows. */
@@ -1101,14 +1152,45 @@ export class CaveView {
         g.textAlign = 'left';
       }
     }
+    // the picked leg or splay: a bright line in the theme's highlight colour along it
+    if (this.selectedShot) {
+      const leg = s.legs.find((l) => l.shot === this.selectedShot);
+      const si = leg ? -1 : s.splay_shots.indexOf(this.selectedShot);
+      const ends: [[number, number, number], [number, number, number]] | null = leg ? [leg.from, leg.to] : si >= 0 ? [[s.splays[si][0], s.splays[si][1], s.splays[si][2]], [s.splays[si][3], s.splays[si][4], s.splays[si][5]]] : null;
+      const a = ends && this.project(ends[0]);
+      const b = ends && this.project(ends[1]);
+      if (a && b) {
+        const hi = `#${this.theme.accent.getHexString()}`;
+        g.lineCap = 'round';
+        g.strokeStyle = hi;
+        g.globalAlpha = 0.3;
+        g.lineWidth = 11;
+        g.beginPath();
+        g.moveTo(a[0], a[1]);
+        g.lineTo(b[0], b[1]);
+        g.stroke();
+        g.globalAlpha = 1;
+        g.lineWidth = 3.5;
+        g.stroke();
+      }
+    }
     const chosen = this.selected ? s.stations.find((st) => st.id === this.selected) : undefined;
     const cp = chosen ? this.project(chosen.at) : null;
     if (cp) {
-      g.strokeStyle = this.theme.css.text;
-      g.lineWidth = 2;
+      // the picked station: a filled halo and ring in the theme's highlight colour
+      const hi = `#${this.theme.accent.getHexString()}`;
+      g.fillStyle = hi;
+      g.globalAlpha = 0.28;
       g.beginPath();
-      g.arc(cp[0], cp[1], 9, 0, Math.PI * 2);
+      g.arc(cp[0], cp[1], 13, 0, Math.PI * 2);
+      g.fill();
+      g.globalAlpha = 1;
+      g.strokeStyle = hi;
+      g.lineWidth = 3;
+      g.beginPath();
+      g.arc(cp[0], cp[1], 13, 0, Math.PI * 2);
       g.stroke();
+      drawStationMarker(g, cp[0], cp[1], !!chosen?.benchmark, 7);
     }
     g.strokeStyle = css.danger;
     g.fillStyle = css.danger;

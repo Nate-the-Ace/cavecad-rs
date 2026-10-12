@@ -4,7 +4,7 @@
   import { Maximize } from '@lucide/svelte';
   import PanelUndo from '../components/PanelUndo.svelte';
   import { looks } from '../lib/ink';
-  import { cave, changed, filter, option, setShowSections } from '../lib/cave.svelte';
+  import { cave, changed, filter, option, setPick, setShowSections } from '../lib/cave.svelte';
   import { defaultBandOffset, drawHandles, drawStrokes, glyphCurves, hits, leaderEnd } from '../lib/section-glyph';
   import { LineEditor, endpointNear, joinFit } from '../lib/line-editor';
   import { Touches } from '../lib/touch';
@@ -27,6 +27,8 @@
   let band = $state<ProfileScene | null>(null);
   /** Labels of the benchmark stations (drawn with a dot in their triangle). */
   let fixed = new Set<string>();
+  /** Label of the picked station (ringed in the highlight colour). */
+  let pickedLabel = '';
   let message = $state('');
 
   // View: pixels per metre (uniform, so the profile is true to scale), and where s=0, z=0 sits.
@@ -97,7 +99,9 @@
     runs = engine.profileRuns(cave.adjusted);
     if (!runs.some((r) => r.key === cave.run)) cave.run = runs[0]?.key ?? '';
     band = cave.run ? engine.profileBand(cave.run, cave.adjusted) : null;
-    fixed = new Set(band ? engine.scene(cave.adjusted).stations.filter((x) => x.benchmark).map((x) => x.label) : []);
+    const dots = band ? engine.scene(cave.adjusted).stations : [];
+    fixed = new Set(dots.filter((x) => x.benchmark).map((x) => x.label));
+    pickedLabel = cave.pick.kind === 'station' ? (dots.find((x) => x.id === cave.pick.id)?.label ?? '') : '';
     schedule();
   }
 
@@ -106,6 +110,7 @@
     void cave.version;
     void cave.adjusted;
     void cave.run;
+    void cave.pick;
     void cave.showSections.profile; // sketches beside stations appear and disappear with the toggle
     void cave.units; // axis labels and run lengths redraw in the new units
     // refresh() both reads and writes panel state; only the three values above may re-trigger it.
@@ -251,6 +256,18 @@
     g.textAlign = 'left';
     for (const st of band.stations) {
       const [x, y] = toScreen(st.s, st.z);
+      if (st.label === pickedLabel) {
+        g.fillStyle = c.accent;
+        g.globalAlpha = 0.28;
+        g.beginPath();
+        g.arc(x, y, 12, 0, Math.PI * 2);
+        g.fill();
+        g.globalAlpha = 1;
+        g.strokeStyle = c.accent;
+        g.lineWidth = 3;
+        g.stroke();
+        g.fillStyle = c.text;
+      }
       g.strokeStyle = fixed.has(st.label) ? c.accent : c.text;
       g.lineWidth = 1.3;
       drawStationMarker(g, x, y, fixed.has(st.label), 5);
@@ -437,8 +454,7 @@
     }
     const hit = best && engine.scene(cave.adjusted).stations.find((x) => x.label === best!.label);
     if (hit) {
-      cave.selected = '';
-      cave.picked = hit.id;
+      setPick('station', hit.id);
       cave.station = hit.id;
     }
   }

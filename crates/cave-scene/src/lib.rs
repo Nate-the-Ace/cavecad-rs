@@ -14,7 +14,7 @@ mod solved;
 mod stations;
 mod under;
 
-pub use detail::{NoteField, StationDetail, WallsOut, station_detail};
+pub use detail::{NoteField, ShotDetail, StationDetail, WallsOut, shot_detail, station_detail};
 pub use filter::{TripInfo, ViewFilter};
 pub use maplines::{map_frames, map_lines_3d};
 pub use mesh::{ColorMode, Mesh, passage_mesh};

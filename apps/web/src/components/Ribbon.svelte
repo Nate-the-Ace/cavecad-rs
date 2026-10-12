@@ -1,7 +1,7 @@
 <script lang="ts">
   import { engine, loadEngine } from '../lib/engine';
   import { openDxf, saveDxf } from '../lib/files';
-  import { cave, setCompactRibbon, setUnits } from '../lib/cave.svelte';
+  import { cave, clearPick, setCompactRibbon, setUnits } from '../lib/cave.svelte';
   import DrawTools from './DrawTools.svelte';
   import ThemeGroup from './ThemeGroup.svelte';
   import ContextOptions from './ContextOptions.svelte';
@@ -9,7 +9,8 @@
   import CollaborateGroup from './CollaborateGroup.svelte';
   import FillTools from './FillTools.svelte';
   import SheetGroup from './SheetGroup.svelte';
-  import StationTab from './StationTab.svelte';
+  import { INSPECTORS } from '../lib/inspectors';
+  import type { PickKind } from '../lib/cave.svelte';
   import Avatars from './Avatars.svelte';
   import { symbolDef } from '../lib/symbols';
   import { fillLabel } from '../lib/fills';
@@ -101,13 +102,13 @@
     // The selected line is gone (undone, deleted elsewhere): nothing is selected any more.
     if (loaded && cave.selected && !cave.tool && selection === null) cave.selected = '';
   });
-  const mode = $derived(cave.tool ? 'command' : selection ? 'selection' : cave.picked ? 'station' : '');
+  const mode = $derived(cave.tool ? 'command' : selection ? 'selection' : cave.pick.kind ? 'pick' : '');
   // one thing is picked at a time: a line, a station, or a tool
   $effect(() => {
-    if (cave.tool || cave.selected) cave.picked = '';
+    if (cave.tool || cave.selected) clearPick();
   });
   const contextName = $derived(
-    mode === 'command' ? (toolLabels[cave.tool] ?? symbolDef(cave.tool)?.name ?? fillLabel(cave.tool) ?? cave.tool) : mode === 'station' ? 'Station' : mode === 'selection' ? `Edit ${toolLabels[selection!.kind] ?? symbolDef(selection!.kind)?.name ?? fillLabel(selection!.kind) ?? selection!.kind}` : '',
+    mode === 'command' ? (toolLabels[cave.tool] ?? symbolDef(cave.tool)?.name ?? fillLabel(cave.tool) ?? cave.tool) : mode === 'pick' ? INSPECTORS[cave.pick.kind as Exclude<PickKind, ''>].title : mode === 'selection' ? `Edit ${toolLabels[selection!.kind] ?? symbolDef(selection!.kind)?.name ?? fillLabel(selection!.kind) ?? selection!.kind}` : '',
   );
   const commandGroups: Group[] = [
     { name: 'Settings', items: [], custom: ContextOptions },
@@ -132,12 +133,8 @@
       ],
     },
   ];
-  const stationGroups: Group[] = [
-    { name: 'Station', items: [], custom: StationTab, props: { part: 'info' } },
-    { name: 'Passage (LRUD)', items: [], custom: StationTab, props: { part: 'walls' } },
-    { name: 'Notes', items: [], custom: StationTab, props: { part: 'notes' } },
-    { name: 'Mark', items: [], custom: StationTab, props: { part: 'mark' } },
-  ];
+  // what a picked thing's tab holds comes from the inspector registered for its kind
+  const pickGroups = $derived<Group[]>(cave.pick.kind ? INSPECTORS[cave.pick.kind as Exclude<PickKind, ''>].groups.map((g) => ({ name: g.name, items: [], custom: INSPECTORS[cave.pick.kind as Exclude<PickKind, ''>].component, props: { part: g.part, kind: cave.pick.kind } })) : []);
   let before = 'Home';
   $effect(() => {
     if (mode) {
@@ -147,7 +144,7 @@
       active = before;
     }
   });
-  const shownGroups = $derived(active === CONTEXT ? (mode === 'selection' ? selectionGroups : mode === 'station' ? stationGroups : commandGroups) : (tabs[active] ?? []));
+  const shownGroups = $derived(active === CONTEXT ? (mode === 'selection' ? selectionGroups : mode === 'pick' ? pickGroups : commandGroups) : (tabs[active] ?? []));
 
   // Groups that do not fit the width fold into one button each (the rightmost first); the button opens
   // a popup under it with the group's buttons, two to a row.
@@ -189,8 +186,8 @@
       openAt = null;
       return;
     }
-    if (e.key === 'Escape' && !cave.tool && !cave.selected && cave.picked && !(e.target as Element | null)?.closest?.('input, select, textarea')) {
-      cave.picked = '';
+    if (e.key === 'Escape' && !cave.tool && !cave.selected && cave.pick.kind && !(e.target as Element | null)?.closest?.('input, select, textarea')) {
+      clearPick();
       return;
     }
     if (e.key === 'Escape' && (cave.tool || cave.selected)) {

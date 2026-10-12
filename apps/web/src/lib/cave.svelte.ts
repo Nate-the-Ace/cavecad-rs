@@ -39,6 +39,20 @@ function savedSections(): { map: boolean; profile: boolean; profileSketches: boo
   return { map: true, profile: true, profileSketches: true };
 }
 
+/** What can be picked in a view to get a tab of its own in the ribbon (see `inspectors.ts`). */
+export type PickKind = '' | 'station' | 'leg' | 'splay';
+
+/** Picks a thing (a tool and a selected line are put down: one thing is picked at a time). */
+export function setPick(kind: PickKind, id: string) {
+  cave.pick = { kind, id: kind ? id : '' };
+  if (kind) cave.selected = '';
+}
+
+/** Lets go of whatever is picked. */
+export function clearPick() {
+  cave.pick = { kind: '', id: '' };
+}
+
 const COMPACT_KEY = 'cavecad.ribbon.compact';
 
 function savedCompact(): boolean {
@@ -67,8 +81,8 @@ export const cave = $state({
   /** The drawing tool picked on the Draw tab (a palette type such as `wall`), or empty. While one is
    *  picked, drawing in any view makes linework of that type in that view. */
   tool: '',
-  /** The station (id) picked for the station tab in the ribbon, or empty. */
-  picked: '',
+  /** The survey thing picked for its tab in the ribbon: a station, a leg or a splay (`kind`), by id. */
+  pick: { kind: '' as PickKind, id: '' },
   /** The line (a feature id) selected for editing, or empty. Its fit points show as handles in the view it was drawn in. */
   selected: '',
   /** Whether cross-section sketches are drawn beside their stations, per view, and whether profile

@@ -269,3 +269,96 @@ pub fn set_station_benchmark(
         value: Value::Flag(on),
     }])
 }
+
+/// What a person can change about one shot (a leg between stations, or a splay). Lengths are metres
+/// (written in the trip's unit); angles are degrees; `None` means not measured.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct ShotEdit {
+    /// Tape reading.
+    pub distance: Option<f64>,
+    /// Compass bearing.
+    pub azimuth: Option<f64>,
+    /// Clinometer reading.
+    pub inclination: Option<f64>,
+    /// Back bearing.
+    pub back_azimuth: Option<f64>,
+    /// Back inclination.
+    pub back_inclination: Option<f64>,
+    /// Left out of the plotted map.
+    pub exclude_from_plot: bool,
+    /// Left out of everything (a void shot).
+    pub exclude_from_all: bool,
+    /// Held as measured when the survey is adjusted.
+    pub no_adjust: bool,
+}
+
+/// Sets what is measured on a shot: only what differs from now is written. A distance must be zero or
+/// more, a bearing finite, an inclination between -90 and 90 degrees.
+pub fn set_shot(doc: &Document, shot: Id, edit: ShotEdit) -> Result<Vec<Action>, DrawError> {
+    let e = doc
+        .entity(shot)
+        .filter(|e| e.kind() == Kind::Shot)
+        .ok_or(DrawError::NoStations)?;
+    let factor = factor_of(doc, e.reference(Field::ShotTrip));
+    let ok =
+        |v: Option<f64>, lo: f64, hi: f64| v.is_none_or(|x| x.is_finite() && x >= lo && x <= hi);
+    if !ok(edit.distance, 0.0, 1e6)
+        || !ok(edit.azimuth, -360.0, 720.0)
+        || !ok(edit.back_azimuth, -360.0, 720.0)
+        || !ok(edit.inclination, -90.0, 90.0)
+        || !ok(edit.back_inclination, -90.0, 90.0)
+    {
+        return Err(DrawError::BadStroke);
+    }
+    let mut actions = Vec::new();
+    let mut number = |field: Field, want: Option<f64>, scale: f64| {
+        let now = e.number(field);
+        let same = match (want, now) {
+            (None, None) => true,
+            (Some(a), Some(b)) => (a / scale - b).abs() < 1e-9,
+            _ => false,
+        };
+        if !same {
+            actions.push(Action::Set {
+                id: shot,
+                field,
+                value: Value::Number(want.map(|v| v / scale)),
+            });
+        }
+    };
+    number(Field::ShotDistance, edit.distance, factor);
+    number(Field::ShotAzimuth, edit.azimuth, 1.0);
+    number(Field::ShotInclination, edit.inclination, 1.0);
+    number(Field::ShotBackAzimuth, edit.back_azimuth, 1.0);
+    number(Field::ShotBackInclination, edit.back_inclination, 1.0);
+    for (field, want) in [
+        (Field::ShotExcludeFromPlot, edit.exclude_from_plot),
+        (Field::ShotExcludeFromAll, edit.exclude_from_all),
+        (Field::ShotNoAdjust, edit.no_adjust),
+    ] {
+        if e.flag(field) != want {
+            actions.push(Action::Set {
+                id: shot,
+                field,
+                value: Value::Flag(want),
+            });
+        }
+    }
+    Ok(actions)
+}
+
+/// What is measured on a shot now, as a [`ShotEdit`] (distance in metres).
+pub fn shot_now(doc: &Document, shot: Id) -> Option<ShotEdit> {
+    let e = doc.entity(shot).filter(|e| e.kind() == Kind::Shot)?;
+    let f = factor_of(doc, e.reference(Field::ShotTrip));
+    Some(ShotEdit {
+        distance: e.number(Field::ShotDistance).map(|v| v * f),
+        azimuth: e.number(Field::ShotAzimuth),
+        inclination: e.number(Field::ShotInclination),
+        back_azimuth: e.number(Field::ShotBackAzimuth),
+        back_inclination: e.number(Field::ShotBackInclination),
+        exclude_from_plot: e.flag(Field::ShotExcludeFromPlot),
+        exclude_from_all: e.flag(Field::ShotExcludeFromAll),
+        no_adjust: e.flag(Field::ShotNoAdjust),
+    })
+}

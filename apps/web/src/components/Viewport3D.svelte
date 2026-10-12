@@ -9,7 +9,7 @@
   import { leave } from '../lib/sync.svelte';
   import { engine, loadEngine, type Scene, type TypeStyle } from '../lib/engine';
   import { CaveView, type Projection } from '../lib/viewport/cave-view';
-  import { cave, changed, filter, markSaved, option, setShowSections, setShown, wireFilter } from '../lib/cave.svelte';
+  import { cave, changed, filter, markSaved, option, setPick, setShowSections, setShown, wireFilter } from '../lib/cave.svelte';
   import { tolerancePx } from '../lib/commands';
   import { ViewCube } from '../lib/viewport/view-cube';
   import { forgetFile } from '../lib/files';
@@ -166,8 +166,9 @@
 
   // The station the Cross Section panel shows is ringed on the map, while that panel can be seen.
   $effect(() => {
-    const id = cave.picked || (panelState.visible.section ? cave.station : '');
+    const id = cave.pick.kind === 'station' ? cave.pick.id : panelState.visible.section ? cave.station : '';
     view?.setSelected(id);
+    view?.setSelectedShot(cave.pick.kind === 'leg' || cave.pick.kind === 'splay' ? cave.pick.id : '');
   });
 
   // A plain click on a station picks it for the Cross Section panel (a drag orbits, as always).
@@ -182,10 +183,14 @@
     down = null;
     if (!d || !view || cave.tool || Math.hypot(e.clientX - d.x, e.clientY - d.y) > 4) return;
     const hit = view.pickStation(e.clientX, e.clientY);
-    if (!hit) return;
+    if (!hit) {
+      // not a station: a leg or a splay under the click gets its own tab; empty space lets go
+      const shot = view.pickShot(e.clientX, e.clientY);
+      setPick(shot?.kind ?? '', shot?.id ?? '');
+      return;
+    }
     cave.station = hit.id;
-    cave.picked = hit.id;
-    cave.selected = '';
+    setPick('station', hit.id);
     showPanel('section');
     engine.log('info', 'section', `cross section at ${hit.label}`);
   }

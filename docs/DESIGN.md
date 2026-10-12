@@ -438,3 +438,16 @@ Not done: the old trip-planner packet (printable card), and the stations.json si
 - Benchmark is a station flag (`StationBenchmark`): an agreed benchmark is drawn as the fixed survey
   point (dotted triangle); every other station is the plain survey point. This replaces drawing survey
   anchors with the dot, which was wrong: an anchor is a maths choice, a benchmark is a decision.
+
+## 2026-10-12: Selection in the highlight colour; one framework for picked things
+- Selected things are drawn in the theme's highlight colour (`--accent`): a filled halo and ring on a picked
+  station, a bright line along a picked leg or splay, a strong halo on a selected line or placed symbol, a
+  highlighted Stations row. (Before, the halo was the thing's own colour at 25%, which hardly showed.)
+- `apps/web/src/lib/inspectors.ts` is the framework for "pick it, get a tab": each pickable kind (station,
+  leg, splay) registers its tab's groups and the component that draws them; the ribbon builds the tab from
+  the registry. To add a thing, add its kind to `PickKind`, a component, and one registry entry. Edits go
+  through the engine as one undoable step in the thing's panel history.
+- Legs and splays: click one on the Map to get its tab (tape, bearing, inclination, back readings, note, and
+  the flags Not on map, Void, Hold fixed). `cave-draw::set_shot` writes only what changed (metres in, the
+  trip's unit out; inclination limited to -90..90). Picking legs in the Profile is not done yet (its
+  legs carry no shot id).

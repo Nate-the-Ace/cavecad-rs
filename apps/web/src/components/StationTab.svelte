@@ -7,13 +7,13 @@
   import { Check, Landmark, Scissors } from '@lucide/svelte';
   import LengthField from './LengthField.svelte';
   import PanelUndo from './PanelUndo.svelte';
-  import { cave, changed } from '../lib/cave.svelte';
+  import { cave, changed, clearPick } from '../lib/cave.svelte';
   import { engine, loadEngine, type StationDetail } from '../lib/engine';
   import { showPanel } from '../lib/workspace.svelte';
   import { formatLength } from '../lib/units';
 
   /** `measure` marks the ribbon's unseen copy used to measure widths: it never writes. */
-  let { part, measure = false }: { part: 'info' | 'walls' | 'notes' | 'mark'; measure?: boolean } = $props();
+  let { part, measure = false }: { part: 'info' | 'walls' | 'notes' | 'mark'; measure?: boolean; kind?: string } = $props();
 
   let detail = $state<StationDetail | null>(null);
   let ready = $state(false);
@@ -35,10 +35,10 @@
   $effect(() => {
     void cave.version;
     void cave.adjusted;
-    void cave.picked;
+    void cave.pick;
     void ready;
     untrack(() => {
-      detail = ready && cave.picked ? engine.stationDetail(cave.picked, cave.adjusted) : null;
+      detail = ready && cave.pick.kind === 'station' ? engine.stationDetail(cave.pick.id, cave.adjusted) : null;
       if (detail?.walls) vals = { left: detail.walls.left, right: detail.walls.right, up: detail.walls.up, down: detail.walls.down };
       if (note >= (detail?.notes.length ?? 0)) note = 0;
       words = detail?.notes[note]?.text ?? '';
@@ -128,7 +128,7 @@
     <button class="tool" class:pressed={detail.benchmark} aria-pressed={detail.benchmark} title="An agreed benchmark is drawn as a fixed survey point (a dotted triangle)" onclick={benchmark}><Landmark size={22} strokeWidth={1.6} /><span>Benchmark</span></button>
     <button class="tool" title="Show this station's cross section" onclick={() => (showPanel('section'), (cave.station = detail!.id))}><Scissors size={22} strokeWidth={1.6} /><span>Section</span></button>
     <div class="undo"><PanelUndo scope="stations" label="station edits" /></div>
-    <button class="tool" onclick={() => (cave.picked = '')}><Check size={22} strokeWidth={1.6} /><span>Done</span></button>
+    <button class="tool" onclick={clearPick}><Check size={22} strokeWidth={1.6} /><span>Done</span></button>
   </div>
 {/if}
 {#if message && part === 'mark'}<div class="msg" role="alert">{message}</div>{/if}

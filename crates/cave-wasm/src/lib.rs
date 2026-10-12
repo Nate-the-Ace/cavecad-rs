@@ -686,6 +686,56 @@ fn station_edit(
     }
 }
 
+/// Everything the shot tab shows about one shot (an id as text), as JSON, or `null`.
+#[wasm_bindgen]
+pub fn shot_detail(id: &str) -> String {
+    let Ok(shot) = id.parse::<cave_id::Id>() else {
+        return "null".into();
+    };
+    DOC.with(|d| {
+        let detail = d
+            .borrow()
+            .as_ref()
+            .and_then(|doc| cave_scene::shot_detail(doc, shot));
+        serde_json::to_string(&detail).unwrap_or_else(|_| "null".into())
+    })
+}
+
+/// Changes what is measured on a shot. `edit` is JSON `{distance, azimuth, inclination, back_azimuth,
+/// back_inclination, exclude_from_plot, exclude_from_all, no_adjust}` (metres, degrees, null for not
+/// measured). Writes only what changed, as one undoable edit.
+#[wasm_bindgen]
+pub fn set_shot(id: &str, edit: &str) -> String {
+    #[derive(serde::Deserialize)]
+    struct E {
+        distance: Option<f64>,
+        azimuth: Option<f64>,
+        inclination: Option<f64>,
+        back_azimuth: Option<f64>,
+        back_inclination: Option<f64>,
+        #[serde(default)]
+        exclude_from_plot: bool,
+        #[serde(default)]
+        exclude_from_all: bool,
+        #[serde(default)]
+        no_adjust: bool,
+    }
+    let (Ok(shot), Ok(e)) = (id.parse::<cave_id::Id>(), serde_json::from_str::<E>(edit)) else {
+        return "error: bad shot or values".into();
+    };
+    let edit = cave_draw::ShotEdit {
+        distance: e.distance,
+        azimuth: e.azimuth,
+        inclination: e.inclination,
+        back_azimuth: e.back_azimuth,
+        back_inclination: e.back_inclination,
+        exclude_from_plot: e.exclude_from_plot,
+        exclude_from_all: e.exclude_from_all,
+        no_adjust: e.no_adjust,
+    };
+    station_edit(|doc| cave_draw::set_shot(doc, shot, edit))
+}
+
 /// Sets a station's passage dimensions (metres; a negative or missing number is not measured unless
 /// the open flag is set). `walls` is JSON `{left, right, up, down, left_open, right_open, up_open,
 /// down_open}`. Writes only what changed.

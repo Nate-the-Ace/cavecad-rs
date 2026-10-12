@@ -6,7 +6,7 @@
   import { untrack } from 'svelte';
   import { Download } from '@lucide/svelte';
   import PanelUndo from '../components/PanelUndo.svelte';
-  import { cave, changed, focusStation } from '../lib/cave.svelte';
+  import { cave, changed, focusStation, setPick } from '../lib/cave.svelte';
   import { engine, loadEngine } from '../lib/engine';
   import { showPanel } from '../lib/workspace.svelte';
   import { KINDS, STATUSES, checklistCsv, effectiveStatus, filterRows, kindCounts, type StationRow } from '../lib/station-table';
@@ -44,8 +44,7 @@
 
   function pick(row: StationRow) {
     if (!row.id) return;
-    cave.selected = '';
-    cave.picked = row.id;
+    setPick('station', row.id);
     cave.station = row.id;
   }
 
@@ -103,7 +102,7 @@
       </thead>
       <tbody>
         {#each shown as r (r.id || r.station)}
-          <tr onclick={() => pick(r)} ondblclick={() => go(r)} class:sel={cave.station === r.id} title="Double-click to go to this station">
+          <tr onclick={() => pick(r)} ondblclick={() => go(r)} class:sel={cave.pick.kind === 'station' ? cave.pick.id === r.id : cave.station === r.id} title="Double-click to go to this station">
             <td class="st">{r.station}</td>
             <td class="kinds">
               {#each r.kinds as k}<span class="badge {k}">{KINDS.find((x) => x.key === k)?.label ?? k}</span>{/each}
@@ -147,7 +146,8 @@
   th { position: sticky; top: 0; background: var(--panel-2); text-align: left; padding: 4px 8px; font-weight: 600; font-size: 12px; border-bottom: 1px solid var(--line); white-space: nowrap; }
   td { padding: 3px 8px; border-bottom: 1px solid var(--line); vertical-align: middle; }
   tr:hover td { background: var(--panel-2); }
-  tr.sel td { background: var(--accent-bg); }
+  tr.sel td { background: var(--accent-bg); box-shadow: inset 0 1px 0 var(--accent), inset 0 -1px 0 var(--accent); }
+  tr.sel td:first-child { box-shadow: inset 3px 0 0 var(--accent), inset 0 1px 0 var(--accent), inset 0 -1px 0 var(--accent); }
   .st { font-weight: 600; white-space: nowrap; }
   .num { white-space: nowrap; color: var(--muted); }
   .note { max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); }

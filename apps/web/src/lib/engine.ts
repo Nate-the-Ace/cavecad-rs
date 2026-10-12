@@ -1,5 +1,5 @@
 // Loads the Rust engine (WASM) once and re-exports the few calls the UI uses.
-import init, { start, log, console_events, console_clear, engine_version, open_demo, scene, profile_runs, profile_band, add_profile_sketch, undo, redo, edit_state, passage_mesh, shading, palette, open_dxf, save_dxf, section_stations, section_at, add_section_sketch, map_sections, place_section, map_profile_sketches, add_map_line, map_lines, draw_tools, edit_line, delete_line, set_line_closed, set_line_kind, line_info, set_line_flip, set_line_text, ornament, callout, sheet_options, sheet_plan, flipped_lines, revision, station_rows, set_station_mark, station_detail, set_station_walls, set_station_note, set_station_benchmark, symbols, fills, fill_marks, draw_tool_groups, sync_outbox, sync_apply, sync_snapshot, sync_load } from '../wasm/cave_wasm.js';
+import init, { start, log, console_events, console_clear, engine_version, open_demo, scene, profile_runs, profile_band, add_profile_sketch, undo, redo, edit_state, passage_mesh, shading, palette, open_dxf, save_dxf, section_stations, section_at, add_section_sketch, map_sections, place_section, map_profile_sketches, add_map_line, map_lines, draw_tools, edit_line, delete_line, set_line_closed, set_line_kind, line_info, set_line_flip, set_line_text, ornament, callout, sheet_options, sheet_plan, flipped_lines, revision, station_rows, set_station_mark, station_detail, shot_detail, set_shot, set_station_walls, set_station_note, set_station_benchmark, symbols, fills, fill_marks, draw_tool_groups, sync_outbox, sync_apply, sync_snapshot, sync_load } from '../wasm/cave_wasm.js';
 
 import { setInkPalette } from './ink';
 import { setOrnamentSource } from './section-glyph';
@@ -23,9 +23,11 @@ export interface Scene {
   /** Palette types with something in this cave, and its trips: what the filter can list. */
   types: string[];
   trips: { id: string; name: string }[];
-  legs: { from: Pt; to: Pt; style: 'new' | 'closure' | 'tie' }[];
+  legs: { shot: string; from: Pt; to: Pt; style: 'new' | 'closure' | 'tie' }[];
   /** [x1, y1, z1, x2, y2, z2] */
   splays: [number, number, number, number, number, number][];
+  /** The shot (id) of each splay, in the same order. */
+  splay_shots: string[];
   /** Passage wall lines (both sides); each is a run of 3D points. */
   walls: Pt[][];
   shading: {
@@ -52,6 +54,28 @@ export interface StationWalls {
   right_open: boolean;
   up_open: boolean;
   down_open: boolean;
+}
+/** What a person can change about a shot. */
+export interface ShotEdit {
+  distance: number | null;
+  azimuth: number | null;
+  inclination: number | null;
+  back_azimuth: number | null;
+  back_inclination: number | null;
+  exclude_from_plot: boolean;
+  exclude_from_all: boolean;
+  no_adjust: boolean;
+}
+/** What the shot tab shows (a leg or a splay). */
+export interface ShotDetail extends ShotEdit {
+  id: string;
+  splay: boolean;
+  from: string;
+  to: string;
+  trip: number;
+  trip_name: string;
+  note: string;
+  problem: string;
 }
 /** What the station tab shows. */
 export interface StationDetail {
@@ -242,6 +266,10 @@ export const engine = {
   /** Puts the team's mark on a station (one undoable edit in the Stations panel's history). */
   /** Everything the station tab shows about one station, or null. */
   stationDetail: (id: string, adjusted: boolean): StationDetail | null => JSON.parse(station_detail(id, adjusted)),
+  /** Everything the shot tab shows about one leg or splay, or null. */
+  shotDetail: (id: string): ShotDetail | null => JSON.parse(shot_detail(id)),
+  /** Changes what is measured on a shot (metres, degrees); only what changed is written. */
+  setShot: (id: string, e: ShotEdit): string => set_shot(id, JSON.stringify(e)),
   /** Writes a station's passage dimensions (metres) to the survey; only what changed. */
   setStationWalls: (id: string, w: StationWalls): string => set_station_walls(id, JSON.stringify(w)),
   /** Changes a note written at a station (`source` comes from the detail). */

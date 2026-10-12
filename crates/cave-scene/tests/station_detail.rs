@@ -119,3 +119,47 @@ fn notes_and_benchmark_edit_where_they_live() {
         "a station holds no note itself"
     );
 }
+
+#[test]
+fn a_shot_edits_in_metres_and_degrees_and_undoes() {
+    let mut doc = pitfall();
+    let a5 = station(&doc, "A5");
+    let (shot, _) = cave_draw::note_sources(&doc, a5).pop().unwrap();
+    let d = cave_scene::shot_detail(&doc, shot).unwrap();
+    assert_eq!(
+        (d.from.as_str(), d.to.as_str(), d.splay),
+        ("A4", "A5", false)
+    );
+    let now = cave_draw::shot_now(&doc, shot).unwrap();
+    assert!(
+        cave_draw::set_shot(&doc, shot, now).unwrap().is_empty(),
+        "no change, no edit"
+    );
+    let mut edit = now;
+    edit.azimuth = Some(now.azimuth.unwrap() + 10.0);
+    edit.distance = Some(now.distance.unwrap() + 1.0);
+    edit.exclude_from_plot = true;
+    let actions = cave_draw::set_shot(&doc, shot, edit).unwrap();
+    assert_eq!(actions.len(), 3);
+    let mut h = History::new();
+    h.record(&doc.edit(actions).unwrap());
+    let after = cave_scene::shot_detail(&doc, shot).unwrap();
+    assert!(
+        (after.distance.unwrap() - now.distance.unwrap() - 1.0).abs() < 1e-9,
+        "metres in, metres out"
+    );
+    assert!(after.exclude_from_plot);
+    h.undo(&mut doc).unwrap();
+    assert!(
+        !cave_scene::shot_detail(&doc, shot)
+            .unwrap()
+            .exclude_from_plot
+    );
+    let mut bad = now;
+    bad.inclination = Some(120.0);
+    assert!(cave_draw::set_shot(&doc, shot, bad).is_err());
+    assert!(
+        cave_scene::shot_detail(&doc, a5).is_none(),
+        "a station is not a shot"
+    );
+}

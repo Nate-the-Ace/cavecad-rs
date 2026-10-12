@@ -20,6 +20,12 @@ export function setOrnamentSource(s: OrnamentSource) {
 }
 
 
+/** The theme's highlight colour (what selection is drawn in). */
+export function highlightColor(): string {
+  if (typeof document === 'undefined') return '#2563eb';
+  return getComputedStyle(document.documentElement).getPropertyValue('--accent').trim() || '#2563eb';
+}
+
 let hiddenTest: (kind: string) => boolean = () => false;
 /** Installs the test for which types the person has hidden (the Show menu). */
 export function setHiddenTest(f: (kind: string) => boolean) {
@@ -113,11 +119,13 @@ export function drawStrokes(
       g.lineWidth = Math.max(1, l.weight * scale * 0.7);
       if (selected && k.id === selected) {
         const pl = placement(p0, p1);
-        g.globalAlpha = 0.25;
-        g.lineWidth = 2;
+        g.strokeStyle = highlightColor();
+        g.globalAlpha = 0.9;
+        g.lineWidth = 3;
         g.beginPath();
-        g.arc(pl.cx, pl.cy, pl.r + 5, 0, Math.PI * 2);
+        g.arc(pl.cx, pl.cy, pl.r + 6, 0, Math.PI * 2);
         g.stroke();
+        g.strokeStyle = l.color;
         g.globalAlpha = l.alpha;
         g.lineWidth = Math.max(1, l.weight * scale * 0.7);
       }
@@ -145,7 +153,7 @@ export function drawStrokes(
         g.stroke();
       }
     };
-    if (selected && k.id === selected) trace(7, l.color, 0.25, []);
+    if (selected && k.id === selected) trace(9, highlightColor(), 0.6, []);
     if (isFillKind(k.kind) && k.points.length >= 3) {
       // An area fill: its marks are made from the outline (in metres) and the stroke's id, then drawn under the outline.
       g.strokeStyle = l.color;
