@@ -12,7 +12,7 @@
   import PanelUndo from '../components/PanelUndo.svelte';
   import { cave, changed, setPick } from '../lib/cave.svelte';
   import { engine, loadEngine } from '../lib/engine';
-  import { SIDES, SIDE_LETTER, angleText, lrudText, parseAngle, parseLrud, withSide, type NotebookPage, type NotebookRow, type Side, type TripChoice } from '../lib/notebook';
+  import { SIDES, SIDE_LETTER, angleText, lrudText, parseAngle, parseLrud, suggestNext, withSide, type NotebookPage, type NotebookRow, type Side, type TripChoice } from '../lib/notebook';
   import { formatLength, lengthText, parseLength, unitName } from '../lib/units';
 
   let ready = $state(false);
@@ -39,11 +39,23 @@
     });
   });
 
-  // The next shot starts where the page ends, the usual case.
+  // The next shot starts where the page ends and goes to the next station in the sequence, the usual
+  // case: both are filled in (and can be changed). A name typed in To is left alone.
+  let toTyped = false;
   $effect(() => {
     const last = [...(page?.rows ?? [])].reverse().find((r) => r.kind === 'station');
     from = last?.label ?? '';
-    to = '';
+    toTyped = false;
+  });
+  $effect(() => {
+    const f = from;
+    void page; // taken names change when a shot is added
+    untrack(() => {
+      if (toTyped) return;
+      const taken = new Set(engine.scanViewStations('map', false).map((s) => s.label));
+      for (const r of page?.rows ?? []) taken.add(r.label);
+      to = suggestNext(f, taken);
+    });
   });
 
   const units = $derived(cave.units);
@@ -104,7 +116,7 @@
   function add(splay: boolean) {
     if (!page) return;
     const target = to.trim();
-    if (run(engine.notebookAddShot(page.trip, from, splay ? '' : target, splay))) to = '';
+    if (run(engine.notebookAddShot(page.trip, from, splay ? '' : target, splay))) toTyped = false;
   }
 
   function newTrip() {
@@ -212,7 +224,7 @@
     </div>
     <div class="add">
       <label>From <input class="st-in" bind:value={from} maxlength="40" aria-label="Shot starts at" /></label>
-      <label>To <input class="st-in" bind:value={to} maxlength="40" aria-label="Shot ends at" onkeydown={(e) => e.key === 'Enter' && add(false)} /></label>
+      <label>To <input class="st-in" bind:value={to} oninput={() => (toTyped = true)} maxlength="40" aria-label="Shot ends at" onkeydown={(e) => e.key === 'Enter' && add(false)} /></label>
       <button onclick={() => add(false)} disabled={!from.trim() || !to.trim()}>Add shot</button>
       <button onclick={() => add(true)} disabled={!from.trim()} title="A reading to a wall: no station at the far end">Add splay</button>
       <span class="note">A station that already exists joins it (a loop); a different "From" starts a branch.</span>
@@ -259,6 +271,7 @@
   tr.shot.bad input { border-color: var(--warn); }
   tr.gap td { height: 10px; background: repeating-linear-gradient(135deg, transparent 0 4px, var(--line) 4px 5px); }
   tr.sel td { outline: 1px solid var(--accent); outline-offset: -1px; }
+  .splay-name { display: inline-block; margin-left: 22px; padding-left: 8px; border-left: 2px solid var(--line); }
   .splay-name, .tag { font-size: 11px; color: var(--muted); margin-left: 4px; }
   .ro { color: var(--muted); font-size: 12px; }
   .total { color: var(--muted); font-size: 12px; text-align: right; white-space: nowrap; }

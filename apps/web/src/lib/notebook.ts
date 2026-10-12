@@ -107,3 +107,22 @@ export function withSide(l: Lrud | null, side: Side, value: number | null, open:
   const base: Lrud = l ?? { left: null, right: null, up: null, down: null, left_open: false, right_open: false, up_open: false, down_open: false };
   return { ...base, [side]: value, [`${side}_open`]: open };
 }
+
+/**
+ * The station a surveyor writes next: the same name with its trailing number one higher (`A93` is
+ * followed by `A94`, `B2a` by... nothing, a name that does not end in a number has no obvious next).
+ * Skips names already taken, so a suggestion never silently joins an existing station and closes
+ * a loop. Empty when there is no suggestion.
+ */
+export function suggestNext(from: string, taken: ReadonlySet<string>): string {
+  const m = /^(.*?)(\d+)$/.exec(from.trim());
+  if (!m) return '';
+  const width = m[2].length;
+  let n = parseInt(m[2], 10);
+  for (let i = 0; i < 1000; i++) {
+    n += 1;
+    const next = `${m[1]}${String(n).padStart(m[2].startsWith('0') ? width : 0, '0')}`;
+    if (!taken.has(next)) return next;
+  }
+  return '';
+}

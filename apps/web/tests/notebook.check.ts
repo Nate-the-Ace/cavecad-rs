@@ -1,4 +1,4 @@
-import { angleText, lrudText, parseAngle, parseLrud, withSide } from '../src/lib/notebook.ts';
+import { angleText, lrudText, parseAngle, parseLrud, suggestNext, withSide } from '../src/lib/notebook.ts';
 
 let bad = 0;
 const ok = (c: boolean, m: string) => { if (!c) { bad++; console.log('FAIL', m); } };
@@ -17,6 +17,11 @@ ok(angleText(45) === '45' && angleText(45.04) === '45' && angleText(null) === ''
 const l = withSide(null, 'left', 2, false);
 ok(l.left === 2 && l.right === null && !l.left_open, 'a side replaces only itself');
 ok(withSide(l, 'left', null, true).left_open === true, 'open replaces a value');
+
+ok(suggestNext('A93', new Set()) === 'A94' && suggestNext('B9', new Set()) === 'B10' && suggestNext('12', new Set()) === '13', 'the next number');
+ok(suggestNext('A93', new Set(['A94', 'A95'])) === 'A96', 'a taken name is skipped so a loop is never closed by accident');
+ok(suggestNext('D07', new Set()) === 'D08' && suggestNext('C09', new Set()) === 'C10', 'zero padding is kept');
+ok(suggestNext('ENT', new Set()) === '' && suggestNext('', new Set()) === '', 'no number, no suggestion');
 
 if (bad) process.exit(1);
 console.log('notebook ok');
