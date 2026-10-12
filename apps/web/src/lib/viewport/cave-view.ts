@@ -5,7 +5,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { LineSegments2 } from 'three/addons/lines/LineSegments2.js';
 import { LineSegmentsGeometry } from 'three/addons/lines/LineSegmentsGeometry.js';
 import { LineMaterial } from 'three/addons/lines/LineMaterial.js';
-import type { Scene } from '../engine';
+import type { PassageBuffers, Scene } from '../engine';
 import { elevationColor, readTheme, type ViewTheme } from './theme';
 
 export type Projection = 'perspective' | 'orthographic';
@@ -43,6 +43,9 @@ export class CaveView {
   private extent = 1;
   private elevationColors = false;
   private showWalls = true;
+  private passage: THREE.Mesh | null = null;
+  private showPassage = true;
+  private readonly headlamp = new THREE.DirectionalLight(0xffffff, 2.2);
   /** Called after every render so the view cube can follow the camera. */
   onRender: (camera: THREE.Camera, target: THREE.Vector3) => void = () => {};
   onProjection: (p: Projection) => void = () => {};
@@ -57,6 +60,8 @@ export class CaveView {
     this.ortho.up.set(0, 0, 1);
     this.persp.position.copy(viewDirection(HOME_DIR).multiplyScalar(50));
     this.scene.add(this.content);
+    this.scene.add(new THREE.AmbientLight(0xffffff, 0.9));
+    this.scene.add(this.headlamp);
     this.controls = new OrbitControls(this.persp, canvas);
     this.controls.screenSpacePanning = true;
     // CAD mouse: middle drag pans, wheel zooms, left drag orbits (right drag pans too).
@@ -227,6 +232,34 @@ export class CaveView {
     this.rebuild();
   }
 
+  /** Shows the passage surface (or clears it with `null`). The buffers are flat triangles. */
+  setPassage(buffers: PassageBuffers | null) {
+    if (this.passage) {
+      this.scene.remove(this.passage);
+      this.passage.geometry.dispose();
+      (this.passage.material as THREE.Material).dispose();
+      this.passage = null;
+    }
+    if (buffers && buffers.positions.length > 0) {
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute('position', new THREE.BufferAttribute(buffers.positions, 3));
+      geo.setAttribute('normal', new THREE.BufferAttribute(buffers.normals, 3));
+      geo.setAttribute('color', new THREE.BufferAttribute(buffers.colors, 3));
+      // Pushed slightly back so the wall outlines drawn on the same edges stay visible.
+      const mat = new THREE.MeshStandardMaterial({ vertexColors: true, side: THREE.DoubleSide, roughness: 0.92, metalness: 0, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 });
+      this.passage = new THREE.Mesh(geo, mat);
+      this.passage.visible = this.showPassage;
+      this.scene.add(this.passage);
+    }
+    this.requestRender();
+  }
+
+  setShowPassage(on: boolean) {
+    this.showPassage = on;
+    if (this.passage) this.passage.visible = on;
+    this.requestRender();
+  }
+
   setShowWalls(on: boolean) {
     this.showWalls = on;
     this.rebuild();
@@ -312,6 +345,10 @@ export class CaveView {
   }
 
   private render() {
+    // A lamp on the camera lights whatever you are looking at, from any angle.
+    this.headlamp.position.copy(this.camera.position);
+    this.headlamp.target.position.copy(this.controls.target);
+    this.headlamp.target.updateMatrixWorld();
     this.renderer.render(this.scene, this.camera);
     this.drawOverlay();
     this.onRender(this.camera, this.controls.target);

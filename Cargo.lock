@@ -60,6 +60,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "cave-mesh"
+version = "0.0.1"
+dependencies = [
+ "cave-doc",
+ "cave-fixture",
+ "cave-id",
+ "cave-survey",
+ "cave-walls",
+ "serde_json",
+]
+
+[[package]]
 name = "cave-profile"
 version = "0.0.1"
 dependencies = [
@@ -79,6 +91,7 @@ dependencies = [
  "cave-fixture",
  "cave-geom",
  "cave-id",
+ "cave-mesh",
  "cave-profile",
  "cave-survey",
  "cave-walls",

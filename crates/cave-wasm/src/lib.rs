@@ -245,3 +245,55 @@ pub fn edit_state() -> String {
         format!("{{\"undo\":{},\"redo\":{}}}", h.can_undo(), h.can_redo())
     })
 }
+
+/// The passage surface as flat triangle buffers for the 3D view. Every triangle has its own three
+/// vertices, so no index buffer is needed (vertices are drawn in order).
+#[wasm_bindgen]
+pub struct PassageMesh {
+    positions: Vec<f32>,
+    normals: Vec<f32>,
+    colors: Vec<f32>,
+}
+
+#[wasm_bindgen]
+impl PassageMesh {
+    /// x, y, z per vertex.
+    #[wasm_bindgen(getter)]
+    pub fn positions(&self) -> Vec<f32> {
+        self.positions.clone()
+    }
+
+    /// Unit normal per vertex.
+    #[wasm_bindgen(getter)]
+    pub fn normals(&self) -> Vec<f32> {
+        self.normals.clone()
+    }
+
+    /// Red, green, blue per vertex.
+    #[wasm_bindgen(getter)]
+    pub fn colors(&self) -> Vec<f32> {
+        self.colors.clone()
+    }
+}
+
+/// Builds the open cave's passage mesh. `mode` is `depth` or `trip`.
+#[wasm_bindgen]
+pub fn passage_mesh(adjusted: bool, mode: &str) -> PassageMesh {
+    let color = if mode == "depth" {
+        cave_scene::ColorMode::Depth
+    } else {
+        cave_scene::ColorMode::Trip
+    };
+    let mesh = DOC.with(|d| {
+        d.borrow()
+            .as_ref()
+            .map(|doc| cave_scene::passage_mesh(doc, adjusted, color))
+            .unwrap_or_default()
+    });
+    let f32s = |v: &[f64]| v.iter().map(|x| *x as f32).collect::<Vec<f32>>();
+    PassageMesh {
+        positions: f32s(&mesh.positions),
+        normals: f32s(&mesh.normals),
+        colors: f32s(&mesh.colors),
+    }
+}

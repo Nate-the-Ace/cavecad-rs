@@ -107,7 +107,12 @@ pub fn station_wall_points(
             ));
         }
     }
-    entries.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
+    // -0.0 equals 0.0 here (a tick sits at 0 along the passage): ties fall through to input order.
+    entries.sort_by(|a, b| {
+        a.0.partial_cmp(&b.0)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then(a.1.cmp(&b.1))
+    });
     entries.into_iter().map(|e| e.2).collect()
 }
 

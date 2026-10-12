@@ -16,6 +16,7 @@
   let demo = $state(DEMOS[0].id);
   let depthColor = $state(false);
   let walls = $state(true);
+  let passage = $state(true);
   let projection = $state<Projection>('perspective');
   let status = $state('');
   let scene: Scene | null = null;
@@ -28,12 +29,19 @@
     changed();
     scene = engine.scene(cave.adjusted);
     view.setScene(scene);
+    loadPassage();
+  }
+
+  /** The passage surface follows the Adjusted and colour settings. */
+  function loadPassage() {
+    view?.setPassage(engine.passageMesh(cave.adjusted, depthColor ? 'depth' : 'trip'));
   }
 
   function refresh() {
     if (!view) return;
     scene = engine.scene(cave.adjusted);
     view.setScene(scene, false);
+    loadPassage();
     changed();
   }
 
@@ -71,7 +79,8 @@
     </select>
     <label><input type="checkbox" bind:checked={cave.adjusted} onchange={refresh} /> Adjusted</label>
     <label><input type="checkbox" bind:checked={walls} onchange={() => view?.setShowWalls(walls)} /> Walls</label>
-    <button class:on={depthColor} title="Colour by elevation" onclick={() => ((depthColor = !depthColor), view?.setElevationColors(depthColor))}><Palette size={15} /></button>
+    <label><input type="checkbox" bind:checked={passage} onchange={() => view?.setShowPassage(passage)} /> Passage</label>
+    <button class:on={depthColor} title="Colour by elevation" onclick={() => ((depthColor = !depthColor), view?.setElevationColors(depthColor), loadPassage())}><Palette size={15} /></button>
     {#if status}<span class="status">{status}</span>{/if}
   </div>
   <div class="cube">

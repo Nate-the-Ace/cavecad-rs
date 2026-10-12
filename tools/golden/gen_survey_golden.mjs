@@ -9,7 +9,7 @@ import vm from 'node:vm';
 
 const [, , oldRoot = `${process.env.HOME}/Documents/github/cavecad-main/cave-survey`, outDir = 'crates/cave-survey/tests/golden'] = process.argv;
 const core = (f) => `scripts/CaveSurvey/Core/${f}.js`;
-const FILES = ['CsUuid', 'CsTell', 'CsUnits', 'CsAngles', 'CsModel', 'CsTraverse', 'CsNetwork', 'CsAdjust', 'CsLrud', 'CsProfile', 'Format/CsCompass'].map(core);
+const FILES = ['CsUuid', 'CsTell', 'CsUnits', 'CsAngles', 'CsModel', 'CsTraverse', 'CsNetwork', 'CsAdjust', 'CsLrud', 'CsProfile', 'CsClosure', 'CsFrontier', 'CsMesh3d', 'Format/CsCompass'].map(core);
 
 const ctx = vm.createContext({ console, Math, JSON, Date, RegExp, Object, Array, String, Number, isFinite, parseFloat, parseInt, isNaN });
 for (const f of FILES) {
@@ -47,6 +47,14 @@ for (const name of FIXTURES) {
                          stations: b.stations.map(function(x){ return [x.name, x.x, x.y]; }), runStations: run.stations };
         }
         return { order: g.order, ungrouped: g.ungrouped, bands: bands };
+      })(),
+      mesh: (function(){
+        var round = function(a, d){ var k = Math.pow(10, d); return a.map(function(v){ return Math.round(v * k) / k; }); };
+        var depth = CsMesh3d.build(s, r, { colorBy: 'depth' });
+        var m = CsMesh3d.build(s, r, { colorBy: 'trip' });
+        return { positions: round(m.triangles.positions, 4), normals: round(m.triangles.normals, 4), colors: round(m.triangles.colors, 3),
+                 depthColors: round(depth.triangles.colors, 3), indexCount: m.triangles.indices.length,
+                 lineCount: m.lines.indices.length / 2, bounds: m.bounds };
       })(),
       walls: (function(){ var w = CsLrud.wallRuns(s, r, 'slope'); var run = function(x){ return { points: x.points.map(function(p){ return [p.x, p.y]; }), stations: x.stations }; }; return { left: w.left.map(run), right: w.right.map(run), skipped: w.skipped }; })(),
       resolved: { stations: pick(r.stations), anchors: r.anchors, loops: r.loops.map(loop), ties: r.ties.map(loop), legCount: r.legs.length },

@@ -1,5 +1,5 @@
 // Loads the Rust engine (WASM) once and re-exports the few calls the UI uses.
-import init, { start, log, console_events, console_clear, engine_version, open_demo, scene, profile_runs, profile_band, add_profile_sketch, undo, redo, edit_state } from '../wasm/cave_wasm.js';
+import init, { start, log, console_events, console_clear, engine_version, open_demo, scene, profile_runs, profile_band, add_profile_sketch, undo, redo, edit_state, passage_mesh } from '../wasm/cave_wasm.js';
 
 export type Level = 'debug' | 'detail' | 'info' | 'warn' | 'error';
 export interface ConsoleEvent {
@@ -44,6 +44,12 @@ export interface ProfileScene {
   /** [minS, minZ, maxS, maxZ] */
   bounds: [number, number, number, number] | null;
 }
+/** Flat triangle buffers for the passage surface (vertices are drawn in order). */
+export interface PassageBuffers {
+  positions: Float32Array;
+  normals: Float32Array;
+  colors: Float32Array;
+}
 export interface BuildInfo {
   builtAt: string | null;
   git: string;
@@ -69,6 +75,12 @@ export const engine = {
   profileBand: (run: string, adjusted: boolean): ProfileScene | null => JSON.parse(profile_band(run, adjusted)),
   /** Adds a stroke drawn on a run's band; every edit goes through the document's one edit path. */
   addSketch: (run: string, points: [number, number][], widths: number[] | null, adjusted: boolean): string => add_profile_sketch(run, JSON.stringify(points), widths ? JSON.stringify(widths) : '', adjusted),
+  passageMesh: (adjusted: boolean, mode: 'trip' | 'depth'): PassageBuffers => {
+    const m = passage_mesh(adjusted, mode);
+    const out = { positions: m.positions, normals: m.normals, colors: m.colors };
+    m.free();
+    return out;
+  },
   undo: (): boolean => undo(),
   redo: (): boolean => redo(),
   editState: (): { undo: boolean; redo: boolean } => JSON.parse(edit_state()),

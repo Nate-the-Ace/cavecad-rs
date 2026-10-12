@@ -2,12 +2,13 @@
 //!
 //! Coordinates are `(s, z)` in metres: `s` is distance along the run, `z` is elevation.
 
+use crate::solved::{Solved, solve};
 use cave_doc::{Document, Field, Frame, Kind, Value};
 use cave_id::Id;
 use cave_profile::{Graph, LegInfo, group_runs, tie_name_of_run, unroll_band};
-use cave_survey::{LegKind, Params, Vec3, adjust, extract, resolve};
+use cave_survey::LegKind;
 use serde::Serialize;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 
 /// A run offered in the panel's dropdown.
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -75,63 +76,12 @@ pub struct ProfileScene {
     pub bounds: Option<[f64; 4]>,
 }
 
-struct Solved {
-    legs: Vec<cave_survey::Leg>,
-    resolved: cave_survey::Resolved,
-    positions: BTreeMap<Id, Vec3>,
-    labels: HashMap<Id, String>,
-    order: Vec<Id>,
-    lruds: HashMap<Id, cave_survey::StationLrud>,
-}
-
-fn solve(doc: &Document, use_adjustment: bool) -> Solved {
-    let ex = extract(doc);
-    let resolved = resolve(&ex.legs, &ex.fixed);
-    let adj = use_adjustment
-        .then(|| adjust(&ex.legs, &resolved, &Params::default()))
-        .filter(|a| a.adjusted);
-    let positions: BTreeMap<Id, Vec3> = match &adj {
-        Some(a) => a.stations.clone(),
-        None => resolved
-            .stations
-            .iter()
-            .map(|(id, p)| (*id, p.pos))
-            .collect(),
-    };
-    let mut order: Vec<(usize, Id)> = resolved
-        .stations
-        .iter()
-        .map(|(id, p)| (p.seq, *id))
-        .collect();
-    order.sort();
-    let order: Vec<Id> = order.into_iter().map(|(_, id)| id).collect();
-    let labels = order
-        .iter()
-        .map(|id| {
-            (
-                *id,
-                doc.entity(*id)
-                    .map(|e| e.text(Field::StationLabel))
-                    .unwrap_or_default(),
-            )
-        })
-        .collect();
-    Solved {
-        legs: ex.legs,
-        resolved,
-        positions,
-        labels,
-        order,
-        lruds: ex.lruds,
-    }
-}
-
 fn graph(s: &Solved) -> Graph {
-    let plan: HashMap<Id, f64> = s
-        .legs
-        .iter()
-        .map(|l| (l.shot, l.offset.horizontal()))
-        .collect();
+    let plan: HashMap<Id, f64> =
+        s.ex.legs
+            .iter()
+            .map(|l| (l.shot, l.offset.horizontal()))
+            .collect();
     let infos: Vec<LegInfo> = s
         .resolved
         .legs
@@ -167,7 +117,7 @@ pub fn runs(doc: &Document, use_adjustment: bool) -> Vec<RunInfo> {
         .iter()
         .map(|run| {
             let tie = tie_station(&s, &run.key);
-            let band = unroll_band(run, tie, &g, &s.labels, &z_of, &s.lruds);
+            let band = unroll_band(run, tie, &g, &s.labels, &z_of, &s.ex.lruds);
             RunInfo {
                 key: run.key.clone(),
                 stations: band.stations.len(),
@@ -185,7 +135,7 @@ pub fn profile_scene(doc: &Document, key: &str, use_adjustment: bool) -> Option<
     let z_of = |id: Id| s.positions.get(&id).map(|p| p.z);
     let grouped = group_runs(&s.labels, &s.order);
     let run = grouped.runs.iter().find(|r| r.key == key)?;
-    let band = unroll_band(run, tie_station(&s, key), &g, &s.labels, &z_of, &s.lruds);
+    let band = unroll_band(run, tie_station(&s, key), &g, &s.labels, &z_of, &s.ex.lruds);
 
     // Sketches are anchored to stations: place them from where the stations are NOW.
     let at: HashMap<Id, [f64; 2]> = band.stations.iter().map(|x| (x.id, [x.s, x.z])).collect();
@@ -274,7 +224,7 @@ pub fn profile_frames(doc: &Document, key: &str, use_adjustment: bool) -> Option
     let z_of = |id: Id| s.positions.get(&id).map(|p| p.z);
     let grouped = group_runs(&s.labels, &s.order);
     let run = grouped.runs.iter().find(|r| r.key == key)?;
-    let band = unroll_band(run, tie_station(&s, key), &g, &s.labels, &z_of, &s.lruds);
+    let band = unroll_band(run, tie_station(&s, key), &g, &s.labels, &z_of, &s.ex.lruds);
     Some(
         band.stations
             .windows(2)

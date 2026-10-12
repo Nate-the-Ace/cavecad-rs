@@ -16,6 +16,7 @@ cave-walls = { path = "../cave-walls" }
 cave-profile = { path = "../cave-profile" }
 cave-geom = { path = "../cave-geom" }
 cave-draw = { path = "../cave-draw" }
+cave-mesh = { path = "../cave-mesh" }
 serde = { version = "1", features = ["derive"] }
 
 [dev-dependencies]

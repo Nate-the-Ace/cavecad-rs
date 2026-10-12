@@ -4,8 +4,11 @@
 //! Derived data only: [`build`] reads a [`Document`] and runs the survey math; nothing is stored
 //! back. The canvas stays dumb: it receives a [`Scene`] and draws it.
 
+mod mesh;
 mod profile;
+mod solved;
 
+pub use mesh::{ColorMode, Mesh, passage_mesh};
 pub use profile::{ProfileScene, RunInfo, profile_frames, profile_scene, runs};
 
 use cave_doc::Document;

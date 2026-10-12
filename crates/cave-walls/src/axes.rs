@@ -132,6 +132,17 @@ pub fn stations_axes(
 }
 
 impl Axes {
+    /// Which of the station's ways out a bearing belongs to (the nearest), or `None` for no bearing.
+    pub fn nearest_cluster(&self, bearing: Option<f64>) -> Option<usize> {
+        let bearing = bearing.filter(|b| b.is_finite())?;
+        self.dirs
+            .iter()
+            .enumerate()
+            .map(|(i, d)| (i, relative_bearing(d.mean, bearing).abs()))
+            .min_by(|a, b| a.1.total_cmp(&b.1))
+            .map(|(i, _)| i)
+    }
+
     /// Three or more distinct ways out.
     pub fn is_junction(&self) -> bool {
         self.dirs.len() >= 3

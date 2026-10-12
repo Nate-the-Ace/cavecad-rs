@@ -105,6 +105,12 @@ pub struct Extracted {
     pub lruds: HashMap<Id, StationLrud>,
     /// Walls typed on a trip's opening row, for stations no shot arrives at.
     pub start_lruds: HashMap<Id, StationLrud>,
+    /// The walls on the FIRST shot arriving at each station, even if that shot recorded none (the
+    /// 3D passage uses this reading; `lruds` is the last shot with evidence, which the plan walls use).
+    pub first_arrival_lruds: HashMap<Id, StationLrud>,
+    /// Which trip (by order, 0 first) each station belongs to: the trip of the first shot arriving
+    /// there, else the first leaving it.
+    pub station_trip: HashMap<Id, usize>,
     /// Shots not used, with reasons.
     pub skipped: Vec<Skipped>,
 }
@@ -128,20 +134,30 @@ pub fn extract(doc: &Document) -> Extracted {
     let (mut legs, mut skipped, mut splays) = (Vec::new(), Vec::new(), Vec::new());
     let mut readings: HashMap<Id, Reading> = HashMap::new();
     let mut lruds: HashMap<Id, StationLrud> = HashMap::new();
+    let mut first_arrival_lruds: HashMap<Id, StationLrud> = HashMap::new();
+    // (trip, from, to) of every non-splay shot in survey order, excluded ones too.
+    let mut trip_marks: Vec<(Option<Id>, Option<Id>, Option<Id>)> = Vec::new();
     let mut arrived: std::collections::HashSet<Id> = std::collections::HashSet::new();
     let mut first_of_trip: HashMap<Option<Id>, Id> = HashMap::new();
     let (mut first_station, mut seen_first) = (None, false);
     for (_, id) in shots {
         let Some(e) = doc.entity(id) else { continue };
         let skip = |reason| Skipped { shot: id, reason };
-        if e.flag(Field::ShotExcludeFromAll) {
-            skipped.push(skip(SkipReason::Excluded));
-            continue;
-        }
         let station = |f| {
             e.reference(f)
                 .filter(|s| doc.entity(*s).is_some_and(|x| x.kind() == Kind::Station))
         };
+        if !e.flag(Field::ShotSplay) {
+            trip_marks.push((
+                e.reference(Field::ShotTrip),
+                station(Field::ShotFrom),
+                station(Field::ShotTo),
+            ));
+        }
+        if e.flag(Field::ShotExcludeFromAll) {
+            skipped.push(skip(SkipReason::Excluded));
+            continue;
+        }
         let trip = e.reference(Field::ShotTrip).and_then(|t| doc.entity(t));
         let factor = match trip.map(|t| t.text(Field::TripDistanceUnit)).as_deref() {
             Some("ft") => FEET_TO_METRES,
@@ -187,6 +203,17 @@ pub fn extract(doc: &Document) -> Extracted {
         }
         if let Some(t) = to_station {
             arrived.insert(t);
+            first_arrival_lruds.entry(t).or_insert_with(|| StationLrud {
+                left: e.number(Field::ShotLeft).map(|v| v * factor),
+                right: e.number(Field::ShotRight).map(|v| v * factor),
+                up: e.number(Field::ShotUp).map(|v| v * factor),
+                down: e.number(Field::ShotDown).map(|v| v * factor),
+                left_open: e.flag(Field::ShotLeftOpen),
+                right_open: e.flag(Field::ShotRightOpen),
+                up_open: e.flag(Field::ShotUpOpen),
+                down_open: e.flag(Field::ShotDownOpen),
+                azimuth: None,
+            });
             let lrud = StationLrud {
                 left: e.number(Field::ShotLeft).map(|v| v * factor),
                 right: e.number(Field::ShotRight).map(|v| v * factor),
@@ -259,6 +286,23 @@ pub fn extract(doc: &Document) -> Extracted {
         })
         .collect();
     trips.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
+    let rank: HashMap<Id, usize> = trips
+        .iter()
+        .enumerate()
+        .map(|(i, (_, id))| (*id, i))
+        .collect();
+    let trip_index = |t: Option<Id>| t.and_then(|t| rank.get(&t).copied()).unwrap_or(0);
+    let mut station_trip: HashMap<Id, usize> = HashMap::new();
+    for (trip, _, to) in &trip_marks {
+        if let Some(t) = to {
+            station_trip.entry(*t).or_insert_with(|| trip_index(*trip));
+        }
+    }
+    for (trip, from, _) in &trip_marks {
+        if let Some(f) = from {
+            station_trip.entry(*f).or_insert_with(|| trip_index(*trip));
+        }
+    }
     let start_of = |trip: Id| -> Option<StationLrud> {
         let e = doc.entity(trip)?;
         let f = if e.text(Field::TripDistanceUnit) == "ft" {
@@ -300,6 +344,8 @@ pub fn extract(doc: &Document) -> Extracted {
         readings,
         lruds,
         start_lruds,
+        first_arrival_lruds,
+        station_trip,
         skipped,
     }
 }
