@@ -61,14 +61,14 @@ pub fn validate(doc: &Document) -> Vec<Issue> {
             (Field::ShotTo, Kind::Station),
             (Field::ShotTrip, Kind::Trip),
         ] {
-            if let Some(target) = e.reference(field) {
-                if doc.entity(target).is_none_or(|t| t.kind() != kind) {
-                    out.push(Issue::DanglingReference {
-                        shot,
-                        field,
-                        target,
-                    });
-                }
+            if let Some(target) = e.reference(field)
+                && doc.entity(target).is_none_or(|t| t.kind() != kind)
+            {
+                out.push(Issue::DanglingReference {
+                    shot,
+                    field,
+                    target,
+                });
             }
         }
         if e.reference(Field::ShotFrom).is_none() {
