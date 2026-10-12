@@ -190,6 +190,11 @@
       if (r !== 'ok') engine.log('warn', 'draw', r);
       changed();
     };
+    v.onLineErased = (id) => {
+      if (cave.selected === id) cave.selected = '';
+      engine.deleteLine(id);
+      changed();
+    };
     v.onLineDrawn = (points, widths, closed) => {
       const r = engine.addMapLine(cave.tool, points, widths, closed, cave.adjusted);
       if (r !== 'ok') engine.log('warn', 'draw', r);

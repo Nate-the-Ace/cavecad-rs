@@ -6,6 +6,7 @@ import { LineSegments2 } from 'three/addons/lines/LineSegments2.js';
 import { LineSegmentsGeometry } from 'three/addons/lines/LineSegmentsGeometry.js';
 import { LineMaterial } from 'three/addons/lines/LineMaterial.js';
 import type { MapSection, PassageBuffers, ProfileSketch3d, Scene, TypeStyle } from '../engine';
+import { PenGuard, isEraser, widthFor } from '../pen';
 import { defaultMapOffset, drawHandles, drawStrokes, glyphCurves, hits, leaderEnd } from '../section-glyph';
 import { distanceToCurve, fitStroke, nearestPoint, smooth } from '../spline';
 import { PICKUP_REACH, joinFit } from '../line-editor';
@@ -82,6 +83,10 @@ export class CaveView {
     this.drawOptions = o;
   }
   /** Called with a plan stroke (east, north metres) when the person lifts the pen. */
+  /** The eraser end of a pen passed over a line: delete it. */
+  onLineErased: (id: string) => void = () => {};
+  private guard = new PenGuard();
+  private erasing = false;
   onLineDrawn: (points: [number, number][], widths: number[] | null, closed: boolean) => void = () => {};
   /** Offsets being dragged right now, before they are saved. */
   private liveOffsets = new Map<string, [number, number, number]>();
@@ -133,7 +138,32 @@ export class CaveView {
     canvas.addEventListener(
       'pointerdown',
       (e) => {
+        if (e.pointerType === 'pen') {
+          this.guard.pen(e);
+          if (this.fingers.size) {
+            // A pen landing means what a resting hand started was never a gesture.
+            this.fingers.clear();
+            this.liveLine = null;
+            this.lineEdit = null;
+            this.controls.enabled = true;
+          }
+          if (isEraser(e) && this.canDrawHere) {
+            e.stopImmediatePropagation();
+            e.stopPropagation();
+            this.erasing = true;
+            this.controls.enabled = false;
+            this.canvas.setPointerCapture(e.pointerId);
+            this.eraseAt(e);
+          }
+          return;
+        }
         if (e.pointerType !== 'touch') return;
+        if (!this.guard.touchDown(e)) {
+          // A palm or a fist: keep it from the orbit controls too.
+          e.stopImmediatePropagation();
+          e.stopPropagation();
+          return;
+        }
         this.fingers.add(e.pointerId);
         if (this.fingers.size >= 2 && (this.liveLine || this.lineEdit)) {
           // A second finger: that was the start of a pinch or pan, not a line. The gesture goes to the orbit controls.
@@ -146,7 +176,17 @@ export class CaveView {
       true,
     );
     const lift = (e: PointerEvent) => {
-      if (e.pointerType === 'touch') this.fingers.delete(e.pointerId);
+      if (e.pointerType === 'touch') {
+        this.fingers.delete(e.pointerId);
+        this.guard.touchUp(e);
+      }
+      if (e.pointerType === 'pen') {
+        this.guard.pen(e);
+        if (this.erasing) {
+          this.erasing = false;
+          this.controls.enabled = true;
+        }
+      }
     };
     canvas.addEventListener('pointerup', lift);
     canvas.addEventListener('pointercancel', (e) => {
@@ -183,7 +223,7 @@ export class CaveView {
           e.stopPropagation();
           this.controls.enabled = false;
           canvas.setPointerCapture(e.pointerId);
-          this.liveLine = { pts: [p], widths: [e.pointerType === 'pen' && this.drawOptions.pressure ? 0.4 + 1.2 * e.pressure : 1], pressure: e.pointerType === 'pen' && this.drawOptions.pressure, z: this.controls.target.z };
+          this.liveLine = { pts: [p], widths: [e.pointerType === 'pen' && this.drawOptions.pressure ? widthFor(e.pressure) : 1], pressure: e.pointerType === 'pen' && this.drawOptions.pressure, z: this.controls.target.z };
           this.requestRender();
           return;
         }
@@ -202,6 +242,13 @@ export class CaveView {
       true,
     );
     canvas.addEventListener('pointermove', (e) => {
+      if (e.pointerType === 'pen') {
+        this.guard.pen(e);
+        if (this.erasing) {
+          this.eraseAt(e);
+          return;
+        }
+      }
       const edit = this.lineEdit;
       if (edit) {
         const p = this.planPoint(e.clientX, e.clientY);
@@ -217,7 +264,7 @@ export class CaveView {
           if (!p || (Math.hypot(p[0] - last[0], p[1] - last[1]) * (this.pixelsPerMetreAt([p[0], p[1], line.z]) ?? 1)) < 1.5) continue;
           line.pts.push(p);
           // Pressure only changes how thick the line is drawn, never where it goes.
-          line.widths.push(line.pressure ? 0.4 + 1.2 * ev.pressure : 1);
+          line.widths.push(line.pressure ? widthFor(ev.pressure) : 1);
         }
         this.requestRender();
         return;
@@ -532,6 +579,21 @@ export class CaveView {
   }
 
   /** A press in the Top or Bottom view with no tool: pick up a fit point of the selected map line, or select the line there. */
+  private eraseAt(e: PointerEvent) {
+    const rect = this.canvas.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    for (const k of [...this.mapLines].reverse()) {
+      const pts = k.points.map((p) => this.project(p)).filter((p): p is [number, number] => !!p);
+      if (pts.length === k.points.length && distanceToCurve(pts, x, y, k.closed) <= 7) {
+        this.mapLines = this.mapLines.filter((m) => m.id !== k.id);
+        this.onLineErased(k.id);
+        this.requestRender();
+        return;
+      }
+    }
+  }
+
   private pressLine(e: PointerEvent) {
     if (this.drawTool || !this.canDrawHere || e.button !== 0 || this.fingers.size > 1) return;
     const rect = this.canvas.getBoundingClientRect();

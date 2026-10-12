@@ -46,6 +46,12 @@ export class Touches {
     return { dx: now.cx - before.cx, dy: now.cy - before.cy, scale: now.d / before.d, cx: now.cx, cy: now.cy };
   }
 
+  /** Forgets every finger (a pen landed: they were a resting hand). */
+  clear(): void {
+    this.pts.clear();
+    this.last = null;
+  }
+
   /** A finger lifted (or the touch was cancelled); returns how many are still down. */
   up(e: { pointerId: number }): number {
     this.pts.delete(e.pointerId);

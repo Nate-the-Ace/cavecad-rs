@@ -8,6 +8,7 @@
   import { defaultBandOffset, drawHandles, drawStrokes, glyphCurves, hits, leaderEnd } from '../lib/section-glyph';
   import { LineEditor, endpointNear, joinFit } from '../lib/line-editor';
   import { Touches } from '../lib/touch';
+  import { PenGuard, isEraser, widthFor } from '../lib/pen';
   import { fitStroke } from '../lib/spline';
   import { tolerancePx } from '../lib/commands';
   import type { BandSection } from '../lib/engine';
@@ -235,6 +236,8 @@
   // ---- input: pen and mouse draw, fingers pan, middle button pans, wheel zooms ---------------
   // Fingers: one draws (with a tool running) or pans, two pan and pinch-zoom together.
   const touches = new Touches();
+  const guard = new PenGuard();
+  let erasing = false;
   let gesturing = false;
   let panning: { x: number; y: number } | null = null;
   let lastMiddle = 0;
@@ -247,12 +250,29 @@
     if (last && Math.hypot(p[0] - last[0], p[1] - last[1]) * scale < 1.5) return;
     live.pts.push(p);
     // Pressure only changes how thick the line is drawn, never where it goes.
-    live.widths.push(live.pressure ? 0.4 + 1.2 * e.pressure : 1);
+    live.widths.push(live.pressure ? widthFor(e.pressure) : 1);
   }
 
   function onDown(e: PointerEvent) {
     canvas.setPointerCapture(e.pointerId);
     canvas.focus();
+    if (e.pointerType === 'pen') {
+      guard.pen(e);
+      // A pen landing means anything a resting hand started was never a gesture.
+      if (touches.count) {
+        touches.clear();
+        gesturing = false;
+        live = null;
+        panning = null;
+        editor.cancel();
+      }
+      if (isEraser(e)) {
+        erasing = true;
+        eraseAt(e);
+        return;
+      }
+    }
+    if (e.pointerType === 'touch' && !guard.touchDown(e)) return; // a palm or a fist: ignore it completely
     if (e.pointerType === 'touch' && touches.down(e) >= 2) {
       // A second finger: this was the start of a gesture, not a line.
       gesturing = true;
@@ -300,7 +320,20 @@
     }
   }
 
+  function eraseAt(e: PointerEvent) {
+    const r = canvas.getBoundingClientRect();
+    if (editor.eraseAt(e.clientX - r.left, e.clientY - r.top)) schedule();
+  }
+
   function onMove(e: PointerEvent) {
+    if (e.pointerType === 'pen') {
+      guard.pen(e);
+      if (erasing) {
+        eraseAt(e);
+        return;
+      }
+    }
+    if (e.pointerType === 'touch' && guard.ignored(e)) return;
     if (e.pointerType === 'touch') {
       const g = touches.move(e);
       if (g) {
@@ -343,6 +376,17 @@
   }
 
   function onUp(e?: PointerEvent) {
+    if (e?.pointerType === 'pen') {
+      guard.pen(e);
+      if (erasing) {
+        erasing = false;
+        return;
+      }
+    }
+    if (e?.pointerType === 'touch' && guard.ignored(e)) {
+      guard.touchUp(e);
+      return;
+    }
     if (e?.pointerType === 'touch') {
       const left = touches.up(e);
       if (gesturing) {

@@ -82,6 +82,20 @@ export class LineEditor<T extends EditableLine = EditableLine> {
     return false;
   }
 
+  /** The eraser passing screen (`x`, `y`): deletes the topmost line there (one undoable edit). Returns true if it did. */
+  eraseAt(x: number, y: number): boolean {
+    const lines = this.h.lines();
+    for (let i = lines.length - 1; i >= 0; i--) {
+      if (distanceToCurve(lines[i].points.map(this.h.toScreen), x, y, !!lines[i].closed) <= LINE_REACH) {
+        if (this.h.selected() === lines[i].id) this.h.select('');
+        this.h.remove(lines[i].id);
+        this.h.redraw();
+        return true;
+      }
+    }
+    return false;
+  }
+
   /** Lets go of a picked-up fit point without saving (a second finger arrived: it was a gesture). */
   cancel(): void {
     this.drag = null;

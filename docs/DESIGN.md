@@ -154,3 +154,23 @@ device's name defaults to what it is (Laptop, iPad, Phone) and can be changed in
 the colour comes from its id. The relay passes each device's name and colour on as plain text and
 sends everyone the roster whenever someone joins or leaves. Not yet: what each person is editing,
 their cursors, or choosing a picture.
+
+## 2026-10-12: Pen input, first layer
+
+`apps/web/src/lib/pen.ts` (pure, checked in `tests/pen.check.ts`) holds the rules; the Map, Profile
+and Cross Section all use it.
+- **Palm rejection** (`PenGuard`): a touch is ignored while the pen is touching the screen, for
+  600 ms after it was last near the screen (hovering counts), or when the contact is bigger than a
+  fingertip (32 px, where the device reports a size). A touch rejected when it lands stays ignored
+  until it lifts, however long the palm rests. A pen landing cancels anything a resting hand had
+  started (a pan, a half-drawn stroke). Mouse and pen are never ignored.
+- **Eraser**: the pen's eraser end (or button 5) deletes the line it passes over, one undoable
+  edit per line in that panel's own history.
+- **Pressure** is one function (`widthFor`, 0.4 to 1.6 times the line's weight); it only changes
+  how a line is drawn. Coalesced events were already used for smooth strokes.
+- Checked in a real browser with pen events (pressure widths, a touch during a pen stroke
+  ignored). The eraser was checked with a synthetic event, because the browser's test protocol
+  cannot press the eraser bit. No real Apple Pencil has been tried yet.
+Not built: tilt (nothing uses it yet), a barrel-button action, hover cursor for the eraser, the
+`cave-ink` crate (pressure curve, smoothing, resampling), a variable-width ribbon renderer and DXF
+variable-width export, and an eraser that splits a line instead of deleting it whole.

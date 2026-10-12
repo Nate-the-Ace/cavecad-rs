@@ -28,6 +28,10 @@ ok(ed.addPoint(25, 20) === true && saved.length === 2 && saved[1].pts.length ===
 ok(ed.addPoint(300, 300) === false, 'far from the line adds nothing');
 ok(ed.key({ key: 'Delete' } as KeyboardEvent) === true && removed[0] === 'a' && selected === '', 'Delete removes the selected line');
 ok(ed.key({ key: 'Delete' } as KeyboardEvent) === false, 'with nothing selected a key does nothing');
+// the eraser end of a pen
+removed.length = 0; selected = 'b';
+ok(ed.eraseAt(300, 300) === false && removed.length === 0, 'the eraser over nothing deletes nothing');
+ok(ed.eraseAt(50, 102) === true && removed[0] === 'b' && selected === '', 'the eraser deletes the line under it (and lets go of it)');
 // picking up an unclosed line where it ended
 const open: EditableLine[] = [
   { id: 'w', kind: 'wall', points: [[0, 0], [50, 0], [100, 20]], widths: null },
