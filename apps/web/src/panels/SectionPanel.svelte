@@ -19,7 +19,7 @@
   import { drawCursor } from '../lib/presence-draw';
   import { fitStroke } from '../lib/spline';
   import { tolerancePx } from '../lib/commands';
-  import { cave, changed, option, filter, wireFilter } from '../lib/cave.svelte';
+  import { cave, changed, option, filter, wireFilter, haloFade, haloReach } from '../lib/cave.svelte';
   import { drawScan } from '../lib/scan-draw';
   import { givePoint, have, scanImage, scans, waitingForPoint } from '../lib/scans.svelte';
   import { engine, loadEngine, type ScanPlacement, type SectionStation, type StationSection } from '../lib/engine';
@@ -111,6 +111,8 @@
     void scans.paths.length; // scans appear when their folder is opened
     void option('showScans', true);
     void option('halo', true);
+    void haloReach();
+    void haloFade();
     void option('scanOpacity', 0.5);
     void ready;
     untrack(refresh);
@@ -171,7 +173,7 @@
     // the rock halo: a soft glow from the measured walls out into the rock, with rock marks fading with it
     if (option('halo', true) && s.outline.length >= 3) {
       const pts = s.outline.map((p) => toScreen(p[0], p[1]));
-      drawHalo(g, width, height, [{ pts, closed: true }], { reach: Math.min(Math.max(1.4 * scale, 30), 220), tint: c.accent, ink: c.muted, toWorld, toScreen });
+      drawHalo(g, width, height, [{ pts, closed: true }], { reach: Math.min(Math.max(haloReach() * 0.3 * scale, 14), 300), fade: haloFade(), tint: c.accent, ink: c.muted, toWorld, toScreen });
     }
 
     // scans placed on this section lie under everything drawn here

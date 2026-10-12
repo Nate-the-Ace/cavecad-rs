@@ -40,7 +40,7 @@ function savedSections(): { map: boolean; profile: boolean; profileSketches: boo
 }
 
 /** What can be picked in a view to get a tab of its own in the ribbon (see `inspectors.ts`). */
-export type PickKind = '' | 'station' | 'leg' | 'splay';
+export type PickKind = '' | 'station' | 'leg' | 'splay' | 'halo';
 
 /** Picks a thing (a tool and a selected line are put down: one thing is picked at a time). */
 export function setPick(kind: PickKind, id: string) {
@@ -177,6 +177,10 @@ export function option<T extends number | boolean | string>(id: string, fallback
   const v = cave.options[id];
   return (typeof v === typeof fallback ? v : fallback) as T;
 }
+
+/** The rock halo's settings, shared by every view: how far it reaches (metres) and how it fades. */
+export const haloReach = () => option('haloReach', 6);
+export const haloFade = () => option('haloFade', 0.5);
 
 /** Picks a drawing tool; picking the one already active puts it down. */
 export function setTool(key: string) {

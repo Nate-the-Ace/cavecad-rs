@@ -55,6 +55,8 @@ export class CaveView {
   private elevationColors = false;
   private showWalls = true;
   private halo = true;
+  private haloReachM = 5;
+  private haloFade = 0.5;
   private showLabels = true;
   private selected = '';
   /** Cross-section sketches drawn beside their stations, and whether they are shown. */
@@ -1040,8 +1042,10 @@ export class CaveView {
   }
 
   /** The rock halo: a soft glow from the walls out into the rock, seen when looking down on the plan. */
-  setHalo(on: boolean) {
+  setHalo(on: boolean, reachM = 5, fade = 0.5) {
     this.halo = on;
+    this.haloReachM = reachM;
+    this.haloFade = fade;
     this.requestRender();
   }
 
@@ -1083,10 +1087,10 @@ export class CaveView {
         inside.push(area > 0 ? [a, b, c] : [a, c, b]);
       }
     }
-    const reach = Math.min(Math.max(6 * (this.height / (2 * this.visibleHalfHeight())), 30), 240);
+    const reach = Math.min(Math.max(this.haloReachM * (this.height / (2 * this.visibleHalfHeight())), 14), 400);
     g.save();
     g.globalAlpha = strength;
-    drawHalo(g, this.width, this.height, lines, { reach, tint: `#${this.theme.accent.getHexString()}`, ink: this.theme.css.muted, toWorld, toScreen, inside });
+    drawHalo(g, this.width, this.height, lines, { reach, fade: this.haloFade, tint: `#${this.theme.accent.getHexString()}`, ink: this.theme.css.muted, toWorld, toScreen, inside });
     g.restore();
   }
 

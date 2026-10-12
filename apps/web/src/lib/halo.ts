@@ -19,6 +19,8 @@ export interface HaloOptions {
   /** Screen pixels to world units and back (the marks are fixed to the world, so they stay put as you pan). */
   toWorld: (x: number, y: number) => [number, number];
   toScreen: (x: number, y: number) => [number, number];
+  /** How quickly the glow dies away: 0 holds strong then drops at the edge, 1 fades fast and trails off (default 0.5, an even fade). */
+  fade?: number;
   /** Passage interiors (screen pixels) that the glow must not cover. */
   inside?: [number, number][][];
 }
@@ -72,10 +74,11 @@ export function drawHalo(g: CanvasRenderingContext2D, w: number, h: number, line
   mg.strokeStyle = '#fff';
   mg.lineCap = 'round';
   mg.lineJoin = 'round';
+  const fk = Math.pow(2, 1 - 2 * Math.min(1, Math.max(0, o.fade ?? 0.5)));
   const a = 1 - Math.pow(1 - PEAK, 1 / STEPS);
   mg.globalAlpha = a;
   for (let i = 1; i <= STEPS; i++) {
-    mg.lineWidth = 2 * o.reach * (i / STEPS) * SCALE;
+    mg.lineWidth = 2 * o.reach * Math.pow(i / STEPS, 1 / fk) * SCALE;
     trace(mg, lines, SCALE);
     mg.stroke();
   }
@@ -130,7 +133,7 @@ function drawRock(g: CanvasRenderingContext2D, w: number, h: number, o: HaloOpti
   const ux = o.toScreen(1, 0);
   const pxPerUnit = Math.hypot(ux[0] - o0[0], ux[1] - o0[1]);
   if (!(pxPerUnit > 0)) return;
-  const k = Math.round(Math.log2(22 / pxPerUnit));
+  const k = Math.round(Math.log2(26 / pxPerUnit));
   const cell = Math.pow(2, k);
   const corners = [o.toWorld(0, 0), o.toWorld(w, 0), o.toWorld(0, h), o.toWorld(w, h)];
   const x0 = Math.floor(Math.min(...corners.map((c) => c[0])) / cell) - 1;
@@ -141,39 +144,29 @@ function drawRock(g: CanvasRenderingContext2D, w: number, h: number, o: HaloOpti
   g.strokeStyle = o.ink;
   g.fillStyle = o.ink;
   g.lineWidth = 1;
-  g.lineCap = 'round';
-  g.lineJoin = 'round';
+  g.lineCap = 'butt';
   g.globalAlpha = 0.7;
-  const px = (pxPerUnit * cell) / 22; // 1 when the cells are the usual size on screen
+  // The usual bedrock symbol: short horizontal bedding lines, each with a vertical joint at one end.
   for (let ix = x0; ix <= x1; ix++) {
     for (let iy = y0; iy <= y1; iy++) {
-      const r = hash(ix, iy, k, 0);
-      if (r > 0.82) continue; // a few gaps, so it reads as rock and not as a grid
-      const wx = (ix + 0.15 + 0.7 * hash(ix, iy, k, 1)) * cell;
-      const wy = (iy + 0.15 + 0.7 * hash(ix, iy, k, 2)) * cell;
-      const [sx, sy] = o.toScreen(wx, wy);
-      const ang = hash(ix, iy, k, 3) * Math.PI;
-      const len = (5 + 6 * hash(ix, iy, k, 4)) * px;
-      const kind = hash(ix, iy, k, 5);
-      const dx = Math.cos(ang) * len;
-      const dy = Math.sin(ang) * len;
+      if (hash(ix, iy, k, 0) > 0.78) continue; // gaps, so it reads as rock and not as a grid
+      const len = cell * (0.55 + 0.9 * hash(ix, iy, k, 1));
+      const wx = (ix + 0.6 * hash(ix, iy, k, 2)) * cell;
+      const wy = (iy + 0.1 * hash(ix, iy, k, 3)) * cell; // a slight step from row to row
+      const a = o.toScreen(wx, wy);
+      const b = o.toScreen(wx + len, wy);
       g.beginPath();
-      if (kind < 0.45) {
-        // an angular fragment: two short strokes meeting at a point
-        const bend = ang + 1.2 + 0.7 * hash(ix, iy, k, 6);
-        g.moveTo(sx - dx * 0.5, sy - dy * 0.5);
-        g.lineTo(sx, sy);
-        g.lineTo(sx + Math.cos(bend) * len * 0.7, sy + Math.sin(bend) * len * 0.7);
-        g.stroke();
-      } else if (kind < 0.8) {
-        // a short dash, like a bedding line
-        g.moveTo(sx - dx * 0.5, sy - dy * 0.5);
-        g.lineTo(sx + dx * 0.5, sy + dy * 0.5);
-        g.stroke();
-      } else {
-        g.arc(sx, sy, Math.max(0.6, 0.9 * px), 0, Math.PI * 2);
-        g.fill();
+      g.moveTo(a[0], a[1]);
+      g.lineTo(b[0], b[1]);
+      if (hash(ix, iy, k, 4) < 0.7) {
+        const end = hash(ix, iy, k, 5) < 0.5 ? 0 : len;
+        const drop = cell * (0.3 + 0.4 * hash(ix, iy, k, 6)) * (hash(ix, iy, k, 7) < 0.5 ? 1 : -1);
+        const c = o.toScreen(wx + end, wy);
+        const d = o.toScreen(wx + end, wy + drop);
+        g.moveTo(c[0], c[1]);
+        g.lineTo(d[0], d[1]);
       }
+      g.stroke();
     }
   }
   g.globalAlpha = 1;

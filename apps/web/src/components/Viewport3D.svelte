@@ -7,7 +7,7 @@
   import { cursorsFor, live as room, reportCursor } from '../lib/sync.svelte';
   import { engine, loadEngine, type Scene, type TypeStyle } from '../lib/engine';
   import { CaveView, type Projection } from '../lib/viewport/cave-view';
-  import { cave, changed, filter, option, setPick, setShowSections, setShown, wireFilter } from '../lib/cave.svelte';
+  import { cave, changed, filter, haloFade, haloReach, option, setPick, setShowSections, setShown, wireFilter } from '../lib/cave.svelte';
   import { tolerancePx } from '../lib/commands';
   import { ViewCube } from '../lib/viewport/view-cube';
   import { onTheme } from '../lib/theme';
@@ -78,9 +78,11 @@
     const on = option('showScans', true);
     const opacity = option('scanOpacity', 0.5);
     const halo = option('halo', true);
+    const haloM = haloReach();
+    const haloF = haloFade();
     untrack(() => {
       if (!view) return;
-      view.setHalo(halo);
+      view.setHalo(halo, haloM, haloF);
       const z = (scene?.bounds?.[2] ?? 0) - 0.5;
       const list = on
         ? engine
@@ -216,6 +218,24 @@
       engine.log('info', 'passage', `${buffers.filled} unmeasured station${buffers.filled === 1 ? '' : 's'} filled in from the nearest measurements (shown paler)`);
     }
   }
+
+  // Every edit (a notebook reading, a station, an undo) redraws the survey, without re-framing it.
+  let rereadFrame = 0;
+  $effect(() => {
+    void cave.version;
+    void cave.adjusted;
+    untrack(() => {
+      if (!view || !loaded || rereadFrame) return;
+      rereadFrame = requestAnimationFrame(() => {
+        rereadFrame = 0;
+        if (!view) return;
+        scene = engine.scene(cave.adjusted, wireFilter());
+        view.setShowLabels(!filter.hiddenTypes.includes('label'));
+        view.setScene(scene, false);
+        loadPassage();
+      });
+    });
+  });
 
   function refresh() {
     if (!view) return;

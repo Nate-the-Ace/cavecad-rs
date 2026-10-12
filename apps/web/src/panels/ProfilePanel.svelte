@@ -5,7 +5,7 @@
   import { Maximize } from '@lucide/svelte';
   import PanelUndo from '../components/PanelUndo.svelte';
   import { looks } from '../lib/ink';
-  import { cave, changed, filter, option, setPick, setShowSections } from '../lib/cave.svelte';
+  import { cave, changed, filter, option, setPick, setShowSections, haloFade, haloReach } from '../lib/cave.svelte';
   import { defaultBandOffset, drawHandles, drawStrokes, glyphCurves, hits, leaderEnd } from '../lib/section-glyph';
   import { LineEditor, endpointNear, joinFit } from '../lib/line-editor';
   import { Touches } from '../lib/touch';
@@ -121,6 +121,8 @@
     void filter.hiddenTrips.length;
     void option('showScans', true);
     void option('halo', true);
+    void haloReach();
+    void haloFade();
     void option('scanOpacity', 0.5);
     void cave.showSections.profile; // sketches beside stations appear and disappear with the toggle
     void cave.units; // axis labels and run lengths redraw in the new units
@@ -216,6 +218,8 @@
     // the rock halo: a soft glow from the passage walls out into the rock, with rock marks fading with it
     if (option('halo', true)) {
       const lines: HaloLine[] = [...band.ceiling, ...band.floor].map((l) => ({ pts: l.map((p) => toScreen(p[0], p[1])) }));
+      // where no ceiling or floor was measured the glow follows the survey line itself, so it never breaks off
+      for (const l of band.legs) lines.push({ pts: [toScreen(l[0], l[1]), toScreen(l[2], l[3])] });
       const inside: [number, number][][] = [];
       const st = band.stations;
       for (let i = 1; i < st.length; i++) {
@@ -224,7 +228,7 @@
         if (a.up == null || a.down == null || b.up == null || b.down == null) continue;
         inside.push([toScreen(a.s, a.z + a.up), toScreen(b.s, b.z + b.up), toScreen(b.s, b.z - b.down), toScreen(a.s, a.z - a.down)]);
       }
-      drawHalo(g, width, height, lines, { reach: Math.min(Math.max(5 * scale, 30), 240), tint: c.accent, ink: c.muted, toWorld, toScreen, inside });
+      drawHalo(g, width, height, lines, { reach: Math.min(Math.max(haloReach() * scale, 14), 400), fade: haloFade(), tint: c.accent, ink: c.muted, toWorld, toScreen, inside });
     }
 
     // scans placed on this band lie under everything the survey draws
