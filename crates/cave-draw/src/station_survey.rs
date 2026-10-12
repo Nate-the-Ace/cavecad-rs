@@ -1,0 +1,271 @@
+//! Editing what the survey says at a station: the passage dimensions (LRUD), the notes, and whether the
+//! station is an agreed benchmark. The survey keeps walls on shots, so an edit goes to the shot that
+//! supplies them (the last shot arriving at the station that recorded any, else the last arriving;
+//! a station nothing arrives at takes its trip's opening row). Values are metres here and are turned
+//! back into the trip's own unit when written.
+
+use crate::{DrawError, MAX_TEXT};
+use cave_doc::{Action, Document, Field, Kind, Value};
+use cave_id::Id;
+
+const FEET_TO_METRES: f64 = 0.3048;
+
+/// Passage dimensions at a station, metres; `None` is not measured, an open flag is "looked, no wall".
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Walls {
+    /// Distance to the left wall.
+    pub left: Option<f64>,
+    /// Distance to the right wall.
+    pub right: Option<f64>,
+    /// Distance to the ceiling.
+    pub up: Option<f64>,
+    /// Distance to the floor.
+    pub down: Option<f64>,
+    /// Open to the left.
+    pub left_open: bool,
+    /// Open to the right.
+    pub right_open: bool,
+    /// Open above.
+    pub up_open: bool,
+    /// Open below.
+    pub down_open: bool,
+}
+
+/// Where a station's walls are written: a shot, or a trip's opening row.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct WallsSource {
+    /// The shot or trip that holds them.
+    pub entity: Id,
+    /// True when it is a trip's opening row.
+    pub trip: bool,
+    /// Metres in one of the trip's distance units.
+    pub factor: f64,
+}
+
+type Fields = [(Field, Field); 4];
+
+const SHOT: Fields = [
+    (Field::ShotLeft, Field::ShotLeftOpen),
+    (Field::ShotRight, Field::ShotRightOpen),
+    (Field::ShotUp, Field::ShotUpOpen),
+    (Field::ShotDown, Field::ShotDownOpen),
+];
+const TRIP: Fields = [
+    (Field::TripStartLeft, Field::TripStartLeftOpen),
+    (Field::TripStartRight, Field::TripStartRightOpen),
+    (Field::TripStartUp, Field::TripStartUpOpen),
+    (Field::TripStartDown, Field::TripStartDownOpen),
+];
+
+fn ordered_shots(doc: &Document) -> Vec<Id> {
+    let mut shots: Vec<(f64, Id)> = doc
+        .ids_of(Kind::Shot)
+        .into_iter()
+        .map(|id| {
+            let order = doc
+                .entity(id)
+                .and_then(|e| e.number(Field::ShotOrder))
+                .unwrap_or(f64::MAX);
+            (order, id)
+        })
+        .collect();
+    shots.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
+    shots.into_iter().map(|s| s.1).collect()
+}
+
+fn factor_of(doc: &Document, trip: Option<Id>) -> f64 {
+    match trip
+        .and_then(|t| doc.entity(t))
+        .map(|t| t.text(Field::TripDistanceUnit))
+        .as_deref()
+    {
+        Some("ft") => FEET_TO_METRES,
+        _ => 1.0,
+    }
+}
+
+fn has_evidence(doc: &Document, id: Id, fields: &Fields) -> bool {
+    doc.entity(id).is_some_and(|e| {
+        fields
+            .iter()
+            .any(|(v, o)| e.number(*v).is_some() || e.flag(*o))
+    })
+}
+
+/// The non-splay, non-excluded shots arriving at a station, in survey order.
+fn arriving(doc: &Document, station: Id) -> Vec<Id> {
+    ordered_shots(doc)
+        .into_iter()
+        .filter(|id| {
+            doc.entity(*id).is_some_and(|e| {
+                !e.flag(Field::ShotSplay)
+                    && !e.flag(Field::ShotExcludeFromAll)
+                    && e.reference(Field::ShotTo) == Some(station)
+                    && e.reference(Field::ShotFrom).is_some()
+            })
+        })
+        .collect()
+}
+
+/// Where this station's walls live (see the module's words), or `None` when no shot touches it.
+pub fn walls_source(doc: &Document, station: Id) -> Option<WallsSource> {
+    let arrivals = arriving(doc, station);
+    if !arrivals.is_empty() {
+        let id = arrivals
+            .iter()
+            .rev()
+            .find(|id| has_evidence(doc, **id, &SHOT))
+            .or(arrivals.last())
+            .copied()?;
+        let trip = doc.entity(id).and_then(|e| e.reference(Field::ShotTrip));
+        return Some(WallsSource {
+            entity: id,
+            trip: false,
+            factor: factor_of(doc, trip),
+        });
+    }
+    let leaving = ordered_shots(doc).into_iter().find(|id| {
+        doc.entity(*id).is_some_and(|e| {
+            !e.flag(Field::ShotSplay) && e.reference(Field::ShotFrom) == Some(station)
+        })
+    })?;
+    let trip = doc
+        .entity(leaving)
+        .and_then(|e| e.reference(Field::ShotTrip))?;
+    Some(WallsSource {
+        entity: trip,
+        trip: true,
+        factor: factor_of(doc, Some(trip)),
+    })
+}
+
+/// The walls held at a source, in metres.
+pub fn walls_at(doc: &Document, src: WallsSource) -> Walls {
+    let Some(e) = doc.entity(src.entity) else {
+        return Walls::default();
+    };
+    let f = if src.trip { &TRIP } else { &SHOT };
+    let n = |i: usize| e.number(f[i].0).map(|v| v * src.factor);
+    Walls {
+        left: n(0),
+        right: n(1),
+        up: n(2),
+        down: n(3),
+        left_open: e.flag(f[0].1),
+        right_open: e.flag(f[1].1),
+        up_open: e.flag(f[2].1),
+        down_open: e.flag(f[3].1),
+    }
+}
+
+/// Sets a station's walls: writes only what differs from what the survey holds now. A dimension must be
+/// a finite number of metres, zero or more.
+pub fn set_station_walls(
+    doc: &Document,
+    station: Id,
+    walls: Walls,
+) -> Result<Vec<Action>, DrawError> {
+    let src = walls_source(doc, station).ok_or(DrawError::NoStations)?;
+    let now = walls_at(doc, src);
+    let f = if src.trip { &TRIP } else { &SHOT };
+    let wanted = [
+        (walls.left, walls.left_open, now.left, now.left_open),
+        (walls.right, walls.right_open, now.right, now.right_open),
+        (walls.up, walls.up_open, now.up, now.up_open),
+        (walls.down, walls.down_open, now.down, now.down_open),
+    ];
+    let mut actions = Vec::new();
+    for (i, (v, open, was_v, was_open)) in wanted.into_iter().enumerate() {
+        if v.is_some_and(|x| !x.is_finite() || x < 0.0) {
+            return Err(DrawError::BadStroke);
+        }
+        let same = match (v, was_v) {
+            (None, None) => true,
+            (Some(a), Some(b)) => (a - b).abs() < 1e-9,
+            _ => false,
+        };
+        if !same {
+            actions.push(Action::Set {
+                id: src.entity,
+                field: f[i].0,
+                value: Value::Number(v.map(|x| x / src.factor)),
+            });
+        }
+        if open != was_open {
+            actions.push(Action::Set {
+                id: src.entity,
+                field: f[i].1,
+                value: Value::Flag(open),
+            });
+        }
+    }
+    Ok(actions)
+}
+
+/// The notes written at a station as `(source, text)`: the note on each shot arriving at it, and the
+/// trip's opening note when it is where a trip starts. The source is what [`set_note`] edits.
+pub fn note_sources(doc: &Document, station: Id) -> Vec<(Id, String)> {
+    let mut out = Vec::new();
+    let first = ordered_shots(doc).into_iter().find(|id| {
+        doc.entity(*id)
+            .is_some_and(|e| !e.flag(Field::ShotSplay) && !e.flag(Field::ShotExcludeFromAll))
+    });
+    if let Some(e) = first.and_then(|id| doc.entity(id))
+        && e.reference(Field::ShotFrom) == Some(station)
+        && let Some(trip) = e.reference(Field::ShotTrip)
+    {
+        out.push((
+            trip,
+            doc.entity(trip)
+                .map(|t| t.text(Field::TripStartNote))
+                .unwrap_or_default(),
+        ));
+    }
+    for id in arriving(doc, station) {
+        let text = doc
+            .entity(id)
+            .map(|e| e.text(Field::ShotNote))
+            .unwrap_or_default();
+        out.push((id, text));
+    }
+    out
+}
+
+/// Sets a note: the words of a shot's note or a trip's opening note. Nothing is written when unchanged.
+pub fn set_note(doc: &Document, source: Id, text: &str) -> Result<Vec<Action>, DrawError> {
+    let e = doc.entity(source).ok_or(DrawError::NoStations)?;
+    let field = match e.kind() {
+        Kind::Shot => Field::ShotNote,
+        Kind::Trip => Field::TripStartNote,
+        _ => return Err(DrawError::NoStations),
+    };
+    let text: String = text.trim().chars().take(MAX_TEXT).collect();
+    if e.text(field) == text {
+        return Ok(Vec::new());
+    }
+    Ok(vec![Action::Set {
+        id: source,
+        field,
+        value: Value::Text(text),
+    }])
+}
+
+/// Marks a station as an agreed benchmark, or not.
+pub fn set_station_benchmark(
+    doc: &Document,
+    station: Id,
+    on: bool,
+) -> Result<Vec<Action>, DrawError> {
+    let e = doc
+        .entity(station)
+        .filter(|e| e.kind() == Kind::Station)
+        .ok_or(DrawError::NoStations)?;
+    if e.flag(Field::StationBenchmark) == on {
+        return Ok(Vec::new());
+    }
+    Ok(vec![Action::Set {
+        id: station,
+        field: Field::StationBenchmark,
+        value: Value::Flag(on),
+    }])
+}

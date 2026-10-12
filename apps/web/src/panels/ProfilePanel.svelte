@@ -25,7 +25,7 @@
   let height = $state(0);
   let runs = $state<RunInfo[]>([]);
   let band = $state<ProfileScene | null>(null);
-  /** Labels of the survey's fixed stations (drawn with a dot in their triangle). */
+  /** Labels of the benchmark stations (drawn with a dot in their triangle). */
   let fixed = new Set<string>();
   let message = $state('');
 
@@ -97,7 +97,7 @@
     runs = engine.profileRuns(cave.adjusted);
     if (!runs.some((r) => r.key === cave.run)) cave.run = runs[0]?.key ?? '';
     band = cave.run ? engine.profileBand(cave.run, cave.adjusted) : null;
-    fixed = new Set(band ? engine.scene(cave.adjusted).stations.filter((x) => x.anchor).map((x) => x.label) : []);
+    fixed = new Set(band ? engine.scene(cave.adjusted).stations.filter((x) => x.benchmark).map((x) => x.label) : []);
     schedule();
   }
 
@@ -420,6 +420,29 @@
     }
   }
 
+  // A plain click on a station's triangle picks it (the ribbon then shows its station tab).
+  let pressedAt: [number, number] = [0, 0];
+  function pickStation(e: MouseEvent) {
+    if (cave.tool || !band || Math.hypot(e.clientX - pressedAt[0], e.clientY - pressedAt[1]) > 4) return;
+    const r = canvas.getBoundingClientRect();
+    let best: { label: string } | null = null;
+    let bestD = 11;
+    for (const st of band.stations) {
+      const [x, y] = toScreen(st.s, st.z);
+      const d = Math.hypot(x - (e.clientX - r.left), y - (e.clientY - r.top));
+      if (d <= bestD) {
+        bestD = d;
+        best = st;
+      }
+    }
+    const hit = best && engine.scene(cave.adjusted).stations.find((x) => x.label === best!.label);
+    if (hit) {
+      cave.selected = '';
+      cave.picked = hit.id;
+      cave.station = hit.id;
+    }
+  }
+
   function onUp(e?: PointerEvent) {
     if (e?.pointerType === 'pen') {
       guard.pen(e);
@@ -563,11 +586,13 @@
     bind:this={canvas}
     tabindex="0"
     style="width:{width}px;height:{height}px;cursor:{cave.tool ? 'crosshair' : 'grab'}"
+    onpointerdowncapture={(e) => (pressedAt = [e.clientX, e.clientY])}
     onpointerdown={onDown}
     onpointermove={onMove}
     onpointerup={onUp}
     onpointercancel={onUp}
     onwheel={onWheel}
+    onclick={pickStation}
     ondblclick={(e) => {
       const r = canvas.getBoundingClientRect();
       if (!cave.tool) editor.addPoint(e.clientX - r.left, e.clientY - r.top);

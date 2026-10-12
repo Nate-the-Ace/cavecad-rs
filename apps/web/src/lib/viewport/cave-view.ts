@@ -1037,8 +1037,8 @@ export class CaveView {
     for (const st of s.stations) {
       const p = this.project(st.at);
       if (!p || p[0] < -20 || p[1] < -20 || p[0] > this.width + 20 || p[1] > this.height + 20) continue;
-      g.strokeStyle = st.anchor ? `#${this.theme.accent.getHexString()}` : this.elevationColors ? `#${elevationColor((st.at[2] - zmin) / zspan).getHexString()}` : css.text;
-      drawStationMarker(g, p[0], p[1], st.anchor, 5);
+      g.strokeStyle = st.benchmark ? `#${this.theme.accent.getHexString()}` : this.elevationColors ? `#${elevationColor((st.at[2] - zmin) / zspan).getHexString()}` : css.text;
+      drawStationMarker(g, p[0], p[1], st.benchmark, 5);
     }
     if (pxPerM > 3 && this.showLabels) {
       g.fillStyle = css.muted;

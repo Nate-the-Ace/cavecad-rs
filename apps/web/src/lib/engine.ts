@@ -1,5 +1,5 @@
 // Loads the Rust engine (WASM) once and re-exports the few calls the UI uses.
-import init, { start, log, console_events, console_clear, engine_version, open_demo, scene, profile_runs, profile_band, add_profile_sketch, undo, redo, edit_state, passage_mesh, shading, palette, open_dxf, save_dxf, section_stations, section_at, add_section_sketch, map_sections, place_section, map_profile_sketches, add_map_line, map_lines, draw_tools, edit_line, delete_line, set_line_closed, set_line_kind, line_info, set_line_flip, set_line_text, ornament, callout, sheet_options, sheet_plan, flipped_lines, revision, station_rows, set_station_mark, symbols, fills, fill_marks, draw_tool_groups, sync_outbox, sync_apply, sync_snapshot, sync_load } from '../wasm/cave_wasm.js';
+import init, { start, log, console_events, console_clear, engine_version, open_demo, scene, profile_runs, profile_band, add_profile_sketch, undo, redo, edit_state, passage_mesh, shading, palette, open_dxf, save_dxf, section_stations, section_at, add_section_sketch, map_sections, place_section, map_profile_sketches, add_map_line, map_lines, draw_tools, edit_line, delete_line, set_line_closed, set_line_kind, line_info, set_line_flip, set_line_text, ornament, callout, sheet_options, sheet_plan, flipped_lines, revision, station_rows, set_station_mark, station_detail, set_station_walls, set_station_note, set_station_benchmark, symbols, fills, fill_marks, draw_tool_groups, sync_outbox, sync_apply, sync_snapshot, sync_load } from '../wasm/cave_wasm.js';
 
 import { setInkPalette } from './ink';
 import { setOrnamentSource } from './section-glyph';
@@ -19,7 +19,7 @@ export interface ConsoleEvent {
 }
 export type Pt = [number, number, number];
 export interface Scene {
-  stations: { id: string; label: string; at: Pt; anchor: boolean }[];
+  stations: { id: string; label: string; at: Pt; anchor: boolean; benchmark: boolean }[];
   /** Palette types with something in this cave, and its trips: what the filter can list. */
   types: string[];
   trips: { id: string; name: string }[];
@@ -41,6 +41,30 @@ export interface Scene {
   bounds: [number, number, number, number, number, number] | null;
   adjusted: boolean;
   skipped: number;
+}
+/** Passage dimensions at a station, metres (null: not measured). */
+export interface StationWalls {
+  left: number | null;
+  right: number | null;
+  up: number | null;
+  down: number | null;
+  left_open: boolean;
+  right_open: boolean;
+  up_open: boolean;
+  down_open: boolean;
+}
+/** What the station tab shows. */
+export interface StationDetail {
+  id: string;
+  label: string;
+  kinds: string[];
+  degree: number;
+  trips: number[];
+  z: number | null;
+  flags: string[];
+  benchmark: boolean;
+  walls: (StationWalls & { on: string }) | null;
+  notes: { source: string; on: string; text: string }[];
 }
 /** Papers (inches) and plot scales a sheet offers. */
 export interface SheetOptions {
@@ -216,6 +240,14 @@ export const engine = {
   /** One row per station: what kind of place it is, its notes, elevation and the team's mark. */
   stationRows: (adjusted: boolean, keyword = ''): StationRow[] => JSON.parse(station_rows(adjusted, keyword)),
   /** Puts the team's mark on a station (one undoable edit in the Stations panel's history). */
+  /** Everything the station tab shows about one station, or null. */
+  stationDetail: (id: string, adjusted: boolean): StationDetail | null => JSON.parse(station_detail(id, adjusted)),
+  /** Writes a station's passage dimensions (metres) to the survey; only what changed. */
+  setStationWalls: (id: string, w: StationWalls): string => set_station_walls(id, JSON.stringify(w)),
+  /** Changes a note written at a station (`source` comes from the detail). */
+  setStationNote: (source: string, text: string): string => set_station_note(source, text),
+  /** Marks a station as an agreed benchmark, or not. */
+  setStationBenchmark: (id: string, on: boolean): string => set_station_benchmark(id, on),
   setStationMark: (id: string, status: string, team: string, who: string): string => set_station_mark(id, status, team, who),
   /** Goes up whenever the open cave really changes; compared with the value at the last save. */
   revision: (): number => revision(),

@@ -4,6 +4,7 @@
 //! Derived data only: [`build`] reads a [`Document`] and runs the survey math; nothing is stored
 //! back. The canvas stays dumb: it receives a [`Scene`] and draws it.
 
+mod detail;
 mod filter;
 mod maplines;
 mod mesh;
@@ -13,6 +14,7 @@ mod solved;
 mod stations;
 mod under;
 
+pub use detail::{NoteField, StationDetail, WallsOut, station_detail};
 pub use filter::{TripInfo, ViewFilter};
 pub use maplines::{map_frames, map_lines_3d};
 pub use mesh::{ColorMode, Mesh, passage_mesh};
@@ -49,6 +51,8 @@ pub struct StationDot {
     pub at: Pt,
     /// True for a station the network is pinned on.
     pub anchor: bool,
+    /// True for an agreed benchmark (drawn as a fixed survey point).
+    pub benchmark: bool,
 }
 
 /// How a leg is drawn.
@@ -309,6 +313,9 @@ pub fn build_seen_from(
                 label: labels[*id].clone(),
                 at: [p.x, p.y, p.z],
                 anchor: r.anchors.contains(*id),
+                benchmark: doc
+                    .entity(**id)
+                    .is_some_and(|e| e.flag(Field::StationBenchmark)),
             });
         }
     }

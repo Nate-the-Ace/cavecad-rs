@@ -90,7 +90,7 @@
     stations = engine.sectionStations(cave.adjusted, true, wireFilter());
     if (!stations.some((s) => s.id === cave.station)) cave.station = (stations.find((s) => s.outlined) ?? stations[0])?.id ?? '';
     section = cave.station ? engine.sectionAt(cave.adjusted, cave.station, true, wireFilter()) : null;
-    fixedHere = !!cave.station && engine.scene(cave.adjusted).stations.some((x) => x.id === cave.station && x.anchor);
+    fixedHere = !!cave.station && engine.scene(cave.adjusted).stations.some((x) => x.id === cave.station && x.benchmark);
     frameOnce();
     schedule();
   }

@@ -166,7 +166,7 @@
 
   // The station the Cross Section panel shows is ringed on the map, while that panel can be seen.
   $effect(() => {
-    const id = panelState.visible.section ? cave.station : '';
+    const id = cave.picked || (panelState.visible.section ? cave.station : '');
     view?.setSelected(id);
   });
 
@@ -184,6 +184,8 @@
     const hit = view.pickStation(e.clientX, e.clientY);
     if (!hit) return;
     cave.station = hit.id;
+    cave.picked = hit.id;
+    cave.selected = '';
     showPanel('section');
     engine.log('info', 'section', `cross section at ${hit.label}`);
   }

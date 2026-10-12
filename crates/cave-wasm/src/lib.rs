@@ -650,6 +650,96 @@ pub fn set_station_mark(id: &str, status: &str, team: &str, who: &str) -> String
     }
 }
 
+/// Everything the station tab shows about one station (an id as text), as JSON, or `null`.
+#[wasm_bindgen]
+pub fn station_detail(id: &str, adjusted: bool) -> String {
+    let Ok(station) = id.parse::<cave_id::Id>() else {
+        return "null".into();
+    };
+    DOC.with(|d| {
+        let detail = d
+            .borrow()
+            .as_ref()
+            .and_then(|doc| cave_scene::station_detail(doc, adjusted, station));
+        serde_json::to_string(&detail).unwrap_or_else(|_| "null".into())
+    })
+}
+
+/// Runs a station edit as one undoable edit in the Stations scope: `build` makes the actions.
+fn station_edit(
+    build: impl FnOnce(&cave_doc::Document) -> Result<Vec<cave_doc::Action>, cave_draw::DrawError>,
+) -> String {
+    let result = DOC.with(|d| {
+        let mut slot = d.borrow_mut();
+        let doc = slot.as_mut().ok_or("no cave is open")?;
+        let actions = build(doc).map_err(|e| format!("{e:?}"))?;
+        if actions.is_empty() {
+            return Ok::<(), String>(());
+        }
+        let edit = doc.edit(actions).map_err(|e| format!("{e:?}"))?;
+        record_edit("stations", &edit);
+        Ok(())
+    });
+    match result {
+        Ok(()) => "ok".into(),
+        Err(e) => format!("error: {e}"),
+    }
+}
+
+/// Sets a station's passage dimensions (metres; a negative or missing number is not measured unless
+/// the open flag is set). `walls` is JSON `{left, right, up, down, left_open, right_open, up_open,
+/// down_open}`. Writes only what changed.
+#[wasm_bindgen]
+pub fn set_station_walls(id: &str, walls: &str) -> String {
+    #[derive(serde::Deserialize)]
+    struct W {
+        left: Option<f64>,
+        right: Option<f64>,
+        up: Option<f64>,
+        down: Option<f64>,
+        #[serde(default)]
+        left_open: bool,
+        #[serde(default)]
+        right_open: bool,
+        #[serde(default)]
+        up_open: bool,
+        #[serde(default)]
+        down_open: bool,
+    }
+    let (Ok(station), Ok(w)) = (id.parse::<cave_id::Id>(), serde_json::from_str::<W>(walls)) else {
+        return "error: bad station or walls".into();
+    };
+    let walls = cave_draw::Walls {
+        left: w.left,
+        right: w.right,
+        up: w.up,
+        down: w.down,
+        left_open: w.left_open,
+        right_open: w.right_open,
+        up_open: w.up_open,
+        down_open: w.down_open,
+    };
+    station_edit(|doc| cave_draw::set_station_walls(doc, station, walls))
+}
+
+/// Changes a note written at a station: `source` is the id the station detail gave for it.
+#[wasm_bindgen]
+pub fn set_station_note(source: &str, text: &str) -> String {
+    let Ok(source) = source.parse::<cave_id::Id>() else {
+        return "error: no such note".into();
+    };
+    station_edit(|doc| cave_draw::set_note(doc, source, text))
+}
+
+/// Marks a station as an agreed benchmark, or not.
+#[wasm_bindgen]
+pub fn set_station_benchmark(id: &str, on: bool) -> String {
+    let Ok(station) = id.parse::<cave_id::Id>() else {
+        return "error: no such station".into();
+    };
+    station_edit(|doc| cave_draw::set_station_benchmark(doc, station, on))
+}
+
 /// Every point symbol the palette offers, with its drawing (JSON array).
 #[wasm_bindgen]
 pub fn symbols() -> String {

@@ -142,6 +142,8 @@ pub enum Field {
     StationTeamNote,
     /// Who has the lead.
     StationAssigned,
+    /// The station is an agreed benchmark (drawn as a fixed survey point), not just a survey point.
+    StationBenchmark,
     /// Fixed easting/x in metres, when this station is a fixed point.
     StationFixedX,
     /// Fixed northing/y.
@@ -278,6 +280,7 @@ impl Field {
             }
             StationLabel => (K::Station, V::Text),
             StationStatus | StationTeamNote | StationAssigned => (K::Station, V::Text),
+            StationBenchmark => (K::Station, V::Flag),
             StationFixedX => (K::Station, V::Number),
             StationFixedY => (K::Station, V::Number),
             StationFixedZ => (K::Station, V::Number),

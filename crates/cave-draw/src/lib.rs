@@ -10,6 +10,13 @@
 //! `pit`, ...) and `FeatureView` says where it was drawn, which decides what its points mean. The
 //! person picks a drawing tool and then draws in whichever view they like.
 
+mod station_survey;
+
+pub use station_survey::{
+    Walls, WallsSource, note_sources, set_note, set_station_benchmark, set_station_walls, walls_at,
+    walls_source,
+};
+
 use cave_doc::{Action, AnchorError, Document, Field, Frame, Kind, Value, anchor_stroke};
 use cave_geom::{Path, Point};
 use cave_id::{Id, IdSource};

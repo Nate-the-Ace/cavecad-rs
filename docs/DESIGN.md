@@ -423,3 +423,18 @@ Not done: the old trip-planner packet (printable card), and the stations.json si
 - Survey stations are drawn as the UIS survey point (a triangle, with a dot when the station is a fixed
   anchor of the survey) in the Map, the Profile, and as the station's own mark in the Cross Section,
   replacing the round dots and the axis cross. Size is in pixels, the same at every zoom.
+
+## 2026-10-12: Station tab, benchmarks
+- Clicking a station (Map, Profile, or a row of the Stations table) picks it and the ribbon shows a Station
+  tab (one thing is picked at a time: a tool, a line, or a station; Escape or Done lets go). It shows the
+  kind of place, legs and elevation (never a position), and edits the passage dimensions (left, right, up,
+  down, each with an "open" flag) and the notes, with the Benchmark toggle and the Stations undo/redo.
+- The survey keeps walls and notes on shots, so an edit goes where the survey holds it: the walls of a
+  station are on the last shot arriving at it that recorded any (else the last arriving one); a station
+  nothing arrives at (the start of a trip) uses the trip's opening row. A station with several arriving
+  shots has one note field per shot (the note chooser names each "shot A4 -> A5"). Values are metres and
+  are written in the trip's own unit; only what differs is written (`cave-draw/src/station_survey.rs`,
+  tests in `cave-scene/tests/station_detail.rs`).
+- Benchmark is a station flag (`StationBenchmark`): an agreed benchmark is drawn as the fixed survey
+  point (dotted triangle); every other station is the plain survey point. This replaces drawing survey
+  anchors with the dot, which was wrong: an anchor is a maths choice, a benchmark is a decision.

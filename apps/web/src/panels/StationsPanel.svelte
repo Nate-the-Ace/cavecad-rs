@@ -42,6 +42,13 @@
     changed();
   }
 
+  function pick(row: StationRow) {
+    if (!row.id) return;
+    cave.selected = '';
+    cave.picked = row.id;
+    cave.station = row.id;
+  }
+
   function go(row: StationRow) {
     if (!row.id) return;
     cave.station = row.id;
@@ -96,7 +103,7 @@
       </thead>
       <tbody>
         {#each shown as r (r.id || r.station)}
-          <tr ondblclick={() => go(r)} class:sel={cave.station === r.id} title="Double-click to go to this station">
+          <tr onclick={() => pick(r)} ondblclick={() => go(r)} class:sel={cave.station === r.id} title="Double-click to go to this station">
             <td class="st">{r.station}</td>
             <td class="kinds">
               {#each r.kinds as k}<span class="badge {k}">{KINDS.find((x) => x.key === k)?.label ?? k}</span>{/each}
