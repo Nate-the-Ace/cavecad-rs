@@ -1,4 +1,4 @@
-import { countDone, filesUnder, foldersOf, scanKind, treeRows, withoutComplete } from '../src/lib/scan-tree.ts';
+import { isDerived, countDone, filesUnder, foldersOf, scanKind, treeRows, withoutComplete } from '../src/lib/scan-tree.ts';
 
 let bad = 0;
 const ok = (c: boolean, m: string) => { if (!c) { bad++; console.log('FAIL', m); } };
@@ -25,6 +25,12 @@ ok(withoutComplete(treeRows(paths, new Set()), new Set(), paths).length === rows
 
 ok(foldersOf(paths).join('|') === '2025|2025/trip 10|2025/trip 2', 'every folder at every level: ' + foldersOf(paths).join('|'));
 ok(foldersOf(paths, '2025/trip 2').join('|') === '2025/trip 2' && foldersOf(paths, '2025').length === 3, 'folders under one');
+
+ok(isDerived('Trimmed/a.png') && isDerived('2024/trimmed/b.png') && isDerived('x/TRIMMED/y/z.png'), 'anything inside a Trimmed folder is for the views');
+ok(!isDerived('2024/Trimmed Notes/a.png') && !isDerived('trimmed.png') && !isDerived('a/b.png'), 'only a folder named exactly Trimmed');
+const withTrim = ['2024/p1.png', 'Trimmed/p1_TRIMMED_x1_y2.png', '2024/Trimmed/q.png'];
+ok(treeRows(withTrim, new Set()).map((r) => r.path).join('|') === '2024|2024/p1.png', 'trimmed pages are not in the tree');
+ok(filesUnder(withTrim, '2024').length === 1 && foldersOf(withTrim).join('|') === '2024', 'not counted, not in the folders');
 
 if (bad) process.exit(1);
 console.log('scan tree ok');

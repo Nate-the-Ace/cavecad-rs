@@ -3,7 +3,7 @@
 // into the cave (a trip's list of scans, see `cave-scans`). Where the browser can remember a folder
 // (Chromium), it is offered again next time with one click (the browser insists on a click to
 // let a page read it again).
-import { scanKind, type ScanKind } from './scan-tree';
+import { isDerived, scanKind, type ScanKind } from './scan-tree';
 
 interface DirHandle {
   name: string;
@@ -198,7 +198,8 @@ function load(name: string, found: Map<string, File>, saveCopy = true) {
   files.clear();
   for (const [p, f] of found) files.set(p, f);
   scans.folder = name;
-  scans.paths = [...files.keys()];
+  // Trimmed pages stay loaded (the views draw them) but are not the person's own scans: not listed here.
+  scans.paths = [...files.keys()].filter((p) => !isDerived(p));
   scans.collapsed = [];
   scans.restored = false;
   scans.message = scans.paths.length ? '' : 'No scans (pictures or PDFs) were found there.';

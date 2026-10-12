@@ -15,6 +15,15 @@ export function scanKind(path: string): ScanKind | null {
   return null;
 }
 
+/**
+ * A page that belongs to the views, not to the person's own scans: anything inside a folder called
+ * `Trimmed` (case does not matter), where trimmed pages are kept for the Map, Profile and Cross
+ * Section to draw. The Scans panel does not list, count or mark them.
+ */
+export function isDerived(path: string): boolean {
+  return path.split('/').slice(0, -1).some((d) => d.toLowerCase() === 'trimmed');
+}
+
 export interface TreeRow {
   kind: 'folder' | 'file';
   /** Folder or file path. */
@@ -34,7 +43,7 @@ const natural = (a: string, b: string) => a.localeCompare(b, undefined, { numeri
  */
 export function treeRows(paths: string[], collapsed: ReadonlySet<string>, filter = ''): TreeRow[] {
   const q = filter.trim().toLowerCase();
-  const scans = paths.filter((p) => scanKind(p) && (!q || p.toLowerCase().includes(q)));
+  const scans = paths.filter((p) => scanKind(p) && !isDerived(p) && (!q || p.toLowerCase().includes(q)));
   type Node = { folders: Map<string, Node>; files: string[] };
   const root: Node = { folders: new Map(), files: [] };
   for (const p of scans) {
@@ -65,7 +74,7 @@ export function treeRows(paths: string[], collapsed: ReadonlySet<string>, filter
 /** The scans inside a folder (all levels), as paths. */
 export function filesUnder(paths: string[], folder: string): string[] {
   const prefix = folder + '/';
-  return paths.filter((p) => p.startsWith(prefix) && scanKind(p));
+  return paths.filter((p) => p.startsWith(prefix) && scanKind(p) && !isDerived(p));
 }
 
 /** How many of `paths` are in `done`. */
@@ -86,7 +95,7 @@ export function withoutComplete(rows: TreeRow[], done: ReadonlySet<string>, all:
 export function foldersOf(paths: string[], under = ''): string[] {
   const out = new Set<string>();
   for (const p of paths) {
-    if (!scanKind(p)) continue;
+    if (!scanKind(p) || isDerived(p)) continue;
     const parts = p.split('/').slice(0, -1);
     for (let i = 1; i <= parts.length; i++) out.add(parts.slice(0, i).join('/'));
   }
