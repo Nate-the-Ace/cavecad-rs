@@ -105,3 +105,15 @@ Recorded 2026-10-11 at Nathan's request: these are on the road map and must be w
 
 **Profile walls from splays** (2026-10-12): the ceiling and floor of a band now use every splay as well as the U and D measurements (`cave-profile::band_wall_runs`, ported from `CsProfile.bandWallRuns` and checked against the old output on all four test caves: every ceiling and floor point and every tick). A splay lands at its station's distance along the run plus its own distance along the passage (the bearing of the leg arriving at the station), at the elevation it reaches; pointing up it joins the ceiling, down the floor, in order along the run. A splay within 10 degrees of level (the boundary itself counts as level) says nothing about the ceiling or floor, so it is a tick of its own (small squares on the band, points on the profile wall layer in the DXF) and never bends a line; a splay with no inclination contributes nothing. Lines break, and are never joined across the break, at a junction, at a closure, at a station with no vertical evidence, and past an open (P) ceiling or floor where a pitch leads on. A splay along the passage axis still counts here (its vertical part is a real measurement), unlike in plan. Not ported: the fixed-azimuth option and the skipped-splay count.
 
+
+## 2026-10-12: Shaped lines, first slice (ticks, fans, scallops)
+
+Ledge and Pit now draw hachures, and three new types exist: Flowstone and Rimstone (scallops) and
+Slope (fans). Only the curve is stored; the ornament is regenerated from the drawn spline every
+time it is painted, so editing the line moves the marks. New crate `cave-shape` is a port of the
+pure geometry in the old `CsShapeLine` (stations, ticks, fans, scallops; old spacings and sizes,
+feet converted to metres), with hand-solved unit tests. Scallop and fan styles hide their spine, as
+the old app did. The marks lie on the right of travel; `Field::FeatureFlip` and a "Flip side"
+button in the selected-line tab move them to the left (one undoable edit in the line's own panel).
+Not yet: Wall Glyphs and automatic outside-of-wall sides (`autoSides`), ornament in the 3D map
+view, ornament in DXF export (the spine exports; marks do not yet), per-line spacing and scale.

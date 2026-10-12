@@ -355,6 +355,45 @@ pub fn set_line_closed(id: &str, closed: bool) -> String {
     })
 }
 
+/// Which side of a shaped line its ornament lies on. One undoable edit. Returns `ok` or `error: ...`.
+#[wasm_bindgen]
+pub fn set_line_flip(id: &str, flip: bool) -> String {
+    change_line(id, |doc, line| cave_draw::set_stroke_flip(doc, line, flip))
+}
+
+/// The ornament of a shaped line: `curve` is `[[x, y], ...]` (the smooth curve, in metres), `flip`
+/// puts it on the left of travel. Returns `{spine, lines}` as JSON: whether the curve itself is drawn, and the ornament polylines (none for a type with no shape).
+#[wasm_bindgen]
+pub fn ornament(kind: &str, curve: &str, closed: bool, flip: bool) -> String {
+    let pts = serde_json::from_str::<Vec<[f64; 2]>>(curve).unwrap_or_default();
+    let side = if flip { -1.0 } else { 1.0 };
+    let spine = cave_shape::shape(kind).is_none_or(|s| !s.hide_spine);
+    let lines = cave_shape::ornament(kind, &pts, closed, side, 1.0);
+    serde_json::json!({"spine": spine, "lines": lines}).to_string()
+}
+
+/// Ids of the shaped lines whose ornament is flipped to the left of travel (JSON array).
+#[wasm_bindgen]
+pub fn flipped_lines() -> String {
+    DOC.with(|d| {
+        let ids: Vec<String> = d
+            .borrow()
+            .as_ref()
+            .map(|doc| {
+                doc.ids_of(cave_doc::Kind::Feature)
+                    .into_iter()
+                    .filter(|id| {
+                        doc.entity(*id)
+                            .is_some_and(|e| e.flag(cave_doc::Field::FeatureFlip))
+                    })
+                    .map(|id| id.to_string())
+                    .collect()
+            })
+            .unwrap_or_default();
+        serde_json::to_string(&ids).unwrap_or_else(|_| "[]".into())
+    })
+}
+
 /// Changes what a line already drawn is (`wall`, `ledge`, ...). One undoable edit. Returns `ok`
 /// or `error: ...`.
 #[wasm_bindgen]
@@ -410,7 +449,7 @@ pub fn line_info(id: &str) -> String {
                 (_, cave_doc::Value::Anchored(Some(a))) => a.closed,
                 _ => false,
             };
-            Some(serde_json::json!({"kind": e.text(cave_doc::Field::FeatureType), "view": view, "closed": closed}))
+            Some(serde_json::json!({"kind": e.text(cave_doc::Field::FeatureType), "view": view, "closed": closed, "flip": e.flag(cave_doc::Field::FeatureFlip)}))
         });
         info.map_or_else(|| "null".to_string(), |v| v.to_string())
     })

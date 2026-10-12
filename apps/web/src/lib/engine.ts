@@ -1,5 +1,5 @@
 // Loads the Rust engine (WASM) once and re-exports the few calls the UI uses.
-import init, { start, log, console_events, console_clear, engine_version, open_demo, scene, profile_runs, profile_band, add_profile_sketch, undo, redo, edit_state, passage_mesh, shading, palette, open_dxf, save_dxf, section_stations, section_at, add_section_sketch, map_sections, place_section, map_profile_sketches, add_map_line, map_lines, draw_tools, edit_line, delete_line, set_line_closed, set_line_kind, line_info } from '../wasm/cave_wasm.js';
+import init, { start, log, console_events, console_clear, engine_version, open_demo, scene, profile_runs, profile_band, add_profile_sketch, undo, redo, edit_state, passage_mesh, shading, palette, open_dxf, save_dxf, section_stations, section_at, add_section_sketch, map_sections, place_section, map_profile_sketches, add_map_line, map_lines, draw_tools, edit_line, delete_line, set_line_closed, set_line_kind, line_info, set_line_flip, ornament, flipped_lines } from '../wasm/cave_wasm.js';
 
 import { setInkPalette } from './ink';
 
@@ -194,7 +194,10 @@ export const engine = {
   /** Changes what a line already drawn is (wall, ledge, ...). */
   setLineKind: (id: string, kind: string): string => set_line_kind(id, kind),
   /** What a drawn line is, or null when the id is not a drawn line. */
-  lineInfo: (id: string): { kind: string; view: 'profile' | 'section' | 'map'; closed: boolean } | null => JSON.parse(line_info(id)),
+  setLineFlip: (id: string, flip: boolean): string => set_line_flip(id, flip),
+  ornament: (kind: string, curve: [number, number][], closed: boolean, flip: boolean): { spine: boolean; lines: [number, number][][] } => JSON.parse(ornament(kind, JSON.stringify(curve), closed, flip)),
+  flippedLines: (): string[] => JSON.parse(flipped_lines()),
+  lineInfo: (id: string): { kind: string; view: 'profile' | 'section' | 'map'; closed: boolean; flip: boolean } | null => JSON.parse(line_info(id)),
   /** Deletes a line drawn in a view. */
   deleteLine: (id: string): string => delete_line(id),
   /** The linework drawn in plan on the map, lifted to the passage's elevation. */

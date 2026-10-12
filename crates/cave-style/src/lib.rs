@@ -92,6 +92,27 @@ pub const PALETTE: &[Style] = &[
     s("ledge", "Ledge", Text, 1.6, Dashed, 1.0, 0.4, "CAVE-LEDGES"),
     s("pit", "Pit", Text, 2.0, Solid, 1.0, 0.4, "CAVE-PITS"),
     s(
+        "flowstone",
+        "Flowstone",
+        Muted,
+        1.4,
+        Solid,
+        1.0,
+        0.4,
+        "CAVE-FLOWSTONE",
+    ),
+    s(
+        "rimstone",
+        "Rimstone",
+        Muted,
+        1.4,
+        Solid,
+        1.0,
+        0.4,
+        "CAVE-RIMSTONE",
+    ),
+    s("slope", "Slope", Text, 1.2, Solid, 1.0, 0.4, "CAVE-SLOPES"),
+    s(
         "centerline",
         "Survey line",
         Text,
@@ -205,7 +226,15 @@ pub const PALETTE: &[Style] = &[
 
 /// The types the Draw tab offers as drawing tools, in the order it lists them. Picking one and then
 /// drawing in any view makes linework of that type in that view.
-pub const DRAW_TOOLS: &[&str] = &["wall", "ledge", "pit", "sketch"];
+pub const DRAW_TOOLS: &[&str] = &[
+    "wall",
+    "ledge",
+    "pit",
+    "flowstone",
+    "rimstone",
+    "slope",
+    "sketch",
+];
 
 /// The styles of the drawing tools.
 pub fn draw_tools() -> Vec<&'static Style> {

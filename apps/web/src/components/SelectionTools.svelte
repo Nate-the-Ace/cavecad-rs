@@ -2,7 +2,7 @@
   // What can be done to the selected line: change what it is, close or open its curve. (Delete and
   // Done sit in the tab's Command group.) Each is one undoable edit in the view the line was drawn in.
   import { onMount } from 'svelte';
-  import { BrickWall, Minus, CircleDashed, Pencil, Route, Spline } from '@lucide/svelte';
+  import { BrickWall, Minus, CircleDashed, Pencil, Route, Spline, FlipHorizontal2, Droplets, Waves, TrendingDown } from '@lucide/svelte';
   import { cave, changed } from '../lib/cave.svelte';
   import { engine, loadEngine, type TypeStyle } from '../lib/engine';
 
@@ -10,7 +10,8 @@
   onMount(() => {
     loadEngine().then(() => (tools = engine.drawTools()));
   });
-  const icons: Record<string, typeof Route> = { wall: BrickWall, ledge: Minus, pit: CircleDashed, sketch: Pencil };
+  const icons: Record<string, typeof Route> = { wall: BrickWall, ledge: Minus, pit: CircleDashed, sketch: Pencil, flowstone: Droplets, rimstone: Waves, slope: TrendingDown };
+  const shaped = ['ledge', 'pit', 'flowstone', 'rimstone', 'slope'];
 
   const info = $derived.by(() => {
     void cave.version;
@@ -39,6 +40,12 @@
       <Spline size={22} strokeWidth={1.6} />
       <span>{info?.closed ? 'Open' : 'Close'}</span>
     </button>
+    {#if info && shaped.includes(info.kind)}
+      <button class="tool" class:pressed={info.flip} aria-pressed={info.flip} title="Put the marks on the other side of the line" onclick={() => run(engine.setLineFlip(cave.selected, !info.flip))}>
+        <FlipHorizontal2 size={22} strokeWidth={1.6} />
+        <span>Flip side</span>
+      </button>
+    {/if}
     {#if message}<span class="msg" role="status">{message}</span>{/if}
   </div>
 </div>
@@ -46,7 +53,7 @@
 <style>
   .sel { display: flex; align-items: center; gap: 14px; height: 100%; }
   .types { display: flex; gap: 4px; }
-  .curve { display: flex; flex-direction: column; align-items: center; gap: 2px; }
+  .curve { display: flex; align-items: center; gap: 4px; }
   .tool { display: flex; flex-direction: column; align-items: center; gap: 4px; min-width: 58px; box-sizing: border-box; height: calc(var(--ribbon-body) - 1px); justify-content: center; overflow: hidden; padding: 4px 8px; background: none; border: 0; border-radius: var(--radius); cursor: pointer; font-size: 12px; color: var(--text); }
   .tool:hover { background: var(--panel-2); }
   .tool.pressed { background: var(--accent-bg); outline: 1px solid var(--accent); }

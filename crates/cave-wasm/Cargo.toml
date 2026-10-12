@@ -18,6 +18,7 @@ cave-scene = { path = "../cave-scene" }
 cave-style = { path = "../cave-style" }
 cave-dxf = { path = "../cave-dxf" }
 cave-draw = { path = "../cave-draw" }
+cave-shape = { path = "../cave-shape" }
 cave-id = { path = "../cave-id" }
 cave-geom = { path = "../cave-geom" }
 js-sys = "0.3"

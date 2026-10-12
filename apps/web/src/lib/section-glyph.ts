@@ -5,6 +5,8 @@
 
 import type { Look } from './ink';
 import { smooth } from './spline.ts';
+import { engine } from './engine';
+
 
 export type Sketches = { points: [number, number][]; widths: number[] | null; closed?: boolean }[];
 
@@ -49,6 +51,7 @@ export function drawStrokes(
 ): void {
   g.lineCap = 'round';
   g.lineJoin = 'round';
+  const flipped = new Set(engine.flippedLines()); // shaped lines with ornament on the left of travel
   for (const k of sketches) {
     const l = look(k.kind);
     const curve = smooth(
@@ -57,6 +60,9 @@ export function drawStrokes(
       10,
       !!k.closed,
     );
+    // Shaped lines: ornament is regenerated from the curve (in metres) every time it is drawn.
+    const metres = smooth(k.points, null, 10, !!k.closed).pts;
+    const orn = engine.ornament(k.kind, metres, !!k.closed, !!k.id && flipped.has(k.id));
     const trace = (extra: number, color: string, alpha: number, dash: number[]) => {
       g.strokeStyle = color;
       g.globalAlpha = alpha;
@@ -70,7 +76,21 @@ export function drawStrokes(
       }
     };
     if (selected && k.id === selected) trace(7, l.color, 0.25, []);
-    trace(0, l.color, l.alpha, l.dash);
+    if (orn.spine) trace(0, l.color, l.alpha, l.dash);
+    if (orn.lines.length) {
+      g.strokeStyle = l.color;
+      g.globalAlpha = l.alpha;
+      g.lineWidth = l.weight * scale * 0.8;
+      for (const line of orn.lines) {
+        g.beginPath();
+        line.forEach((p, i) => {
+          const [x, y] = to(p[0], p[1]);
+          if (i === 0) g.moveTo(x, y);
+          else g.lineTo(x, y);
+        });
+        g.stroke();
+      }
+    }
   }
   g.setLineDash([]);
   g.globalAlpha = 1;

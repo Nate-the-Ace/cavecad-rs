@@ -208,6 +208,8 @@ pub enum Field {
     /// the band of its run), `section` (in the plane across the passage at its station), or `map`
     /// (in plan, anchored to the survey). `FeatureType` says what it IS (wall, ledge, pit, ...).
     FeatureView,
+    /// Shaped lines: true puts the ornament on the left of the direction of travel instead of the right.
+    FeatureFlip,
     /// A stroke anchored to stations (follows the survey when it changes).
     FeatureAnchored,
     /// Free-form tags.
@@ -302,6 +304,7 @@ impl Field {
             FeatureStation => (K::Feature, V::Ref),
             FeatureRun => (K::Feature, V::Text),
             FeatureView => (K::Feature, V::Text),
+            FeatureFlip => (K::Feature, V::Flag),
             FeatureAnchored => (K::Feature, V::Anchored),
             FeatureTags => (K::Feature, V::Map),
             SymbolName => (K::Symbol, V::Text),

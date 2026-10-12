@@ -327,6 +327,16 @@ pub fn set_stroke_closed(doc: &Document, id: Id, closed: bool) -> Result<Vec<Act
     }])
 }
 
+/// Actions that put a shaped line's ornament on the other side.
+pub fn set_stroke_flip(doc: &Document, id: Id, flip: bool) -> Result<Vec<Action>, DrawError> {
+    drawn_in(doc, id).ok_or(DrawError::NoStations)?;
+    Ok(vec![Action::Set {
+        id,
+        field: Field::FeatureFlip,
+        value: Value::Flag(flip),
+    }])
+}
+
 /// Actions that change what a stroke is (`wall`, `ledge`, ...): its look follows its type.
 pub fn set_stroke_kind(doc: &Document, id: Id, kind: &str) -> Result<Vec<Action>, DrawError> {
     drawn_in(doc, id).ok_or(DrawError::NoStations)?;
