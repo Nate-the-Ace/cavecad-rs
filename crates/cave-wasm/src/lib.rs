@@ -253,6 +253,7 @@ pub struct PassageMesh {
     positions: Vec<f32>,
     normals: Vec<f32>,
     colors: Vec<f32>,
+    filled: usize,
 }
 
 #[wasm_bindgen]
@@ -274,11 +275,18 @@ impl PassageMesh {
     pub fn colors(&self) -> Vec<f32> {
         self.colors.clone()
     }
+
+    /// How many unmeasured stations were given an inferred (paler) section.
+    #[wasm_bindgen(getter)]
+    pub fn filled(&self) -> usize {
+        self.filled
+    }
 }
 
-/// Builds the open cave's passage mesh. `mode` is `depth` or `trip`.
+/// Builds the open cave's passage mesh. `mode` is `depth` or `trip`; `fill_gaps` draws a paler
+/// inferred section through stations with no measurements.
 #[wasm_bindgen]
-pub fn passage_mesh(adjusted: bool, mode: &str) -> PassageMesh {
+pub fn passage_mesh(adjusted: bool, mode: &str, fill_gaps: bool) -> PassageMesh {
     let color = if mode == "depth" {
         cave_scene::ColorMode::Depth
     } else {
@@ -287,7 +295,7 @@ pub fn passage_mesh(adjusted: bool, mode: &str) -> PassageMesh {
     let mesh = DOC.with(|d| {
         d.borrow()
             .as_ref()
-            .map(|doc| cave_scene::passage_mesh(doc, adjusted, color))
+            .map(|doc| cave_scene::passage_mesh(doc, adjusted, color, fill_gaps))
             .unwrap_or_default()
     });
     let f32s = |v: &[f64]| v.iter().map(|x| *x as f32).collect::<Vec<f32>>();
@@ -295,5 +303,6 @@ pub fn passage_mesh(adjusted: bool, mode: &str) -> PassageMesh {
         positions: f32s(&mesh.positions),
         normals: f32s(&mesh.normals),
         colors: f32s(&mesh.colors),
+        filled: mesh.filled,
     }
 }

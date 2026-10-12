@@ -49,6 +49,8 @@ export interface PassageBuffers {
   positions: Float32Array;
   normals: Float32Array;
   colors: Float32Array;
+  /** Unmeasured stations given an inferred (paler) section. */
+  filled: number;
 }
 export interface BuildInfo {
   builtAt: string | null;
@@ -75,9 +77,9 @@ export const engine = {
   profileBand: (run: string, adjusted: boolean): ProfileScene | null => JSON.parse(profile_band(run, adjusted)),
   /** Adds a stroke drawn on a run's band; every edit goes through the document's one edit path. */
   addSketch: (run: string, points: [number, number][], widths: number[] | null, adjusted: boolean): string => add_profile_sketch(run, JSON.stringify(points), widths ? JSON.stringify(widths) : '', adjusted),
-  passageMesh: (adjusted: boolean, mode: 'trip' | 'depth'): PassageBuffers => {
-    const m = passage_mesh(adjusted, mode);
-    const out = { positions: m.positions, normals: m.normals, colors: m.colors };
+  passageMesh: (adjusted: boolean, mode: 'trip' | 'depth', fillGaps: boolean): PassageBuffers => {
+    const m = passage_mesh(adjusted, mode, fillGaps);
+    const out = { positions: m.positions, normals: m.normals, colors: m.colors, filled: m.filled };
     m.free();
     return out;
   },

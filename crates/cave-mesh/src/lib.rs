@@ -20,5 +20,5 @@
 mod build;
 mod frame;
 
-pub use build::{ColorMode, Mesh, MeshInput, build};
+pub use build::{ColorMode, LoftMode, Mesh, MeshInput, build};
 pub use frame::{Frame, RingPoint, frame_at, ring_at};

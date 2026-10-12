@@ -17,6 +17,7 @@
   let depthColor = $state(false);
   let walls = $state(true);
   let passage = $state(true);
+  let fillGaps = $state(true);
   let projection = $state<Projection>('perspective');
   let status = $state('');
   let scene: Scene | null = null;
@@ -34,7 +35,11 @@
 
   /** The passage surface follows the Adjusted and colour settings. */
   function loadPassage() {
-    view?.setPassage(engine.passageMesh(cave.adjusted, depthColor ? 'depth' : 'trip'));
+    const buffers = engine.passageMesh(cave.adjusted, depthColor ? 'depth' : 'trip', fillGaps);
+    view?.setPassage(buffers);
+    if (buffers.filled > 0) {
+      engine.log('info', 'passage', `${buffers.filled} unmeasured station${buffers.filled === 1 ? '' : 's'} filled in from the nearest measurements (shown paler)`);
+    }
   }
 
   function refresh() {
@@ -80,6 +85,7 @@
     <label><input type="checkbox" bind:checked={cave.adjusted} onchange={refresh} /> Adjusted</label>
     <label><input type="checkbox" bind:checked={walls} onchange={() => view?.setShowWalls(walls)} /> Walls</label>
     <label><input type="checkbox" bind:checked={passage} onchange={() => view?.setShowPassage(passage)} /> Passage</label>
+    <label title="Draw a paler section through stations with no measurements"><input type="checkbox" bind:checked={fillGaps} onchange={loadPassage} /> Fill gaps</label>
     <button class:on={depthColor} title="Colour by elevation" onclick={() => ((depthColor = !depthColor), view?.setElevationColors(depthColor), loadPassage())}><Palette size={15} /></button>
     {#if status}<span class="status">{status}</span>{/if}
   </div>

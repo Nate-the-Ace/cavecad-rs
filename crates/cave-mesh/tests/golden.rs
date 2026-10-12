@@ -4,7 +4,7 @@
 
 use cave_doc::ActorId;
 use cave_id::Id;
-use cave_mesh::{ColorMode, Mesh, MeshInput, build};
+use cave_mesh::{ColorMode, LoftMode, Mesh, MeshInput, build};
 use cave_survey::{Vec3, extract, resolve};
 use serde_json::Value;
 use std::collections::BTreeMap;
@@ -24,6 +24,8 @@ fn mesh_of(text: &str, color: ColorMode) -> Mesh {
         start_lruds: &ex.start_lruds,
         station_trip: &ex.station_trip,
         color,
+        loft: LoftMode::Nearest,
+        fill_gaps: false,
     })
 }
 
