@@ -39,7 +39,7 @@ the index useful; `missing_docs` is a warning for that reason.
 Toolchain: use rustup's, not Homebrew's `rustc` (no wasm32 target). Put it first on PATH:
 `export PATH=/opt/homebrew/opt/rustup/bin:$PATH`. Local browser-build check:
 
-    cargo build --target wasm32-unknown-unknown -p cave-id -p cave-store -p cave-log -p cave-geom -p cave-doc -p cave-survey -p cave-notebook
+    cargo build --target wasm32-unknown-unknown -p cave-id -p cave-store -p cave-log -p cave-geom -p cave-doc -p cave-survey -p cave-notebook -p cave-scans
 
 ## Web app (apps/web)
 

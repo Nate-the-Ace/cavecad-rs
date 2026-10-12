@@ -116,6 +116,9 @@ pub enum Field {
     TripStartNote,
     /// Position of the trip among trips (smaller is earlier; ties break by id).
     TripOrder,
+    /// The scanned field-book pages that go with the trip: relative paths in the person's scans
+    /// folder, one per line. Only the names are kept; the pictures stay on the person's machine.
+    TripScans,
     /// Walls at the trip's first station (nothing arrives there, so no shot carries them).
     TripStartLeft,
     /// See `TripStartLeft`.
@@ -273,7 +276,7 @@ impl Field {
             TripDistanceUnit => (K::Trip, V::Text),
             TripTapeMode => (K::Trip, V::Text),
             TripOrder => (K::Trip, V::Number),
-            TripCaveName | TripInstruments | TripStartNote => (K::Trip, V::Text),
+            TripCaveName | TripInstruments | TripStartNote | TripScans => (K::Trip, V::Text),
             TripStartLeft | TripStartRight | TripStartUp | TripStartDown => (K::Trip, V::Number),
             TripStartLeftOpen | TripStartRightOpen | TripStartUpOpen | TripStartDownOpen => {
                 (K::Trip, V::Flag)

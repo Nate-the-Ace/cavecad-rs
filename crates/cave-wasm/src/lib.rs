@@ -1496,3 +1496,36 @@ pub fn notebook_new_trip(name: &str) -> String {
         _ => r,
     }
 }
+
+// ---- Scans -----------------------------------------------------------------------------------
+
+/// Every scan linked to a trip, as JSON `[{trip, path}]`.
+#[wasm_bindgen]
+pub fn scan_links() -> String {
+    DOC.with(|d| {
+        let v = d
+            .borrow()
+            .as_ref()
+            .map(cave_scans::links)
+            .unwrap_or_default();
+        serde_json::to_string(&v).unwrap_or_else(|_| "[]".into())
+    })
+}
+
+/// Links a scan (a path relative to the scans folder) to a trip. One undoable edit in the Scans history.
+#[wasm_bindgen]
+pub fn scan_link(trip: &str, path: &str) -> String {
+    let Some(trip) = parse_id(trip) else {
+        return "error: no such trip".into();
+    };
+    scoped_edit("scans", |doc| cave_scans::link(doc, trip, path))
+}
+
+/// Takes a scan off a trip.
+#[wasm_bindgen]
+pub fn scan_unlink(trip: &str, path: &str) -> String {
+    let Some(trip) = parse_id(trip) else {
+        return "error: no such trip".into();
+    };
+    scoped_edit("scans", |doc| cave_scans::unlink(doc, trip, path))
+}

@@ -19,6 +19,7 @@ cave-style = { path = "../cave-style" }
 cave-dxf = { path = "../cave-dxf" }
 cave-draw = { path = "../cave-draw" }
 cave-notebook = { path = "../cave-notebook" }
+cave-scans = { path = "../cave-scans" }
 cave-shape = { path = "../cave-shape" }
 cave-sheet = { path = "../cave-sheet" }
 cave-symbols = { path = "../cave-symbols" }

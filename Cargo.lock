@@ -124,6 +124,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "cave-scans"
+version = "0.0.1"
+dependencies = [
+ "cave-doc",
+ "cave-dxf",
+ "cave-fixture",
+ "cave-id",
+ "serde",
+]
+
+[[package]]
 name = "cave-scene"
 version = "0.0.1"
 dependencies = [
@@ -213,6 +224,7 @@ dependencies = [
  "cave-id",
  "cave-log",
  "cave-notebook",
+ "cave-scans",
  "cave-scene",
  "cave-shape",
  "cave-sheet",

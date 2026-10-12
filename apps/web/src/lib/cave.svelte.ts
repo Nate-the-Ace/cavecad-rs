@@ -102,6 +102,8 @@ export const cave = $state({
   station: '',
   /** The run the Profile panel is showing. */
   run: '',
+  /** The trip (id) the Notebook and the Scans panel are both on, so a page and its scans stay together. */
+  trip: '',
   /** A request to bring the Map to a station (from the Stations panel). */
   focus: { id: '', seq: 0 },
   /** A request to fit the selected line again at another curve detail; the panel that holds the line does it. */

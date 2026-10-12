@@ -7,7 +7,8 @@
   // bearings the survey keeps. The page is worked out from the survey every time and every cell is a real,
   // undoable edit of it (this panel has its own Undo and Redo).
   import { untrack } from 'svelte';
-  import { Plus, Trash2 } from '@lucide/svelte';
+  import { Plus, ScanLine, Trash2 } from '@lucide/svelte';
+  import { showPanel } from '../lib/workspace.svelte';
   import PanelUndo from '../components/PanelUndo.svelte';
   import { cave, changed, setPick } from '../lib/cave.svelte';
   import { engine, loadEngine } from '../lib/engine';
@@ -16,7 +17,6 @@
 
   let ready = $state(false);
   let trips = $state<TripChoice[]>([]);
-  let tripId = $state('');
   let page = $state<NotebookPage | null>(null);
   let message = $state('');
   let from = $state('');
@@ -28,12 +28,13 @@
   $effect(() => {
     void cave.version;
     void cave.opened;
+    void cave.trip;
     void ready;
     untrack(() => {
       if (!ready) return;
       trips = engine.notebookTrips();
-      if (!trips.some((t) => t.id === tripId)) tripId = trips[0]?.id ?? '';
-      page = tripId ? engine.notebookPage(tripId) : null;
+      if (!trips.some((t) => t.id === cave.trip)) cave.trip = trips[0]?.id ?? '';
+      page = cave.trip ? engine.notebookPage(cave.trip) : null;
       redraw += 1;
     });
   });
@@ -109,7 +110,7 @@
   function newTrip() {
     const r = engine.notebookNewTrip(`Trip ${trips.length + 1}`);
     if (r.startsWith('error')) return void run(r);
-    tripId = r;
+    cave.trip = r;
     changed();
   }
 
@@ -135,11 +136,12 @@
 <div class="panel" role="region" aria-label="Survey notebook" tabindex="-1" onkeydown={onKey}>
   <div class="bar">
     <PanelUndo scope="notebook" label="in the notebook" />
-    <select value={tripId} aria-label="Trip" onchange={(e) => { tripId = e.currentTarget.value; page = engine.notebookPage(tripId); redraw += 1; }}>
+    <select value={cave.trip} aria-label="Trip" onchange={(e) => (cave.trip = e.currentTarget.value)}>
       {#each trips as t}<option value={t.id}>{t.index + 1}. {t.name || 'Untitled trip'}{t.date ? ` (${t.date})` : ''}</option>{/each}
     </select>
     <button class="icon" title="Start a new trip (a new page)" aria-label="New trip" onclick={newTrip}><Plus size={15} /></button>
     {#if page}
+      <button class="scan" onclick={() => showPanel('scans')} title="Show this trip's scanned pages beside the notes"><ScanLine size={14} /> Scans</button>
       {#key redraw}
         <label>Name <input class="wide" value={page.name} maxlength="200" onchange={(e) => field('name', e.currentTarget.value)} onkeydown={enter} /></label>
         <label>Date <input class="date" value={page.date} placeholder="YYYY-MM-DD" onchange={(e) => field('date', e.currentTarget.value)} onkeydown={enter} /></label>
@@ -266,6 +268,7 @@
   .closures { display: flex; flex-wrap: wrap; gap: 6px; padding: 4px 10px 8px; border-top: 1px solid var(--line); max-height: 90px; overflow: auto; }
   .closure { padding: 2px 8px; border-radius: 999px; border: 1px solid var(--line); background: none; color: var(--text); cursor: pointer; font-size: 12px; }
   .none { padding: 14px; color: var(--muted); }
+  button.scan { display: inline-flex; align-items: center; gap: 4px; font: inherit; font-size: 12px; padding: 3px 8px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel-2); color: var(--text); cursor: pointer; }
   button.icon { background: none; border: none; color: var(--muted); cursor: pointer; padding: 2px; }
   button.icon:hover { color: var(--text); }
 </style>

@@ -1,5 +1,5 @@
 // Loads the Rust engine (WASM) once and re-exports the few calls the UI uses.
-import init, { start, log, console_events, console_clear, engine_version, open_demo, scene, profile_runs, profile_band, add_profile_sketch, undo, redo, edit_state, passage_mesh, shading, palette, open_dxf, save_dxf, section_stations, section_at, add_section_sketch, map_sections, place_section, map_profile_sketches, add_map_line, map_lines, draw_tools, edit_line, delete_line, set_line_closed, set_line_kind, line_info, set_line_flip, set_line_text, ornament, callout, sheet_options, sheet_plan, flipped_lines, revision, station_rows, set_station_mark, station_detail, shot_detail, set_shot, set_station_walls, set_station_note, set_station_benchmark, symbols, fills, fill_marks, draw_tool_groups, sync_outbox, sync_apply, sync_snapshot, sync_load, notebook_trips, notebook_page, notebook_set_reading, notebook_set_walls, notebook_set_note, notebook_set_trip_field, notebook_set_declination, notebook_add_shot, notebook_remove_shot, notebook_rename_station, notebook_new_trip } from '../wasm/cave_wasm.js';
+import init, { start, log, console_events, console_clear, engine_version, open_demo, scene, profile_runs, profile_band, add_profile_sketch, undo, redo, edit_state, passage_mesh, shading, palette, open_dxf, save_dxf, section_stations, section_at, add_section_sketch, map_sections, place_section, map_profile_sketches, add_map_line, map_lines, draw_tools, edit_line, delete_line, set_line_closed, set_line_kind, line_info, set_line_flip, set_line_text, ornament, callout, sheet_options, sheet_plan, flipped_lines, revision, station_rows, set_station_mark, station_detail, shot_detail, set_shot, set_station_walls, set_station_note, set_station_benchmark, symbols, fills, fill_marks, draw_tool_groups, sync_outbox, sync_apply, sync_snapshot, sync_load, notebook_trips, notebook_page, notebook_set_reading, notebook_set_walls, notebook_set_note, notebook_set_trip_field, notebook_set_declination, notebook_add_shot, notebook_remove_shot, notebook_rename_station, notebook_new_trip, scan_links, scan_link, scan_unlink } from '../wasm/cave_wasm.js';
 
 import { setInkPalette } from './ink';
 import { setOrnamentSource } from './section-glyph';
@@ -9,7 +9,7 @@ import type { StationRow } from './station-table';
 import type { Lrud, NotebookPage, TripChoice } from './notebook';
 
 /** The panels that keep their own undo history. */
-export type Scope = 'profile' | 'section' | 'map' | 'stations' | 'notebook';
+export type Scope = 'profile' | 'section' | 'map' | 'stations' | 'notebook' | 'scans';
 
 export type Level = 'debug' | 'detail' | 'info' | 'warn' | 'error';
 export interface ConsoleEvent {
@@ -297,6 +297,11 @@ export const engine = {
   notebookRenameStation: (station: string, name: string): string => notebook_rename_station(station, name),
   /** Starts a new trip; returns its id, or `error: ...`. */
   notebookNewTrip: (name: string): string => notebook_new_trip(name),
+  /** Every scan linked to a trip (paths relative to the scans folder). */
+  scanLinks: (): { trip: string; path: string }[] => JSON.parse(scan_links()),
+  /** Links a scan to a trip (one undoable edit in the Scans panel's history). */
+  scanLink: (trip: string, path: string): string => scan_link(trip, path),
+  scanUnlink: (trip: string, path: string): string => scan_unlink(trip, path),
   /** Goes up whenever the open cave really changes; compared with the value at the last save. */
   revision: (): number => revision(),
   /** Local edits since the last call (JSON ops, as a string; `[]` when none). */
