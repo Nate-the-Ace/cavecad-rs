@@ -82,6 +82,12 @@ export class LineEditor<T extends EditableLine = EditableLine> {
     return false;
   }
 
+  /** Lets go of a picked-up fit point without saving (a second finger arrived: it was a gesture). */
+  cancel(): void {
+    this.drag = null;
+    this.h.redraw();
+  }
+
   /** Moves the picked-up fit point; returns true while one is being moved. */
   move(x: number, y: number): boolean {
     if (!this.drag) return false;

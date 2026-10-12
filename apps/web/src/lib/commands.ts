@@ -33,6 +33,13 @@ export const DRAW_OPTIONS: OptionDef[] = [
     default: false,
   },
   {
+    id: 'finger',
+    label: 'Draw with finger',
+    hint: 'A single finger draws while a tool is running; two fingers pan and zoom. Turn off to draw with a pen only and pan with one finger.',
+    kind: 'toggle',
+    default: true,
+  },
+  {
     id: 'pressure',
     label: 'Pen pressure',
     hint: 'Pressing harder draws a thicker line. It changes how the line looks, never where it is.',

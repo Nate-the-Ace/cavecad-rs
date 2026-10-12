@@ -106,7 +106,8 @@
     const tol = tolerancePx(option('detail', 5));
     const pressure = option('pressure', true);
     const close = option('close', false);
-    view?.setDrawOptions({ tolerancePx: tol, pressure, close });
+    const finger = option('finger', true);
+    view?.setDrawOptions({ tolerancePx: tol, pressure, close, finger });
   });
 
   // The picked drawing tool: drawing on the map goes to its plan, from the Top or Bottom view.

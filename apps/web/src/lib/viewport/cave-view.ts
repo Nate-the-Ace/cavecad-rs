@@ -75,8 +75,10 @@ export class CaveView {
   /** Where the next stroke would carry an open line on from, on screen, while a tool waits. */
   private pickupAt: [number, number] | null = null;
   /** How a drawn stroke is turned into a curve: the fit tolerance in pixels, and whether pen pressure counts. */
-  private drawOptions = { tolerancePx: 2.5, pressure: true, close: false };
-  setDrawOptions(o: { tolerancePx: number; pressure: boolean; close: boolean }) {
+  private drawOptions = { tolerancePx: 2.5, pressure: true, close: false, finger: true };
+  /** Fingers on the map now: a second one means a gesture, so a stroke the first began is dropped. */
+  private fingers = new Set<number>();
+  setDrawOptions(o: { tolerancePx: number; pressure: boolean; close: boolean; finger: boolean }) {
     this.drawOptions = o;
   }
   /** Called with a plan stroke (east, north metres) when the person lifts the pen. */
@@ -128,6 +130,33 @@ export class CaveView {
       clearTimeout(this.shadingTimer);
       this.shadingTimer = window.setTimeout(() => this.reshade() && this.rebuild(), 150);
     });
+    canvas.addEventListener(
+      'pointerdown',
+      (e) => {
+        if (e.pointerType !== 'touch') return;
+        this.fingers.add(e.pointerId);
+        if (this.fingers.size >= 2 && (this.liveLine || this.lineEdit)) {
+          // A second finger: that was the start of a pinch or pan, not a line. The gesture goes to the orbit controls.
+          this.liveLine = null;
+          this.lineEdit = null;
+          this.controls.enabled = true;
+          this.requestRender();
+        }
+      },
+      true,
+    );
+    const lift = (e: PointerEvent) => {
+      if (e.pointerType === 'touch') this.fingers.delete(e.pointerId);
+    };
+    canvas.addEventListener('pointerup', lift);
+    canvas.addEventListener('pointercancel', (e) => {
+      lift(e);
+      if (e.pointerType === 'touch' && this.liveLine) {
+        this.liveLine = null;
+        this.controls.enabled = true;
+        this.requestRender();
+      }
+    });
     // A right click ends the running command; a right drag still pans.
     canvas.addEventListener('pointerdown', (e) => {
       if (e.button === 2) this.rightDown = { x: e.clientX, y: e.clientY };
@@ -147,7 +176,7 @@ export class CaveView {
         if (e.button !== 0) return;
         if (this.drawTool) {
           // Drawing on the map: only from straight above or below, where plan is what is seen.
-          if (!this.canDrawHere || e.pointerType === 'touch') return;
+          if (!this.canDrawHere || this.fingers.size > 1 || (e.pointerType === 'touch' && !this.drawOptions.finger)) return;
           const p = this.planPoint(e.clientX, e.clientY);
           if (!p) return;
           e.stopImmediatePropagation();
@@ -504,7 +533,7 @@ export class CaveView {
 
   /** A press in the Top or Bottom view with no tool: pick up a fit point of the selected map line, or select the line there. */
   private pressLine(e: PointerEvent) {
-    if (this.drawTool || !this.canDrawHere || e.button !== 0 || e.pointerType === 'touch') return;
+    if (this.drawTool || !this.canDrawHere || e.button !== 0 || this.fingers.size > 1) return;
     const rect = this.canvas.getBoundingClientRect();
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;

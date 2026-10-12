@@ -1,0 +1,16 @@
+import { Touches } from '../src/lib/touch.ts';
+let bad = 0;
+const ok = (c: boolean, m: string) => { if (!c) { bad++; console.log('FAIL', m); } };
+const t = new Touches();
+ok(t.down({ pointerId: 1, clientX: 100, clientY: 100 }) === 1, 'one finger down');
+ok(t.move({ pointerId: 1, clientX: 110, clientY: 100 }) === null, 'one finger is not a gesture');
+ok(t.down({ pointerId: 2, clientX: 200, clientY: 100 }) === 2, 'two fingers down');
+const spread = t.move({ pointerId: 2, clientX: 300, clientY: 100 })!;
+ok(Math.abs(spread.scale - 190 / 90) < 1e-9 && Math.abs(spread.cx - 205) < 1e-9, 'spreading zooms in about the middle');
+const pan = t.move({ pointerId: 1, clientX: 110, clientY: 140 })!;
+ok(Math.abs(pan.dy - 20) < 1e-9, 'the middle of the fingers moved 20 down');
+ok(t.up({ pointerId: 2 }) === 1, 'one finger left');
+ok(t.move({ pointerId: 1, clientX: 120, clientY: 140 }) === null, 'a single finger after a gesture is no gesture');
+ok(t.up({ pointerId: 1 }) === 0, 'all up');
+ok(t.move({ pointerId: 9, clientX: 1, clientY: 1 }) === null, 'an unknown finger is ignored');
+console.log(bad ? 'FAILED' : 'touch checks ok'); process.exit(bad ? 1 : 0);

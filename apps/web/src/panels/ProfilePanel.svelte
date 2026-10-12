@@ -7,6 +7,7 @@
   import { cave, changed, option, setShowSections } from '../lib/cave.svelte';
   import { defaultBandOffset, drawHandles, drawStrokes, glyphCurves, hits, leaderEnd } from '../lib/section-glyph';
   import { LineEditor, endpointNear, joinFit } from '../lib/line-editor';
+  import { Touches } from '../lib/touch';
   import { fitStroke } from '../lib/spline';
   import { tolerancePx } from '../lib/commands';
   import type { BandSection } from '../lib/engine';
@@ -226,6 +227,9 @@
   }
 
   // ---- input: pen and mouse draw, fingers pan, middle button pans, wheel zooms ---------------
+  // Fingers: one draws (with a tool running) or pans, two pan and pinch-zoom together.
+  const touches = new Touches();
+  let gesturing = false;
   let panning: { x: number; y: number } | null = null;
   let lastMiddle = 0;
 
@@ -243,17 +247,26 @@
   function onDown(e: PointerEvent) {
     canvas.setPointerCapture(e.pointerId);
     canvas.focus();
+    if (e.pointerType === 'touch' && touches.down(e) >= 2) {
+      // A second finger: this was the start of a gesture, not a line.
+      gesturing = true;
+      live = null;
+      panning = null;
+      editor.cancel();
+      schedule();
+      return;
+    }
     const middle = e.button === 1;
     if (middle) {
       e.preventDefault();
       if (e.timeStamp - lastMiddle < 350) fit();
       lastMiddle = e.timeStamp;
     }
-    if (e.button === 0 && e.pointerType !== 'touch' && !cave.tool) {
+    if (e.button === 0 && !cave.tool) {
       const r = canvas.getBoundingClientRect();
       if (editor.press(e.clientX - r.left, e.clientY - r.top)) return;
     }
-    if (e.button === 0 && e.pointerType !== 'touch') {
+    if (e.button === 0) {
       const rect = canvas.getBoundingClientRect();
       const grab = sectionAt(e.clientX - rect.left, e.clientY - rect.top);
       if (grab) {
@@ -261,7 +274,7 @@
         return;
       }
     }
-    const draws = !!cave.tool && !middle && e.button === 0 && e.pointerType !== 'touch' && !!band;
+    const draws = !!cave.tool && !middle && e.button === 0 && (e.pointerType !== 'touch' || option('finger', true)) && !!band;
     if (draws) {
       live = { pts: [], widths: [], pressure: e.pointerType === 'pen' && option('pressure', true) };
       addPoint(e);
@@ -282,6 +295,21 @@
   }
 
   function onMove(e: PointerEvent) {
+    if (e.pointerType === 'touch') {
+      const g = touches.move(e);
+      if (g) {
+        // Two fingers: pan with the middle of them, zoom with how far apart they are.
+        const r0 = canvas.getBoundingClientRect();
+        const mx = g.cx - r0.left;
+        const my = g.cy - r0.top;
+        ox = mx - (mx - ox) * g.scale + g.dx;
+        oy = my - (my - oy) * g.scale + g.dy;
+        scale *= g.scale;
+        schedule();
+        return;
+      }
+      if (gesturing) return; // one finger left after a gesture: wait until all are lifted
+    }
     const r = canvas.getBoundingClientRect();
     if (editor.move(e.clientX - r.left, e.clientY - r.top)) return;
     if (!live && !panning && cave.tool) showPickup(e.clientX - r.left, e.clientY - r.top);
@@ -308,7 +336,24 @@
     }
   }
 
-  function onUp() {
+  function onUp(e?: PointerEvent) {
+    if (e?.pointerType === 'touch') {
+      const left = touches.up(e);
+      if (gesturing) {
+        // A gesture never commits a stroke; it ends when every finger is up.
+        if (left === 0) gesturing = false;
+        panning = null;
+        return;
+      }
+      if (e.type === 'pointercancel') {
+        // The system took the touch (a palm, a system gesture): drop the stroke.
+        live = null;
+        panning = null;
+        editor.cancel();
+        schedule();
+        return;
+      }
+    }
     panning = null;
     if (editor.release()) return;
     if (dragSection) {
