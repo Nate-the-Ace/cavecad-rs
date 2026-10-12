@@ -11,9 +11,12 @@ import path from 'node:path';
 
 const repo = path.resolve(import.meta.dirname, '../../..');
 const outDir = path.resolve(import.meta.dirname, '../src/wasm');
+// Where rustup's tools usually are on a developer's machine, put first; the system's own PATH follows,
+// joined with the separator of the system this runs on (a colon on macOS and Linux, a semicolon on Windows).
+const home = process.env.HOME ?? process.env.USERPROFILE ?? '';
 const env = {
   ...process.env,
-  PATH: `/opt/homebrew/opt/rustup/bin:${process.env.HOME}/.cargo/bin:${process.env.PATH}`,
+  PATH: ['/opt/homebrew/opt/rustup/bin', path.join(home, '.cargo', 'bin'), process.env.PATH ?? ''].join(path.delimiter),
 };
 
 function git(...args) {
