@@ -456,6 +456,8 @@
     if (hit) {
       setPick('station', hit.id);
       cave.station = hit.id;
+    } else if (cave.pick.kind) {
+      setPick('', ''); // a click on nothing lets go
     }
   }
 

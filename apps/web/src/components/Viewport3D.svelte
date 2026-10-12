@@ -166,7 +166,7 @@
 
   // The station the Cross Section panel shows is ringed on the map, while that panel can be seen.
   $effect(() => {
-    const id = cave.pick.kind === 'station' ? cave.pick.id : panelState.visible.section ? cave.station : '';
+    const id = cave.pick.kind === 'station' ? cave.pick.id : '';
     view?.setSelected(id);
     view?.setSelectedShot(cave.pick.kind === 'leg' || cave.pick.kind === 'splay' ? cave.pick.id : '');
   });

@@ -451,3 +451,6 @@ Not done: the old trip-planner packet (printable card), and the stations.json si
   the flags Not on map, Void, Hold fixed). `cave-draw::set_shot` writes only what changed (metres in, the
   trip's unit out; inclination limited to -90..90). Picking legs in the Profile is not done yet (its
   legs carry no shot id).
+- Deselecting: only a picked station is ringed (Map), ringed (Profile) or highlighted (Stations table); the
+  station the Cross Section panel shows no longer stays lit after a click on nothing. A click on empty
+  space in the Map or Profile lets go.

@@ -102,7 +102,7 @@
       </thead>
       <tbody>
         {#each shown as r (r.id || r.station)}
-          <tr onclick={() => pick(r)} ondblclick={() => go(r)} class:sel={cave.pick.kind === 'station' ? cave.pick.id === r.id : cave.station === r.id} title="Double-click to go to this station">
+          <tr onclick={() => pick(r)} ondblclick={() => go(r)} class:sel={cave.pick.kind === 'station' && cave.pick.id === r.id} title="Double-click to go to this station">
             <td class="st">{r.station}</td>
             <td class="kinds">
               {#each r.kinds as k}<span class="badge {k}">{KINDS.find((x) => x.key === k)?.label ?? k}</span>{/each}
