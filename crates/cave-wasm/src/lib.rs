@@ -105,10 +105,17 @@ fn install(mut doc: Document) {
 }
 
 /// A new editor identity for this device (53 bits, so it survives a trip through JavaScript).
+#[cfg(target_arch = "wasm32")]
 fn random_actor() -> ActorId {
     let hi = (js_sys::Math::random() * 2_097_152.0) as u64;
     let lo = (js_sys::Math::random() * 4_294_967_296.0) as u64;
     ActorId((hi << 32) | lo | 1)
+}
+
+/// Native builds (the tests) have no browser random source and edit alone.
+#[cfg(not(target_arch = "wasm32"))]
+fn random_actor() -> ActorId {
+    ActorId(1)
 }
 
 /// Opens a demo cave from shot-list JSON (the synthetic test caves). Returns a one-line summary,
