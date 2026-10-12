@@ -507,7 +507,6 @@ pub const DRAW_TOOLS: &[&str] = &[
     "sketch",
     "text",
     "callout",
-    "underlying",
     "presumed",
     "narrow",
     "dripline",
@@ -536,7 +535,7 @@ pub const TOOL_GROUPS: &[(&str, &[&str])] = &[
     ),
     (
         "Passage lines",
-        &["underlying", "presumed", "narrow", "dripline", "glyphs"],
+        &["presumed", "narrow", "dripline", "glyphs"],
     ),
     (
         "Geology and relief",
