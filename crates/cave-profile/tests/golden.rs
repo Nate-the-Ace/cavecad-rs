@@ -4,7 +4,7 @@
 
 use cave_doc::{ActorId, Field};
 use cave_id::Id;
-use cave_profile::{Graph, LegInfo, group_runs, tie_name_of_run, unroll_band};
+use cave_profile::{Graph, LegInfo, group_runs, hierarchy, unroll_band};
 use cave_survey::{extract, resolve};
 use serde_json::Value;
 use std::collections::HashMap;
@@ -38,7 +38,6 @@ fn check(file: &str) {
             )
         })
         .collect();
-    let by_label: HashMap<&str, Id> = labels.iter().map(|(id, l)| (l.as_str(), *id)).collect();
     let label = |id: &Id| labels[id].clone();
 
     let runs = group_runs(&labels, &order);
@@ -73,6 +72,24 @@ fn check(file: &str) {
         })
         .collect();
     let graph = Graph::new(&infos);
+    let seq: HashMap<Id, usize> = order.iter().enumerate().map(|(i, id)| (*id, i)).collect();
+    let hier = hierarchy(&runs, &infos, &seq);
+    for run in &runs.runs {
+        let want_tie = want["hierarchy"]["ties"][&run.key].as_str();
+        let want_parent = want["hierarchy"]["parents"][&run.key].as_str();
+        assert_eq!(
+            hier.ties[&run.key].map(|t| label(&t)).as_deref(),
+            want_tie,
+            "{file} run {}: tie station",
+            run.key
+        );
+        assert_eq!(
+            hier.parents[&run.key].as_deref(),
+            want_parent,
+            "{file} run {}: parent run",
+            run.key
+        );
+    }
     let z_of = |id: Id| r.stations.get(&id).map(|p| p.pos.z);
 
     for run in &runs.runs {
@@ -86,7 +103,7 @@ fn check(file: &str) {
             .collect();
         assert_eq!(names, want_names, "{file} run {}: member order", run.key);
 
-        let tie = tie_name_of_run(&run.key).and_then(|n| by_label.get(n.as_str()).copied());
+        let tie = hier.ties[&run.key];
         let band = unroll_band(run, tie, &graph, &labels, &z_of, &ex.lruds);
         let stations = w["stations"].as_array().unwrap();
         assert_eq!(

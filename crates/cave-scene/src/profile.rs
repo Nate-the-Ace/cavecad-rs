@@ -5,7 +5,7 @@
 use crate::solved::{Solved, solve};
 use cave_doc::{Document, Field, Frame, Kind, Value};
 use cave_id::Id;
-use cave_profile::{Graph, LegInfo, group_runs, tie_name_of_run, unroll_band};
+use cave_profile::{Graph, LegInfo, group_runs, hierarchy, unroll_band};
 use cave_survey::LegKind;
 use serde::Serialize;
 use std::collections::HashMap;
@@ -76,7 +76,7 @@ pub struct ProfileScene {
     pub bounds: Option<[f64; 4]>,
 }
 
-fn graph(s: &Solved) -> Graph {
+fn leg_infos(s: &Solved) -> Vec<LegInfo> {
     let plan: HashMap<Id, f64> =
         s.ex.legs
             .iter()
@@ -96,15 +96,22 @@ fn graph(s: &Solved) -> Graph {
             })
         })
         .collect();
-    Graph::new(&infos)
+    infos
 }
 
-fn tie_station(s: &Solved, key: &str) -> Option<Id> {
-    let name = tie_name_of_run(key)?;
-    s.labels
-        .iter()
-        .find(|(id, l)| **l == name && s.positions.contains_key(id))
-        .map(|(id, _)| *id)
+fn graph(s: &Solved) -> Graph {
+    Graph::new(&leg_infos(s))
+}
+
+/// The station each run ties in at, decided by the shot graph (the station on the parent's side
+/// of the leg that placed the run), as the old app does. Only stations with a position count.
+fn tie_stations(s: &Solved, runs: &cave_profile::Runs) -> HashMap<String, Id> {
+    let seq: HashMap<Id, usize> = s.order.iter().enumerate().map(|(i, id)| (*id, i)).collect();
+    hierarchy(runs, &leg_infos(s), &seq)
+        .ties
+        .into_iter()
+        .filter_map(|(k, t)| t.filter(|t| s.positions.contains_key(t)).map(|t| (k, t)))
+        .collect()
 }
 
 /// Every run in the cave with its band length, in survey order.
@@ -112,11 +119,13 @@ pub fn runs(doc: &Document, use_adjustment: bool) -> Vec<RunInfo> {
     let s = solve(doc, use_adjustment);
     let g = graph(&s);
     let z_of = |id: Id| s.positions.get(&id).map(|p| p.z);
-    group_runs(&s.labels, &s.order)
+    let grouped = group_runs(&s.labels, &s.order);
+    let ties = tie_stations(&s, &grouped);
+    grouped
         .runs
         .iter()
         .map(|run| {
-            let tie = tie_station(&s, &run.key);
+            let tie = ties.get(&run.key).copied();
             let band = unroll_band(run, tie, &g, &s.labels, &z_of, &s.ex.lruds);
             RunInfo {
                 key: run.key.clone(),
@@ -135,7 +144,8 @@ pub fn profile_scene(doc: &Document, key: &str, use_adjustment: bool) -> Option<
     let z_of = |id: Id| s.positions.get(&id).map(|p| p.z);
     let grouped = group_runs(&s.labels, &s.order);
     let run = grouped.runs.iter().find(|r| r.key == key)?;
-    let band = unroll_band(run, tie_station(&s, key), &g, &s.labels, &z_of, &s.ex.lruds);
+    let tie = tie_stations(&s, &grouped).get(key).copied();
+    let band = unroll_band(run, tie, &g, &s.labels, &z_of, &s.ex.lruds);
 
     // Sketches are anchored to stations: place them from where the stations are NOW.
     let at: HashMap<Id, [f64; 2]> = band.stations.iter().map(|x| (x.id, [x.s, x.z])).collect();
@@ -224,7 +234,8 @@ pub fn profile_frames(doc: &Document, key: &str, use_adjustment: bool) -> Option
     let z_of = |id: Id| s.positions.get(&id).map(|p| p.z);
     let grouped = group_runs(&s.labels, &s.order);
     let run = grouped.runs.iter().find(|r| r.key == key)?;
-    let band = unroll_band(run, tie_station(&s, key), &g, &s.labels, &z_of, &s.ex.lruds);
+    let tie = tie_stations(&s, &grouped).get(key).copied();
+    let band = unroll_band(run, tie, &g, &s.labels, &z_of, &s.ex.lruds);
     Some(
         band.stations
             .windows(2)
@@ -264,6 +275,21 @@ mod tests {
             "plan length, not slope"
         );
         assert_eq!(r[0].stations, 3);
+    }
+
+    #[test]
+    fn a_letter_run_starts_at_the_station_it_ties_in_at() {
+        // B's name says nothing about A3; the shot that placed B1 does.
+        let b = profile_scene(&cave(), "B", false).unwrap();
+        assert_eq!(b.tie.as_deref(), Some("A3"));
+        let labels: Vec<&str> = b.stations.iter().map(|x| x.label.as_str()).collect();
+        assert_eq!(labels, ["A3", "B1", "B2"], "the tie-in station comes first");
+        assert!(
+            b.stations[0].s.abs() < 1e-9,
+            "and sits at the start of the band"
+        );
+        let a = profile_scene(&cave(), "A", false).unwrap();
+        assert_eq!(a.tie, None, "the main run has nothing to tie into");
     }
 
     #[test]

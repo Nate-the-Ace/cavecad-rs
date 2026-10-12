@@ -38,15 +38,15 @@ for (const name of FIXTURES) {
       trips: (s.trips || []).map(function(t){ return { name: t.name, startLrud: t.startLrud || null }; }),
       profile: (function(){
         var g = CsProfile.groupRuns(r), adj = CsProfile.adjacency(r), idx = CsProfile.legIndex(r), bands = {};
+        var h = CsProfile.hierarchy(g, r);
         for (var i = 0; i < g.order.length; i++) {
           var key = g.order[i], run = g.runs[key];
-          var tn = CsProfile.tieNameOfRun(key);
-          var tie = (tn !== null && r.stations.hasOwnProperty(tn)) ? tn : null;
+          var tie = (h.ties[key] !== null && h.ties[key] !== undefined && r.stations.hasOwnProperty(h.ties[key])) ? h.ties[key] : null;
           var b = CsProfile.unrollBand(run, tie, r, null, { adjacency: adj, legIndex: idx });
           bands[key] = { tie: b.tie, stopped: b.stopped, stoppedReason: b.stoppedReason, omitted: b.omitted,
                          stations: b.stations.map(function(x){ return [x.name, x.x, x.y]; }), runStations: run.stations };
         }
-        return { order: g.order, ungrouped: g.ungrouped, bands: bands };
+        return { order: g.order, ungrouped: g.ungrouped, bands: bands, hierarchy: { parents: h.parents, ties: h.ties, bandOrder: h.order } };
       })(),
       mesh: (function(){
         var round = function(a, d){ var k = Math.pow(10, d); return a.map(function(v){ return Math.round(v * k) / k; }); };
