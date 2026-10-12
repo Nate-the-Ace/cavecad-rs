@@ -202,8 +202,12 @@ pub enum Field {
     FeatureTrip,
     /// For section traces, the station the section is cut at.
     FeatureStation,
-    /// For profile sketches, the run (key) whose band the stroke was drawn on.
+    /// For profile linework, the run (key) whose band the stroke was drawn on.
     FeatureRun,
+    /// Which view the stroke was drawn in, and so what its points mean: `profile` (anchored to
+    /// the band of its run), `section` (in the plane across the passage at its station), or `map`
+    /// (in plan, anchored to the survey). `FeatureType` says what it IS (wall, ledge, pit, ...).
+    FeatureView,
     /// A stroke anchored to stations (follows the survey when it changes).
     FeatureAnchored,
     /// Free-form tags.
@@ -297,6 +301,7 @@ impl Field {
             FeatureTrip => (K::Feature, V::Ref),
             FeatureStation => (K::Feature, V::Ref),
             FeatureRun => (K::Feature, V::Text),
+            FeatureView => (K::Feature, V::Text),
             FeatureAnchored => (K::Feature, V::Anchored),
             FeatureTags => (K::Feature, V::Map),
             SymbolName => (K::Symbol, V::Text),

@@ -253,7 +253,33 @@ impl Geometry<'_> {
     /// A flat polyline with optional pen weight per vertex, as variable-width segments.
     fn lwpolyline(&mut self, key: &str, pts: &[[f64; 2]], widths: Option<&[f64]>) {
         let (layer, color) = self.look(key);
-        self.entity("LWPOLYLINE", layer, Some(color), "AcDbPolyline");
+        self.lwpolyline_on(layer.to_string(), color, pts, widths);
+    }
+
+    /// A flat polyline of `key`'s type on its layer with `suffix` added (profile linework gets its
+    /// own layers, apart from the plan's).
+    fn lwpolyline_suffixed(
+        &mut self,
+        key: &str,
+        suffix: &str,
+        pts: &[[f64; 2]],
+        widths: Option<&[f64]>,
+    ) {
+        let st = style(key);
+        let color = dxf_color(st.ink);
+        let layer = cave_style::dxf_layer(key, Some(suffix));
+        self.layers.insert(layer_name(&layer), (color, st.linetype));
+        self.lwpolyline_on(layer, color, pts, widths);
+    }
+
+    fn lwpolyline_on(
+        &mut self,
+        layer: String,
+        color: i32,
+        pts: &[[f64; 2]],
+        widths: Option<&[f64]>,
+    ) {
+        self.entity("LWPOLYLINE", &layer, Some(color), "AcDbPolyline");
         self.w.tag(90, pts.len().to_string());
         self.w.tag(70, "0");
         for (i, p) in pts.iter().enumerate() {
@@ -353,7 +379,7 @@ fn draw_profiles(g: &mut Geometry, doc: &Document, adjusted: bool, plan_min: [f6
         }
         for sk in &p.sketches {
             let pts: Vec<[f64; 2]> = sk.points.iter().map(|q| at(q[0], q[1])).collect();
-            g.lwpolyline("profile-sketch", &pts, sk.widths.as_deref());
+            g.lwpolyline_suffixed(&sk.kind, "PROFILE", &pts, sk.widths.as_deref());
         }
         base_y -= (b[3] - b[1]) + 60.0;
     }

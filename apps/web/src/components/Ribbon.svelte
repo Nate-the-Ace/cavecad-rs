@@ -2,6 +2,7 @@
   import { engine } from '../lib/engine';
   import { openDxf, saveDxf } from '../lib/files';
   import { cave, setUnits } from '../lib/cave.svelte';
+  import DrawTools from './DrawTools.svelte';
   import ThemeGroup from './ThemeGroup.svelte';
   import { PANELS, panelState, resetLayout, togglePanel } from '../lib/workspace.svelte';
   import { FileInput, FolderOpen, Save, Ruler, Footprints, Route, Waypoints, Pencil, Spline, PaintBucket, PanelTop, Scissors, Box, Map as MapIcon, Terminal, LayoutDashboard, Activity } from '@lucide/svelte';
@@ -47,7 +48,7 @@
       { name: 'Trace', items: [stub('Feature', Pencil), stub('Shaped', Spline), stub('Fill', PaintBucket)] },
       { name: 'Views', items: [stub('Profile', PanelTop), panelItem('section', Scissors), stub('3D', Box)] },
     ],
-    Draw: [],
+    Draw: [{ name: 'Linework', items: [], custom: DrawTools }],
     Sheets: [],
     View: [
       { name: 'Panels', items: [panelItem('map', MapIcon), panelItem('profile', Activity), panelItem('section', Scissors), panelItem('console', Terminal)] },
@@ -59,6 +60,10 @@
   let active = $state('Home');
 
   function keys(e: KeyboardEvent) {
+    if (e.key === 'Escape' && cave.tool) {
+      cave.tool = '';
+      return;
+    }
     if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
     const k = e.key.toLowerCase();
     if (k === 'o') (e.preventDefault(), open());

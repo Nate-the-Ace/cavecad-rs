@@ -262,6 +262,57 @@ pub fn map_profile_sketches(adjusted: bool) -> String {
     })
 }
 
+/// Adds a stroke of `kind` drawn in plan on the map. `points` are `[east, north]` metres. It is
+/// anchored to the survey's legs, goes through the one edit path and is undoable. Returns `ok` or
+/// `error: ...`.
+#[wasm_bindgen]
+pub fn add_map_line(kind: &str, points: &str, widths: &str, adjusted: bool) -> String {
+    let Ok(points) = serde_json::from_str::<Vec<[f64; 2]>>(points) else {
+        return "error: unreadable stroke".into();
+    };
+    let widths: Option<Vec<f64>> = if widths.is_empty() {
+        None
+    } else {
+        serde_json::from_str(widths).ok()
+    };
+    let result = DOC.with(|d| {
+        let mut slot = d.borrow_mut();
+        let doc = slot.as_mut().ok_or("no cave is open")?;
+        let frames = cave_scene::map_frames(doc, adjusted);
+        let (_, actions) =
+            cave_draw::map_line(doc, &mut random_ids(), kind, &points, widths, &frames)
+                .map_err(|e| format!("{e:?}"))?;
+        let edit = doc.edit(actions).map_err(|e| format!("{e:?}"))?;
+        HISTORY.with(|h| h.borrow_mut().record(&edit));
+        Ok::<(), String>(())
+    });
+    match result {
+        Ok(()) => {
+            tracing::info!(source = "sketch", "added a {kind} line to the map");
+            "ok".into()
+        }
+        Err(e) => format!("error: {e}"),
+    }
+}
+
+/// The linework drawn in plan on the map, lifted to the passage's elevation (JSON array).
+#[wasm_bindgen]
+pub fn map_lines(adjusted: bool) -> String {
+    DOC.with(|d| {
+        let list = match d.borrow().as_ref() {
+            Some(doc) => cave_scene::map_lines_3d(doc, adjusted),
+            None => Vec::new(),
+        };
+        serde_json::to_string(&list).unwrap_or_else(|_| "[]".to_string())
+    })
+}
+
+/// The drawing tools the Draw tab offers (JSON array of palette styles).
+#[wasm_bindgen]
+pub fn draw_tools() -> String {
+    serde_json::to_string(&cave_style::draw_tools()).unwrap_or_else(|_| "[]".to_string())
+}
+
 /// Places a station's section sketches by hand in a view (`map` or `profile`), as an offset from
 /// the station in that view's metres. One undoable edit. Returns `ok` or `error: ...`.
 #[wasm_bindgen]
@@ -289,7 +340,13 @@ pub fn place_section(station: &str, view: &str, a: f64, b: f64, c: f64) -> Strin
 /// `[across, up]` metres in the section's plane; `widths` is pen weight per point or empty. Goes
 /// through the one edit path and is undoable. Returns `ok` or `error: ...`.
 #[wasm_bindgen]
-pub fn add_section_sketch(station: &str, points: &str, widths: &str, adjusted: bool) -> String {
+pub fn add_section_sketch(
+    station: &str,
+    kind: &str,
+    points: &str,
+    widths: &str,
+    adjusted: bool,
+) -> String {
     let Ok(points) = serde_json::from_str::<Vec<[f64; 2]>>(points) else {
         return "error: unreadable stroke".into();
     };
@@ -305,9 +362,16 @@ pub fn add_section_sketch(station: &str, points: &str, widths: &str, adjusted: b
         let mut slot = d.borrow_mut();
         let doc = slot.as_mut().ok_or("no cave is open")?;
         let trip = cave_scene::section_trip(doc, adjusted, station);
-        let (_, actions) =
-            cave_draw::section_sketch(doc, &mut random_ids(), station_id, &points, widths, trip)
-                .map_err(|e| format!("{e:?}"))?;
+        let (_, actions) = cave_draw::section_sketch(
+            doc,
+            &mut random_ids(),
+            kind,
+            station_id,
+            &points,
+            widths,
+            trip,
+        )
+        .map_err(|e| format!("{e:?}"))?;
         let edit = doc.edit(actions).map_err(|e| format!("{e:?}"))?;
         HISTORY.with(|h| h.borrow_mut().record(&edit));
         Ok::<(), String>(())
@@ -403,7 +467,13 @@ pub fn profile_band(run: &str, adjusted: bool) -> String {
 /// drawn from. The stroke is anchored to the band's stations. Goes through the document's one edit path and
 /// is undoable. Returns `ok` or `error: ...`.
 #[wasm_bindgen]
-pub fn add_profile_sketch(run: &str, points: &str, widths: &str, adjusted: bool) -> String {
+pub fn add_profile_sketch(
+    run: &str,
+    kind: &str,
+    points: &str,
+    widths: &str,
+    adjusted: bool,
+) -> String {
     let Ok(points) = serde_json::from_str::<Vec<[f64; 2]>>(points) else {
         return "error: unreadable stroke".into();
     };
@@ -417,7 +487,7 @@ pub fn add_profile_sketch(run: &str, points: &str, widths: &str, adjusted: bool)
         let doc = slot.as_mut().ok_or("no cave is open")?;
         let frames = cave_scene::profile_frames(doc, run, adjusted).ok_or("no such run")?;
         let (_, actions) =
-            cave_draw::profile_sketch(doc, &mut random_ids(), run, &points, widths, &frames)
+            cave_draw::profile_sketch(doc, &mut random_ids(), kind, run, &points, widths, &frames)
                 .map_err(|e| format!("{e:?}"))?;
         let edit = doc.edit(actions).map_err(|e| format!("{e:?}"))?;
         HISTORY.with(|h| h.borrow_mut().record(&edit));
@@ -602,7 +672,9 @@ mod tests {
         assert_eq!(sec["label"], "B");
         assert!(sec["sketches"].as_array().unwrap().is_empty());
         assert_eq!(section_at(false, "nope", true, "{}"), "null");
-        assert!(add_section_sketch("nope", "[[0,0],[1,1]]", "", false).starts_with("error"));
-        assert!(add_section_sketch(&id, "garbage", "", false).starts_with("error"));
+        assert!(
+            add_section_sketch("nope", "wall", "[[0,0],[1,1]]", "", false).starts_with("error")
+        );
+        assert!(add_section_sketch(&id, "wall", "garbage", "", false).starts_with("error"));
     }
 }

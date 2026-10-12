@@ -3,6 +3,8 @@
 // draws it at true size beside the station, joined to it by a dashed leader, and the person drags
 // it to where they want it. The offset they leave it at is saved with the drawing.
 
+import type { Look } from './ink';
+
 export type Sketches = { points: [number, number][]; widths: number[] | null }[];
 
 /** `[minU, minV, maxU, maxV]` around the strokes (zeros when empty). */
@@ -34,20 +36,25 @@ export function hits(sketches: Sketches, anchor: [number, number], px: number, x
   return x >= anchor[0] + b[0] * px - pad && x <= anchor[0] + b[2] * px + pad && y >= anchor[1] - b[3] * px - pad && y <= anchor[1] - b[1] * px + pad;
 }
 
-/** Draws strokes (width scaled by pen weight) with `to` mapping section metres to screen pixels. */
-export function drawStrokes(g: CanvasRenderingContext2D, sketches: Sketches, to: (u: number, v: number) => [number, number], color: string, base = 2): void {
-  g.strokeStyle = color;
+/** Draws strokes in the look of their kind (width scaled by pen weight), `to` mapping section metres to pixels. */
+export function drawStrokes(g: CanvasRenderingContext2D, sketches: (Sketches[number] & { kind: string })[], to: (u: number, v: number) => [number, number], look: (kind: string) => Look, scale = 1): void {
   g.lineCap = 'round';
   g.lineJoin = 'round';
   for (const k of sketches) {
+    const l = look(k.kind);
+    g.strokeStyle = l.color;
+    g.globalAlpha = l.alpha;
+    g.setLineDash(l.dash);
     for (let i = 1; i < k.points.length; i++) {
       const a = to(k.points[i - 1][0], k.points[i - 1][1]);
       const b = to(k.points[i][0], k.points[i][1]);
-      g.lineWidth = base * (k.widths ? (k.widths[i - 1] + k.widths[i]) / 2 : 1);
+      g.lineWidth = l.weight * scale * (k.widths ? (k.widths[i - 1] + k.widths[i]) / 2 : 1);
       g.beginPath();
       g.moveTo(a[0], a[1]);
       g.lineTo(b[0], b[1]);
       g.stroke();
     }
   }
+  g.setLineDash([]);
+  g.globalAlpha = 1;
 }

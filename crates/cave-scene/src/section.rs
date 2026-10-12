@@ -7,7 +7,7 @@
 //! note instead of an outline, and can still be sketched on (the field-book page is the evidence
 //! then); where "fill gaps" supplies an inferred ring the section says so.
 //!
-//! Sketches are `section-sketch` features naming their station, with points in the section's own
+//! Sketches are features drawn in the `section` view, naming their station, with points in the section's own
 //! plane (`[across, up]` metres from the station, the plane's orientation being the tube's frame at
 //! that station), so they follow the station when the survey is adjusted.
 
@@ -39,6 +39,8 @@ pub struct SectionStation {
 pub struct SectionSketch {
     /// The feature's id as text.
     pub id: String,
+    /// What it is (`wall`, `ledge`, `sketch`, ...): the palette type that styles it.
+    pub kind: String,
     /// The stroke.
     pub points: Vec<[f64; 2]>,
     /// Pen weight per point, when drawn with pressure.
@@ -135,7 +137,7 @@ pub fn sketches_by_station(
     let mut out: BTreeMap<Id, Vec<SectionSketch>> = BTreeMap::new();
     for id in doc.ids_of(Kind::Feature) {
         let Some(e) = doc.entity(id) else { continue };
-        if e.text(Field::FeatureType) != cave_draw::SECTION_SKETCH
+        if e.text(Field::FeatureView) != cave_draw::VIEW_SECTION
             || !filter.trip_shown(e.reference(Field::FeatureTrip))
         {
             continue;
@@ -148,6 +150,7 @@ pub fn sketches_by_station(
         };
         out.entry(station).or_default().push(SectionSketch {
             id: id.to_string(),
+            kind: e.text(Field::FeatureType),
             points: path.points().iter().map(|p| [p.x, p.y]).collect(),
             widths: path.widths().map(<[f64]>::to_vec),
         });
@@ -262,7 +265,7 @@ pub fn section_stations(
     let mut counts: HashMap<Id, usize> = HashMap::new();
     for id in doc.ids_of(Kind::Feature) {
         if let Some(e) = doc.entity(id)
-            && e.text(Field::FeatureType) == cave_draw::SECTION_SKETCH
+            && e.text(Field::FeatureView) == cave_draw::VIEW_SECTION
             && filter.trip_shown(e.reference(Field::FeatureTrip))
             && let Some(st) = e.reference(Field::FeatureStation)
         {
@@ -434,6 +437,7 @@ mod tests {
         let (_, actions) = cave_draw::section_sketch(
             &d,
             &mut SeqIds::new(9),
+            "wall",
             a2,
             &[[0.0, 0.0], [1.0, 0.5], [2.0, 0.0]],
             Some(vec![0.5, 1.0, 1.5]),
@@ -471,6 +475,7 @@ mod tests {
         let (_, actions) = cave_draw::section_sketch(
             &d,
             &mut SeqIds::new(9),
+            "wall",
             a2,
             &[[0.0, 0.0], [1.0, 1.0]],
             None,

@@ -1,5 +1,7 @@
 // Loads the Rust engine (WASM) once and re-exports the few calls the UI uses.
-import init, { start, log, console_events, console_clear, engine_version, open_demo, scene, profile_runs, profile_band, add_profile_sketch, undo, redo, edit_state, passage_mesh, shading, palette, open_dxf, save_dxf, section_stations, section_at, add_section_sketch, map_sections, place_section, map_profile_sketches } from '../wasm/cave_wasm.js';
+import init, { start, log, console_events, console_clear, engine_version, open_demo, scene, profile_runs, profile_band, add_profile_sketch, undo, redo, edit_state, passage_mesh, shading, palette, open_dxf, save_dxf, section_stations, section_at, add_section_sketch, map_sections, place_section, map_profile_sketches, add_map_line, map_lines, draw_tools } from '../wasm/cave_wasm.js';
+
+import { setInkPalette } from './ink';
 
 export type Level = 'debug' | 'detail' | 'info' | 'warn' | 'error';
 export interface ConsoleEvent {
@@ -47,7 +49,7 @@ export interface ProfileScene {
   legs: [number, number, number, number][];
   ceiling: [number, number][][];
   floor: [number, number][][];
-  sketches: { id: string; points: [number, number][]; widths: number[] | null }[];
+  sketches: { id: string; kind: string; points: [number, number][]; widths: number[] | null }[];
   /** Cross-section sketches of the stations on this band. */
   sections: BandSection[];
   /** Sketches that cannot be placed because a station they hang on is not on this band. */
@@ -82,13 +84,14 @@ export interface MapSection {
   label: string;
   /** The station in the map's metres. */
   at: Pt;
-  sketches: { id: string; points: [number, number][]; widths: number[] | null }[];
+  sketches: { id: string; kind: string; points: [number, number][]; widths: number[] | null }[];
   /** Offset from the station placed by hand (east, north, up), or null until placed. */
   placement: Pt | null;
 }
 /** A profile sketch placed along its run in the cave: points are [east, north, up] metres. */
 export interface ProfileSketch3d {
   id: string;
+  kind: string;
   run: string;
   points: [number, number, number][];
   widths: number[] | null;
@@ -99,7 +102,7 @@ export interface BandSection {
   label: string;
   s: number;
   z: number;
-  sketches: { id: string; points: [number, number][]; widths: number[] | null }[];
+  sketches: { id: string; kind: string; points: [number, number][]; widths: number[] | null }[];
   /** Offset (along the band, elevation) placed by hand, or null until placed. */
   placement: [number, number] | null;
 }
@@ -115,6 +118,8 @@ export interface SectionStation {
 /** A stroke sketched on a cross section: [across, up] metres from the station. */
 export interface SectionSketch {
   id: string;
+  /** What it is (`wall`, `ledge`, ...): the palette type that styles it. */
+  kind: string;
   points: [number, number][];
   widths: number[] | null;
 }
@@ -141,7 +146,10 @@ export interface BuildInfo {
 let ready: Promise<void> | null = null;
 
 export function loadEngine(): Promise<void> {
-  ready ??= init().then(() => start());
+  ready ??= init().then(() => {
+    start();
+    setInkPalette(JSON.parse(palette()));
+  });
   return ready;
 }
 
@@ -163,19 +171,25 @@ export const engine = {
   /** The cross section at a station, with its sketches. */
   sectionAt: (adjusted: boolean, station: string, fillGaps: boolean, filter = '{}'): StationSection | null => JSON.parse(section_at(adjusted, station, fillGaps, filter)),
   /** Adds a stroke drawn on a station's cross section; every edit goes through the document's one edit path. */
-  addSectionSketch: (station: string, points: [number, number][], widths: number[] | null, adjusted: boolean): string => add_section_sketch(station, JSON.stringify(points), widths ? JSON.stringify(widths) : '', adjusted),
+  addSectionSketch: (station: string, kind: string, points: [number, number][], widths: number[] | null, adjusted: boolean): string => add_section_sketch(station, kind, JSON.stringify(points), widths ? JSON.stringify(widths) : '', adjusted),
   /** The cross-section sketches to show on the map. */
   mapSections: (adjusted: boolean, filter = '{}'): MapSection[] => JSON.parse(map_sections(adjusted, filter)),
   /** The profile sketches placed along their runs in 3D, for the map. */
   mapProfileSketches: (adjusted: boolean): ProfileSketch3d[] => JSON.parse(map_profile_sketches(adjusted)),
   /** Places a station's section sketches by hand in a view (an undoable edit). */
   placeSection: (station: string, view: 'map' | 'profile', offset: [number, number, number]): string => place_section(station, view, offset[0], offset[1], offset[2]),
+  /** Adds a line of `kind` drawn in plan on the map (anchored to the survey, undoable). */
+  addMapLine: (kind: string, points: [number, number][], widths: number[] | null, adjusted: boolean): string => add_map_line(kind, JSON.stringify(points), widths ? JSON.stringify(widths) : '', adjusted),
+  /** The linework drawn in plan on the map, lifted to the passage's elevation. */
+  mapLines: (adjusted: boolean): ProfileSketch3d[] => JSON.parse(map_lines(adjusted)),
+  /** The drawing tools the Draw tab offers. */
+  drawTools: (): TypeStyle[] => JSON.parse(draw_tools()),
   /** The type palette. */
   palette: (): TypeStyle[] => JSON.parse(palette()),
   profileRuns: (adjusted: boolean): RunInfo[] => JSON.parse(profile_runs(adjusted)),
   profileBand: (run: string, adjusted: boolean): ProfileScene | null => JSON.parse(profile_band(run, adjusted)),
   /** Adds a stroke drawn on a run's band; every edit goes through the document's one edit path. */
-  addSketch: (run: string, points: [number, number][], widths: number[] | null, adjusted: boolean): string => add_profile_sketch(run, JSON.stringify(points), widths ? JSON.stringify(widths) : '', adjusted),
+  addSketch: (run: string, kind: string, points: [number, number][], widths: number[] | null, adjusted: boolean): string => add_profile_sketch(run, kind, JSON.stringify(points), widths ? JSON.stringify(widths) : '', adjusted),
   passageMesh: (adjusted: boolean, mode: 'trip' | 'depth', fillGaps: boolean, filter = '{}'): PassageBuffers => {
     const m = passage_mesh(adjusted, mode, fillGaps, filter);
     const out = { positions: m.positions, normals: m.normals, colors: m.colors, filled: m.filled };

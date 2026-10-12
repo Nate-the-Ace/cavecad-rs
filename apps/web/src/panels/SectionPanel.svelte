@@ -5,7 +5,9 @@
   // their station and follow it when the survey is adjusted.
   import { onMount, untrack } from 'svelte';
   import { onTheme } from '../lib/theme';
-  import { Pencil, Hand, Undo2, Redo2, Maximize, ChevronLeft, ChevronRight } from '@lucide/svelte';
+  import { Undo2, Redo2, Maximize, ChevronLeft, ChevronRight } from '@lucide/svelte';
+  import { looks } from '../lib/ink';
+  import { drawStrokes } from '../lib/section-glyph';
   import { cave, changed, filter, wireFilter } from '../lib/cave.svelte';
   import { engine, loadEngine, type SectionStation, type StationSection } from '../lib/engine';
   import { metresPer, niceNumber, unitName } from '../lib/units';
@@ -17,7 +19,6 @@
   let ready = $state(false);
   let stations = $state.raw<SectionStation[]>([]);
   let section = $state.raw<StationSection | null>(null);
-  let tool = $state<'sketch' | 'pan'>('sketch');
   let canUndo = $state(false);
   let canRedo = $state(false);
   let message = $state('');
@@ -97,21 +98,6 @@
     return { text: v('--text'), muted: v('--muted'), line: v('--line'), accent: v('--accent'), accentBg: v('--accent-bg') };
   };
 
-  function stroke(g: CanvasRenderingContext2D, pts: [number, number][], widths: number[] | null, color: string, base = 2.6) {
-    g.strokeStyle = color;
-    g.lineCap = 'round';
-    g.lineJoin = 'round';
-    for (let i = 1; i < pts.length; i++) {
-      const a = toScreen(pts[i - 1][0], pts[i - 1][1]);
-      const b = toScreen(pts[i][0], pts[i][1]);
-      g.lineWidth = base * (widths ? (widths[i - 1] + widths[i]) / 2 : 1);
-      g.beginPath();
-      g.moveTo(a[0], a[1]);
-      g.lineTo(b[0], b[1]);
-      g.stroke();
-    }
-  }
-
   function draw() {
     if (!canvas || width === 0) return;
     const dpr = window.devicePixelRatio || 1;
@@ -164,8 +150,9 @@
     }
 
     // what has been sketched
-    for (const k of s.sketches) stroke(g, k.points, k.widths, c.text);
-    if (live && live.pts.length > 1) stroke(g, live.pts, live.pressure ? live.widths : null, c.accent);
+    const look = looks();
+    drawStrokes(g, s.sketches, toScreen, look);
+    if (live && live.pts.length > 1) drawStrokes(g, [{ kind: cave.tool || 'sketch', points: live.pts, widths: live.pressure ? live.widths : null }], toScreen, look);
 
     // up arrow and what it means
     g.fillStyle = c.muted;
@@ -221,7 +208,7 @@
       if (e.timeStamp - lastMiddle < 350) fit();
       lastMiddle = e.timeStamp;
     }
-    const draws = tool === 'sketch' && !middle && e.button === 0 && e.pointerType !== 'touch' && !!section;
+    const draws = !!cave.tool && !middle && e.button === 0 && e.pointerType !== 'touch' && !!section;
     if (draws) {
       live = { pts: [], widths: [], pressure: e.pointerType === 'pen' };
       addPoint(e);
@@ -249,7 +236,7 @@
     const stroked = live;
     live = null;
     if (stroked.pts.length >= 2 && cave.station) {
-      const result = engine.addSectionSketch(cave.station, stroked.pts, stroked.pressure ? stroked.widths : null, cave.adjusted);
+      const result = engine.addSectionSketch(cave.station, cave.tool, stroked.pts, stroked.pressure ? stroked.widths : null, cave.adjusted);
       message = result === 'ok' ? '' : result;
       changed();
     }
@@ -316,7 +303,7 @@
   <canvas
     bind:this={canvas}
     tabindex="0"
-    style="width:{width}px;height:{height}px;cursor:{tool === 'sketch' ? 'crosshair' : 'grab'}"
+    style="width:{width}px;height:{height}px;cursor:{cave.tool ? 'crosshair' : 'grab'}"
     onpointerdown={onDown}
     onpointermove={onMove}
     onpointerup={onUp}
@@ -331,8 +318,6 @@
       {#each stations as s}<option value={s.id}>{s.label}{s.outlined ? '' : ' (no walls)'}{s.sketches ? ` · ${s.sketches} sketch${s.sketches === 1 ? '' : 'es'}` : ''}</option>{/each}
     </select>
     <button title="Next station" disabled={index < 0 || index >= stations.length - 1} onclick={() => step(1)}><ChevronRight size={15} /></button>
-    <button class:on={tool === 'sketch'} title="Sketch (pen or mouse)" onclick={() => (tool = 'sketch')}><Pencil size={15} /></button>
-    <button class:on={tool === 'pan'} title="Pan" onclick={() => (tool = 'pan')}><Hand size={15} /></button>
     <button title="Undo (Ctrl/Cmd+Z)" disabled={!canUndo} onclick={doUndo}><Undo2 size={15} /></button>
     <button title="Redo (Shift+Ctrl/Cmd+Z)" disabled={!canRedo} onclick={doRedo}><Redo2 size={15} /></button>
     <button title="Fit (or double middle-click)" onclick={fit}><Maximize size={15} /></button>
@@ -352,7 +337,6 @@
   .bar { position: absolute; top: 8px; left: 8px; right: 8px; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; padding: 6px 8px; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); font-size: 12px; width: fit-content; max-width: calc(100% - 16px); }
   select, button { font: inherit; padding: 3px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--text); cursor: pointer; display: inline-grid; place-items: center; }
   select { max-width: 200px; }
-  button.on { background: var(--accent-bg); }
   button:disabled { opacity: 0.4; cursor: default; }
   .note { position: absolute; left: 8px; right: 8px; bottom: 8px; padding: 6px 10px; font-size: 12px; color: var(--muted); background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); }
   .note.warn { color: var(--text); border-color: var(--warn); }

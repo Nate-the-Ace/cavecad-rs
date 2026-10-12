@@ -192,16 +192,25 @@ pub const PALETTE: &[Style] = &[
         "CAVE-PROFILE-WALLS",
     ),
     s(
-        "profile-sketch",
-        "Profile sketch",
+        "sketch",
+        "Sketch",
         Accent,
         2.0,
         Solid,
         1.0,
         1.0,
-        "CAVE-PROFILE-SKETCH",
+        "CAVE-SKETCHES",
     ),
 ];
+
+/// The types the Draw tab offers as drawing tools, in the order it lists them. Picking one and then
+/// drawing in any view makes linework of that type in that view.
+pub const DRAW_TOOLS: &[&str] = &["wall", "ledge", "pit", "sketch"];
+
+/// The styles of the drawing tools.
+pub fn draw_tools() -> Vec<&'static Style> {
+    DRAW_TOOLS.iter().map(|k| style(k)).collect()
+}
 
 /// What an unknown type (a symbol name nobody styled yet) looks like.
 pub const DEFAULT: Style = s("default", "Other", Text, 1.6, Solid, 1.0, 0.4, "CAVE-OTHER");
@@ -255,6 +264,14 @@ mod tests {
                 assert_eq!((a.ink, a.linetype), (b.ink, b.linetype), "{}", a.layer);
             }
         }
+    }
+
+    #[test]
+    fn every_drawing_tool_is_in_the_palette() {
+        for k in DRAW_TOOLS {
+            assert_eq!(style(k).key, *k, "{k} has its own style");
+        }
+        assert_eq!(draw_tools().len(), DRAW_TOOLS.len());
     }
 
     #[test]

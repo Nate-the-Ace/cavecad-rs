@@ -32,6 +32,7 @@ fn awkward() -> Document {
     let (_, actions) = cave_draw::profile_sketch(
         &doc,
         &mut SeqIds::new(77),
+        "wall",
         "A",
         &[[1.0, -1.0], [3.0, -2.0], [6.0, -2.5]],
         Some(vec![0.4, 1.2, 1.6]),

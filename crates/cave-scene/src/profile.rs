@@ -43,6 +43,8 @@ pub struct BandDot {
 pub struct Sketch {
     /// The feature's id, as text.
     pub id: String,
+    /// What it is (`wall`, `ledge`, `sketch`, ...): the palette type that styles it.
+    pub kind: String,
     /// Points `(s, z)`.
     pub points: Vec<[f64; 2]>,
     /// Pen weight per point, when drawn with pressure.
@@ -175,7 +177,7 @@ pub fn profile_scene(doc: &Document, key: &str, use_adjustment: bool) -> Option<
         .into_iter()
         .filter_map(|id| {
             let e = doc.entity(id)?;
-            if e.text(Field::FeatureType) != cave_draw::PROFILE_SKETCH
+            if e.text(Field::FeatureView) != cave_draw::VIEW_PROFILE
                 || e.text(Field::FeatureRun) != key
             {
                 return None;
@@ -189,6 +191,7 @@ pub fn profile_scene(doc: &Document, key: &str, use_adjustment: bool) -> Option<
             };
             Some(Sketch {
                 id: id.to_string(),
+                kind: e.text(Field::FeatureType),
                 points,
                 widths: anchored.widths.clone(),
             })
@@ -269,7 +272,9 @@ pub fn profile_scene(doc: &Document, key: &str, use_adjustment: bool) -> Option<
 pub struct Sketch3d {
     /// The feature's id as text.
     pub id: String,
-    /// The run (key) the stroke was drawn on.
+    /// What it is (`wall`, `ledge`, ...): the palette type that styles it.
+    pub kind: String,
+    /// The run (key) the stroke was drawn on (empty for a line drawn in plan).
     pub run: String,
     /// The stroke in the map's metres (east, north, up).
     pub points: Vec<[f64; 3]>,
@@ -292,7 +297,7 @@ pub fn profile_sketches_3d(doc: &Document, use_adjustment: bool) -> Vec<Sketch3d
     let mut out = Vec::new();
     for id in doc.ids_of(Kind::Feature) {
         let Some(e) = doc.entity(id) else { continue };
-        if e.text(Field::FeatureType) != cave_draw::PROFILE_SKETCH {
+        if e.text(Field::FeatureView) != cave_draw::VIEW_PROFILE {
             continue;
         }
         let key = e.text(Field::FeatureRun);
@@ -346,6 +351,7 @@ pub fn profile_sketches_3d(doc: &Document, use_adjustment: bool) -> Vec<Sketch3d
         if points.len() == placed.len() {
             out.push(Sketch3d {
                 id: id.to_string(),
+                kind: e.text(Field::FeatureType),
                 run: key,
                 points,
                 widths: anchored.widths.clone(),
@@ -414,6 +420,7 @@ mod tests {
         let (_, actions) = cave_draw::profile_sketch(
             &doc,
             &mut SeqIds::new(3),
+            "wall",
             "A",
             &[[5.0, 1.0], [run, -2.5]],
             Some(vec![0.5, 1.5]),
@@ -455,6 +462,7 @@ mod tests {
         let (_, actions) = cave_draw::section_sketch(
             &doc,
             &mut SeqIds::new(4),
+            "wall",
             a2,
             &[[0.0, 0.0], [1.0, 0.5]],
             None,
@@ -519,6 +527,7 @@ mod tests {
         let (_, actions) = cave_draw::profile_sketch(
             &doc,
             &mut SeqIds::new(7),
+            "wall",
             "A",
             &[[0.0, 0.0], [5.0, 1.0]],
             Some(vec![0.5, 1.5]),
@@ -555,9 +564,16 @@ mod tests {
         let last = raw.stations.last().unwrap();
         let frames = profile_frames(&doc, "A", false).unwrap();
         let stroke = [[last.s + 0.5, last.z + 1.0], [last.s + 1.5, last.z + 1.0]];
-        let (_, actions) =
-            cave_draw::profile_sketch(&doc, &mut SeqIds::new(3), "A", &stroke, None, &frames)
-                .unwrap();
+        let (_, actions) = cave_draw::profile_sketch(
+            &doc,
+            &mut SeqIds::new(3),
+            "wall",
+            "A",
+            &stroke,
+            None,
+            &frames,
+        )
+        .unwrap();
         doc.edit(actions).unwrap();
 
         let (before, after) = (
@@ -595,6 +611,7 @@ mod tests {
         let (_, actions) = cave_draw::profile_sketch(
             &doc,
             &mut SeqIds::new(5),
+            "wall",
             "A",
             &[[1.0, 0.0], [2.0, 0.0]],
             None,

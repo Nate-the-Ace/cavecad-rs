@@ -5,16 +5,21 @@
 //! never edits around the one edit path. Strokes are anchored to stations, so they follow the
 //! survey when it changes. Pen pressure is kept as per-point widths, which change how the line is
 //! drawn and never where it is.
+//!
+//! Linework is one thing drawn in a view: its `FeatureType` says what it is (`wall`, `ledge`,
+//! `pit`, ...) and `FeatureView` says where it was drawn, which decides what its points mean. The
+//! person picks a drawing tool and then draws in whichever view they like.
 
 use cave_doc::{Action, AnchorError, Document, Field, Frame, Kind, Value, anchor_stroke};
 use cave_geom::{Path, Point};
 use cave_id::{Id, IdSource};
 
-/// `Feature.type` of a stroke sketched on a profile band.
-pub const PROFILE_SKETCH: &str = "profile-sketch";
-
-/// `Feature.type` of a stroke sketched on a station's cross section.
-pub const SECTION_SKETCH: &str = "section-sketch";
+/// `FeatureView` of a stroke drawn on a profile band.
+pub const VIEW_PROFILE: &str = "profile";
+/// `FeatureView` of a stroke drawn on a cross section.
+pub const VIEW_SECTION: &str = "section";
+/// `FeatureView` of a stroke drawn in plan on the map.
+pub const VIEW_MAP: &str = "map";
 
 /// `Feature.type` of the record of where a station's section sketches are placed in a view.
 pub const SECTION_PLACEMENT: &str = "section-placement";
@@ -27,9 +32,9 @@ pub const PLACEMENT_VIEWS: [&str; 2] = ["map", "profile"];
 pub enum DrawError {
     /// A stroke needs at least two distinct points.
     TooShort,
-    /// A coordinate or pen weight was not a usable number.
+    /// A coordinate or pen weight was not a usable number, or the type was empty.
     BadStroke,
-    /// The run has no usable stretch of survey to anchor the stroke to.
+    /// There is no usable stretch of survey (or station) to anchor the stroke to.
     NoStations,
 }
 
@@ -43,81 +48,16 @@ impl From<AnchorError> for DrawError {
     }
 }
 
-/// Actions that add a stroke sketched on the profile band of `run`.
-///
-/// `points` are `(s, z)` in metres on the band (distance along the run, elevation); `frames` are
-/// the band's consecutive station pairs with their band positions, and the stroke is anchored to
-/// the nearest of them. `widths` is optional pen weight per point (1.0 is the normal weight).
-/// Returns the new feature's id with the actions. A sketch is a feature of type `profile-sketch`;
-/// grouping and visibility come from type and trip, not from layers.
-pub fn profile_sketch(
-    _doc: &Document,
-    ids: &mut impl IdSource,
-    run: &str,
-    points: &[[f64; 2]],
-    widths: Option<Vec<f64>>,
-    frames: &[Frame],
-) -> Result<(Id, Vec<Action>), DrawError> {
-    // Drop repeated points: a stroke that never moved is not a line.
-    let mut kept: Vec<usize> = Vec::with_capacity(points.len());
-    for (i, p) in points.iter().enumerate() {
-        if kept.last().is_none_or(|&k| points[k] != *p) {
-            kept.push(i);
-        }
-    }
-    if widths.as_ref().is_some_and(|w| w.len() != points.len()) {
-        return Err(DrawError::BadStroke);
-    }
-    let pts: Vec<[f64; 2]> = kept.iter().map(|&i| points[i]).collect();
-    let widths = widths.map(|w| kept.iter().map(|&i| w[i]).collect());
-    let anchored = anchor_stroke(&pts, frames, widths)?;
-
-    let mut actions = Vec::new();
-    let id = ids.next_id();
-    actions.extend([
-        Action::Create {
-            id,
-            kind: Kind::Feature,
-        },
-        Action::Set {
-            id,
-            field: Field::FeatureType,
-            value: Value::Text(PROFILE_SKETCH.into()),
-        },
-        Action::Set {
-            id,
-            field: Field::FeatureRun,
-            value: Value::Text(run.into()),
-        },
-        Action::Set {
-            id,
-            field: Field::FeatureAnchored,
-            value: Value::Anchored(Some(anchored)),
-        },
-    ]);
-    Ok((id, actions))
+/// What a stroke is (`wall`, `ledge`, ...): a short plain word, never empty.
+fn valid_kind(kind: &str) -> bool {
+    !kind.is_empty() && kind.len() <= 40 && kind.chars().all(|c| c.is_ascii_graphic())
 }
 
-/// Actions that add a stroke sketched on the cross section at `station`.
-///
-/// `points` are `[across, up]` in metres in the section's plane (right and up as the passage is
-/// seen looking along it), measured from the station. A section sketch is a feature of type
-/// `section-sketch` that names its station; `trip` (the trip that surveyed the station) lets the
-/// trip filter hide it with its passage. `widths` is optional pen weight per point.
-pub fn section_sketch(
-    doc: &Document,
-    ids: &mut impl IdSource,
-    station: Id,
-    points: &[[f64; 2]],
-    widths: Option<Vec<f64>>,
-    trip: Option<Id>,
-) -> Result<(Id, Vec<Action>), DrawError> {
-    if doc
-        .entity(station)
-        .is_none_or(|e| e.kind() != Kind::Station)
-    {
-        return Err(DrawError::NoStations);
-    }
+/// A stroke's points and, when drawn with pressure, a pen weight for each.
+type Stroke = (Vec<[f64; 2]>, Option<Vec<f64>>);
+
+/// Drops repeated points (a stroke that never moved is not a line), with their pen weights.
+fn distinct(points: &[[f64; 2]], widths: Option<Vec<f64>>) -> Result<Stroke, DrawError> {
     if widths.as_ref().is_some_and(|w| w.len() != points.len()) {
         return Err(DrawError::BadStroke);
     }
@@ -133,16 +73,19 @@ pub fn section_sketch(
     if kept.len() < 2 {
         return Err(DrawError::TooShort);
     }
-    let pts: Vec<Point> = kept
-        .iter()
-        .map(|&i| Point::new(points[i][0], points[i][1]))
-        .collect();
-    let mut path = Path::polyline(&pts, false);
-    if let Some(w) = widths {
-        path = path
-            .with_widths(kept.iter().map(|&i| w[i]).collect())
-            .map_err(|_| DrawError::BadStroke)?;
-    }
+    Ok((
+        kept.iter().map(|&i| points[i]).collect(),
+        widths.map(|w| kept.iter().map(|&i| w[i]).collect()),
+    ))
+}
+
+/// Actions that create a feature of `kind` drawn in `view`, then set `fields`.
+fn feature(
+    ids: &mut impl IdSource,
+    kind: &str,
+    view: &str,
+    fields: Vec<(Field, Value)>,
+) -> (Id, Vec<Action>) {
     let id = ids.next_id();
     let mut actions = vec![
         Action::Create {
@@ -152,27 +95,118 @@ pub fn section_sketch(
         Action::Set {
             id,
             field: Field::FeatureType,
-            value: Value::Text(SECTION_SKETCH.into()),
+            value: Value::Text(kind.into()),
         },
         Action::Set {
             id,
-            field: Field::FeatureStation,
-            value: Value::Ref(Some(station)),
-        },
-        Action::Set {
-            id,
-            field: Field::FeaturePath,
-            value: Value::Path(Some(path)),
+            field: Field::FeatureView,
+            value: Value::Text(view.into()),
         },
     ];
-    if let Some(trip) = trip {
-        actions.push(Action::Set {
-            id,
-            field: Field::FeatureTrip,
-            value: Value::Ref(Some(trip)),
-        });
+    actions.extend(
+        fields
+            .into_iter()
+            .map(|(field, value)| Action::Set { id, field, value }),
+    );
+    (id, actions)
+}
+
+/// Actions that add a stroke of `kind` (`wall`, `ledge`, ...) drawn on the profile band of `run`.
+///
+/// `points` are `(s, z)` in metres on the band (distance along the run, elevation); `frames` are
+/// the band's consecutive station pairs with their band positions, and the stroke is anchored to
+/// the nearest of them. `widths` is optional pen weight per point (1.0 is the normal weight).
+/// Returns the new feature's id with the actions. Grouping and visibility come from type and
+/// trip, not from layers.
+pub fn profile_sketch(
+    _doc: &Document,
+    ids: &mut impl IdSource,
+    kind: &str,
+    run: &str,
+    points: &[[f64; 2]],
+    widths: Option<Vec<f64>>,
+    frames: &[Frame],
+) -> Result<(Id, Vec<Action>), DrawError> {
+    if !valid_kind(kind) {
+        return Err(DrawError::BadStroke);
     }
-    Ok((id, actions))
+    let (pts, widths) = distinct(points, widths)?;
+    let anchored = anchor_stroke(&pts, frames, widths)?;
+    Ok(feature(
+        ids,
+        kind,
+        VIEW_PROFILE,
+        vec![
+            (Field::FeatureRun, Value::Text(run.into())),
+            (Field::FeatureAnchored, Value::Anchored(Some(anchored))),
+        ],
+    ))
+}
+
+/// Actions that add a stroke of `kind` drawn in plan on the map.
+///
+/// `points` are `(x, y)` in metres (east, north); `frames` are the survey's legs with their plan
+/// positions, and the stroke is anchored to the nearest of them so it follows the survey when it
+/// is adjusted. `widths` is optional pen weight per point.
+pub fn map_line(
+    _doc: &Document,
+    ids: &mut impl IdSource,
+    kind: &str,
+    points: &[[f64; 2]],
+    widths: Option<Vec<f64>>,
+    frames: &[Frame],
+) -> Result<(Id, Vec<Action>), DrawError> {
+    if !valid_kind(kind) {
+        return Err(DrawError::BadStroke);
+    }
+    let (pts, widths) = distinct(points, widths)?;
+    let anchored = anchor_stroke(&pts, frames, widths)?;
+    Ok(feature(
+        ids,
+        kind,
+        VIEW_MAP,
+        vec![(Field::FeatureAnchored, Value::Anchored(Some(anchored)))],
+    ))
+}
+
+/// Actions that add a stroke of `kind` drawn on the cross section at `station`.
+///
+/// `points` are `[across, up]` in metres in the section's plane (right and up as the passage is
+/// seen looking along it), measured from the station. The feature names its station; `trip` (the
+/// trip that surveyed the station) lets the trip filter hide it with its passage. `widths` is
+/// optional pen weight per point.
+pub fn section_sketch(
+    doc: &Document,
+    ids: &mut impl IdSource,
+    kind: &str,
+    station: Id,
+    points: &[[f64; 2]],
+    widths: Option<Vec<f64>>,
+    trip: Option<Id>,
+) -> Result<(Id, Vec<Action>), DrawError> {
+    if !valid_kind(kind) {
+        return Err(DrawError::BadStroke);
+    }
+    if doc
+        .entity(station)
+        .is_none_or(|e| e.kind() != Kind::Station)
+    {
+        return Err(DrawError::NoStations);
+    }
+    let (pts, widths) = distinct(points, widths)?;
+    let pts: Vec<Point> = pts.iter().map(|p| Point::new(p[0], p[1])).collect();
+    let mut path = Path::polyline(&pts, false);
+    if let Some(w) = widths {
+        path = path.with_widths(w).map_err(|_| DrawError::BadStroke)?;
+    }
+    let mut fields = vec![
+        (Field::FeatureStation, Value::Ref(Some(station))),
+        (Field::FeaturePath, Value::Path(Some(path))),
+    ];
+    if let Some(trip) = trip {
+        fields.push((Field::FeatureTrip, Value::Ref(Some(trip))));
+    }
+    Ok(feature(ids, kind, VIEW_SECTION, fields))
 }
 
 /// Actions that set where `station`'s section sketches sit in `view` (`map` or `profile`), as an
@@ -283,13 +317,25 @@ mod tests {
     #[test]
     fn a_sketch_is_a_valid_anchored_feature_() {
         let (mut doc, frames, [a, b]) = cave();
-        let (id, actions) =
-            profile_sketch(&doc, &mut SeqIds::new(1), "A", &stroke(), None, &frames).unwrap();
+        let (id, actions) = profile_sketch(
+            &doc,
+            &mut SeqIds::new(1),
+            "wall",
+            "A",
+            &stroke(),
+            None,
+            &frames,
+        )
+        .unwrap();
         doc.edit(actions).unwrap();
         let e = doc.entity(id).unwrap();
         assert_eq!(
-            (e.text(Field::FeatureRun), e.text(Field::FeatureType)),
-            ("A".into(), PROFILE_SKETCH.to_string())
+            (
+                e.text(Field::FeatureRun),
+                e.text(Field::FeatureType),
+                e.text(Field::FeatureView)
+            ),
+            ("A".into(), "wall".to_string(), VIEW_PROFILE.to_string())
         );
         let Value::Anchored(Some(anchored)) = e.get(Field::FeatureAnchored) else {
             panic!("not anchored")
@@ -304,8 +350,16 @@ mod tests {
     #[test]
     fn deleting_a_station_the_sketch_hangs_on_is_flagged() {
         let (mut doc, frames, [a, _]) = cave();
-        let (id, actions) =
-            profile_sketch(&doc, &mut SeqIds::new(1), "A", &stroke(), None, &frames).unwrap();
+        let (id, actions) = profile_sketch(
+            &doc,
+            &mut SeqIds::new(1),
+            "wall",
+            "A",
+            &stroke(),
+            None,
+            &frames,
+        )
+        .unwrap();
         doc.edit(actions).unwrap();
         doc.edit(vec![Action::Remove {
             id: a,
@@ -324,10 +378,26 @@ mod tests {
         let (base, frames, _) = cave();
         let mut a = base.clone();
         let mut b = Document::from_json(&base.to_json(), ActorId(2)).unwrap();
-        let (_, ea) =
-            profile_sketch(&a, &mut SeqIds::new(1), "A", &stroke(), None, &frames).unwrap();
-        let (_, eb) =
-            profile_sketch(&b, &mut SeqIds::new(2), "A", &stroke(), None, &frames).unwrap();
+        let (_, ea) = profile_sketch(
+            &a,
+            &mut SeqIds::new(1),
+            "wall",
+            "A",
+            &stroke(),
+            None,
+            &frames,
+        )
+        .unwrap();
+        let (_, eb) = profile_sketch(
+            &b,
+            &mut SeqIds::new(2),
+            "wall",
+            "A",
+            &stroke(),
+            None,
+            &frames,
+        )
+        .unwrap();
         let (ops_a, ops_b) = (a.edit(ea).unwrap().ops, b.edit(eb).unwrap().ops);
         for op in &ops_b {
             a.apply(op).unwrap();
@@ -346,6 +416,7 @@ mod tests {
         let (_, actions) = profile_sketch(
             &doc,
             &mut SeqIds::new(1),
+            "wall",
             "A",
             &pts,
             Some(vec![1.0, 1.1, 1.2]),
@@ -369,7 +440,7 @@ mod tests {
         let (doc, frames, _) = cave();
         let mut ids = SeqIds::new(1);
         let run = |pts: &[[f64; 2]], w: Option<Vec<f64>>, f: &[Frame], ids: &mut SeqIds| {
-            profile_sketch(&doc, ids, "A", pts, w, f).unwrap_err()
+            profile_sketch(&doc, ids, "wall", "A", pts, w, f).unwrap_err()
         };
         assert_eq!(
             run(&[[0.0, 0.0]], None, &frames, &mut ids),
@@ -394,8 +465,16 @@ mod tests {
     fn a_sketch_can_be_undone_and_redone() {
         let (mut doc, frames, _) = cave();
         let mut history = History::new();
-        let (id, actions) =
-            profile_sketch(&doc, &mut SeqIds::new(1), "A", &stroke(), None, &frames).unwrap();
+        let (id, actions) = profile_sketch(
+            &doc,
+            &mut SeqIds::new(1),
+            "wall",
+            "A",
+            &stroke(),
+            None,
+            &frames,
+        )
+        .unwrap();
         let edit = doc.edit(actions).unwrap();
         history.record(&edit);
         history.undo(&mut doc).unwrap();
@@ -411,6 +490,7 @@ mod tests {
         let (id, actions) = section_sketch(
             &doc,
             &mut SeqIds::new(5),
+            "wall",
             a,
             &pts,
             Some(vec![0.5, 0.6, 1.0, 1.5]),
@@ -421,7 +501,8 @@ mod tests {
         let edit = doc.edit(actions).unwrap();
         history.record(&edit);
         let e = doc.entity(id).unwrap();
-        assert_eq!(e.text(Field::FeatureType), SECTION_SKETCH);
+        assert_eq!(e.text(Field::FeatureType), "wall");
+        assert_eq!(e.text(Field::FeatureView), VIEW_SECTION);
         assert_eq!(e.reference(Field::FeatureStation), Some(a));
         let Value::Path(Some(path)) = e.get(Field::FeaturePath) else {
             panic!("no path")
@@ -440,19 +521,29 @@ mod tests {
         let line = [[0.0, 0.0], [1.0, 1.0]];
         let nowhere = Id::from_name("nothing");
         assert_eq!(
-            section_sketch(&doc, ids, nowhere, &line, None, None).unwrap_err(),
+            section_sketch(&doc, ids, "wall", nowhere, &line, None, None).unwrap_err(),
             DrawError::NoStations
         );
         assert_eq!(
-            section_sketch(&doc, ids, a, &[[1.0, 1.0], [1.0, 1.0]], None, None).unwrap_err(),
+            section_sketch(&doc, ids, "wall", a, &[[1.0, 1.0], [1.0, 1.0]], None, None)
+                .unwrap_err(),
             DrawError::TooShort
         );
         assert_eq!(
-            section_sketch(&doc, ids, a, &[[0.0, 0.0], [f64::NAN, 1.0]], None, None).unwrap_err(),
+            section_sketch(
+                &doc,
+                ids,
+                "wall",
+                a,
+                &[[0.0, 0.0], [f64::NAN, 1.0]],
+                None,
+                None
+            )
+            .unwrap_err(),
             DrawError::BadStroke
         );
         assert_eq!(
-            section_sketch(&doc, ids, a, &line, Some(vec![1.0]), None).unwrap_err(),
+            section_sketch(&doc, ids, "wall", a, &line, Some(vec![1.0]), None).unwrap_err(),
             DrawError::BadStroke
         );
     }
@@ -463,6 +554,7 @@ mod tests {
         let (id, actions) = section_sketch(
             &doc,
             &mut SeqIds::new(1),
+            "wall",
             a,
             &[[0.0, 0.0], [1.0, 1.0]],
             None,

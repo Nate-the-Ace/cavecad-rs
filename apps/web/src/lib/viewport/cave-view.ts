@@ -7,6 +7,7 @@ import { LineSegmentsGeometry } from 'three/addons/lines/LineSegmentsGeometry.js
 import { LineMaterial } from 'three/addons/lines/LineMaterial.js';
 import type { MapSection, PassageBuffers, ProfileSketch3d, Scene, TypeStyle } from '../engine';
 import { defaultMapOffset, drawStrokes, hits } from '../section-glyph';
+import { looks } from '../ink';
 import { elevationColor, inkColor, readTheme, type ViewTheme } from './theme';
 import { metresPer, niceNumber, unitName, type Units } from '../units';
 
@@ -54,6 +55,13 @@ export class CaveView {
    *  as the camera looks along it (straight down or up) and are hidden from the top or bottom. */
   private profileSketches: ProfileSketch3d[] = [];
   private showProfileSketches = true;
+  /** Linework drawn in plan, lifted to the passage's elevation. */
+  private mapLines: ProfileSketch3d[] = [];
+  /** The drawing tool picked on the Draw tab (a palette type), or empty. */
+  private drawTool = '';
+  private liveLine: { pts: [number, number][]; widths: number[]; pressure: boolean; z: number } | null = null;
+  /** Called with a plan stroke (east, north metres) when the person lifts the pen. */
+  onLineDrawn: (points: [number, number][], widths: number[] | null) => void = () => {};
   /** Offsets being dragged right now, before they are saved. */
   private liveOffsets = new Map<string, [number, number, number]>();
   private dragging: { id: string; x: number; y: number } | null = null;
@@ -106,6 +114,19 @@ export class CaveView {
       'pointerdown',
       (e) => {
         if (e.button !== 0) return;
+        if (this.drawTool) {
+          // Drawing on the map: only from straight above or below, where plan is what is seen.
+          if (!this.canDrawHere || e.pointerType === 'touch') return;
+          const p = this.planPoint(e.clientX, e.clientY);
+          if (!p) return;
+          e.stopImmediatePropagation();
+          e.stopPropagation();
+          this.controls.enabled = false;
+          canvas.setPointerCapture(e.pointerId);
+          this.liveLine = { pts: [p], widths: [e.pointerType === 'pen' ? 0.4 + 1.2 * e.pressure : 1], pressure: e.pointerType === 'pen', z: this.controls.target.z };
+          this.requestRender();
+          return;
+        }
         const id = this.sectionAt(e.clientX, e.clientY);
         if (!id) return;
         e.stopImmediatePropagation();
@@ -118,6 +139,19 @@ export class CaveView {
       true,
     );
     canvas.addEventListener('pointermove', (e) => {
+      const line = this.liveLine;
+      if (line) {
+        for (const ev of e.getCoalescedEvents?.().length ? e.getCoalescedEvents() : [e]) {
+          const p = this.planPoint(ev.clientX, ev.clientY);
+          const last = line.pts[line.pts.length - 1];
+          if (!p || (Math.hypot(p[0] - last[0], p[1] - last[1]) * (this.pixelsPerMetreAt([p[0], p[1], line.z]) ?? 1)) < 1.5) continue;
+          line.pts.push(p);
+          // Pressure only changes how thick the line is drawn, never where it goes.
+          line.widths.push(line.pressure ? 0.4 + 1.2 * ev.pressure : 1);
+        }
+        this.requestRender();
+        return;
+      }
       const d = this.dragging;
       if (d) {
         this.moveSection(d.id, e.clientX - d.x, e.clientY - d.y);
@@ -128,6 +162,14 @@ export class CaveView {
       }
     });
     const drop = () => {
+      const line = this.liveLine;
+      if (line) {
+        this.liveLine = null;
+        this.controls.enabled = true;
+        if (line.pts.length >= 2) this.onLineDrawn(line.pts, line.pressure ? line.widths : null);
+        this.requestRender();
+        return;
+      }
       const d = this.dragging;
       if (!d) return;
       this.dragging = null;
@@ -328,6 +370,33 @@ export class CaveView {
     this.requestRender();
   }
 
+  /** The drawing tool picked on the Draw tab (a palette type), or empty for none. */
+  setDrawTool(key: string) {
+    this.drawTool = key;
+    this.canvas.style.cursor = key && this.canDrawHere ? 'crosshair' : '';
+    this.requestRender();
+  }
+
+  /** True when the camera looks straight down or up, so a stroke on screen is a stroke in plan. */
+  get canDrawHere(): boolean {
+    return Math.abs(this.cameraOffset.clone().normalize().z) > 0.985;
+  }
+
+  /** The plan position (east, north) under a screen point, on the level of what the camera looks at. */
+  private planPoint(clientX: number, clientY: number): [number, number] | null {
+    const rect = this.canvas.getBoundingClientRect();
+    const ndc = new THREE.Vector2(((clientX - rect.left) / rect.width) * 2 - 1, -((clientY - rect.top) / rect.height) * 2 + 1);
+    const ray = new THREE.Raycaster();
+    ray.setFromCamera(ndc, this.camera);
+    const hit = ray.ray.intersectPlane(new THREE.Plane(new THREE.Vector3(0, 0, 1), -this.controls.target.z), new THREE.Vector3());
+    return hit ? [hit.x, hit.y] : null;
+  }
+
+  setMapLines(list: ProfileSketch3d[]) {
+    this.mapLines = list;
+    this.requestRender();
+  }
+
   /** The cross-section sketches to draw beside their stations. */
   setSections(list: MapSection[]) {
     this.sections = list;
@@ -401,6 +470,33 @@ export class CaveView {
     const d = right.multiplyScalar(dx / px).addScaledVector(up, -dy / px);
     this.liveOffsets.set(id, [o[0] + d.x, o[1] + d.y, o[2] + d.z]);
     this.requestRender();
+  }
+
+  /** Strokes 3D lines (projected to the screen) in the look of their kind. */
+  private strokeLines(g: CanvasRenderingContext2D, lines: ProfileSketch3d[]) {
+    const look = looks();
+    const base = g.globalAlpha;
+    g.lineCap = 'round';
+    g.lineJoin = 'round';
+    for (const k of lines) {
+      const l = look(k.kind);
+      g.strokeStyle = l.color;
+      g.globalAlpha = base * l.alpha;
+      g.setLineDash(l.dash);
+      const pts = k.points.map((p) => this.project(p));
+      for (let i = 1; i < pts.length; i++) {
+        const a = pts[i - 1];
+        const b = pts[i];
+        if (!a || !b) continue;
+        g.lineWidth = l.weight * (k.widths ? (k.widths[i - 1] + k.widths[i]) / 2 : 1);
+        g.beginPath();
+        g.moveTo(a[0], a[1]);
+        g.lineTo(b[0], b[1]);
+        g.stroke();
+      }
+    }
+    g.setLineDash([]);
+    g.globalAlpha = base;
   }
 
   /** The station (id) to ring on the map, e.g. the one the Cross Section panel shows. */
@@ -601,23 +697,13 @@ export class CaveView {
     if (this.showProfileSketches && seen > 0) {
       g.save();
       g.globalAlpha = seen;
-      g.strokeStyle = `#${this.theme.accent.getHexString()}`;
-      g.lineCap = 'round';
-      g.lineJoin = 'round';
-      for (const k of this.profileSketches) {
-        const pts = k.points.map((p) => this.project(p));
-        for (let i = 1; i < pts.length; i++) {
-          const a = pts[i - 1];
-          const b = pts[i];
-          if (!a || !b) continue;
-          g.lineWidth = 2.2 * (k.widths ? (k.widths[i - 1] + k.widths[i]) / 2 : 1);
-          g.beginPath();
-          g.moveTo(a[0], a[1]);
-          g.lineTo(b[0], b[1]);
-          g.stroke();
-        }
-      }
+      this.strokeLines(g, this.profileSketches);
       g.restore();
+    }
+    this.strokeLines(g, this.mapLines);
+    const live = this.liveLine;
+    if (live && live.pts.length > 1) {
+      this.strokeLines(g, [{ id: '', kind: this.drawTool || 'sketch', run: '', points: live.pts.map((p) => [p[0], p[1], live.z] as [number, number, number]), widths: live.pressure ? live.widths : null }]);
     }
     if (this.showSections) {
       for (const sec of this.sections) {
@@ -634,7 +720,7 @@ export class CaveView {
           g.stroke();
           g.setLineDash([]);
         }
-        drawStrokes(g, sec.sketches, (u, v) => [at[0] + u * px, at[1] - v * px], css.text, 2);
+        drawStrokes(g, sec.sketches, (u, v) => [at[0] + u * px, at[1] - v * px], looks());
         g.fillStyle = css.muted;
         g.textAlign = 'left';
         g.fillText(sec.label, at[0] + 4, at[1] + 12);

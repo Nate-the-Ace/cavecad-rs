@@ -5,6 +5,7 @@
 //! back. The canvas stays dumb: it receives a [`Scene`] and draws it.
 
 mod filter;
+mod maplines;
 mod mesh;
 mod profile;
 mod section;
@@ -12,6 +13,7 @@ mod solved;
 mod under;
 
 pub use filter::{TripInfo, ViewFilter};
+pub use maplines::{map_frames, map_lines_3d};
 pub use mesh::{ColorMode, Mesh, passage_mesh};
 pub use profile::{
     ProfileScene, RunInfo, Sketch3d, profile_frames, profile_scene, profile_sketches_3d, runs,

@@ -1,7 +1,8 @@
 <script lang="ts">
   import { onMount, untrack } from 'svelte';
   import { onTheme } from '../lib/theme';
-  import { Pencil, Hand, Undo2, Redo2, Maximize } from '@lucide/svelte';
+  import { Undo2, Redo2, Maximize } from '@lucide/svelte';
+  import { looks } from '../lib/ink';
   import { cave, changed, setShowSections } from '../lib/cave.svelte';
   import { defaultBandOffset, drawStrokes, hits } from '../lib/section-glyph';
   import type { BandSection } from '../lib/engine';
@@ -14,7 +15,6 @@
   let height = $state(0);
   let runs = $state<RunInfo[]>([]);
   let band = $state<ProfileScene | null>(null);
-  let tool = $state<'sketch' | 'pan'>('sketch');
   let canUndo = $state(false);
   let canRedo = $state(false);
   let message = $state('');
@@ -155,7 +155,8 @@
     for (const line of [...band.ceiling, ...band.floor]) stroke(g, line, null, c.muted, 1.2);
     g.setLineDash([]);
     for (const l of band.legs) stroke(g, [[l[0], l[1]], [l[2], l[3]]], null, c.text, 2);
-    for (const k of band.sketches) stroke(g, k.points, k.widths, c.accent);
+    const look = looks();
+    drawStrokes(g, band.sketches, toScreen, look);
     if (cave.showSections.profile) {
       for (const sec of band.sections) {
         const st = toScreen(sec.s, sec.z);
@@ -168,13 +169,13 @@
         g.lineTo(at[0], at[1]);
         g.stroke();
         g.setLineDash([]);
-        drawStrokes(g, sec.sketches, (u, v) => [at[0] + u * scale, at[1] - v * scale], c.text, 2);
+        drawStrokes(g, sec.sketches, (u, v) => [at[0] + u * scale, at[1] - v * scale], look);
         g.fillStyle = c.muted;
         g.textAlign = 'left';
         g.fillText(sec.label, at[0] + 4, at[1] + 12);
       }
     }
-    if (live && live.pts.length > 1) stroke(g, live.pts, live.pressure ? live.widths : null, c.accent);
+    if (live && live.pts.length > 1) drawStrokes(g, [{ kind: cave.tool || 'sketch', points: live.pts, widths: live.pressure ? live.widths : null }], toScreen, look);
 
     g.fillStyle = c.text;
     g.textAlign = 'left';
@@ -221,7 +222,7 @@
         return;
       }
     }
-    const draws = tool === 'sketch' && !middle && e.button === 0 && e.pointerType !== 'touch' && !!band;
+    const draws = !!cave.tool && !middle && e.button === 0 && e.pointerType !== 'touch' && !!band;
     if (draws) {
       live = { pts: [], widths: [], pressure: e.pointerType === 'pen' };
       addPoint(e);
@@ -272,7 +273,7 @@
     const stroked = live;
     live = null;
     if (stroked.pts.length >= 2 && cave.run) {
-      const result = engine.addSketch(cave.run, stroked.pts, stroked.pressure ? stroked.widths : null, cave.adjusted);
+      const result = engine.addSketch(cave.run, cave.tool, stroked.pts, stroked.pressure ? stroked.widths : null, cave.adjusted);
       message = result === 'ok' ? '' : result;
       changed();
     }
@@ -327,7 +328,7 @@
   <canvas
     bind:this={canvas}
     tabindex="0"
-    style="width:{width}px;height:{height}px;cursor:{tool === 'sketch' ? 'crosshair' : 'grab'}"
+    style="width:{width}px;height:{height}px;cursor:{cave.tool ? 'crosshair' : 'grab'}"
     onpointerdown={onDown}
     onpointermove={onMove}
     onpointerup={onUp}
@@ -340,8 +341,6 @@
     <select bind:value={cave.run} aria-label="Run">
       {#each runs as r}<option value={r.key}>{r.key} · {r.stations} stations · {formatLength(r.length, cave.units)}{r.tie ? ` · from ${r.tie}` : ''}</option>{/each}
     </select>
-    <button class:on={tool === 'sketch'} title="Sketch (pen or mouse)" onclick={() => (tool = 'sketch')}><Pencil size={15} /></button>
-    <button class:on={tool === 'pan'} title="Pan" onclick={() => (tool = 'pan')}><Hand size={15} /></button>
     <label class="show" title="Show the cross sections drawn at stations, next to their stations (drag one to place it)"><input type="checkbox" checked={cave.showSections.profile} onchange={(e) => (setShowSections('profile', e.currentTarget.checked), schedule())} /> Sections</label>
     <button title="Undo (Ctrl/Cmd+Z)" disabled={!canUndo} onclick={doUndo}><Undo2 size={15} /></button>
     <button title="Redo (Shift+Ctrl/Cmd+Z)" disabled={!canRedo} onclick={doRedo}><Redo2 size={15} /></button>
@@ -361,7 +360,6 @@
   select, button { font: inherit; padding: 3px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--text); cursor: pointer; display: inline-grid; place-items: center; }
   select { max-width: 260px; }
   .show { display: flex; gap: 4px; align-items: center; color: var(--muted); }
-  button.on { background: var(--accent-bg); }
   button:disabled { opacity: 0.4; cursor: default; }
   .note { position: absolute; left: 8px; bottom: 8px; padding: 4px 8px; font-size: 12px; color: var(--muted); background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); }
 </style>

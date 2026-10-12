@@ -69,7 +69,16 @@
       view?.setShowProfileSketches(profileOn);
       if (view && on) view.setSections(engine.mapSections(cave.adjusted, wireFilter()));
       if (view && profileOn) view.setProfileSketches(engine.mapProfileSketches(cave.adjusted));
+      view?.setMapLines(engine.mapLines(cave.adjusted));
     });
+  });
+
+  // The picked drawing tool: drawing on the map goes to its plan, from the Top or Bottom view.
+  let drawHint = $state('');
+  $effect(() => {
+    const tool = cave.tool;
+    view?.setDrawTool(tool);
+    drawHint = '';
   });
 
   // The station the Cross Section panel shows is ringed on the map.
@@ -86,7 +95,7 @@
   function onUp(e: PointerEvent) {
     const d = down;
     down = null;
-    if (!d || !view || Math.hypot(e.clientX - d.x, e.clientY - d.y) > 4) return;
+    if (!d || !view || cave.tool || Math.hypot(e.clientX - d.x, e.clientY - d.y) > 4) return;
     const hit = view.pickStation(e.clientX, e.clientY);
     if (!hit) return;
     cave.station = hit.id;
@@ -128,7 +137,16 @@
   onMount(() => {
     const v = new CaveView(gl, overlay);
     const cube = new ViewCube(cubeHost, (dir) => v.snapTo(dir), (da, dp) => v.orbitBy(da, dp));
-    v.onRender = (camera, target) => cube.sync(camera, target);
+    v.onRender = (camera, target) => {
+      cube.sync(camera, target);
+      const hint = cave.tool && !v.canDrawHere ? 'Snap to the Top view to draw on the map' : '';
+      if (hint !== drawHint) drawHint = hint;
+    };
+    v.onLineDrawn = (points, widths) => {
+      const r = engine.addMapLine(cave.tool, points, widths, cave.adjusted);
+      if (r !== 'ok') engine.log('warn', 'draw', r);
+      changed();
+    };
     v.onProjection = (p) => (projection = p);
     v.setUnits(cave.units);
     v.onSectionPlaced = (id, offset) => {
@@ -194,7 +212,7 @@
       {/if}
     </div>
     <button class:on={depthColor} title="Colour by elevation" onclick={() => ((depthColor = !depthColor), view?.setElevationColors(depthColor), loadPassage())}><Palette size={15} /></button>
-    {#if status}<span class="status">{status}</span>{/if}
+    {#if drawHint}<span class="status">{drawHint}</span>{:else if status}<span class="status">{status}</span>{/if}
   </div>
   <div class="cube">
     <div bind:this={cubeHost}></div>

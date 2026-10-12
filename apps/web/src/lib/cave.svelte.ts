@@ -26,6 +26,9 @@ function savedSections(): { map: boolean; profile: boolean; profileSketches: boo
 }
 
 export const cave = $state({
+  /** The drawing tool picked on the Draw tab (a palette type such as `wall`), or empty. While one is
+   *  picked, drawing in any view makes linework of that type in that view. */
+  tool: '',
   /** Whether cross-section sketches are drawn beside their stations, per view, and whether profile
    *  sketches are drawn along their runs on the map (view settings). */
   showSections: savedSections(),
@@ -80,6 +83,11 @@ export function setUnits(u: Units) {
   } catch {
     // private window: the choice just lasts until the page closes
   }
+}
+
+/** Picks a drawing tool; picking the one already active puts it down. */
+export function setTool(key: string) {
+  cave.tool = cave.tool === key ? '' : key;
 }
 
 export function changed() {
