@@ -32,8 +32,9 @@ for (const name of FIXTURES) {
       unit: s.distanceUnit,
       shots: s.shots.map(function(x){ return { from: x.from, to: x.to, distance: x.distance, azimuth: x.azimuth, inclination: x.inclination,
         backAzimuth: x.backAzimuth === undefined ? null : x.backAzimuth, backInclination: x.backInclination === undefined ? null : x.backInclination,
-        azimuthOmitted: !!x.azimuthOmitted, noAdjust: !!x.noAdjust, splay: !!x.splay, excludeFromAll: !!x.excludeFromAll }; }),
-      fixed: s.fixed,
+        azimuthOmitted: !!x.azimuthOmitted, noAdjust: !!x.noAdjust, splay: !!x.splay, excludeFromAll: !!x.excludeFromAll, excludeFromPlot: !!x.excludeFromPlot,
+        left: x.left, right: x.right, up: x.up, down: x.down, leftOpen: !!x.leftOpen, rightOpen: !!x.rightOpen, upOpen: !!x.upOpen, downOpen: !!x.downOpen, trip: x.trip }; }),
+      name: s.caveName || s.name, startLrud: s.startLrud, fixed: s.fixed,
       resolved: { stations: pick(r.stations), anchors: r.anchors, loops: r.loops.map(loop), ties: r.ties.map(loop), legCount: r.legs.length },
       adjusted: { converged: a.summary.converged, adjusted: a.adjusted, stations: pick(a.stations) }
     });

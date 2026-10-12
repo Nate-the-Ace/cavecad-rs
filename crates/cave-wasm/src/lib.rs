@@ -3,13 +3,20 @@
 //! Each function here forwards to a core crate. Keep it that way: behaviour belongs in the
 //! `cave-*` crates where it is tested natively; this crate only adapts types for JavaScript.
 
+use cave_doc::{ActorId, Document};
 use cave_log::{BufferLayer, LogBuffer};
 use serde::Serialize;
+use std::cell::RefCell;
 use std::sync::OnceLock;
 use tracing_subscriber::layer::SubscriberExt;
 use wasm_bindgen::prelude::*;
 
 static CONSOLE: OnceLock<LogBuffer> = OnceLock::new();
+
+thread_local! {
+    /// The cave currently open. The browser is single-threaded, so this is the one document.
+    static DOC: RefCell<Option<Document>> = const { RefCell::new(None) };
+}
 
 fn console() -> &'static LogBuffer {
     CONSOLE.get_or_init(|| {
@@ -81,4 +88,41 @@ pub fn console_events(since: u64) -> String {
 #[wasm_bindgen]
 pub fn console_clear() {
     console().clear();
+}
+
+/// Opens a demo cave from shot-list JSON (the synthetic test caves). Returns a one-line summary,
+/// or an error message starting with `error:`.
+#[wasm_bindgen]
+pub fn open_demo(json: &str) -> String {
+    let _ = console();
+    match cave_fixture::from_shot_list(json, ActorId(1)) {
+        Ok(doc) => {
+            let scene = cave_scene::build(&doc, true);
+            let summary = format!(
+                "{} stations, {} legs, {} loop closures",
+                scene.stations.len(),
+                scene.legs.len(),
+                scene.closures.len()
+            );
+            tracing::info!(source = "import", "opened demo cave: {summary}");
+            DOC.with(|d| *d.borrow_mut() = Some(doc));
+            summary
+        }
+        Err(e) => {
+            tracing::error!(source = "import", "could not open demo cave: {e}");
+            format!("error: {e}")
+        }
+    }
+}
+
+/// The open cave as a scene for the map canvas (JSON). Empty scene when nothing is open.
+#[wasm_bindgen]
+pub fn scene(adjusted: bool) -> String {
+    DOC.with(|d| {
+        let scene = match d.borrow().as_ref() {
+            Some(doc) => cave_scene::build(doc, adjusted),
+            None => cave_scene::Scene::default(),
+        };
+        serde_json::to_string(&scene).unwrap_or_else(|_| "{}".to_string())
+    })
 }

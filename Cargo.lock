@@ -19,6 +19,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "cave-fixture"
+version = "0.0.1"
+dependencies = [
+ "cave-doc",
+ "cave-id",
+ "cave-survey",
+ "serde_json",
+]
+
+[[package]]
 name = "cave-geom"
 version = "0.0.1"
 dependencies = [
@@ -41,6 +51,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "cave-scene"
+version = "0.0.1"
+dependencies = [
+ "cave-doc",
+ "cave-fixture",
+ "cave-id",
+ "cave-survey",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "cave-store"
 version = "0.0.1"
 dependencies = [
@@ -60,7 +82,10 @@ dependencies = [
 name = "cave-wasm"
 version = "0.0.1"
 dependencies = [
+ "cave-doc",
+ "cave-fixture",
  "cave-log",
+ "cave-scene",
  "serde",
  "serde_json",
  "tracing",

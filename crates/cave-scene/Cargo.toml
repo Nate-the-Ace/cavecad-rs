@@ -1,0 +1,18 @@
+[package]
+name = "cave-scene"
+edition.workspace = true
+version.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+cave-id = { path = "../cave-id" }
+cave-doc = { path = "../cave-doc" }
+serde_json = "1"
+cave-survey = { path = "../cave-survey" }
+serde = { version = "1", features = ["derive"] }
+
+[dev-dependencies]
+cave-fixture = { path = "../cave-fixture" }

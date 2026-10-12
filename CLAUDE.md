@@ -60,3 +60,7 @@ Dockview styles only ship in its all-in-one bundle, so the import path is delibe
 ## Reuse the old math, prove it with the old answers
 
 The QCAD-era app already solved the survey math. Port from `~/Documents/github/cavecad-main/cave-survey/scripts/CaveSurvey/Core/` (read the comments: they record hard-won decisions), then prove parity: `tools/golden/gen_survey_golden.mjs` runs the OLD JavaScript on its synthetic test caves and writes answers to `crates/*/tests/golden/`; Rust tests must match them. The old `tests/js_unit.js` has hand-solved numbers worth porting as unit tests.
+
+## CI is switched off
+
+The `ci` workflow is disabled on GitHub (Nathan's call, 2026-10-11: webapp-forward, no more failure emails). The file stays in `.github/workflows/ci.yml`; re-enable with `gh workflow enable ci`. Until then the checks are run by hand before every commit: `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test`, the wasm32 build line above, `python3 tools/make_code_index.py --check`, and `npx svelte-check` in `apps/web`.

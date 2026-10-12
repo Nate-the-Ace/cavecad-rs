@@ -36,6 +36,21 @@ pub struct Skipped {
     pub reason: SkipReason,
 }
 
+/// A splay: a measured wall hit aimed from a station, not a station-to-station leg.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Splay {
+    /// The shot.
+    pub shot: Id,
+    /// The station it is aimed from.
+    pub from: Id,
+    /// What was read (distances in metres).
+    pub reading: Reading,
+    /// Displacement from the station, in metres.
+    pub offset: Vec3,
+    /// Left out of the plot (and so out of the walls).
+    pub exclude_from_plot: bool,
+}
+
 /// Everything the network needs from a document.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Extracted {
@@ -43,6 +58,8 @@ pub struct Extracted {
     pub legs: Vec<Leg>,
     /// Stations with surveyed control.
     pub fixed: Vec<Fixed>,
+    /// Splays with a usable reading, in survey order.
+    pub splays: Vec<Splay>,
     /// Shots not used, with reasons.
     pub skipped: Vec<Skipped>,
 }
@@ -63,7 +80,7 @@ pub fn extract(doc: &Document) -> Extracted {
         .collect();
     shots.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
 
-    let (mut legs, mut skipped) = (Vec::new(), Vec::new());
+    let (mut legs, mut skipped, mut splays) = (Vec::new(), Vec::new(), Vec::new());
     for (_, id) in shots {
         let Some(e) = doc.entity(id) else { continue };
         let skip = |reason| Skipped { shot: id, reason };
@@ -71,22 +88,10 @@ pub fn extract(doc: &Document) -> Extracted {
             skipped.push(skip(SkipReason::Excluded));
             continue;
         }
-        if e.flag(Field::ShotSplay) {
-            skipped.push(skip(SkipReason::Splay));
-            continue;
-        }
         let station = |f| {
             e.reference(f)
                 .filter(|s| doc.entity(*s).is_some_and(|x| x.kind() == Kind::Station))
         };
-        let (Some(from), Some(to)) = (station(Field::ShotFrom), station(Field::ShotTo)) else {
-            skipped.push(skip(SkipReason::MissingStation));
-            continue;
-        };
-        if from == to {
-            skipped.push(skip(SkipReason::SelfLoop));
-            continue;
-        }
         let trip = e.reference(Field::ShotTrip).and_then(|t| doc.entity(t));
         let factor = match trip.map(|t| t.text(Field::TripDistanceUnit)).as_deref() {
             Some("ft") => FEET_TO_METRES,
@@ -106,6 +111,27 @@ pub fn extract(doc: &Document) -> Extracted {
             back_inclination: e.number(Field::ShotBackInclination),
             azimuth_omitted: e.flag(Field::ShotAzimuthOmitted),
         };
+        if e.flag(Field::ShotSplay) {
+            skipped.push(skip(SkipReason::Splay));
+            if let (Some(from), Some(o)) = (station(Field::ShotFrom), offset(&reading, mode)) {
+                splays.push(Splay {
+                    shot: id,
+                    from,
+                    reading,
+                    offset: o.v,
+                    exclude_from_plot: e.flag(Field::ShotExcludeFromPlot),
+                });
+            }
+            continue;
+        }
+        let (Some(from), Some(to)) = (station(Field::ShotFrom), station(Field::ShotTo)) else {
+            skipped.push(skip(SkipReason::MissingStation));
+            continue;
+        };
+        if from == to {
+            skipped.push(skip(SkipReason::SelfLoop));
+            continue;
+        }
         match offset(&reading, mode) {
             Some(o) => legs.push(Leg {
                 shot: id,
@@ -136,6 +162,7 @@ pub fn extract(doc: &Document) -> Extracted {
     Extracted {
         legs,
         fixed,
+        splays,
         skipped,
     }
 }
