@@ -307,10 +307,15 @@ export class CaveView {
     const legs = (style: string) => s.legs.filter((l) => l.style === style).map((l) => [...l.from, ...l.to]);
     const walls = this.showWalls && s.walls.length > 0;
     // Walls are the drawing; once they are there the surveyed centreline steps back.
-    lines(s.splays, t.muted, 1, { opacity: 0.45 });
-    lines(legs('new'), walls ? t.muted : t.text, walls ? 1.4 : 2.2);
+    // Lines under another passage are dim and dashed, so overlapping levels read apart.
+    const sh = s.shading;
+    lines(sh.splays_over, t.muted, 1, { opacity: 0.45 });
+    lines(sh.splays_under, t.muted, 1, { opacity: 0.2, dashed: true });
+    lines(sh.legs_over, walls ? t.muted : t.text, walls ? 1.4 : 2.2);
+    lines(sh.legs_under, walls ? t.muted : t.text, walls ? 1.2 : 1.8, { opacity: 0.4, dashed: true });
     if (walls) {
-      lines(s.walls.flatMap((run) => run.slice(1).map((p, i) => [...run[i], ...p])), t.text, 2.4);
+      lines(sh.walls_over, t.text, 2.4);
+      lines(sh.walls_under, t.text, 2, { opacity: 0.4, dashed: true });
     }
     lines(legs('tie'), t.warn, 2, { dashed: true });
     lines(legs('closure'), t.accent, 2, { dashed: true });

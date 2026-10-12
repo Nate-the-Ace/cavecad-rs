@@ -16,6 +16,14 @@ export interface Scene {
   splays: [number, number, number, number, number, number][];
   /** Passage wall lines (both sides); each is a run of 3D points. */
   walls: Pt[][];
+  shading: {
+    splays_over: number[][];
+    splays_under: number[][];
+    walls_over: number[][];
+    walls_under: number[][];
+    legs_over: number[][];
+    legs_under: number[][];
+  };
   closures: { at: Pt; horizontal: number; vertical: number; percent: number | null }[];
   /** [minX, minY, minZ, maxX, maxY, maxZ] */
   bounds: [number, number, number, number, number, number] | null;

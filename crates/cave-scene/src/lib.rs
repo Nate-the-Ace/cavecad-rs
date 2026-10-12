@@ -7,9 +7,11 @@
 mod mesh;
 mod profile;
 mod solved;
+mod under;
 
 pub use mesh::{ColorMode, Mesh, passage_mesh};
 pub use profile::{ProfileScene, RunInfo, profile_frames, profile_scene, runs};
+pub use under::Shading;
 
 use cave_doc::Document;
 use cave_id::Id;
@@ -82,6 +84,8 @@ pub struct Scene {
     pub splay_shots: Vec<String>,
     /// Passage wall lines (both sides), each a run of 3D points built from LRUD and splays.
     pub walls: Vec<Vec<Pt>>,
+    /// The same lines split by whether another passage lies over them (drawn dim and dashed).
+    pub shading: Shading,
     /// Loop and tie misclosures (as surveyed, never from adjusted coordinates).
     pub closures: Vec<SceneClosure>,
     /// `[min_x, min_y, min_z, max_x, max_y, max_z]`, or `None` when empty.
@@ -175,12 +179,38 @@ pub fn build(doc: &Document, use_adjustment: bool) -> Scene {
         start_lruds: &ex.start_lruds,
         splays: &ex.splays,
     });
+    let feet = under::Footprints::new(&r.legs, &pos, &ex.lruds, &placed);
     for run in walls.left.iter().chain(&walls.right) {
         // Only the outside of the shell: loops where the line doubles back are dropped.
         let shell = cave_walls::outer_shell(&run.points);
-        scene
-            .walls
-            .push(shell.iter().map(|p| [p.x, p.y, p.z]).collect());
+        let line: Vec<Pt> = shell.iter().map(|p| [p.x, p.y, p.z]).collect();
+        let own: std::collections::HashSet<Id> = run.stations.iter().copied().collect();
+        let sh = &mut scene.shading;
+        feet.split(&line, &own, &mut sh.walls_over, &mut sh.walls_under);
+        scene.walls.push(line);
+    }
+    for (sp, ray) in ex
+        .splays
+        .iter()
+        .filter(|s| !s.exclude_from_plot && pos(s.from).is_some())
+        .zip(&scene.splays)
+    {
+        let own = std::collections::HashSet::from([sp.from]);
+        let line = [[ray[0], ray[1], ray[2]], [ray[3], ray[4], ray[5]]];
+        let sh = &mut scene.shading;
+        feet.split(&line, &own, &mut sh.splays_over, &mut sh.splays_under);
+    }
+    for l in r.legs.iter().filter(|l| l.kind == LegKind::New) {
+        if let (Some(a), Some(b)) = (pos(l.from), pos(l.to)) {
+            let own = std::collections::HashSet::from([l.from, l.to]);
+            let sh = &mut scene.shading;
+            feet.split(
+                &[[a.x, a.y, a.z], [b.x, b.y, b.z]],
+                &own,
+                &mut sh.legs_over,
+                &mut sh.legs_under,
+            );
+        }
     }
     for c in &r.closures {
         if let Some(p) = pos(c.at) {
