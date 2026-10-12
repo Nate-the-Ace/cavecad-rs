@@ -9,7 +9,7 @@ import vm from 'node:vm';
 
 const [, , oldRoot = `${process.env.HOME}/Documents/github/cavecad-main/cave-survey`, outDir = 'crates/cave-survey/tests/golden'] = process.argv;
 const core = (f) => `scripts/CaveSurvey/Core/${f}.js`;
-const FILES = ['CsUuid', 'CsTell', 'CsUnits', 'CsAngles', 'CsModel', 'CsTraverse', 'CsNetwork', 'CsAdjust', 'Format/CsCompass'].map(core);
+const FILES = ['CsUuid', 'CsTell', 'CsUnits', 'CsAngles', 'CsModel', 'CsTraverse', 'CsNetwork', 'CsAdjust', 'CsLrud', 'Format/CsCompass'].map(core);
 
 const ctx = vm.createContext({ console, Math, JSON, Date, RegExp, Object, Array, String, Number, isFinite, parseFloat, parseInt, isNaN });
 for (const f of FILES) {
@@ -35,6 +35,8 @@ for (const name of FIXTURES) {
         azimuthOmitted: !!x.azimuthOmitted, noAdjust: !!x.noAdjust, splay: !!x.splay, excludeFromAll: !!x.excludeFromAll, excludeFromPlot: !!x.excludeFromPlot,
         left: x.left, right: x.right, up: x.up, down: x.down, leftOpen: !!x.leftOpen, rightOpen: !!x.rightOpen, upOpen: !!x.upOpen, downOpen: !!x.downOpen, trip: x.trip }; }),
       name: s.caveName || s.name, startLrud: s.startLrud, fixed: s.fixed,
+      trips: (s.trips || []).map(function(t){ return { name: t.name, startLrud: t.startLrud || null }; }),
+      walls: (function(){ var w = CsLrud.wallRuns(s, r, 'slope'); var run = function(x){ return { points: x.points.map(function(p){ return [p.x, p.y]; }), stations: x.stations }; }; return { left: w.left.map(run), right: w.right.map(run), skipped: w.skipped }; })(),
       resolved: { stations: pick(r.stations), anchors: r.anchors, loops: r.loops.map(loop), ties: r.ties.map(loop), legCount: r.legs.length },
       adjusted: { converged: a.summary.converged, adjusted: a.adjusted, stations: pick(a.stations) }
     });

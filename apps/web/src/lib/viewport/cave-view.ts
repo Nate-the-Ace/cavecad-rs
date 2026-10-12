@@ -12,8 +12,8 @@ export type Projection = 'perspective' | 'orthographic';
 export type Dir = [number, number, number];
 
 const FOV = 45;
-/** Default "home" view: from the south-east and above. */
-export const HOME_DIR: Dir = [1, -1.2, 0.9];
+/** Default "home" view: straight down (plan), north up. Every cave opens here. */
+export const HOME_DIR: Dir = [0, 0, 1];
 
 /** A tiny tilt so straight-down views keep north at the top of the screen. */
 const TILT = 1e-3;
@@ -61,7 +61,15 @@ export class CaveView {
     // CAD mouse: middle drag pans, wheel zooms, left drag orbits (right drag pans too).
     this.controls.mouseButtons = { LEFT: THREE.MOUSE.ROTATE, MIDDLE: THREE.MOUSE.PAN, RIGHT: THREE.MOUSE.PAN };
     // Stops the browser's middle-click autoscroll from taking over the drag.
-    canvas.addEventListener('mousedown', (e) => e.button === 1 && e.preventDefault());
+    // A double middle-click is Zoom Everything (frames the whole cave).
+    let lastMiddle = { time: 0, x: 0, y: 0 };
+    canvas.addEventListener('mousedown', (e) => {
+      if (e.button !== 1) return;
+      e.preventDefault();
+      const quick = e.timeStamp - lastMiddle.time < 350 && Math.hypot(e.clientX - lastMiddle.x, e.clientY - lastMiddle.y) < 8;
+      lastMiddle = { time: quick ? 0 : e.timeStamp, x: e.clientX, y: e.clientY };
+      if (quick) this.fit();
+    });
     this.controls.addEventListener('change', () => this.requestRender());
     this.applyTheme();
   }
@@ -197,8 +205,10 @@ export class CaveView {
     this.requestRender();
   }
 
-  /** Jumps (no animation) to the home angle and frames the cave. Used when a cave first opens. */
+  /** Jumps (no animation) to the home view (Top, north up) and frames the cave. Used when a cave opens. */
   resetView() {
+    // Plan view is orthographic: a measured drawing, not a perspective picture.
+    this.setProjection('orthographic');
     const dist = Math.max(this.cameraOffset.length(), 1);
     this.camera.position.copy(this.controls.target).addScaledVector(viewDirection(HOME_DIR), dist);
     this.controls.update();

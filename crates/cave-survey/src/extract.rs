@@ -5,10 +5,11 @@
 //! Distances are converted to metres using each shot's trip (empty unit means metres).
 
 use crate::network::{Fixed, Leg};
-use crate::traverse::{Reading, TapeMode, offset};
+use crate::traverse::{Reading, TapeMode, is_plumb, offset};
 use crate::vec3::Vec3;
 use cave_doc::{Document, Field, Kind};
 use cave_id::Id;
+use std::collections::HashMap;
 
 const FEET_TO_METRES: f64 = 0.3048;
 
@@ -51,6 +52,44 @@ pub struct Splay {
     pub exclude_from_plot: bool,
 }
 
+/// Passage dimensions measured at a station (metres). `None` means not measured, which is not
+/// the same as 0 (the wall is at the station). An open flag means "P": looked at, no wall.
+#[derive(Clone, Copy, Debug, PartialEq, Default)]
+pub struct StationLrud {
+    /// Distance to the left wall.
+    pub left: Option<f64>,
+    /// Distance to the right wall.
+    pub right: Option<f64>,
+    /// Distance to the ceiling.
+    pub up: Option<f64>,
+    /// Distance to the floor.
+    pub down: Option<f64>,
+    /// Open passage to the left.
+    pub left_open: bool,
+    /// Open passage to the right.
+    pub right_open: bool,
+    /// Open above.
+    pub up_open: bool,
+    /// Open below.
+    pub down_open: bool,
+    /// The bearing the caver faced when pulling the tapes; `None` for a pitch (no bearing).
+    pub azimuth: Option<f64>,
+}
+
+impl StationLrud {
+    /// True if anything was recorded (a number or an open flag).
+    pub fn has_evidence(&self) -> bool {
+        self.left.is_some()
+            || self.right.is_some()
+            || self.up.is_some()
+            || self.down.is_some()
+            || self.left_open
+            || self.right_open
+            || self.up_open
+            || self.down_open
+    }
+}
+
 /// Everything the network needs from a document.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Extracted {
@@ -60,6 +99,12 @@ pub struct Extracted {
     pub fixed: Vec<Fixed>,
     /// Splays with a usable reading, in survey order.
     pub splays: Vec<Splay>,
+    /// What was read on each leg (by shot), for bearings and pitch tests.
+    pub readings: HashMap<Id, Reading>,
+    /// Walls measured at each station, from the last shot arriving there.
+    pub lruds: HashMap<Id, StationLrud>,
+    /// Walls typed on a trip's opening row, for stations no shot arrives at.
+    pub start_lruds: HashMap<Id, StationLrud>,
     /// Shots not used, with reasons.
     pub skipped: Vec<Skipped>,
 }
@@ -81,6 +126,11 @@ pub fn extract(doc: &Document) -> Extracted {
     shots.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
 
     let (mut legs, mut skipped, mut splays) = (Vec::new(), Vec::new(), Vec::new());
+    let mut readings: HashMap<Id, Reading> = HashMap::new();
+    let mut lruds: HashMap<Id, StationLrud> = HashMap::new();
+    let mut arrived: std::collections::HashSet<Id> = std::collections::HashSet::new();
+    let mut first_of_trip: HashMap<Option<Id>, Id> = HashMap::new();
+    let (mut first_station, mut seen_first) = (None, false);
     for (_, id) in shots {
         let Some(e) = doc.entity(id) else { continue };
         let skip = |reason| Skipped { shot: id, reason };
@@ -124,7 +174,39 @@ pub fn extract(doc: &Document) -> Extracted {
             }
             continue;
         }
-        let (Some(from), Some(to)) = (station(Field::ShotFrom), station(Field::ShotTo)) else {
+        // Walls: LRUD belongs to the TO station of the last non-splay shot arriving there.
+        let (from_station, to_station) = (station(Field::ShotFrom), station(Field::ShotTo));
+        if !seen_first {
+            seen_first = true;
+            first_station = from_station;
+        }
+        if let Some(f) = from_station {
+            first_of_trip
+                .entry(e.reference(Field::ShotTrip))
+                .or_insert(f);
+        }
+        if let Some(t) = to_station {
+            arrived.insert(t);
+            let lrud = StationLrud {
+                left: e.number(Field::ShotLeft).map(|v| v * factor),
+                right: e.number(Field::ShotRight).map(|v| v * factor),
+                up: e.number(Field::ShotUp).map(|v| v * factor),
+                down: e.number(Field::ShotDown).map(|v| v * factor),
+                left_open: e.flag(Field::ShotLeftOpen),
+                right_open: e.flag(Field::ShotRightOpen),
+                up_open: e.flag(Field::ShotUpOpen),
+                down_open: e.flag(Field::ShotDownOpen),
+                azimuth: if reading.azimuth_omitted || is_plumb(&reading) {
+                    None
+                } else {
+                    reading.azimuth
+                },
+            };
+            if lrud.has_evidence() {
+                lruds.insert(t, lrud);
+            }
+        }
+        let (Some(from), Some(to)) = (from_station, to_station) else {
             skipped.push(skip(SkipReason::MissingStation));
             continue;
         };
@@ -133,15 +215,18 @@ pub fn extract(doc: &Document) -> Extracted {
             continue;
         }
         match offset(&reading, mode) {
-            Some(o) => legs.push(Leg {
-                shot: id,
-                from,
-                to,
-                offset: o.v,
-                distance: reading.distance,
-                no_adjust: e.flag(Field::ShotNoAdjust),
-                azimuth_omitted: reading.azimuth_omitted,
-            }),
+            Some(o) => {
+                readings.insert(id, reading);
+                legs.push(Leg {
+                    shot: id,
+                    from,
+                    to,
+                    offset: o.v,
+                    distance: reading.distance,
+                    no_adjust: e.flag(Field::ShotNoAdjust),
+                    azimuth_omitted: reading.azimuth_omitted,
+                });
+            }
             None => skipped.push(skip(SkipReason::Unusable)),
         }
     }
@@ -159,10 +244,62 @@ pub fn extract(doc: &Document) -> Extracted {
             Some(Fixed { station: id, pos })
         })
         .collect();
+    // Walls typed on a trip's opening row live on the station that trip begins at, but only if
+    // no shot arrives there (otherwise that shot carries them, measured facing the passage).
+    let mut trips: Vec<(f64, Id)> = doc
+        .ids_of(Kind::Trip)
+        .into_iter()
+        .map(|id| {
+            (
+                doc.entity(id)
+                    .and_then(|e| e.number(Field::TripOrder))
+                    .unwrap_or(f64::MAX),
+                id,
+            )
+        })
+        .collect();
+    trips.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
+    let start_of = |trip: Id| -> Option<StationLrud> {
+        let e = doc.entity(trip)?;
+        let f = if e.text(Field::TripDistanceUnit) == "ft" {
+            FEET_TO_METRES
+        } else {
+            1.0
+        };
+        let l = StationLrud {
+            left: e.number(Field::TripStartLeft).map(|v| v * f),
+            right: e.number(Field::TripStartRight).map(|v| v * f),
+            up: e.number(Field::TripStartUp).map(|v| v * f),
+            down: e.number(Field::TripStartDown).map(|v| v * f),
+            left_open: e.flag(Field::TripStartLeftOpen),
+            right_open: e.flag(Field::TripStartRightOpen),
+            up_open: e.flag(Field::TripStartUpOpen),
+            down_open: e.flag(Field::TripStartDownOpen),
+            azimuth: None,
+        };
+        l.has_evidence().then_some(l)
+    };
+    let mut start_lruds: HashMap<Id, StationLrud> = HashMap::new();
+    let mut take = |name: Option<Id>, lrud: Option<StationLrud>| {
+        if let (Some(n), Some(l)) = (name, lrud)
+            && !arrived.contains(&n)
+            && !start_lruds.contains_key(&n)
+        {
+            start_lruds.insert(n, l);
+        }
+    };
+    take(first_station, trips.first().and_then(|(_, t)| start_of(*t)));
+    for (_, t) in &trips {
+        take(first_of_trip.get(&Some(*t)).copied(), start_of(*t));
+    }
+
     Extracted {
         legs,
         fixed,
         splays,
+        readings,
+        lruds,
+        start_lruds,
         skipped,
     }
 }

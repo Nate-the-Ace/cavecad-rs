@@ -76,3 +76,5 @@ The whole canvas is a 3D view (three.js, `apps/web/src/lib/viewport/`): z is up,
 ## Roadmap items every step must respect
 
 Xrefs and multi-user co-editing are not built yet but are on the road map; `docs/DESIGN.md` ("Standing considerations") lists the gaps and a per-step checklist. Read it before adding a tool or crate.
+
+Pen input is on the road map too (see "Pen and tablet input" in `docs/DESIGN.md`): strokes keep optional `widths`; pressure never moves a coordinate.

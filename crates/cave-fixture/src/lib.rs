@@ -24,24 +24,69 @@ pub fn from_shot_list(text: &str, actor: ActorId) -> Result<Document, String> {
     let mut doc = Document::new(actor);
     let unit = json["unit"].as_str().unwrap_or("m").to_string();
 
-    let trip = ids.next_id();
-    doc.edit(vec![
-        Action::Create {
-            id: trip,
-            kind: Kind::Trip,
-        },
-        Action::Set {
-            id: trip,
-            field: Field::TripName,
-            value: Value::Text(json["name"].as_str().unwrap_or("").into()),
-        },
-        Action::Set {
-            id: trip,
-            field: Field::TripDistanceUnit,
-            value: Value::Text(unit.clone()),
-        },
-    ])
-    .map_err(|e| format!("{e:?}"))?;
+    // One Trip per entry of "trips" (the old app's trip table); one trip if the file has none.
+    let trip_list = json["trips"]
+        .as_array()
+        .filter(|t| !t.is_empty())
+        .cloned()
+        .unwrap_or_else(|| vec![Json::Null]);
+    let mut trips = Vec::new();
+    for (i, t) in trip_list.iter().enumerate() {
+        let id = ids.next_id();
+        let name = t["name"].as_str().or(json["name"].as_str()).unwrap_or("");
+        let mut actions = vec![
+            Action::Create {
+                id,
+                kind: Kind::Trip,
+            },
+            Action::Set {
+                id,
+                field: Field::TripName,
+                value: Value::Text(name.into()),
+            },
+            Action::Set {
+                id,
+                field: Field::TripDistanceUnit,
+                value: Value::Text(unit.clone()),
+            },
+            Action::Set {
+                id,
+                field: Field::TripOrder,
+                value: Value::Number(Some(i as f64)),
+            },
+        ];
+        let start = &t["startLrud"];
+        for (key, field) in [
+            ("left", Field::TripStartLeft),
+            ("right", Field::TripStartRight),
+            ("up", Field::TripStartUp),
+            ("down", Field::TripStartDown),
+        ] {
+            if start[key].is_number() {
+                actions.push(Action::Set {
+                    id,
+                    field,
+                    value: number(&start[key]),
+                });
+            }
+        }
+        for (key, field) in [
+            ("leftOpen", Field::TripStartLeftOpen),
+            ("rightOpen", Field::TripStartRightOpen),
+            ("upOpen", Field::TripStartUpOpen),
+            ("downOpen", Field::TripStartDownOpen),
+        ] {
+            if start[key].as_bool() == Some(true) {
+                actions.push(Action::Set {
+                    id,
+                    field,
+                    value: Value::Flag(true),
+                });
+            }
+        }
+        doc.edit(actions).map_err(|e| format!("{e:?}"))?;
+        trips.push(id);
+    }
 
     let mut stations: HashMap<String, Id> = HashMap::new();
     let mut station = |doc: &mut Document, name: &str, ids: &mut SeqIds| -> Result<Id, String> {
@@ -72,6 +117,9 @@ pub fn from_shot_list(text: &str, actor: ActorId) -> Result<Document, String> {
         .enumerate()
     {
         let id = ids.next_id();
+        let trip_index = s["trip"]
+            .as_u64()
+            .map_or(0, |t| (t as usize).min(trips.len() - 1));
         let mut actions = vec![
             Action::Create {
                 id,
@@ -80,7 +128,7 @@ pub fn from_shot_list(text: &str, actor: ActorId) -> Result<Document, String> {
             Action::Set {
                 id,
                 field: Field::ShotTrip,
-                value: Value::Ref(Some(trip)),
+                value: Value::Ref(Some(trips[trip_index])),
             },
             Action::Set {
                 id,

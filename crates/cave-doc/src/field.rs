@@ -103,6 +103,24 @@ pub enum Field {
     TripDeclinationSource,
     /// Unit of every distance and LRUD in the trip: `ft` or `m` (empty means metres).
     TripDistanceUnit,
+    /// Position of the trip among trips (smaller is earlier; ties break by id).
+    TripOrder,
+    /// Walls at the trip's first station (nothing arrives there, so no shot carries them).
+    TripStartLeft,
+    /// See `TripStartLeft`.
+    TripStartRight,
+    /// See `TripStartLeft`.
+    TripStartUp,
+    /// See `TripStartLeft`.
+    TripStartDown,
+    /// The start station's left side was written "P" (open passage).
+    TripStartLeftOpen,
+    /// See `TripStartLeftOpen`.
+    TripStartRightOpen,
+    /// See `TripStartLeftOpen`.
+    TripStartUpOpen,
+    /// See `TripStartLeftOpen`.
+    TripStartDownOpen,
     /// How the tape was held: `slope` (default, empty means slope) or `horizontal`.
     TripTapeMode,
     /// Station label shown to people (not its identity).
@@ -239,6 +257,11 @@ impl Field {
             TripDeclinationSource => (K::Trip, V::Text),
             TripDistanceUnit => (K::Trip, V::Text),
             TripTapeMode => (K::Trip, V::Text),
+            TripOrder => (K::Trip, V::Number),
+            TripStartLeft | TripStartRight | TripStartUp | TripStartDown => (K::Trip, V::Number),
+            TripStartLeftOpen | TripStartRightOpen | TripStartUpOpen | TripStartDownOpen => {
+                (K::Trip, V::Flag)
+            }
             StationLabel => (K::Station, V::Text),
             StationFixedX => (K::Station, V::Number),
             StationFixedY => (K::Station, V::Number),

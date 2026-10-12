@@ -19,7 +19,7 @@ pub use adjust::{
     Adjusted, CG_TOLERANCE_FRACTION, MIN_VARIANCE, NO_ADJUST_WEIGHT_FACTOR, PLUMB_SIGMA_ANGLE_DEG,
     Params, Residual, Shift, Summary, adjust,
 };
-pub use extract::{Extracted, SkipReason, Skipped, extract};
+pub use extract::{Extracted, SkipReason, Skipped, Splay, StationLrud, extract};
 pub use network::{
     Closure, ClosureKind, Fixed, Leg, LegKind, LegResult, Placed, Resolved, resolve,
 };

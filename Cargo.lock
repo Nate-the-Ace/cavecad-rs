@@ -79,6 +79,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "cave-walls"
+version = "0.0.1"
+dependencies = [
+ "cave-doc",
+ "cave-fixture",
+ "cave-id",
+ "cave-survey",
+ "serde_json",
+]
+
+[[package]]
 name = "cave-wasm"
 version = "0.0.1"
 dependencies = [

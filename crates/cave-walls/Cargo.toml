@@ -1,0 +1,17 @@
+[package]
+name = "cave-walls"
+edition.workspace = true
+version.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+cave-id = { path = "../cave-id" }
+cave-survey = { path = "../cave-survey" }
+
+[dev-dependencies]
+cave-doc = { path = "../cave-doc" }
+cave-fixture = { path = "../cave-fixture" }
+serde_json = "1"
