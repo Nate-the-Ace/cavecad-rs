@@ -72,3 +72,7 @@ The `ci` workflow is disabled on GitHub (Nathan's call, 2026-10-11: webapp-forwa
 ## The canvas is 3D
 
 The whole canvas is a 3D view (three.js, `apps/web/src/lib/viewport/`): z is up, y is north. Plan is just the Top view. The view cube snaps to 26 directions; a flat face view switches to orthographic. Dev hook: `window.__view` in dev builds. Scene data (always 3D) comes from `cave-scene` through `cave-wasm`.
+
+## Roadmap items every step must respect
+
+Xrefs and multi-user co-editing are not built yet but are on the road map; `docs/DESIGN.md` ("Standing considerations") lists the gaps and a per-step checklist. Read it before adding a tool or crate.
