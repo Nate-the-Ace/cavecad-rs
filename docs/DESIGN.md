@@ -399,3 +399,17 @@ Not done: the old trip-planner packet (printable card), and the stations.json si
   and is exported to DXF (text, leader and arrow head on `CAVE-CALLOUTS-<view>`).
 - Not done: several arrows on one note, the curved leader style (the engine has it, no button yet), the
   note styles (hazard, dig...: use Show/types instead), and the elevation callout that reads a floor height.
+
+## 2026-10-12: Sheets, first slice (the map on paper)
+- `cave-sheet` ports the old `CsSheetSetup` maths: the 12 papers, 20 plot scales, which scale fits a cave on a
+  sheet (`fit`), the scale bar's round divisions (`bar_for`, metric scales count metres) and the packing of
+  title block, scale bar and north arrow into the band under the map (`furniture`). Golden-checked against the
+  old code on 432 fits, 72 layouts and every bar (`tests/golden.rs`). Furniture comes out as plain shapes so
+  screen, PNG and later DXF/PDF draw the same sheet.
+- Sheets tab: paper, way up (best fits the cave), scale (best fit, metric scales first when the unit is metric),
+  title block words, which pieces to show, Save PNG (200 dpi) and Print (the browser's dialog, "Save as PDF"
+  there gives a PDF on the right paper size). The Sheet panel shows exactly what Print produces: walls (outer
+  shell), survey legs and everything drawn on the map, in black on white.
+- Sheet settings are kept in this browser (like view settings), not in the cave.
+- Not done: several sheets / tiling a big cave, elevation sheets, legend, detail boxes, magnetic north arm
+  (declination is not stored yet), sheet templates, putting the sheet in the DXF, dragging pieces around.

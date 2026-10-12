@@ -8,12 +8,13 @@
   import SelectionTools from './SelectionTools.svelte';
   import CollaborateGroup from './CollaborateGroup.svelte';
   import FillTools from './FillTools.svelte';
+  import SheetGroup from './SheetGroup.svelte';
   import Avatars from './Avatars.svelte';
   import { symbolDef } from '../lib/symbols';
   import { fillLabel } from '../lib/fills';
   import { onMount } from 'svelte';
   import { PANELS, panelState, resetLayout, showPanel, togglePanel } from '../lib/workspace.svelte';
-  import { Check, Trash2, FileInput, FolderOpen, Save, Ruler, Footprints, Route, Waypoints, Scissors, Map as MapIcon, Terminal, LayoutDashboard, Activity, Shapes, Table2 } from '@lucide/svelte';
+  import { Check, Trash2, FileInput, FolderOpen, Save, Ruler, Footprints, Route, Waypoints, Scissors, Map as MapIcon, Terminal, LayoutDashboard, Activity, Shapes, Table2, FileText } from '@lucide/svelte';
   import type { Component } from 'svelte';
 
   interface Item {
@@ -63,9 +64,14 @@
       { name: 'Symbols', items: [{ label: 'Symbols', icon: Shapes, run: () => showPanel('symbols'), pressed: () => !!panelState.visible.symbols }] },
       { name: 'Area fill', items: [], custom: FillTools },
     ],
-    Sheets: [],
+    Sheets: [
+      { name: 'Paper and scale', items: [], custom: SheetGroup, props: { part: 'paper' } },
+      { name: 'Title block', items: [], custom: SheetGroup, props: { part: 'title' } },
+      { name: 'Show', items: [], custom: SheetGroup, props: { part: 'pieces' } },
+      { name: 'Save', items: [], custom: SheetGroup, props: { part: 'save' } },
+    ],
     View: [
-      { name: 'Panels', items: [panelItem('map', MapIcon), panelItem('profile', Activity), panelItem('section', Scissors), panelItem('symbols', Shapes), panelItem('stations', Table2), panelItem('console', Terminal)] },
+      { name: 'Panels', items: [panelItem('map', MapIcon), panelItem('profile', Activity), panelItem('section', Scissors), panelItem('symbols', Shapes), panelItem('stations', Table2), panelItem('sheet', FileText), panelItem('console', Terminal)] },
       { name: 'Units', items: [{ label: 'Metric', icon: Ruler, run: () => setUnits('metric'), pressed: () => cave.units === 'metric' }, { label: 'Imperial', icon: Footprints, run: () => setUnits('imperial'), pressed: () => cave.units === 'imperial' }] },
       { name: 'Theme', items: [], custom: ThemeGroup },
       { name: 'Live editing', items: [], custom: CollaborateGroup },

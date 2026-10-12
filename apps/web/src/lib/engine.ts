@@ -1,5 +1,5 @@
 // Loads the Rust engine (WASM) once and re-exports the few calls the UI uses.
-import init, { start, log, console_events, console_clear, engine_version, open_demo, scene, profile_runs, profile_band, add_profile_sketch, undo, redo, edit_state, passage_mesh, shading, palette, open_dxf, save_dxf, section_stations, section_at, add_section_sketch, map_sections, place_section, map_profile_sketches, add_map_line, map_lines, draw_tools, edit_line, delete_line, set_line_closed, set_line_kind, line_info, set_line_flip, set_line_text, ornament, callout, flipped_lines, revision, station_rows, set_station_mark, symbols, fills, fill_marks, draw_tool_groups, sync_outbox, sync_apply, sync_snapshot, sync_load } from '../wasm/cave_wasm.js';
+import init, { start, log, console_events, console_clear, engine_version, open_demo, scene, profile_runs, profile_band, add_profile_sketch, undo, redo, edit_state, passage_mesh, shading, palette, open_dxf, save_dxf, section_stations, section_at, add_section_sketch, map_sections, place_section, map_profile_sketches, add_map_line, map_lines, draw_tools, edit_line, delete_line, set_line_closed, set_line_kind, line_info, set_line_flip, set_line_text, ornament, callout, sheet_options, sheet_plan, flipped_lines, revision, station_rows, set_station_mark, symbols, fills, fill_marks, draw_tool_groups, sync_outbox, sync_apply, sync_snapshot, sync_load } from '../wasm/cave_wasm.js';
 
 import { setInkPalette } from './ink';
 import { setOrnamentSource } from './section-glyph';
@@ -41,6 +41,37 @@ export interface Scene {
   bounds: [number, number, number, number, number, number] | null;
   adjusted: boolean;
   skipped: number;
+}
+/** Papers (inches) and plot scales a sheet offers. */
+export interface SheetOptions {
+  papers: { name: string; w: number; h: number }[];
+  scales: { label: string; feet_per_inch: number; metric: boolean }[];
+}
+/** What a person chose for a sheet. */
+export interface SheetSetup {
+  /** Index into the papers. */
+  paper: number;
+  /** 0 landscape, 1 portrait, 2 whichever fits the cave better. */
+  turned: 0 | 1 | 2;
+  /** Feet of cave per inch of paper; 0 for the most detailed scale that fits. */
+  feetPerInch: number;
+  name: string;
+  lines: string[];
+  title: boolean;
+  bar: boolean;
+  north: boolean;
+}
+/** A shape of the sheet's furniture, in inches from the paper's lower left corner. */
+export type SheetShape = { t: 'line'; a: [number, number]; b: [number, number] } | { t: 'rect'; a: [number, number]; b: [number, number] } | { t: 'fill'; pts: [number, number][] } | { t: 'text'; at: [number, number]; h: number; s: string };
+/** A sheet laid out: paper size (inches), the box the map may use, the scale and the furniture. */
+export interface SheetPlan {
+  w: number;
+  h: number;
+  map: [number, number, number, number];
+  feet_per_inch: number;
+  shapes: SheetShape[];
+  turned: boolean;
+  fits: boolean;
 }
 export interface RunInfo {
   key: string;
@@ -226,6 +257,10 @@ export const engine = {
   /** What a drawn line is, or null when the id is not a drawn line. */
   setLineText: (id: string, text: string): string => set_line_text(id, text),
   setLineFlip: (id: string, flip: boolean): string => set_line_flip(id, flip),
+  /** The papers and plot scales a sheet offers. */
+  sheetOptions: (): SheetOptions => JSON.parse(sheet_options()),
+  /** A sheet laid out for a cave this many metres wide and tall (see `sheet_plan` in the engine). */
+  sheetPlan: (width: number, height: number, p: SheetSetup): SheetPlan => JSON.parse(sheet_plan(width, height, p.paper, p.turned, p.feetPerInch, p.name, JSON.stringify(p.lines), p.title, p.bar, p.north)),
   ornament: (kind: string, curve: [number, number][], closed: boolean, flip: boolean, id: string, survey: [number, number][]): { spine: boolean; lines: [number, number][][] } => JSON.parse(ornament(kind, JSON.stringify(curve), closed, flip, id, JSON.stringify(survey))),
   flippedLines: (): string[] => JSON.parse(flipped_lines()),
   lineInfo: (id: string): { kind: string; view: 'profile' | 'section' | 'map'; closed: boolean; flip: boolean; text: string } | null => JSON.parse(line_info(id)),

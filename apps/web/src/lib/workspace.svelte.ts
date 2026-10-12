@@ -12,6 +12,7 @@ import ProfilePanel from '../panels/ProfilePanel.svelte';
 import SectionPanel from '../panels/SectionPanel.svelte';
 import SymbolsPanel from '../panels/SymbolsPanel.svelte';
 import StationsPanel from '../panels/StationsPanel.svelte';
+import SheetPanel from '../panels/SheetPanel.svelte';
 
 const LAYOUT_KEY = 'cavecad.layout.v1';
 
@@ -31,6 +32,7 @@ export const PANELS: Record<string, PanelDef> = {
   section: { title: 'Cross Section', component: SectionPanel, width: 460 },
   symbols: { title: 'Symbols', component: SymbolsPanel, width: 300 },
   stations: { title: 'Stations', component: StationsPanel, height: 260 },
+  sheet: { title: 'Sheet', component: SheetPanel, width: 520 },
   console: { title: 'Console', component: ConsolePanel, height: 260 },
 };
 

@@ -418,6 +418,72 @@ pub fn callout(tip_x: f64, tip_y: f64, at_x: f64, at_y: f64, chars: usize, curve
     serde_json::to_string(&l).unwrap_or_default()
 }
 
+/// The papers and plot scales a sheet offers: `{papers:[{name,w,h}], scales:[{label,feet_per_inch,metric}]}`
+/// as JSON (inches, feet per inch).
+#[wasm_bindgen]
+pub fn sheet_options() -> String {
+    serde_json::json!({"papers": cave_sheet::papers(), "scales": cave_sheet::scales()}).to_string()
+}
+
+/// A sheet laid out for a cave `width` x `height` metres: `paper` is an index into the papers,
+/// `turned` 0 landscape / 1 portrait / 2 whichever fits, `feet_per_inch` 0 for the most detailed scale
+/// that fits. `lines` is a JSON array of title block lines. Returns `{w, h, map, feet_per_inch, shapes,
+/// turned, fits}` as JSON (inches from the paper's lower left corner).
+#[wasm_bindgen]
+#[allow(clippy::too_many_arguments)]
+pub fn sheet_plan(
+    width: f64,
+    height: f64,
+    paper: usize,
+    turned: u8,
+    feet_per_inch: f64,
+    name: &str,
+    lines: &str,
+    title: bool,
+    bar: bool,
+    north: bool,
+) -> String {
+    let papers = cave_sheet::papers();
+    let Some(paper) = papers.get(paper).or(papers.first()) else {
+        return String::new();
+    };
+    let lines = serde_json::from_str::<Vec<String>>(lines).unwrap_or_default();
+    let words = cave_sheet::Title {
+        name,
+        lines: &lines,
+    };
+    let wants = cave_sheet::Wants { title, bar, north };
+    let (w_ft, h_ft) = (width * cave_sheet::FT_PER_M, height * cave_sheet::FT_PER_M);
+    let footer = |t| cave_sheet::footer_for(paper, t, wants, &words);
+    let (mut is_turned, mut fits) = (turned == 1, true);
+    let mut scale = feet_per_inch;
+    if feet_per_inch <= 0.0 || turned == 2 {
+        let land = cave_sheet::fit(w_ft, h_ft, paper, footer(false), Some(false));
+        let port = cave_sheet::fit(w_ft, h_ft, paper, footer(true), Some(true));
+        let best = if turned == 0 || (turned == 2 && !land.fits && !port.fits) {
+            land.clone()
+        } else if turned == 1 {
+            port.clone()
+        } else if land.fits && (!port.fits || land.scale <= port.scale) {
+            land.clone()
+        } else {
+            port.clone()
+        };
+        if turned == 2 {
+            is_turned = best.turned;
+        }
+        if feet_per_inch <= 0.0 {
+            scale = best.scale;
+            fits = best.fits;
+        }
+    }
+    let sheet = cave_sheet::layout(paper, is_turned, scale, wants, &words);
+    let mut v = serde_json::to_value(&sheet).unwrap_or_default();
+    v["turned"] = is_turned.into();
+    v["fits"] = fits.into();
+    v.to_string()
+}
+
 /// Ids of the shaped lines whose ornament is flipped to the left of travel (JSON array).
 #[wasm_bindgen]
 pub fn flipped_lines() -> String {
