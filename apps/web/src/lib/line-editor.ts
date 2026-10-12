@@ -3,11 +3,11 @@
 // that draws on a canvas (Profile, Cross Section). The view says where its lines are and how
 // world and screen relate; this decides what a press, a drag and a key do.
 import { distanceToCurve, insertionAt, nearestPoint, type Pt } from './spline.ts';
-import { hitsSymbol, isSymbolKind } from './symbols.ts';
+import { hitsStamp, isStampKind } from './symbols.ts';
 
 /** How near, in pixels, a point is to a line (a symbol counts as its whole body). */
-function reach(l: { points: Pt[]; closed?: boolean; kind?: string }, toScreen: (p: Pt) => Pt, x: number, y: number): number {
-  if (isSymbolKind(l.kind) && l.points.length >= 2) return hitsSymbol(toScreen(l.points[0]), toScreen(l.points[1]), x, y) ? 0 : Infinity;
+function reach(l: { points: Pt[]; closed?: boolean; kind?: string; text?: string }, toScreen: (p: Pt) => Pt, x: number, y: number): number {
+  if (isStampKind(l.kind) && l.points.length >= 2) return hitsStamp(l.kind ?? '', l.text, toScreen(l.points[0]), toScreen(l.points[1]), x, y) ? 0 : Infinity;
   return distanceToCurve(l.points.map(toScreen), x, y, !!l.closed);
 }
 
@@ -19,6 +19,8 @@ export interface EditableLine {
   closed?: boolean;
   /** What it is (wall, ledge, ...). */
   kind?: string;
+  /** Words that go with it. */
+  text?: string;
 }
 
 export interface Hooks<T extends EditableLine> {

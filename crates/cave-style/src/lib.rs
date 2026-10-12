@@ -91,6 +91,7 @@ pub const PALETTE: &[Style] = &[
     s("wall", "Wall", Text, 2.4, Solid, 1.0, 0.4, "CAVE-WALLS"),
     s("ledge", "Ledge", Text, 1.6, Dashed, 1.0, 0.4, "CAVE-LEDGES"),
     s("pit", "Pit", Text, 2.0, Solid, 1.0, 0.4, "CAVE-PITS"),
+    s("text", "Text", Text, 1.4, Solid, 1.0, 0.4, "CAVE-TEXT"),
     s(
         "flowstone",
         "Flowstone",
@@ -234,6 +235,7 @@ pub const DRAW_TOOLS: &[&str] = &[
     "rimstone",
     "slope",
     "sketch",
+    "text",
 ];
 
 /// The styles of the drawing tools.

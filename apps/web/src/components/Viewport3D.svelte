@@ -109,7 +109,7 @@
     const pressure = option('pressure', true);
     const close = option('close', false);
     const finger = option('finger', true);
-    view?.setDrawOptions({ tolerancePx: tol, pressure, close, finger, symbolSize: option('symbolSize', 1.5) });
+    view?.setDrawOptions({ tolerancePx: tol, pressure, close, finger, symbolSize: option('symbolSize', 1.5), label: option('label', '') });
   });
 
   // The picked drawing tool: drawing on the map goes to its plan, from the Top or Bottom view.
@@ -195,8 +195,12 @@
       engine.deleteLine(id);
       changed();
     };
-    v.onLineDrawn = (points, widths, closed) => {
-      const r = engine.addMapLine(cave.tool, points, widths, closed, cave.adjusted);
+    v.onLineDrawn = (points, widths, closed, text = '') => {
+      if (cave.tool === 'text' && !text.trim()) {
+        engine.log('warn', 'draw', 'Type the text in the ribbon first.');
+        return;
+      }
+      const r = engine.addMapLine(cave.tool, points, widths, closed, cave.adjusted, text);
       if (r !== 'ok') engine.log('warn', 'draw', r);
       changed();
     };

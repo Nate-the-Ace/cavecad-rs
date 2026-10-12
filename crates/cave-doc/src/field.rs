@@ -210,6 +210,8 @@ pub enum Field {
     FeatureView,
     /// Shaped lines: true puts the ornament on the left of the direction of travel instead of the right.
     FeatureFlip,
+    /// Words that go with the stroke: a label next to a symbol, or the text of a text stroke.
+    FeatureText,
     /// A stroke anchored to stations (follows the survey when it changes).
     FeatureAnchored,
     /// Free-form tags.
@@ -305,6 +307,7 @@ impl Field {
             FeatureRun => (K::Feature, V::Text),
             FeatureView => (K::Feature, V::Text),
             FeatureFlip => (K::Feature, V::Flag),
+            FeatureText => (K::Feature, V::Text),
             FeatureAnchored => (K::Feature, V::Anchored),
             FeatureTags => (K::Feature, V::Map),
             SymbolName => (K::Symbol, V::Text),

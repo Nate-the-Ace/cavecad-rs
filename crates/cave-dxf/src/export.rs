@@ -402,6 +402,25 @@ fn draw_profiles(g: &mut Geometry, doc: &Document, adjusted: bool, plan_min: [f6
             if let (Some(sym), [a, b, ..]) = (cave_symbols::symbol(&sk.kind), pts.as_slice()) {
                 // A placed symbol: its drawing on the symbol's own layer, not a line between two points.
                 g.symbol(sym, *a, *b, "PROFILE");
+                if !sk.text.is_empty() {
+                    // its label sits to the symbol's right, a little larger than the symbol's radius
+                    let r = (b[0] - a[0]).hypot(b[1] - a[1]);
+                    let (ux, uy) = ((b[0] - a[0]) / r, (b[1] - a[1]) / r);
+                    let at = [a[0] + 1.3 * r * uy, a[1] - 1.3 * r * ux, 0.0];
+                    g.text("text", at, 0.9 * r, &sk.text);
+                }
+                continue;
+            }
+            if sk.kind == "text"
+                && let [a, b, ..] = pts.as_slice()
+            {
+                // A text stroke: its words at the first point, as tall as the distance to the second.
+                g.text(
+                    "text",
+                    [a[0], a[1], 0.0],
+                    (b[0] - a[0]).hypot(b[1] - a[1]),
+                    &sk.text,
+                );
                 continue;
             }
             g.lwpolyline_suffixed(&sk.kind, "PROFILE", &pts, sk.widths.as_deref());

@@ -79,3 +79,44 @@ export function hitsSymbol(p0: [number, number], p1: [number, number], x: number
   const pl = placement(p0, p1);
   return Math.hypot(x - pl.cx, y - pl.cy) <= Math.max(pl.r, 6) + pad;
 }
+
+/** True for a type that is placed by a click and a drag rather than drawn: a symbol, or text. */
+export function isStampKind(kind: string | undefined): boolean {
+  return isSymbolKind(kind) || kind === 'text';
+}
+
+/** Where a stamp's words go and how big: for text, at the first point, turned to the aim; for a symbol's label, to its right. */
+function wordsPlacement(kind: string, pl: ReturnType<typeof placement>): { x: number; y: number; size: number; angle: number } {
+  if (kind === 'text') return { x: pl.cx, y: pl.cy, size: Math.max(6, pl.r), angle: Math.atan2(pl.ux, -pl.uy) };
+  return { x: pl.cx + 1.3 * pl.r, y: pl.cy, size: Math.max(7, pl.r * 0.9), angle: 0 };
+}
+
+/** Draws a symbol (with its label) or a text stroke at `p0`, aimed toward `p1`. */
+export function drawStamp(g: CanvasRenderingContext2D, kind: string, p0: [number, number], p1: [number, number], text = ''): void {
+  const pl = placement(p0, p1);
+  if (kind !== 'text') drawSymbol(g, kind, p0, p1);
+  if (!text || pl.r < 1) return;
+  const w = wordsPlacement(kind, pl);
+  g.save();
+  g.fillStyle = g.strokeStyle;
+  g.font = `${w.size}px system-ui, sans-serif`;
+  g.textBaseline = 'middle';
+  g.translate(w.x, w.y);
+  g.rotate(w.angle);
+  g.fillText(text, 0, 0);
+  g.restore();
+}
+
+/** True when the screen point is on a placed stamp: a symbol's body or label, or the words of a text stroke. */
+export function hitsStamp(kind: string, text: string | undefined, p0: [number, number], p1: [number, number], x: number, y: number, pad = 4): boolean {
+  const pl = placement(p0, p1);
+  if (!text) return hitsSymbol(p0, p1, x, y, pad);
+  const w = wordsPlacement(kind, pl);
+  // the words' box in their own frame: along the baseline and across it
+  const dx = x - w.x;
+  const dy = y - w.y;
+  const along = dx * Math.cos(w.angle) + dy * Math.sin(w.angle);
+  const across = -dx * Math.sin(w.angle) + dy * Math.cos(w.angle);
+  const inWords = along >= -pad && along <= text.length * w.size * 0.6 + pad && Math.abs(across) <= w.size * 0.6 + pad;
+  return inWords || (kind !== 'text' && hitsSymbol(p0, p1, x, y, pad));
+}

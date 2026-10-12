@@ -7,9 +7,18 @@
   const defs = $derived(optionsFor(cave.tool));
   const ranges = $derived(defs.filter((d) => d.kind === 'range'));
   const toggles = $derived(defs.filter((d) => d.kind === 'toggle'));
+  const texts = $derived(defs.filter((d) => d.kind === 'text'));
 </script>
 
 <div class="opts">
+  {#each texts as d}
+    {#if d.kind === 'text'}
+      <label class="opt" title={d.hint}>
+        <span class="name">{d.label}</span>
+        <input class="words" type="text" value={option(d.id, d.default)} placeholder={d.placeholder} maxlength="200" oninput={(e) => setOption(d.id, e.currentTarget.value)} aria-label={d.label} />
+      </label>
+    {/if}
+  {/each}
   {#each ranges as d}
     {#if d.kind === 'range'}
       {@const v = option(d.id, d.default)}
@@ -35,6 +44,7 @@
 <style>
   .opts { display: flex; flex-direction: column; gap: 4px; justify-content: center; height: 100%; min-width: 260px; font-size: 12px; overflow: hidden; }
   .row { display: flex; gap: 14px; }
+  .words { flex: 1; min-width: 0; height: 22px; box-sizing: border-box; padding: 0 6px; background: var(--panel-2); color: var(--text); border: 1px solid var(--line); border-radius: var(--radius); font: inherit; }
   .opt { display: flex; align-items: center; gap: 8px; height: 22px; color: var(--text); white-space: nowrap; }
   .name { min-width: 92px; }
   .toggle .name { min-width: 0; }

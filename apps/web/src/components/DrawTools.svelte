@@ -3,7 +3,7 @@
   // context (the open profile, the cross-section station, the map plan). Pick it again, or press
   // Escape, to put it down.
   import { onMount } from 'svelte';
-  import { BrickWall, Minus, CircleDashed, Pencil, Route, Droplets, Waves, TrendingDown } from '@lucide/svelte';
+  import { BrickWall, Minus, CircleDashed, Pencil, Route, Droplets, Waves, TrendingDown, Type } from '@lucide/svelte';
   import { cave, setTool } from '../lib/cave.svelte';
   import { engine, loadEngine, type TypeStyle } from '../lib/engine';
 
@@ -11,7 +11,7 @@
   onMount(() => {
     loadEngine().then(() => (tools = engine.drawTools()));
   });
-  const icons: Record<string, typeof Route> = { wall: BrickWall, ledge: Minus, pit: CircleDashed, sketch: Pencil, flowstone: Droplets, rimstone: Waves, slope: TrendingDown };
+  const icons: Record<string, typeof Route> = { wall: BrickWall, ledge: Minus, pit: CircleDashed, sketch: Pencil, flowstone: Droplets, rimstone: Waves, slope: TrendingDown, text: Type };
 </script>
 
 <div class="tools" role="group" aria-label="Drawing tools">

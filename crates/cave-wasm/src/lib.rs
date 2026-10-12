@@ -296,6 +296,7 @@ pub fn add_map_line(
     widths: &str,
     closed: bool,
     adjusted: bool,
+    text: &str,
 ) -> String {
     let Ok(points) = serde_json::from_str::<Vec<[f64; 2]>>(points) else {
         return "error: unreadable stroke".into();
@@ -309,10 +310,11 @@ pub fn add_map_line(
         let mut slot = d.borrow_mut();
         let doc = slot.as_mut().ok_or("no cave is open")?;
         let frames = cave_scene::map_frames(doc, adjusted);
-        let (_, actions) =
+        let (id, actions) =
             cave_draw::map_line(doc, &mut random_ids(), kind, &points, widths, &frames)
                 .map_err(|e| format!("{e:?}"))?;
         let actions = cave_draw::with_closed(actions, closed).map_err(|e| format!("{e:?}"))?;
+        let actions = cave_draw::with_text(actions, id, text);
         let edit = doc.edit(actions).map_err(|e| format!("{e:?}"))?;
         record_edit("map", &edit);
         Ok::<(), String>(())
@@ -415,6 +417,13 @@ pub fn flipped_lines() -> String {
     })
 }
 
+/// Changes the words of a line already drawn (a symbol's label, or a text stroke's text). One
+/// undoable edit. Returns `ok` or `error: ...`.
+#[wasm_bindgen]
+pub fn set_line_text(id: &str, text: &str) -> String {
+    change_line(id, |doc, line| cave_draw::set_stroke_text(doc, line, text))
+}
+
 /// Changes what a line already drawn is (`wall`, `ledge`, ...). One undoable edit. Returns `ok`
 /// or `error: ...`.
 #[wasm_bindgen]
@@ -470,7 +479,7 @@ pub fn line_info(id: &str) -> String {
                 (_, cave_doc::Value::Anchored(Some(a))) => a.closed,
                 _ => false,
             };
-            Some(serde_json::json!({"kind": e.text(cave_doc::Field::FeatureType), "view": view, "closed": closed, "flip": e.flag(cave_doc::Field::FeatureFlip)}))
+            Some(serde_json::json!({"kind": e.text(cave_doc::Field::FeatureType), "view": view, "closed": closed, "flip": e.flag(cave_doc::Field::FeatureFlip), "text": e.text(cave_doc::Field::FeatureText)}))
         });
         info.map_or_else(|| "null".to_string(), |v| v.to_string())
     })
@@ -558,6 +567,7 @@ pub fn add_section_sketch(
     widths: &str,
     closed: bool,
     adjusted: bool,
+    text: &str,
 ) -> String {
     let Ok(points) = serde_json::from_str::<Vec<[f64; 2]>>(points) else {
         return "error: unreadable stroke".into();
@@ -574,7 +584,7 @@ pub fn add_section_sketch(
         let mut slot = d.borrow_mut();
         let doc = slot.as_mut().ok_or("no cave is open")?;
         let trip = cave_scene::section_trip(doc, adjusted, station);
-        let (_, actions) = cave_draw::section_sketch(
+        let (id, actions) = cave_draw::section_sketch(
             doc,
             &mut random_ids(),
             kind,
@@ -585,6 +595,7 @@ pub fn add_section_sketch(
         )
         .map_err(|e| format!("{e:?}"))?;
         let actions = cave_draw::with_closed(actions, closed).map_err(|e| format!("{e:?}"))?;
+        let actions = cave_draw::with_text(actions, id, text);
         let edit = doc.edit(actions).map_err(|e| format!("{e:?}"))?;
         record_edit("section", &edit);
         Ok::<(), String>(())
@@ -687,6 +698,7 @@ pub fn add_profile_sketch(
     widths: &str,
     closed: bool,
     adjusted: bool,
+    text: &str,
 ) -> String {
     let Ok(points) = serde_json::from_str::<Vec<[f64; 2]>>(points) else {
         return "error: unreadable stroke".into();
@@ -700,10 +712,11 @@ pub fn add_profile_sketch(
         let mut slot = d.borrow_mut();
         let doc = slot.as_mut().ok_or("no cave is open")?;
         let frames = cave_scene::profile_frames(doc, run, adjusted).ok_or("no such run")?;
-        let (_, actions) =
+        let (id, actions) =
             cave_draw::profile_sketch(doc, &mut random_ids(), kind, run, &points, widths, &frames)
                 .map_err(|e| format!("{e:?}"))?;
         let actions = cave_draw::with_closed(actions, closed).map_err(|e| format!("{e:?}"))?;
+        let actions = cave_draw::with_text(actions, id, text);
         let edit = doc.edit(actions).map_err(|e| format!("{e:?}"))?;
         record_edit("profile", &edit);
         Ok::<(), String>(())
@@ -912,10 +925,12 @@ mod tests {
         assert!(sec["sketches"].as_array().unwrap().is_empty());
         assert_eq!(section_at(false, "nope", true, "{}"), "null");
         assert!(
-            add_section_sketch("nope", "wall", "[[0,0],[1,1]]", "", false, false)
+            add_section_sketch("nope", "wall", "[[0,0],[1,1]]", "", false, false, "")
                 .starts_with("error")
         );
-        assert!(add_section_sketch(&id, "wall", "garbage", "", false, false).starts_with("error"));
+        assert!(
+            add_section_sketch(&id, "wall", "garbage", "", false, false, "").starts_with("error")
+        );
     }
 }
 

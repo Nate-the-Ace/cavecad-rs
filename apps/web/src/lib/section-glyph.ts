@@ -5,7 +5,7 @@
 
 import type { Look } from './ink';
 import { smooth } from './spline.ts';
-import { drawSymbol, isSymbolKind, placement } from './symbols.ts';
+import { drawStamp, isStampKind, placement } from './symbols.ts';
 
 /** Where shaped-line ornament comes from (the engine sets this once it has loaded). */
 export interface OrnamentSource {
@@ -19,7 +19,7 @@ export function setOrnamentSource(s: OrnamentSource) {
 }
 
 
-export type Sketches = { points: [number, number][]; widths: number[] | null; closed?: boolean }[];
+export type Sketches = { points: [number, number][]; widths: number[] | null; closed?: boolean; text?: string }[];
 
 /** `[minU, minV, maxU, maxV]` around the strokes (zeros when empty). */
 export function sketchBounds(sketches: Sketches): [number, number, number, number] {
@@ -65,7 +65,7 @@ export function drawStrokes(
   const flipped = new Set(source?.flippedLines() ?? []); // shaped lines with ornament on the left of travel
   for (const k of sketches) {
     const l = look(k.kind);
-    if (isSymbolKind(k.kind) && k.points.length >= 2) {
+    if (isStampKind(k.kind) && k.points.length >= 2) {
       // A placed symbol: its first point is where it sits, its second says which way is up and how big.
       const p0 = to(k.points[0][0], k.points[0][1]);
       const p1 = to(k.points[1][0], k.points[1][1]);
@@ -83,7 +83,7 @@ export function drawStrokes(
         g.globalAlpha = l.alpha;
         g.lineWidth = Math.max(1, l.weight * scale * 0.7);
       }
-      drawSymbol(g, k.kind, p0, p1);
+      drawStamp(g, k.kind, p0, p1, (k as { text?: string }).text);
       continue;
     }
     const curve = smooth(

@@ -1,5 +1,5 @@
 // Loads the Rust engine (WASM) once and re-exports the few calls the UI uses.
-import init, { start, log, console_events, console_clear, engine_version, open_demo, scene, profile_runs, profile_band, add_profile_sketch, undo, redo, edit_state, passage_mesh, shading, palette, open_dxf, save_dxf, section_stations, section_at, add_section_sketch, map_sections, place_section, map_profile_sketches, add_map_line, map_lines, draw_tools, edit_line, delete_line, set_line_closed, set_line_kind, line_info, set_line_flip, ornament, flipped_lines, symbols, sync_outbox, sync_apply, sync_snapshot, sync_load } from '../wasm/cave_wasm.js';
+import init, { start, log, console_events, console_clear, engine_version, open_demo, scene, profile_runs, profile_band, add_profile_sketch, undo, redo, edit_state, passage_mesh, shading, palette, open_dxf, save_dxf, section_stations, section_at, add_section_sketch, map_sections, place_section, map_profile_sketches, add_map_line, map_lines, draw_tools, edit_line, delete_line, set_line_closed, set_line_kind, line_info, set_line_flip, set_line_text, ornament, flipped_lines, symbols, sync_outbox, sync_apply, sync_snapshot, sync_load } from '../wasm/cave_wasm.js';
 
 import { setInkPalette } from './ink';
 import { setOrnamentSource } from './section-glyph';
@@ -56,7 +56,7 @@ export interface ProfileScene {
   floor: [number, number][][];
   /** Near-level splays as [s, z] ticks. */
   flat: [number, number][];
-  sketches: { id: string; kind: string; points: [number, number][]; widths: number[] | null; closed: boolean }[];
+  sketches: { id: string; kind: string; points: [number, number][]; widths: number[] | null; closed: boolean; text?: string }[];
   /** Cross-section sketches of the stations on this band. */
   sections: BandSection[];
   /** Sketches that cannot be placed because a station they hang on is not on this band. */
@@ -91,12 +91,14 @@ export interface MapSection {
   label: string;
   /** The station in the map's metres. */
   at: Pt;
-  sketches: { id: string; kind: string; points: [number, number][]; widths: number[] | null; closed: boolean }[];
+  sketches: { id: string; kind: string; points: [number, number][]; widths: number[] | null; closed: boolean; text?: string }[];
   /** Offset from the station placed by hand (east, north, up), or null until placed. */
   placement: Pt | null;
 }
 /** A profile sketch placed along its run in the cave: points are [east, north, up] metres. */
 export interface ProfileSketch3d {
+  /** Words that go with it (a symbol's label, or the text of a text stroke). */
+  text?: string;
   id: string;
   closed: boolean;
   kind: string;
@@ -110,7 +112,7 @@ export interface BandSection {
   label: string;
   s: number;
   z: number;
-  sketches: { id: string; kind: string; points: [number, number][]; widths: number[] | null; closed: boolean }[];
+  sketches: { id: string; kind: string; points: [number, number][]; widths: number[] | null; closed: boolean; text?: string }[];
   /** Offset (along the band, elevation) placed by hand, or null until placed. */
   placement: [number, number] | null;
 }
@@ -131,6 +133,7 @@ export interface SectionSketch {
   kind: string;
   points: [number, number][];
   widths: number[] | null;
+  text?: string;
 }
 /** The cross section at one station. Points are [across, up] in metres from the station. */
 export interface StationSection {
@@ -191,7 +194,7 @@ export const engine = {
   /** The cross section at a station, with its sketches. */
   sectionAt: (adjusted: boolean, station: string, fillGaps: boolean, filter = '{}'): StationSection | null => JSON.parse(section_at(adjusted, station, fillGaps, filter)),
   /** Adds a stroke drawn on a station's cross section; every edit goes through the document's one edit path. */
-  addSectionSketch: (station: string, kind: string, points: [number, number][], widths: number[] | null, closed: boolean, adjusted: boolean): string => add_section_sketch(station, kind, JSON.stringify(points), widths ? JSON.stringify(widths) : '', closed, adjusted),
+  addSectionSketch: (station: string, kind: string, points: [number, number][], widths: number[] | null, closed: boolean, adjusted: boolean, text = ''): string => add_section_sketch(station, kind, JSON.stringify(points), widths ? JSON.stringify(widths) : '', closed, adjusted, text),
   /** The cross-section sketches to show on the map. */
   mapSections: (adjusted: boolean, filter = '{}'): MapSection[] => JSON.parse(map_sections(adjusted, filter)),
   /** The profile sketches placed along their runs in 3D, for the map. */
@@ -199,7 +202,7 @@ export const engine = {
   /** Places a station's section sketches by hand in a view (an undoable edit). */
   placeSection: (station: string, view: 'map' | 'profile', offset: [number, number, number]): string => place_section(station, view, offset[0], offset[1], offset[2]),
   /** Adds a line of `kind` drawn in plan on the map (anchored to the survey, undoable). */
-  addMapLine: (kind: string, points: [number, number][], widths: number[] | null, closed: boolean, adjusted: boolean): string => add_map_line(kind, JSON.stringify(points), widths ? JSON.stringify(widths) : '', closed, adjusted),
+  addMapLine: (kind: string, points: [number, number][], widths: number[] | null, closed: boolean, adjusted: boolean, text = ''): string => add_map_line(kind, JSON.stringify(points), widths ? JSON.stringify(widths) : '', closed, adjusted, text),
   /** Moves the fit points of a line already drawn (in the space it was drawn in); re-anchors it to the survey. */
   editLine: (id: string, points: [number, number][], widths: number[] | null, adjusted: boolean): string => edit_line(id, JSON.stringify(points), widths ? JSON.stringify(widths) : '', adjusted),
   /** Closes or opens a line already drawn. */
@@ -207,10 +210,11 @@ export const engine = {
   /** Changes what a line already drawn is (wall, ledge, ...). */
   setLineKind: (id: string, kind: string): string => set_line_kind(id, kind),
   /** What a drawn line is, or null when the id is not a drawn line. */
+  setLineText: (id: string, text: string): string => set_line_text(id, text),
   setLineFlip: (id: string, flip: boolean): string => set_line_flip(id, flip),
   ornament: (kind: string, curve: [number, number][], closed: boolean, flip: boolean): { spine: boolean; lines: [number, number][][] } => JSON.parse(ornament(kind, JSON.stringify(curve), closed, flip)),
   flippedLines: (): string[] => JSON.parse(flipped_lines()),
-  lineInfo: (id: string): { kind: string; view: 'profile' | 'section' | 'map'; closed: boolean; flip: boolean } | null => JSON.parse(line_info(id)),
+  lineInfo: (id: string): { kind: string; view: 'profile' | 'section' | 'map'; closed: boolean; flip: boolean; text: string } | null => JSON.parse(line_info(id)),
   /** Deletes a line drawn in a view. */
   deleteLine: (id: string): string => delete_line(id),
   /** The linework drawn in plan on the map, lifted to the passage's elevation. */
@@ -222,7 +226,7 @@ export const engine = {
   profileRuns: (adjusted: boolean): RunInfo[] => JSON.parse(profile_runs(adjusted)),
   profileBand: (run: string, adjusted: boolean): ProfileScene | null => JSON.parse(profile_band(run, adjusted)),
   /** Adds a stroke drawn on a run's band; every edit goes through the document's one edit path. */
-  addSketch: (run: string, kind: string, points: [number, number][], widths: number[] | null, closed: boolean, adjusted: boolean): string => add_profile_sketch(run, kind, JSON.stringify(points), widths ? JSON.stringify(widths) : '', closed, adjusted),
+  addSketch: (run: string, kind: string, points: [number, number][], widths: number[] | null, closed: boolean, adjusted: boolean, text = ''): string => add_profile_sketch(run, kind, JSON.stringify(points), widths ? JSON.stringify(widths) : '', closed, adjusted, text),
   passageMesh: (adjusted: boolean, mode: 'trip' | 'depth', fillGaps: boolean, filter = '{}'): PassageBuffers => {
     const m = passage_mesh(adjusted, mode, fillGaps, filter);
     const out = { positions: m.positions, normals: m.normals, colors: m.colors, filled: m.filled };

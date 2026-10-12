@@ -227,3 +227,16 @@ official UIS list and the USGS OFR 95-526 zip).
   others) need names confirmed and carry a dip number, so they wait for the cartographer's picks and for
   a text label on a placed symbol.
 - The dev server now rebuilds the engine when a `crates/*/data/*.json` file changes.
+
+## 2026-10-12: Words on strokes (symbol labels and the Text tool)
+
+`Field::FeatureText` holds the words of a stroke, set in the same edit that creates it
+(`cave_draw::with_text`) and changed later in one undoable edit (`set_stroke_text`, the selected
+line's tab). Two uses: a **label** beside a placed symbol (a dip, a depth, "P 19"), and the **Text**
+tool (type of its own, `text`): click to place the words, drag to set their size (the distance) and
+direction (the aim), like a symbol. The contextual tab of a symbol or text tool has a Label or Text
+field and a Size; the words are not remembered between visits (a forgotten label would quietly go on
+tomorrow's symbols). A text stroke with no words is refused with a hint. The same two-point model keeps
+everything else working (anchoring to the survey, per-panel undo, eraser, live editing). Profile DXF
+export writes text as TEXT entities. Limits: 200 characters; text does not wrap; the Map's
+text is projected like any line.

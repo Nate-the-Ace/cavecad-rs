@@ -6,7 +6,8 @@ import { formatLength, type Units } from './units.ts';
 
 export type OptionDef =
   | { id: string; label: string; hint: string; kind: 'range'; min: number; max: number; step: number; default: number; show: (v: number, units: Units) => string }
-  | { id: string; label: string; hint: string; kind: 'toggle'; default: boolean };
+  | { id: string; label: string; hint: string; kind: 'toggle'; default: boolean }
+  | { id: string; label: string; hint: string; kind: 'text'; default: string; placeholder: string };
 
 /** How closely a drawn curve follows the hand: the tolerance, in screen pixels, a freehand stroke is reduced within. */
 export function tolerancePx(detail: number): number {
@@ -50,11 +51,11 @@ export const DRAW_OPTIONS: OptionDef[] = [
   },
 ];
 
-/** The options of a placing-a-symbol command: how big a click makes it (a drag sets size and direction). */
+/** The options of a placing-a-symbol command: its label and how big a click makes it (a drag sets size and direction). Two rows only, to fit the ribbon; "Draw with finger" keeps the value set on a line tool. */
 export const SYMBOL_OPTIONS: OptionDef[] = [
   {
     id: 'symbolSize',
-    label: 'Symbol size',
+    label: 'Size',
     hint: 'How big a symbol is when you just click. Drag instead to set its size and which way it points: the line you drag is its radius and its up.',
     kind: 'range',
     min: 0.25,
@@ -63,11 +64,32 @@ export const SYMBOL_OPTIONS: OptionDef[] = [
     default: 1.5,
     show: (v, units) => formatLength(v, units, 2),
   },
-  DRAW_OPTIONS.find((o) => o.id === 'finger')!,
+  {
+    id: 'label',
+    label: 'Label',
+    hint: 'Words to put beside each symbol you place (a dip, a depth, a number). Leave empty for none. You can change a placed symbol\'s label by selecting it.',
+    kind: 'text',
+    default: '',
+    placeholder: 'e.g. 30',
+  },
+];
+
+/** The options of the Text tool: the words, and how big a click makes them (a drag sets size and direction). */
+export const TEXT_OPTIONS: OptionDef[] = [
+  {
+    id: 'label',
+    label: 'Text',
+    hint: 'The words to place. Click to place them at the chosen size; drag to set their size and direction.',
+    kind: 'text',
+    default: '',
+    placeholder: 'Type the text, then click in a view',
+  },
+  SYMBOL_OPTIONS[0],
 ];
 
 /** The options of a running command (`wall`, `ledge`, ...), or none. */
 export function optionsFor(command: string): OptionDef[] {
   if (!command) return [];
+  if (command === 'text') return TEXT_OPTIONS;
   return command.startsWith('sym-') ? SYMBOL_OPTIONS : DRAW_OPTIONS;
 }

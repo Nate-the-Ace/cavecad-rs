@@ -47,6 +47,8 @@ pub struct SectionSketch {
     pub widths: Option<Vec<f64>>,
     /// True when the curve loops back from the last point to the first.
     pub closed: bool,
+    /// Words that go with it (a symbol's label, or the text of a text stroke).
+    pub text: String,
 }
 
 /// The section at one station. Points are `[across, up]` in metres from the station.
@@ -156,6 +158,7 @@ pub fn sketches_by_station(
             points: path.points().iter().map(|p| [p.x, p.y]).collect(),
             widths: path.widths().map(<[f64]>::to_vec),
             closed: matches!(path, cave_geom::Path::Spline { closed: true, .. }),
+            text: e.text(Field::FeatureText),
         });
     }
     out

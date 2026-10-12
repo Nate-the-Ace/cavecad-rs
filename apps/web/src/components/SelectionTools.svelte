@@ -2,22 +2,23 @@
   // What can be done to the selected line: change what it is, close or open its curve. (Delete and
   // Done sit in the tab's Command group.) Each is one undoable edit in the view the line was drawn in.
   import { onMount } from 'svelte';
-  import { BrickWall, Minus, CircleDashed, Pencil, Route, Spline, FlipHorizontal2, Droplets, Waves, TrendingDown } from '@lucide/svelte';
+  import { BrickWall, Minus, CircleDashed, Pencil, Route, Spline, FlipHorizontal2, Droplets, Waves, TrendingDown, Type } from '@lucide/svelte';
   import { cave, changed } from '../lib/cave.svelte';
   import { engine, loadEngine, type TypeStyle } from '../lib/engine';
+  import { isStampKind } from '../lib/symbols';
 
   let tools = $state<TypeStyle[]>([]);
   onMount(() => {
     loadEngine().then(() => (tools = engine.drawTools()));
   });
-  const icons: Record<string, typeof Route> = { wall: BrickWall, ledge: Minus, pit: CircleDashed, sketch: Pencil, flowstone: Droplets, rimstone: Waves, slope: TrendingDown };
+  const icons: Record<string, typeof Route> = { wall: BrickWall, ledge: Minus, pit: CircleDashed, sketch: Pencil, flowstone: Droplets, rimstone: Waves, slope: TrendingDown, text: Type };
   const shaped = ['ledge', 'pit', 'flowstone', 'rimstone', 'slope'];
 
   const info = $derived.by(() => {
     void cave.version;
     return cave.selected ? engine.lineInfo(cave.selected) : null;
   });
-  const isSymbol = $derived(!!info && info.kind.startsWith('sym-'));
+  const isSymbol = $derived(!!info && isStampKind(info.kind));
   let message = $state('');
 
   const run = (r: string) => {
@@ -45,7 +46,10 @@
       <span>{info?.closed ? 'Open' : 'Close'}</span>
     </button>
     {/if}
-    {#if isSymbol}<span class="msg">Drag the dot to move it, the square to turn and resize it.</span>{/if}
+    {#if isSymbol && info}
+      <input class="words" type="text" value={info.text} placeholder={info.kind === 'text' ? 'The text' : 'Label'} maxlength="200" aria-label={info.kind === 'text' ? 'The text' : 'Label'} onchange={(e) => run(engine.setLineText(cave.selected, e.currentTarget.value))} />
+      <span class="tip">Drag the dot to move it, the square to turn and resize it.</span>
+    {/if}
     {#if info && shaped.includes(info.kind)}
       <button class="tool" class:pressed={info.flip} aria-pressed={info.flip} title="Put the marks on the other side of the line" onclick={() => run(engine.setLineFlip(cave.selected, !info.flip))}>
         <FlipHorizontal2 size={22} strokeWidth={1.6} />
@@ -63,5 +67,7 @@
   .tool { display: flex; flex-direction: column; align-items: center; gap: 4px; min-width: 58px; box-sizing: border-box; height: calc(var(--ribbon-body) - 1px); justify-content: center; overflow: hidden; padding: 4px 8px; background: none; border: 0; border-radius: var(--radius); cursor: pointer; font-size: 12px; color: var(--text); }
   .tool:hover { background: var(--panel-2); }
   .tool.pressed { background: var(--accent-bg); outline: 1px solid var(--accent); }
+  .words { width: 170px; height: 26px; box-sizing: border-box; padding: 0 8px; background: var(--panel-2); color: var(--text); border: 1px solid var(--line); border-radius: var(--radius); font: inherit; font-size: 13px; }
+  .tip { font-size: 11px; color: var(--muted); max-width: 150px; line-height: 1.25; }
   .msg { font-size: 11px; color: var(--danger); max-width: 130px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 </style>

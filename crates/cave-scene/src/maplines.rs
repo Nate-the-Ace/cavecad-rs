@@ -67,6 +67,7 @@ pub fn map_lines_3d(doc: &Document, use_adjustment: bool) -> Vec<Sketch3d> {
                 points,
                 widths: anchored.widths.clone(),
                 closed: anchored.closed,
+                text: e.text(Field::FeatureText),
             });
         }
     }

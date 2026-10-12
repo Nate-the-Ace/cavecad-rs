@@ -12,7 +12,7 @@
   import { LineEditor, endpointNear, joinFit } from '../lib/line-editor';
   import { Touches } from '../lib/touch';
   import { PenGuard, isEraser, widthFor } from '../lib/pen';
-  import { isSymbolKind } from '../lib/symbols';
+  import { isStampKind } from '../lib/symbols';
   import { fitStroke } from '../lib/spline';
   import { tolerancePx } from '../lib/commands';
   import { cave, changed, option, filter, wireFilter } from '../lib/cave.svelte';
@@ -279,7 +279,7 @@
     }
     const draws = !!cave.tool && !middle && e.button === 0 && (e.pointerType !== 'touch' || option('finger', true)) && !!section;
     if (draws) {
-      if (isSymbolKind(cave.tool)) {
+      if (isStampKind(cave.tool)) {
         // A symbol: press where it goes, drag to say which way is up and how big.
         const r = canvas.getBoundingClientRect();
         const p = toWorld(e.clientX - r.left, e.clientY - r.top);
@@ -296,7 +296,7 @@
   // Where the next stroke would pick an open line up: shown while a drawing tool waits.
   let pickupAt: [number, number] | null = null;
   function showPickup(x: number, y: number) {
-    const hit = cave.tool && !isSymbolKind(cave.tool) ? endpointNear(section?.sketches ?? [], cave.tool, (p) => toScreen(p[0], p[1]), x, y) : null;
+    const hit = cave.tool && !isStampKind(cave.tool) ? endpointNear(section?.sketches ?? [], cave.tool, (p) => toScreen(p[0], p[1]), x, y) : null;
     const next = hit ? hit.at : null;
     if ((next?.[0] ?? -1) !== (pickupAt?.[0] ?? -1) || (next?.[1] ?? -1) !== (pickupAt?.[1] ?? -1)) {
       pickupAt = next;
@@ -337,7 +337,7 @@
     if (editor.move(e.clientX - r.left, e.clientY - r.top)) return;
     if (!live && !panning && cave.tool) showPickup(e.clientX - r.left, e.clientY - r.top);
     if (live) {
-      if (isSymbolKind(cave.tool)) {
+      if (isStampKind(cave.tool)) {
         const r2 = canvas.getBoundingClientRect();
         live.pts[1] = toWorld(e.clientX - r2.left, e.clientY - r2.top);
       } else {
@@ -387,13 +387,18 @@
     if (!live) return;
     const stroked = live;
     live = null;
-    if (isSymbolKind(cave.tool) && stroked.pts.length === 2 && cave.station) {
+    if (isStampKind(cave.tool) && stroked.pts.length === 2 && cave.station) {
+      if (cave.tool === 'text' && !option('label', '').trim()) {
+        message = 'Type the text in the ribbon first.';
+        schedule();
+        return;
+      }
       const [p0, q] = stroked.pts;
       const a = toScreen(p0[0], p0[1]);
       const b = toScreen(q[0], q[1]);
       // Just a click: a symbol of the chosen size, pointing up.
       const p1: [number, number] = Math.hypot(a[0] - b[0], a[1] - b[1]) < 6 ? [p0[0], p0[1] + option('symbolSize', 1.5)] : q;
-      const result = engine.addSectionSketch(cave.station, cave.tool, [p0, p1], null, false, cave.adjusted);
+      const result = engine.addSectionSketch(cave.station, cave.tool, [p0, p1], null, false, cave.adjusted, option('label', ''));
       message = result === 'ok' ? '' : result;
       changed();
       schedule();

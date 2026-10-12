@@ -327,6 +327,33 @@ pub fn set_stroke_closed(doc: &Document, id: Id, closed: bool) -> Result<Vec<Act
     }])
 }
 
+/// Adds a text to a new stroke's actions (the stroke's label, or the words of a text stroke), so the
+/// stroke and its words are one edit. Empty text adds nothing.
+pub fn with_text(mut actions: Vec<Action>, id: Id, text: &str) -> Vec<Action> {
+    let text = text.trim();
+    if !text.is_empty() {
+        actions.push(Action::Set {
+            id,
+            field: Field::FeatureText,
+            value: Value::Text(text.chars().take(MAX_TEXT).collect()),
+        });
+    }
+    actions
+}
+
+/// The longest text a stroke carries.
+pub const MAX_TEXT: usize = 200;
+
+/// Actions that change the words of a stroke (empty clears them).
+pub fn set_stroke_text(doc: &Document, id: Id, text: &str) -> Result<Vec<Action>, DrawError> {
+    drawn_in(doc, id).ok_or(DrawError::NoStations)?;
+    Ok(vec![Action::Set {
+        id,
+        field: Field::FeatureText,
+        value: Value::Text(text.trim().chars().take(MAX_TEXT).collect()),
+    }])
+}
+
 /// Actions that put a shaped line's ornament on the other side.
 pub fn set_stroke_flip(doc: &Document, id: Id, flip: bool) -> Result<Vec<Action>, DrawError> {
     drawn_in(doc, id).ok_or(DrawError::NoStations)?;
@@ -462,6 +489,50 @@ mod tests {
 
     fn stroke() -> Vec<[f64; 2]> {
         vec![[0.0, 0.0], [1.0, 0.5], [2.0, 0.0]]
+    }
+
+    #[test]
+    fn a_stroke_carries_words_in_the_same_edit_and_they_can_be_changed() {
+        let (mut doc, frames, _) = cave();
+        let (id, actions) = profile_sketch(
+            &doc,
+            &mut SeqIds::new(2),
+            "sym-pit",
+            "A",
+            &stroke()[..2],
+            None,
+            &frames,
+        )
+        .unwrap();
+        let n = actions.len();
+        let with = with_text(actions.clone(), id, "  P 19  ");
+        assert_eq!(with.len(), n + 1, "one extra action, in the same edit");
+        assert_eq!(
+            with_text(actions, id, "   ").len(),
+            n,
+            "empty words add nothing"
+        );
+        let mut history = History::new();
+        let e = doc.edit(with).unwrap();
+        history.record(&e);
+        assert_eq!(doc.entity(id).unwrap().text(Field::FeatureText), "P 19");
+        let e = doc
+            .edit(set_stroke_text(&doc, id, "P 20").unwrap())
+            .unwrap();
+        history.record(&e);
+        assert_eq!(doc.entity(id).unwrap().text(Field::FeatureText), "P 20");
+        history.undo(&mut doc).unwrap();
+        assert_eq!(doc.entity(id).unwrap().text(Field::FeatureText), "P 19");
+        let long = "x".repeat(MAX_TEXT + 50);
+        doc.edit(set_stroke_text(&doc, id, &long).unwrap()).unwrap();
+        assert_eq!(
+            doc.entity(id)
+                .unwrap()
+                .text(Field::FeatureText)
+                .chars()
+                .count(),
+            MAX_TEXT
+        );
     }
 
     #[test]

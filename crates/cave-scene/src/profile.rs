@@ -53,6 +53,8 @@ pub struct Sketch {
     pub widths: Option<Vec<f64>>,
     /// True when the curve loops back from the last point to the first.
     pub closed: bool,
+    /// Words that go with it (a symbol's label, or the text of a text stroke).
+    pub text: String,
 }
 
 /// A station's cross-section sketches as the band shows them, next to the station.
@@ -239,6 +241,7 @@ pub fn profile_scene(doc: &Document, key: &str, use_adjustment: bool) -> Option<
                 points,
                 widths: anchored.widths.clone(),
                 closed: anchored.closed,
+                text: e.text(Field::FeatureText),
             })
         })
         .collect();
@@ -330,6 +333,8 @@ pub struct Sketch3d {
     pub widths: Option<Vec<f64>>,
     /// True when the curve loops back from the last point to the first.
     pub closed: bool,
+    /// Words that go with it (a symbol's label, or the text of a text stroke).
+    pub text: String,
 }
 
 /// Every profile sketch placed along its run in 3D, so the Map can show it where it belongs: each
@@ -406,6 +411,7 @@ pub fn profile_sketches_3d(doc: &Document, use_adjustment: bool) -> Vec<Sketch3d
                 points,
                 widths: anchored.widths.clone(),
                 closed: anchored.closed,
+                text: e.text(Field::FeatureText),
             });
         }
     }
