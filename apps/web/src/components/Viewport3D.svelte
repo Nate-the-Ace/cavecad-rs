@@ -215,6 +215,24 @@
     }
   }
 
+  // Every edit (a notebook reading, a station, an undo) redraws the survey, without re-framing it.
+  let rereadFrame = 0;
+  $effect(() => {
+    void cave.version;
+    void cave.adjusted;
+    untrack(() => {
+      if (!view || !loaded || rereadFrame) return;
+      rereadFrame = requestAnimationFrame(() => {
+        rereadFrame = 0;
+        if (!view) return;
+        scene = engine.scene(cave.adjusted, wireFilter());
+        view.setShowLabels(!filter.hiddenTypes.includes('label'));
+        view.setScene(scene, false);
+        loadPassage();
+      });
+    });
+  });
+
   function refresh() {
     if (!view) return;
     scene = engine.scene(cave.adjusted, wireFilter());
