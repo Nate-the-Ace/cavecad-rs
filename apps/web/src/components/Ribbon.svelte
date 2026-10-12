@@ -5,9 +5,10 @@
   import DrawTools from './DrawTools.svelte';
   import ThemeGroup from './ThemeGroup.svelte';
   import ContextOptions from './ContextOptions.svelte';
+  import SelectionTools from './SelectionTools.svelte';
   import { onMount } from 'svelte';
   import { PANELS, panelState, resetLayout, togglePanel } from '../lib/workspace.svelte';
-  import { Check, FileInput, FolderOpen, Save, Ruler, Footprints, Route, Waypoints, Pencil, Spline, PaintBucket, Scissors, Map as MapIcon, Terminal, LayoutDashboard, Activity } from '@lucide/svelte';
+  import { Check, Trash2, FileInput, FolderOpen, Save, Ruler, Footprints, Route, Waypoints, Pencil, Spline, PaintBucket, Scissors, Map as MapIcon, Terminal, LayoutDashboard, Activity } from '@lucide/svelte';
   import type { Component } from 'svelte';
 
   interface Item {
@@ -68,25 +69,61 @@
   onMount(() => {
     loadEngine().then(() => (toolLabels = Object.fromEntries(engine.drawTools().map((t) => [t.key, t.label]))));
   });
-  const contextName = $derived(cave.tool ? (toolLabels[cave.tool] ?? cave.tool) : '');
-  const contextGroups: Group[] = [
+  // A selected line gets one too, with what can be done to it, so it is easy to adjust.
+  let loaded = $state(false);
+  onMount(() => {
+    loadEngine().then(() => (loaded = true));
+  });
+  const selection = $derived.by(() => {
+    void cave.version;
+    return loaded && cave.selected && !cave.tool ? engine.lineInfo(cave.selected) : null;
+  });
+  $effect(() => {
+    // The selected line is gone (undone, deleted elsewhere): nothing is selected any more.
+    if (loaded && cave.selected && !cave.tool && selection === null) cave.selected = '';
+  });
+  const mode = $derived(cave.tool ? 'command' : selection ? 'selection' : '');
+  const contextName = $derived(
+    mode === 'command' ? (toolLabels[cave.tool] ?? cave.tool) : mode === 'selection' ? `Edit ${toolLabels[selection!.kind] ?? selection!.kind}` : '',
+  );
+  const commandGroups: Group[] = [
     { name: 'Settings', items: [], custom: ContextOptions },
     { name: 'Command', items: [{ label: 'Done', icon: Check, run: () => (cave.tool = '') }] },
   ];
+  const selectionGroups: Group[] = [
+    { name: 'Line', items: [], custom: SelectionTools },
+    {
+      name: 'Command',
+      items: [
+        {
+          label: 'Delete',
+          icon: Trash2,
+          run: () => {
+            const id = cave.selected;
+            cave.selected = '';
+            if (id) engine.deleteLine(id);
+            cave.version += 1;
+          },
+        },
+        { label: 'Done', icon: Check, run: () => (cave.selected = '') },
+      ],
+    },
+  ];
   let before = 'Home';
   $effect(() => {
-    if (cave.tool) {
+    if (mode) {
       if (active !== CONTEXT) before = active;
       active = CONTEXT;
     } else if (active === CONTEXT) {
       active = before;
     }
   });
-  const shownGroups = $derived(active === CONTEXT ? contextGroups : (tabs[active] ?? []));
+  const shownGroups = $derived(active === CONTEXT ? (mode === 'selection' ? selectionGroups : commandGroups) : (tabs[active] ?? []));
 
   function keys(e: KeyboardEvent) {
-    if (e.key === 'Escape' && cave.tool) {
-      cave.tool = '';
+    if (e.key === 'Escape' && (cave.tool || cave.selected)) {
+      if (cave.tool) cave.tool = '';
+      else cave.selected = '';
       return;
     }
     if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
@@ -103,7 +140,7 @@
     {#each Object.keys(tabs) as t}
       <button class:on={t === active} onclick={() => (active = t)}>{t}</button>
     {/each}
-    {#if cave.tool}
+    {#if mode}
       <button class="ctx" class:on={active === CONTEXT} onclick={() => (active = CONTEXT)}>{contextName}</button>
     {/if}
   </nav>

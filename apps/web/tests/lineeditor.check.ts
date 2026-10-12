@@ -1,4 +1,4 @@
-import { LineEditor, type EditableLine } from '../src/lib/line-editor.ts';
+import { LineEditor, endpointNear, joinFit, type EditableLine } from '../src/lib/line-editor.ts';
 let bad = 0;
 const ok = (c: boolean, m: string) => { if (!c) { bad++; console.log('FAIL', m); } };
 let selected = '';
@@ -28,4 +28,23 @@ ok(ed.addPoint(25, 20) === true && saved.length === 2 && saved[1].pts.length ===
 ok(ed.addPoint(300, 300) === false, 'far from the line adds nothing');
 ok(ed.key({ key: 'Delete' } as KeyboardEvent) === true && removed[0] === 'a' && selected === '', 'Delete removes the selected line');
 ok(ed.key({ key: 'Delete' } as KeyboardEvent) === false, 'with nothing selected a key does nothing');
+// picking up an unclosed line where it ended
+const open: EditableLine[] = [
+  { id: 'w', kind: 'wall', points: [[0, 0], [50, 0], [100, 20]], widths: null },
+  { id: 'c', kind: 'wall', closed: true, points: [[0, 50], [50, 50], [25, 80]], widths: null },
+  { id: 'l', kind: 'ledge', points: [[0, 200], [100, 200]], widths: null },
+];
+const near = (x: number, y: number, kind = 'wall') => endpointNear(open, kind, (p) => p, x, y);
+ok(near(104, 22)?.line.id === 'w' && near(104, 22)?.atStart === false, 'near the end of an open wall');
+ok(near(3, 2)?.line.id === 'w' && near(3, 2)?.atStart === true, 'near its start');
+ok(near(50, 0) === null, 'the middle of a line is not an end');
+ok(near(0, 50) === null, 'a closed line has no ends to pick up');
+ok(near(100, 200) === null && near(100, 200, 'ledge')?.line.id === 'l', 'only a line of the tool\'s own kind');
+const more = { pts: [[110, 30], [140, 60], [170, 50]] as [number, number][], widths: null };
+const j = joinFit(open[0], more, false);
+ok(j.pts.length === 5 && j.pts[2][0] === 100 && j.pts[3][0] === 140, 'the new points follow the old end, no gap');
+const k = joinFit(open[0], { pts: [[-5, 3], [-30, 10], [-60, 0]] as [number, number][], widths: null }, true);
+ok(k.pts[0][0] === -60 && k.pts[k.pts.length - 1][0] === 100 && k.pts.length === 5, 'drawn away from the start goes in front, in line order');
+const w = joinFit({ ...open[0], widths: [1, 1, 1] }, { pts: [[110, 30], [140, 60]], widths: [2, 2] }, false);
+ok(w.widths!.length === w.pts.length, 'pen weights stay one per point');
 console.log(bad ? 'FAILED' : 'line editor checks ok'); process.exit(bad ? 1 : 0);

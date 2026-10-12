@@ -45,6 +45,8 @@ pub struct SectionSketch {
     pub points: Vec<[f64; 2]>,
     /// Pen weight per point, when drawn with pressure.
     pub widths: Option<Vec<f64>>,
+    /// True when the curve loops back from the last point to the first.
+    pub closed: bool,
 }
 
 /// The section at one station. Points are `[across, up]` in metres from the station.
@@ -153,6 +155,7 @@ pub fn sketches_by_station(
             kind: e.text(Field::FeatureType),
             points: path.points().iter().map(|p| [p.x, p.y]).collect(),
             widths: path.widths().map(<[f64]>::to_vec),
+            closed: matches!(path, cave_geom::Path::Spline { closed: true, .. }),
         });
     }
     out

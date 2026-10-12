@@ -196,7 +196,10 @@ pub fn section_sketch(
     let (pts, widths) = distinct(points, widths)?;
     let mut fields = vec![
         (Field::FeatureStation, Value::Ref(Some(station))),
-        (Field::FeaturePath, Value::Path(Some(spline(&pts, widths)?))),
+        (
+            Field::FeaturePath,
+            Value::Path(Some(spline(&pts, widths, false)?)),
+        ),
     ];
     if let Some(trip) = trip {
         fields.push((Field::FeatureTrip, Value::Ref(Some(trip))));
@@ -205,10 +208,13 @@ pub fn section_sketch(
 }
 
 /// A smooth curve through the fit points, with pen weights when there are some.
-fn spline(pts: &[[f64; 2]], widths: Option<Vec<f64>>) -> Result<Path, DrawError> {
+fn spline(pts: &[[f64; 2]], widths: Option<Vec<f64>>, closed: bool) -> Result<Path, DrawError> {
+    if closed && pts.len() < 3 {
+        return Err(DrawError::TooShort);
+    }
     let path = Path::Spline {
         points: pts.iter().map(|p| Point::new(p[0], p[1])).collect(),
-        closed: false,
+        closed,
         widths: None,
     };
     match widths {
@@ -240,13 +246,98 @@ pub fn edit_stroke(
 ) -> Result<Vec<Action>, DrawError> {
     let (view, _) = drawn_in(doc, id).ok_or(DrawError::NoStations)?;
     let (pts, widths) = distinct(points, widths)?;
+    let closed = is_closed(doc, id);
     let (field, value) = if view == VIEW_SECTION {
-        (Field::FeaturePath, Value::Path(Some(spline(&pts, widths)?)))
+        (
+            Field::FeaturePath,
+            Value::Path(Some(spline(&pts, widths, closed)?)),
+        )
     } else {
-        let anchored = anchor_stroke(&pts, frames, widths)?;
+        let mut anchored = anchor_stroke(&pts, frames, widths)?;
+        anchored.closed = closed && pts.len() >= 3;
         (Field::FeatureAnchored, Value::Anchored(Some(anchored)))
     };
     Ok(vec![Action::Set { id, field, value }])
+}
+
+/// True if the stroke's curve loops back to its first point.
+fn is_closed(doc: &Document, id: Id) -> bool {
+    let Some(e) = doc.entity(id) else {
+        return false;
+    };
+    match (e.get(Field::FeaturePath), e.get(Field::FeatureAnchored)) {
+        (Value::Path(Some(Path::Spline { closed, .. })), _) => closed,
+        (_, Value::Anchored(Some(a))) => a.closed,
+        _ => false,
+    }
+}
+
+/// `actions` (from a `*_sketch` or `map_line` call) with the stroke made a closed loop when
+/// `closed` is set. A loop needs at least three fit points.
+pub fn with_closed(mut actions: Vec<Action>, closed: bool) -> Result<Vec<Action>, DrawError> {
+    if !closed {
+        return Ok(actions);
+    }
+    for a in &mut actions {
+        if let Action::Set { value, .. } = a {
+            match value {
+                Value::Anchored(Some(an)) if an.points.len() >= 3 => an.closed = true,
+                Value::Path(Some(Path::Spline { points, closed, .. })) if points.len() >= 3 => {
+                    *closed = true;
+                }
+                Value::Anchored(Some(_)) | Value::Path(Some(_)) => return Err(DrawError::TooShort),
+                _ => {}
+            }
+        }
+    }
+    Ok(actions)
+}
+
+/// Actions that close or open an existing stroke (a closed one loops back to its first point).
+pub fn set_stroke_closed(doc: &Document, id: Id, closed: bool) -> Result<Vec<Action>, DrawError> {
+    drawn_in(doc, id).ok_or(DrawError::NoStations)?;
+    let e = doc.entity(id).ok_or(DrawError::NoStations)?;
+    let value = match (e.get(Field::FeaturePath), e.get(Field::FeatureAnchored)) {
+        (Value::Path(Some(Path::Spline { points, widths, .. })), _) => {
+            if closed && points.len() < 3 {
+                return Err(DrawError::TooShort);
+            }
+            (
+                Field::FeaturePath,
+                Value::Path(Some(Path::Spline {
+                    points,
+                    closed,
+                    widths,
+                })),
+            )
+        }
+        (_, Value::Anchored(Some(mut a))) => {
+            if closed && a.points.len() < 3 {
+                return Err(DrawError::TooShort);
+            }
+            a.closed = closed;
+            (Field::FeatureAnchored, Value::Anchored(Some(a)))
+        }
+        _ => return Err(DrawError::NoStations),
+    };
+    Ok(vec![Action::Set {
+        id,
+        field: value.0,
+        value: value.1,
+    }])
+}
+
+/// Actions that change what a stroke is (`wall`, `ledge`, ...): its look follows its type.
+pub fn set_stroke_kind(doc: &Document, id: Id, kind: &str) -> Result<Vec<Action>, DrawError> {
+    drawn_in(doc, id).ok_or(DrawError::NoStations)?;
+    if !valid_kind(kind) {
+        return Err(DrawError::BadStroke);
+    }
+    Ok(vec![Action::Set {
+        id,
+        field: Field::FeatureType,
+        value: Value::Text(kind.into()),
+    }])
 }
 
 /// Actions that delete a stroke drawn in a view.
@@ -747,5 +838,82 @@ mod tests {
         // Only drawn linework can be edited or deleted.
         assert!(edit_stroke(&doc, a, &moved, None, &frames).is_err());
         assert!(remove_stroke(&doc, a).is_err());
+    }
+
+    #[test]
+    fn strokes_can_be_closed_reopened_retyped_and_keep_their_loop_when_edited() {
+        let (mut doc, frames, [a, _]) = cave();
+        let mut history = History::new();
+        let ids = &mut SeqIds::new(1);
+        let tri = [[0.0, 0.0], [4.0, 0.0], [2.0, 3.0]];
+        // drawn closed from the start
+        let (sec, actions) = section_sketch(&doc, ids, "pit", a, &tri, None, None).unwrap();
+        history.record(&doc.edit(with_closed(actions, true).unwrap()).unwrap());
+        let closed_of = |doc: &Document, id: Id| is_closed(doc, id);
+        assert!(closed_of(&doc, sec), "drawn as a loop");
+        // moving a fit point keeps the loop
+        history.record(
+            &doc.edit(
+                edit_stroke(&doc, sec, &[[0.0, 0.0], [4.0, 0.0], [2.0, 5.0]], None, &[]).unwrap(),
+            )
+            .unwrap(),
+        );
+        assert!(closed_of(&doc, sec));
+        // open it again, then close it again
+        history.record(
+            &doc.edit(set_stroke_closed(&doc, sec, false).unwrap())
+                .unwrap(),
+        );
+        assert!(!closed_of(&doc, sec));
+        history.record(
+            &doc.edit(set_stroke_closed(&doc, sec, true).unwrap())
+                .unwrap(),
+        );
+        assert!(closed_of(&doc, sec));
+        // change what it is
+        history.record(
+            &doc.edit(set_stroke_kind(&doc, sec, "ledge").unwrap())
+                .unwrap(),
+        );
+        assert_eq!(doc.entity(sec).unwrap().text(Field::FeatureType), "ledge");
+        history.undo(&mut doc).unwrap();
+        assert_eq!(
+            doc.entity(sec).unwrap().text(Field::FeatureType),
+            "pit",
+            "undo restores the type"
+        );
+        // an anchored (profile) stroke closes the same way and survives an edit
+        let (prof, actions) = profile_sketch(
+            &doc,
+            ids,
+            "wall",
+            "A",
+            &[[1.0, 1.0], [5.0, 4.0], [9.0, 1.0]],
+            None,
+            &frames,
+        )
+        .unwrap();
+        history.record(&doc.edit(with_closed(actions, true).unwrap()).unwrap());
+        assert!(closed_of(&doc, prof));
+        history.record(
+            &doc.edit(
+                edit_stroke(
+                    &doc,
+                    prof,
+                    &[[1.0, 1.0], [5.0, 5.0], [9.0, 1.0]],
+                    None,
+                    &frames,
+                )
+                .unwrap(),
+            )
+            .unwrap(),
+        );
+        assert!(closed_of(&doc, prof), "editing keeps the loop");
+        // a loop needs three fit points; bad types are refused
+        let (_, actions) =
+            section_sketch(&doc, ids, "wall", a, &[[0.0, 0.0], [1.0, 1.0]], None, None).unwrap();
+        assert!(with_closed(actions, true).is_err());
+        assert!(set_stroke_kind(&doc, sec, "").is_err());
+        assert!(validate(&doc).is_empty());
     }
 }

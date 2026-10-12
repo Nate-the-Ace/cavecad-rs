@@ -153,6 +153,7 @@ dependencies = [
  "cave-draw",
  "cave-dxf",
  "cave-fixture",
+ "cave-geom",
  "cave-id",
  "cave-log",
  "cave-scene",

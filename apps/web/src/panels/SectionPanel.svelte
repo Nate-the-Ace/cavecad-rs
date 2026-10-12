@@ -9,8 +9,8 @@
   import PanelUndo from '../components/PanelUndo.svelte';
   import { looks } from '../lib/ink';
   import { drawHandles, drawStrokes } from '../lib/section-glyph';
-  import { LineEditor } from '../lib/line-editor';
-  import { simplify } from '../lib/spline';
+  import { LineEditor, endpointNear, joinFit } from '../lib/line-editor';
+  import { fitStroke } from '../lib/spline';
   import { tolerancePx } from '../lib/commands';
   import { cave, changed, option, filter, wireFilter } from '../lib/cave.svelte';
   import { engine, loadEngine, type SectionStation, type StationSection } from '../lib/engine';
@@ -175,7 +175,15 @@
     const look = looks();
     drawStrokes(g, editor.display(), toScreen, look, 1, cave.selected);
     drawHandles(g, editor.handles(), c.accent, c.panel);
-    if (live && live.pts.length > 1) drawStrokes(g, [{ kind: cave.tool || 'sketch', points: live.pts, widths: live.pressure ? live.widths : null }], toScreen, look);
+    if (pickupAt && cave.tool && !live) {
+      // the end of an open line the next stroke would carry on from
+      g.strokeStyle = c.accent;
+      g.lineWidth = 2;
+      g.beginPath();
+      g.arc(pickupAt[0], pickupAt[1], 9, 0, Math.PI * 2);
+      g.stroke();
+    }
+    if (live && live.pts.length > 1) drawStrokes(g, [{ kind: cave.tool || 'sketch', points: live.pts, widths: live.pressure ? live.widths : null, closed: false }], toScreen, look);
 
     // up arrow and what it means
     g.fillStyle = c.muted;
@@ -244,9 +252,21 @@
     }
   }
 
+  // Where the next stroke would pick an open line up: shown while a drawing tool waits.
+  let pickupAt: [number, number] | null = null;
+  function showPickup(x: number, y: number) {
+    const hit = cave.tool ? endpointNear(section?.sketches ?? [], cave.tool, (p) => toScreen(p[0], p[1]), x, y) : null;
+    const next = hit ? hit.at : null;
+    if ((next?.[0] ?? -1) !== (pickupAt?.[0] ?? -1) || (next?.[1] ?? -1) !== (pickupAt?.[1] ?? -1)) {
+      pickupAt = next;
+      schedule();
+    }
+  }
+
   function onMove(e: PointerEvent) {
     const r = canvas.getBoundingClientRect();
     if (editor.move(e.clientX - r.left, e.clientY - r.top)) return;
+    if (!live && !panning && cave.tool) showPickup(e.clientX - r.left, e.clientY - r.top);
     if (live) {
       const samples = e.getCoalescedEvents?.() ?? [];
       for (const ev of samples.length > 0 ? samples : [e]) addPoint(ev);
@@ -267,8 +287,20 @@
     live = null;
     if (stroked.pts.length >= 2 && cave.station) {
       // A freehand stroke becomes a smooth curve through a few fit points.
-      const fit = simplify(stroked.pts, stroked.pressure ? stroked.widths : null, tolerancePx(option('detail', 5)) / scale);
-      const result = engine.addSectionSketch(cave.station, cave.tool, fit.pts, fit.widths, cave.adjusted);
+      const wantClosed = option('close', false);
+      const fit = fitStroke(stroked.pts, stroked.pressure ? stroked.widths : null, tolerancePx(option('detail', 5)) / scale, wantClosed);
+      const closed = wantClosed && fit.pts.length >= 3;
+      // Starting on the end of an open line of the same kind carries that line on instead of starting a new one.
+      const start = toScreen(stroked.pts[0][0], stroked.pts[0][1]);
+      const pickup = endpointNear(section?.sketches ?? [], cave.tool, (p) => toScreen(p[0], p[1]), start[0], start[1]);
+      let result: string;
+      if (pickup) {
+        const joined = joinFit(pickup.line, fit, pickup.atStart);
+        result = engine.editLine(pickup.line.id, joined.pts, joined.widths, cave.adjusted);
+        cave.selected = '';
+      } else {
+        result = engine.addSectionSketch(cave.station, cave.tool, fit.pts, fit.widths, closed, cave.adjusted);
+      }
       message = result === 'ok' ? '' : result;
       changed();
     }
@@ -350,7 +382,10 @@
       if (!cave.tool) editor.addPoint(e.clientX - r.left, e.clientY - r.top);
     }}
     onkeydown={onKey}
-    oncontextmenu={(e) => e.preventDefault()}
+    oncontextmenu={(e) => {
+      e.preventDefault();
+      if (cave.tool) cave.tool = ''; // a right click ends the command
+    }}
   ></canvas>
   <div class="bar" bind:clientHeight={barH}>
     <button title="Previous station" disabled={index <= 0} onclick={() => step(-1)}><ChevronLeft size={15} /></button>

@@ -6,7 +6,7 @@
 import type { Look } from './ink';
 import { smooth } from './spline.ts';
 
-export type Sketches = { points: [number, number][]; widths: number[] | null }[];
+export type Sketches = { points: [number, number][]; widths: number[] | null; closed?: boolean }[];
 
 /** `[minU, minV, maxU, maxV]` around the strokes (zeros when empty). */
 export function sketchBounds(sketches: Sketches): [number, number, number, number] {
@@ -54,6 +54,8 @@ export function drawStrokes(
     const curve = smooth(
       k.points.map((p) => to(p[0], p[1])),
       k.widths,
+      10,
+      !!k.closed,
     );
     const trace = (extra: number, color: string, alpha: number, dash: number[]) => {
       g.strokeStyle = color;
@@ -89,7 +91,7 @@ export function drawHandles(g: CanvasRenderingContext2D, pts: [number, number][]
 
 /** The smooth curves of a section's strokes on screen (what is actually drawn). */
 export function glyphCurves(sketches: Sketches, to: (u: number, v: number) => [number, number]): [number, number][][] {
-  return sketches.map((k) => smooth(k.points.map((p) => to(p[0], p[1])), null).pts);
+  return sketches.map((k) => smooth(k.points.map((p) => to(p[0], p[1])), null, 10, !!k.closed).pts);
 }
 
 /**

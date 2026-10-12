@@ -6,8 +6,8 @@
   import { looks } from '../lib/ink';
   import { cave, changed, option, setShowSections } from '../lib/cave.svelte';
   import { defaultBandOffset, drawHandles, drawStrokes, glyphCurves, hits, leaderEnd } from '../lib/section-glyph';
-  import { LineEditor } from '../lib/line-editor';
-  import { simplify } from '../lib/spline';
+  import { LineEditor, endpointNear, joinFit } from '../lib/line-editor';
+  import { fitStroke } from '../lib/spline';
   import { tolerancePx } from '../lib/commands';
   import type { BandSection } from '../lib/engine';
   import { formatLength, inUnits, metresPer, niceNumber, unitName } from '../lib/units';
@@ -180,6 +180,14 @@
     const look = looks();
     drawStrokes(g, editor.display(), toScreen, look, 1, cave.selected);
     drawHandles(g, editor.handles(), c.accent, c.bg);
+    if (pickupAt && cave.tool && !live) {
+      // the end of an open line the next stroke would carry on from
+      g.strokeStyle = c.accent;
+      g.lineWidth = 2;
+      g.beginPath();
+      g.arc(pickupAt[0], pickupAt[1], 9, 0, Math.PI * 2);
+      g.stroke();
+    }
     if (cave.showSections.profile) {
       for (const sec of band.sections) {
         const st = toScreen(sec.s, sec.z);
@@ -202,7 +210,7 @@
         g.textAlign = 'left';
       }
     }
-    if (live && live.pts.length > 1) drawStrokes(g, [{ kind: cave.tool || 'sketch', points: live.pts, widths: live.pressure ? live.widths : null }], toScreen, look);
+    if (live && live.pts.length > 1) drawStrokes(g, [{ kind: cave.tool || 'sketch', points: live.pts, widths: live.pressure ? live.widths : null, closed: false }], toScreen, look);
 
     g.fillStyle = c.text;
     g.textAlign = 'left';
@@ -262,9 +270,21 @@
     }
   }
 
+  // Where the next stroke would pick an open line up: shown while a drawing tool waits.
+  let pickupAt: [number, number] | null = null;
+  function showPickup(x: number, y: number) {
+    const hit = cave.tool ? endpointNear(band?.sketches ?? [], cave.tool, (p) => toScreen(p[0], p[1]), x, y) : null;
+    const next = hit ? hit.at : null;
+    if ((next?.[0] ?? -1) !== (pickupAt?.[0] ?? -1) || (next?.[1] ?? -1) !== (pickupAt?.[1] ?? -1)) {
+      pickupAt = next;
+      schedule();
+    }
+  }
+
   function onMove(e: PointerEvent) {
     const r = canvas.getBoundingClientRect();
     if (editor.move(e.clientX - r.left, e.clientY - r.top)) return;
+    if (!live && !panning && cave.tool) showPickup(e.clientX - r.left, e.clientY - r.top);
     if (dragSection) {
       const s = band?.sections.find((k) => k.id === dragSection!.id);
       if (s) {
@@ -308,8 +328,20 @@
     live = null;
     if (stroked.pts.length >= 2 && cave.run) {
       // A freehand stroke becomes a smooth curve through a few fit points.
-      const fit = simplify(stroked.pts, stroked.pressure ? stroked.widths : null, tolerancePx(option('detail', 5)) / scale);
-      const result = engine.addSketch(cave.run, cave.tool, fit.pts, fit.widths, cave.adjusted);
+      const wantClosed = option('close', false);
+      const fit = fitStroke(stroked.pts, stroked.pressure ? stroked.widths : null, tolerancePx(option('detail', 5)) / scale, wantClosed);
+      const closed = wantClosed && fit.pts.length >= 3;
+      // Starting on the end of an open line of the same kind carries that line on instead of starting a new one.
+      const start = toScreen(stroked.pts[0][0], stroked.pts[0][1]);
+      const pickup = endpointNear(band?.sketches ?? [], cave.tool, (p) => toScreen(p[0], p[1]), start[0], start[1]);
+      let result: string;
+      if (pickup) {
+        const joined = joinFit(pickup.line, fit, pickup.atStart);
+        result = engine.editLine(pickup.line.id, joined.pts, joined.widths, cave.adjusted);
+        cave.selected = '';
+      } else {
+        result = engine.addSketch(cave.run, cave.tool, fit.pts, fit.widths, closed, cave.adjusted);
+      }
       message = result === 'ok' ? '' : result;
       changed();
     }
@@ -379,7 +411,10 @@
       if (!cave.tool) editor.addPoint(e.clientX - r.left, e.clientY - r.top);
     }}
     onkeydown={onKey}
-    oncontextmenu={(e) => e.preventDefault()}
+    oncontextmenu={(e) => {
+      e.preventDefault();
+      if (cave.tool) cave.tool = ''; // a right click ends the command
+    }}
   ></canvas>
   <div class="bar">
     <select bind:value={cave.run} aria-label="Run">

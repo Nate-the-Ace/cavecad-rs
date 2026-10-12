@@ -105,7 +105,8 @@
   $effect(() => {
     const tol = tolerancePx(option('detail', 5));
     const pressure = option('pressure', true);
-    view?.setDrawOptions({ tolerancePx: tol, pressure });
+    const close = option('close', false);
+    view?.setDrawOptions({ tolerancePx: tol, pressure, close });
   });
 
   // The picked drawing tool: drawing on the map goes to its plan, from the Top or Bottom view.
@@ -180,13 +181,14 @@
       if (hint !== drawHint) drawHint = hint;
     };
     v.onSelectLine = (id) => (cave.selected = id);
+    v.onEndCommand = () => (cave.tool = '');
     v.onLineEdited = (id, points, widths) => {
       const r = engine.editLine(id, points, widths, cave.adjusted);
       if (r !== 'ok') engine.log('warn', 'draw', r);
       changed();
     };
-    v.onLineDrawn = (points, widths) => {
-      const r = engine.addMapLine(cave.tool, points, widths, cave.adjusted);
+    v.onLineDrawn = (points, widths, closed) => {
+      const r = engine.addMapLine(cave.tool, points, widths, closed, cave.adjusted);
       if (r !== 'ok') engine.log('warn', 'draw', r);
       changed();
     };

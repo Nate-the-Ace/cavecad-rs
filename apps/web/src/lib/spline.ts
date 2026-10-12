@@ -43,15 +43,22 @@ export function simplify(pts: Pt[], widths: number[] | null, tol: number): { pts
   return { pts: idx.map((i) => pts[i]), widths: widths ? idx.map((i) => widths[i]) : null };
 }
 
-/** Samples of the curve through `pts` (and the pen weight at each sample), `per` samples per span. */
-export function smooth(pts: Pt[], widths: number[] | null = null, per = 10): { pts: Pt[]; widths: number[] | null } {
+/**
+ * Samples of the curve through `pts` (and the pen weight at each sample), `per` samples per span.
+ * A closed curve also runs from the last point back to the first, smoothly, with no corner there.
+ */
+export function smooth(pts: Pt[], widths: number[] | null = null, per = 10, closed = false): { pts: Pt[]; widths: number[] | null } {
   const n = pts.length;
   if (n < 3) return { pts, widths };
-  const ext: Pt[] = [[2 * pts[0][0] - pts[1][0], 2 * pts[0][1] - pts[1][1]], ...pts, [2 * pts[n - 1][0] - pts[n - 2][0], 2 * pts[n - 1][1] - pts[n - 2][1]]];
+  const at = (i: number): Pt => pts[((i % n) + n) % n];
+  const ext: Pt[] = closed
+    ? [at(-1), ...pts, at(n), at(n + 1)]
+    : [[2 * pts[0][0] - pts[1][0], 2 * pts[0][1] - pts[1][1]], ...pts, [2 * pts[n - 1][0] - pts[n - 2][0], 2 * pts[n - 1][1] - pts[n - 2][1]]];
+  const spans = closed ? n : n - 1;
   const out: Pt[] = [pts[0]];
   const w: number[] = widths ? [widths[0]] : [];
   const knot = (a: Pt, b: Pt) => Math.max(Math.pow(Math.hypot(b[0] - a[0], b[1] - a[1]), 0.5), 1e-6);
-  for (let i = 0; i < n - 1; i++) {
+  for (let i = 0; i < spans; i++) {
     const [p0, p1, p2, p3] = [ext[i], ext[i + 1], ext[i + 2], ext[i + 3]];
     const t0 = 0;
     const t1 = t0 + knot(p0, p1);
@@ -66,7 +73,7 @@ export function smooth(pts: Pt[], widths: number[] | null = null, per = 10): { p
       const b1 = mix(a1, a2, t0, t2);
       const b2 = mix(a2, a3, t1, t3);
       out.push(mix(b1, b2, t1, t2));
-      if (widths) w.push(widths[i] + ((widths[i + 1] - widths[i]) * s) / per);
+      if (widths) w.push(widths[i] + (((widths[(i + 1) % n] ?? widths[i]) - widths[i]) * s) / per);
     }
   }
   return { pts: out, widths: widths ? w : null };
@@ -87,18 +94,19 @@ export function nearestPoint(pts: Pt[], x: number, y: number, radius: number): n
 }
 
 /** Distance from (`x`, `y`) to the curve through `pts`. */
-export function distanceToCurve(pts: Pt[], x: number, y: number): number {
-  const c = smooth(pts).pts;
+export function distanceToCurve(pts: Pt[], x: number, y: number, closed = false): number {
+  const c = smooth(pts, null, 10, closed).pts;
   let d = Infinity;
   for (let i = 1; i < c.length; i++) d = Math.min(d, segmentDistance([x, y], c[i - 1], c[i]));
   return c.length === 1 ? Math.hypot(c[0][0] - x, c[0][1] - y) : d;
 }
 
 /** Where a new fit point belongs to land on the span of `pts` nearest (`x`, `y`): its index and the point on the span. */
-export function insertionAt(pts: Pt[], x: number, y: number): { index: number; at: Pt } {
+export function insertionAt(pts: Pt[], x: number, y: number, closed = false): { index: number; at: Pt } {
   let best = { index: 1, at: pts[0], d: Infinity };
-  for (let i = 1; i < pts.length; i++) {
-    const [a, b] = [pts[i - 1], pts[i]];
+  // a closed curve also has the span from the last point back to the first
+  for (let i = 1; i < pts.length + (closed ? 1 : 0); i++) {
+    const [a, b] = [pts[i - 1], pts[i % pts.length]];
     const dx = b[0] - a[0];
     const dy = b[1] - a[1];
     const len2 = dx * dx + dy * dy;
@@ -108,4 +116,17 @@ export function insertionAt(pts: Pt[], x: number, y: number): { index: number; a
     if (d < best.d) best = { index: i, at, d };
   }
   return { index: best.index, at: best.at };
+}
+
+/**
+ * A freehand stroke as fit points: reduced within `tol`, and for a closed curve the last point
+ * (which the hand left beside the first) is dropped when it sits within reach of it.
+ */
+export function fitStroke(pts: Pt[], widths: number[] | null, tol: number, closed: boolean): { pts: Pt[]; widths: number[] | null } {
+  const f = simplify(pts, widths, tol);
+  if (closed && f.pts.length > 3) {
+    const [a, b] = [f.pts[0], f.pts[f.pts.length - 1]];
+    if (Math.hypot(a[0] - b[0], a[1] - b[1]) < tol * 3) return { pts: f.pts.slice(0, -1), widths: f.widths ? f.widths.slice(0, -1) : null };
+  }
+  return f;
 }

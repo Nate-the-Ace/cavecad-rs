@@ -8,6 +8,10 @@ export interface EditableLine {
   id: string;
   points: Pt[];
   widths: number[] | null;
+  /** True when the curve loops back from the last point to the first. */
+  closed?: boolean;
+  /** What it is (wall, ledge, ...). */
+  kind?: string;
 }
 
 export interface Hooks<T extends EditableLine> {
@@ -67,7 +71,7 @@ export class LineEditor<T extends EditableLine = EditableLine> {
     }
     const lines = this.h.lines();
     for (let i = lines.length - 1; i >= 0; i--) {
-      if (distanceToCurve(lines[i].points.map(this.h.toScreen), x, y) <= LINE_REACH) {
+      if (distanceToCurve(lines[i].points.map(this.h.toScreen), x, y, !!lines[i].closed) <= LINE_REACH) {
         this.h.select(lines[i].id);
         this.h.redraw();
         return false;
@@ -100,12 +104,12 @@ export class LineEditor<T extends EditableLine = EditableLine> {
     const sel = this.selectedLine();
     if (!sel) return false;
     const screen = sel.points.map(this.h.toScreen);
-    if (distanceToCurve(screen, x, y) > LINE_REACH + 3) return false;
-    const { index, at } = insertionAt(screen, x, y);
+    if (distanceToCurve(screen, x, y, !!sel.closed) > LINE_REACH + 3) return false;
+    const { index, at } = insertionAt(screen, x, y, !!sel.closed);
     const points = [...sel.points];
     points.splice(index, 0, this.h.toWorld(at[0], at[1]));
     const widths = sel.widths ? [...sel.widths] : null;
-    if (widths) widths.splice(index, 0, (widths[index - 1] + widths[index]) / 2);
+    if (widths) widths.splice(index, 0, (widths[index - 1] + widths[index % widths.length]) / 2);
     this.h.commit(sel.id, points, widths);
     return true;
   }
@@ -126,4 +130,42 @@ export class LineEditor<T extends EditableLine = EditableLine> {
     }
     return false;
   }
+}
+
+/** How close, in pixels, a press must be to the end of an open line to carry that line on. */
+export const PICKUP_REACH = 12;
+
+/** The open line of kind `kind` with an end near screen (`x`, `y`): which line, which end, where on screen. */
+export function endpointNear<T extends EditableLine>(lines: T[], kind: string, toScreen: (p: Pt) => Pt, x: number, y: number, reach = PICKUP_REACH): { line: T; atStart: boolean; at: Pt } | null {
+  let best: { line: T; atStart: boolean; at: Pt } | null = null;
+  let bestD = reach;
+  for (const line of lines) {
+    if (line.closed || line.kind !== kind || line.points.length < 2) continue;
+    for (const atStart of [false, true]) {
+      const at = toScreen(atStart ? line.points[0] : line.points[line.points.length - 1]);
+      const d = Math.hypot(at[0] - x, at[1] - y);
+      if (d <= bestD) {
+        bestD = d;
+        best = { line, atStart, at };
+      }
+    }
+  }
+  return best;
+}
+
+/**
+ * A new stroke (as fit points) carried on from an end of an existing open line: the line's own end
+ * point is where the new stroke joins, so there is never a gap. Drawn away from the start, the
+ * new points go in front, in the order they will run along the line.
+ */
+export function joinFit(line: EditableLine, fit: { pts: Pt[]; widths: number[] | null }, atStart: boolean): { pts: Pt[]; widths: number[] | null } {
+  const added = fit.pts.slice(1);
+  const addedW = fit.widths ? fit.widths.slice(1) : null;
+  const useWidths = line.widths !== null || fit.widths !== null;
+  const own = line.widths ?? line.points.map(() => 1);
+  const ownNew = addedW ?? added.map(() => 1);
+  if (atStart) {
+    return { pts: [...added.reverse(), ...line.points], widths: useWidths ? [...ownNew.reverse(), ...own] : null };
+  }
+  return { pts: [...line.points, ...added], widths: useWidths ? [...own, ...ownNew] : null };
 }

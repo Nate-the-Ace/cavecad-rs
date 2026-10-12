@@ -44,6 +44,9 @@ pub struct AnchoredPath {
     /// Relative pen weight per point (from pressure), if recorded.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub widths: Option<Vec<f64>>,
+    /// True if the curve loops back from the last point to the first.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub closed: bool,
 }
 
 /// Why a stroke could not be anchored.
@@ -120,6 +123,7 @@ pub fn anchor_stroke(
         });
     }
     Ok(AnchoredPath {
+        closed: false,
         frames: used.iter().map(|&i| (frames[i].a, frames[i].b)).collect(),
         points: out,
         widths,

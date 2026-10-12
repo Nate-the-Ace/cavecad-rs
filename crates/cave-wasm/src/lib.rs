@@ -269,7 +269,13 @@ pub fn map_profile_sketches(adjusted: bool) -> String {
 /// anchored to the survey's legs, goes through the one edit path and is undoable. Returns `ok` or
 /// `error: ...`.
 #[wasm_bindgen]
-pub fn add_map_line(kind: &str, points: &str, widths: &str, adjusted: bool) -> String {
+pub fn add_map_line(
+    kind: &str,
+    points: &str,
+    widths: &str,
+    closed: bool,
+    adjusted: bool,
+) -> String {
     let Ok(points) = serde_json::from_str::<Vec<[f64; 2]>>(points) else {
         return "error: unreadable stroke".into();
     };
@@ -285,6 +291,7 @@ pub fn add_map_line(kind: &str, points: &str, widths: &str, adjusted: bool) -> S
         let (_, actions) =
             cave_draw::map_line(doc, &mut random_ids(), kind, &points, widths, &frames)
                 .map_err(|e| format!("{e:?}"))?;
+        let actions = cave_draw::with_closed(actions, closed).map_err(|e| format!("{e:?}"))?;
         let edit = doc.edit(actions).map_err(|e| format!("{e:?}"))?;
         record_edit("map", &edit);
         Ok::<(), String>(())
@@ -337,6 +344,76 @@ pub fn edit_line(id: &str, points: &str, widths: &str, adjusted: bool) -> String
         Ok(()) => "ok".into(),
         Err(e) => format!("error: {e}"),
     }
+}
+
+/// Closes or opens a line already drawn (a closed one loops back to its first point). One
+/// undoable edit. Returns `ok` or `error: ...`.
+#[wasm_bindgen]
+pub fn set_line_closed(id: &str, closed: bool) -> String {
+    change_line(id, |doc, line| {
+        cave_draw::set_stroke_closed(doc, line, closed)
+    })
+}
+
+/// Changes what a line already drawn is (`wall`, `ledge`, ...). One undoable edit. Returns `ok`
+/// or `error: ...`.
+#[wasm_bindgen]
+pub fn set_line_kind(id: &str, kind: &str) -> String {
+    change_line(id, |doc, line| cave_draw::set_stroke_kind(doc, line, kind))
+}
+
+/// Applies `make` to a drawn line as one edit on the history of the view it was drawn in.
+fn change_line(
+    id: &str,
+    make: impl FnOnce(&Document, cave_id::Id) -> Result<Vec<cave_doc::Action>, cave_draw::DrawError>,
+) -> String {
+    let Ok(line) = id.parse::<cave_id::Id>() else {
+        return "error: no such line".into();
+    };
+    let result = DOC.with(|d| {
+        let mut slot = d.borrow_mut();
+        let doc = slot.as_mut().ok_or("no cave is open")?;
+        let scope = doc
+            .entity(line)
+            .map(|e| e.text(cave_doc::Field::FeatureView))
+            .unwrap_or_default();
+        let actions = make(doc, line).map_err(|e| format!("{e:?}"))?;
+        let edit = doc.edit(actions).map_err(|e| format!("{e:?}"))?;
+        record_edit(&scope, &edit);
+        Ok::<(), String>(())
+    });
+    match result {
+        Ok(()) => "ok".into(),
+        Err(e) => format!("error: {e}"),
+    }
+}
+
+/// What a drawn line is: JSON `{"kind","view","closed"}`, or `null` when `id` is not a drawn line.
+#[wasm_bindgen]
+pub fn line_info(id: &str) -> String {
+    let Ok(line) = id.parse::<cave_id::Id>() else {
+        return "null".into();
+    };
+    DOC.with(|d| {
+        let slot = d.borrow();
+        let info = slot.as_ref().and_then(|doc| {
+            let e = doc.entity(line).filter(|e| e.kind() == cave_doc::Kind::Feature)?;
+            let view = e.text(cave_doc::Field::FeatureView);
+            if !["profile", "section", "map"].contains(&view.as_str()) {
+                return None;
+            }
+            let closed = match (
+                e.get(cave_doc::Field::FeaturePath),
+                e.get(cave_doc::Field::FeatureAnchored),
+            ) {
+                (cave_doc::Value::Path(Some(cave_geom::Path::Spline { closed, .. })), _) => closed,
+                (_, cave_doc::Value::Anchored(Some(a))) => a.closed,
+                _ => false,
+            };
+            Some(serde_json::json!({"kind": e.text(cave_doc::Field::FeatureType), "view": view, "closed": closed}))
+        });
+        info.map_or_else(|| "null".to_string(), |v| v.to_string())
+    })
 }
 
 /// Deletes a line drawn in a view. One undoable edit. Returns `ok` or `error: ...`.
@@ -413,6 +490,7 @@ pub fn add_section_sketch(
     kind: &str,
     points: &str,
     widths: &str,
+    closed: bool,
     adjusted: bool,
 ) -> String {
     let Ok(points) = serde_json::from_str::<Vec<[f64; 2]>>(points) else {
@@ -440,6 +518,7 @@ pub fn add_section_sketch(
             trip,
         )
         .map_err(|e| format!("{e:?}"))?;
+        let actions = cave_draw::with_closed(actions, closed).map_err(|e| format!("{e:?}"))?;
         let edit = doc.edit(actions).map_err(|e| format!("{e:?}"))?;
         record_edit("section", &edit);
         Ok::<(), String>(())
@@ -540,6 +619,7 @@ pub fn add_profile_sketch(
     kind: &str,
     points: &str,
     widths: &str,
+    closed: bool,
     adjusted: bool,
 ) -> String {
     let Ok(points) = serde_json::from_str::<Vec<[f64; 2]>>(points) else {
@@ -557,6 +637,7 @@ pub fn add_profile_sketch(
         let (_, actions) =
             cave_draw::profile_sketch(doc, &mut random_ids(), kind, run, &points, widths, &frames)
                 .map_err(|e| format!("{e:?}"))?;
+        let actions = cave_draw::with_closed(actions, closed).map_err(|e| format!("{e:?}"))?;
         let edit = doc.edit(actions).map_err(|e| format!("{e:?}"))?;
         record_edit("profile", &edit);
         Ok::<(), String>(())
@@ -765,8 +846,9 @@ mod tests {
         assert!(sec["sketches"].as_array().unwrap().is_empty());
         assert_eq!(section_at(false, "nope", true, "{}"), "null");
         assert!(
-            add_section_sketch("nope", "wall", "[[0,0],[1,1]]", "", false).starts_with("error")
+            add_section_sketch("nope", "wall", "[[0,0],[1,1]]", "", false, false)
+                .starts_with("error")
         );
-        assert!(add_section_sketch(&id, "wall", "garbage", "", false).starts_with("error"));
+        assert!(add_section_sketch(&id, "wall", "garbage", "", false, false).starts_with("error"));
     }
 }

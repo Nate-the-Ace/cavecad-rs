@@ -26,6 +26,13 @@ export const DRAW_OPTIONS: OptionDef[] = [
     show: (v) => (v <= 3 ? 'Few points' : v >= 8 ? 'Close' : 'Balanced'),
   },
   {
+    id: 'close',
+    label: 'Close curve',
+    hint: 'Draw each curve as a closed loop: it runs from its last point back to its first, smoothly. A loop needs at least three points.',
+    kind: 'toggle',
+    default: false,
+  },
+  {
     id: 'pressure',
     label: 'Pen pressure',
     hint: 'Pressing harder draws a thicker line. It changes how the line looks, never where it is.',

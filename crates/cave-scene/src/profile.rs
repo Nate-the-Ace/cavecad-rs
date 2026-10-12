@@ -49,6 +49,8 @@ pub struct Sketch {
     pub points: Vec<[f64; 2]>,
     /// Pen weight per point, when drawn with pressure.
     pub widths: Option<Vec<f64>>,
+    /// True when the curve loops back from the last point to the first.
+    pub closed: bool,
 }
 
 /// A station's cross-section sketches as the band shows them, next to the station.
@@ -194,6 +196,7 @@ pub fn profile_scene(doc: &Document, key: &str, use_adjustment: bool) -> Option<
                 kind: e.text(Field::FeatureType),
                 points,
                 widths: anchored.widths.clone(),
+                closed: anchored.closed,
             })
         })
         .collect();
@@ -280,6 +283,8 @@ pub struct Sketch3d {
     pub points: Vec<[f64; 3]>,
     /// Pen weight per point, when drawn with pressure.
     pub widths: Option<Vec<f64>>,
+    /// True when the curve loops back from the last point to the first.
+    pub closed: bool,
 }
 
 /// Every profile sketch placed along its run in 3D, so the Map can show it where it belongs: each
@@ -355,6 +360,7 @@ pub fn profile_sketches_3d(doc: &Document, use_adjustment: bool) -> Vec<Sketch3d
                 run: key,
                 points,
                 widths: anchored.widths.clone(),
+                closed: anchored.closed,
             });
         }
     }

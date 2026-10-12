@@ -7,7 +7,8 @@ import { LineSegmentsGeometry } from 'three/addons/lines/LineSegmentsGeometry.js
 import { LineMaterial } from 'three/addons/lines/LineMaterial.js';
 import type { MapSection, PassageBuffers, ProfileSketch3d, Scene, TypeStyle } from '../engine';
 import { defaultMapOffset, drawHandles, drawStrokes, glyphCurves, hits, leaderEnd } from '../section-glyph';
-import { distanceToCurve, nearestPoint, simplify, smooth } from '../spline';
+import { distanceToCurve, fitStroke, nearestPoint, smooth } from '../spline';
+import { PICKUP_REACH, joinFit } from '../line-editor';
 import { looks } from '../ink';
 import { elevationColor, inkColor, readTheme, type ViewTheme } from './theme';
 import { metresPer, niceNumber, unitName, type Units } from '../units';
@@ -68,13 +69,18 @@ export class CaveView {
   /** Called when a map line's fit points have been moved (plan metres) or a line is picked or put down. */
   onLineEdited: (id: string, points: [number, number][], widths: number[] | null) => void = () => {};
   onSelectLine: (id: string) => void = () => {};
+  /** Called when a right click (not a right drag, which pans) asks to end the running command. */
+  onEndCommand: () => void = () => {};
+  private rightDown: { x: number; y: number } | null = null;
+  /** Where the next stroke would carry an open line on from, on screen, while a tool waits. */
+  private pickupAt: [number, number] | null = null;
   /** How a drawn stroke is turned into a curve: the fit tolerance in pixels, and whether pen pressure counts. */
-  private drawOptions = { tolerancePx: 2.5, pressure: true };
-  setDrawOptions(o: { tolerancePx: number; pressure: boolean }) {
+  private drawOptions = { tolerancePx: 2.5, pressure: true, close: false };
+  setDrawOptions(o: { tolerancePx: number; pressure: boolean; close: boolean }) {
     this.drawOptions = o;
   }
   /** Called with a plan stroke (east, north metres) when the person lifts the pen. */
-  onLineDrawn: (points: [number, number][], widths: number[] | null) => void = () => {};
+  onLineDrawn: (points: [number, number][], widths: number[] | null, closed: boolean) => void = () => {};
   /** Offsets being dragged right now, before they are saved. */
   private liveOffsets = new Map<string, [number, number, number]>();
   private dragging: { id: string; x: number; y: number } | null = null;
@@ -122,6 +128,18 @@ export class CaveView {
       clearTimeout(this.shadingTimer);
       this.shadingTimer = window.setTimeout(() => this.reshade() && this.rebuild(), 150);
     });
+    // A right click ends the running command; a right drag still pans.
+    canvas.addEventListener('pointerdown', (e) => {
+      if (e.button === 2) this.rightDown = { x: e.clientX, y: e.clientY };
+    });
+    // (Decided on release, not on the context-menu event, which some systems send on press.)
+    canvas.addEventListener('pointerup', (e) => {
+      const d = this.rightDown;
+      if (e.button !== 2 || !d) return;
+      this.rightDown = null;
+      if (this.drawTool && Math.hypot(e.clientX - d.x, e.clientY - d.y) < 5) this.onEndCommand();
+    });
+    canvas.addEventListener('contextmenu', (e) => e.preventDefault());
     // A section can be dragged by hand: this runs before the orbit controls see the press.
     canvas.addEventListener(
       'pointerdown',
@@ -175,6 +193,15 @@ export class CaveView {
         this.requestRender();
         return;
       }
+      if (this.drawTool && this.canDrawHere && !this.dragging) {
+        const r = this.canvas.getBoundingClientRect();
+        const hit = this.openEndNear(e.clientX - r.left, e.clientY - r.top);
+        const next = hit ? hit.at : null;
+        if ((next?.[0] ?? -1) !== (this.pickupAt?.[0] ?? -1) || (next?.[1] ?? -1) !== (this.pickupAt?.[1] ?? -1)) {
+          this.pickupAt = next;
+          this.requestRender();
+        }
+      }
       const d = this.dragging;
       if (d) {
         this.moveSection(d.id, e.clientX - d.x, e.clientY - d.y);
@@ -201,8 +228,18 @@ export class CaveView {
         if (line.pts.length >= 2) {
           // A freehand stroke becomes a smooth curve through a few fit points.
           const px = this.pixelsPerMetreAt([line.pts[0][0], line.pts[0][1], line.z]) ?? 1;
-          const fit = simplify(line.pts, line.pressure ? line.widths : null, this.drawOptions.tolerancePx / px);
-          this.onLineDrawn(fit.pts, fit.widths);
+          // Starting on the end of an open line of the same kind carries that line on.
+          const first = this.project([line.pts[0][0], line.pts[0][1], line.z]);
+          const pickup = first ? this.openEndNear(first[0], first[1]) : null;
+          if (pickup) {
+            const fit = fitStroke(line.pts, line.pressure ? line.widths : null, this.drawOptions.tolerancePx / px, false);
+            const own = { id: pickup.line.id, points: pickup.line.points.map((p) => [p[0], p[1]] as [number, number]), widths: pickup.line.widths };
+            const joined = joinFit(own, fit, pickup.atStart);
+            this.onLineEdited(pickup.line.id, joined.pts, joined.widths);
+          } else {
+            const fit = fitStroke(line.pts, line.pressure ? line.widths : null, this.drawOptions.tolerancePx / px, this.drawOptions.close);
+            this.onLineDrawn(fit.pts, fit.widths, this.drawOptions.close && fit.pts.length >= 3);
+          }
         }
         this.requestRender();
         return;
@@ -429,6 +466,25 @@ export class CaveView {
     return hit ? [hit.x, hit.y] : null;
   }
 
+  /** The open map line of the running tool's kind with an end near screen (`x`, `y`): which, which end, where. */
+  private openEndNear(x: number, y: number): { line: ProfileSketch3d; atStart: boolean; at: [number, number] } | null {
+    let best: { line: ProfileSketch3d; atStart: boolean; at: [number, number] } | null = null;
+    let bestD = PICKUP_REACH;
+    for (const k of this.mapLines) {
+      if (k.closed || k.kind !== this.drawTool || k.points.length < 2) continue;
+      for (const atStart of [false, true]) {
+        const at = this.project(atStart ? k.points[0] : k.points[k.points.length - 1]);
+        if (!at) continue;
+        const d = Math.hypot(at[0] - x, at[1] - y);
+        if (d <= bestD) {
+          bestD = d;
+          best = { line: k, atStart, at };
+        }
+      }
+    }
+    return best;
+  }
+
   /** The line selected for editing (empty for none), from the shared selection. */
   setSelectedLine(id: string) {
     this.selectedLine = id;
@@ -467,7 +523,7 @@ export class CaveView {
     }
     for (const k of [...this.mapLines].reverse()) {
       const pts = screen(k);
-      if (pts.length === k.points.length && distanceToCurve(pts, x, y) <= 7) {
+      if (pts.length === k.points.length && distanceToCurve(pts, x, y, k.closed) <= 7) {
         this.onSelectLine(k.id);
         return;
       }
@@ -569,7 +625,7 @@ export class CaveView {
       const projected = k.points.map((p) => this.project(p));
       // A curve through the fit points (straight where part of it is behind the camera).
       const whole = projected.every((p) => !!p);
-      const curve = whole ? smooth(projected as [number, number][], k.widths) : { pts: projected, widths: k.widths };
+      const curve = whole ? smooth(projected as [number, number][], k.widths, 10, k.closed) : { pts: projected, widths: k.widths };
       const pts = curve.pts;
       const trace = (extra: number, alpha: number, dash: number[]) => {
         g.globalAlpha = base * alpha;
@@ -799,9 +855,17 @@ export class CaveView {
       const hs = editing.points.map((p) => this.project(p)).filter((p): p is [number, number] => !!p);
       drawHandles(g, hs, `#${this.theme.accent.getHexString()}`, `#${this.theme.bg.getHexString()}`);
     }
+    if (this.pickupAt && this.drawTool && !this.liveLine) {
+      // the end of an open line the next stroke would carry on from
+      g.strokeStyle = `#${this.theme.accent.getHexString()}`;
+      g.lineWidth = 2;
+      g.beginPath();
+      g.arc(this.pickupAt[0], this.pickupAt[1], 9, 0, Math.PI * 2);
+      g.stroke();
+    }
     const live = this.liveLine;
     if (live && live.pts.length > 1) {
-      this.strokeLines(g, [{ id: '', kind: this.drawTool || 'sketch', run: '', points: live.pts.map((p) => [p[0], p[1], live.z] as [number, number, number]), widths: live.pressure ? live.widths : null }]);
+      this.strokeLines(g, [{ id: '', closed: false, kind: this.drawTool || 'sketch', run: '', points: live.pts.map((p) => [p[0], p[1], live.z] as [number, number, number]), widths: live.pressure ? live.widths : null }]);
     }
     if (this.showSections) {
       for (const sec of this.sections) {
