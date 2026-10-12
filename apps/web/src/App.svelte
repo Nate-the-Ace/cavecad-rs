@@ -9,6 +9,9 @@
   import { installDiagnostics } from './lib/diagnostics';
   import { live, readInviteFromUrl } from './lib/sync.svelte';
   import CaveShelf from './components/CaveShelf.svelte';
+  import LiveShare from './components/LiveShare.svelte';
+  import { viewChanged } from './lib/p2p.svelte';
+  import { scans } from './lib/scans.svelte';
   import { autosaveSoon, flush, loadShelf, shelf } from './lib/shelf.svelte';
   import { checkRemembered } from './lib/scans.svelte';
 
@@ -50,6 +53,14 @@
     void cave.version;
     autosaveSoon();
   });
+  // The host tells guests where it is looking.
+  $effect(() => {
+    void cave.trip;
+    void cave.run;
+    void cave.station;
+    void scans.selected;
+    viewChanged();
+  });
   const keepNow = () => void flush();
 
   const dirty = $derived(unsaved());
@@ -64,6 +75,7 @@
   <Ribbon />
   <NewCave />
   <CaveShelf />
+  <LiveShare />
   {#if info?.error}
     <div class="banner">Rust build failed. The page is showing the last good build.<pre>{info.error}</pre></div>
   {/if}

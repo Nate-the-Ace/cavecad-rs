@@ -527,3 +527,14 @@ export function setRealRoot(name: string, path: string) {
     /* not remembered: private window */
   }
 }
+
+/** A page by its path, for sending to someone else. */
+export const fileOf = (path: string): File | undefined => files.get(path);
+
+/** Adds a page that arrived from another device (kept for this visit only: it is not a folder on this machine). */
+export function addRemoteFile(path: string, file: File) {
+  if (!scanKind(path) || isDerived(path)) return;
+  files.set(path, file);
+  if (!scans.paths.includes(path)) scans.paths = [...scans.paths, path].sort();
+  if (!scans.folder) scans.folder = 'from the host';
+}

@@ -52,6 +52,8 @@ export interface Cursor {
   seen: number;
 }
 
+export const myPersonId = myId;
+
 export const live = $state({
   /** `off`, `connecting`, `live`, or `reconnecting` (the connection dropped; edits wait and are sent on return). */
   status: 'off' as 'off' | 'connecting' | 'live' | 'reconnecting',
@@ -162,13 +164,36 @@ function flush() {
   if (ops !== '[]') socket.send(`{"t":"ops","ops":${ops}}`);
 }
 
+/**
+ * A second way of sharing, directly between devices (see `p2p.svelte.ts`), plugs in here: where this
+ * person's pointer is sent, and what to do when sharing stops.
+ */
+const hooks: { presence: ((m: object) => void) | null; leave: (() => void) | null } = { presence: null, leave: null };
+export function setPeerHooks(h: { presence: (m: object) => void; leave: () => void }) {
+  hooks.presence = h.presence;
+  hooks.leave = h.leave;
+}
+
+/** Drops the pointers of people not heard from lately, so they vanish from the views. */
+export function fadeCursors() {
+  const now = Date.now();
+  for (const id of Object.keys(live.cursors)) if (now - live.cursors[id].seen > CURSOR_FADE_MS) delete live.cursors[id];
+}
+
 /** Tells the others where this person's pointer is. Cheap to call on every move: it is rate limited. */
 export function reportCursor(view: string, ctx: string, x: number, y: number, tool: string) {
-  if (live.status !== 'live' || !socket || socket.readyState !== WebSocket.OPEN) return;
+  if (live.status !== 'live') return;
   const now = performance.now();
   if (now - lastPresence < PRESENCE_MS) return;
+  const msg = { t: 'presence', view, ctx, x, y, tool };
+  if (hooks.presence && !socket) {
+    lastPresence = now;
+    hooks.presence(msg); // peer to peer
+    return;
+  }
+  if (!socket || socket.readyState !== WebSocket.OPEN) return;
   lastPresence = now;
-  socket.send(JSON.stringify({ t: 'presence', view, ctx, x, y, tool }));
+  socket.send(JSON.stringify(msg));
 }
 
 /** The others' pointers that are in this view (and this run or station) and recent. */
@@ -194,6 +219,7 @@ function stopTimers() {
 
 /** Leaves the room. The cave stays open on this device exactly as it is. */
 export function leave() {
+  hooks.leave?.(); // a peer-to-peer session ends with it
   wanted = false;
   stopTimers();
   const s = socket;

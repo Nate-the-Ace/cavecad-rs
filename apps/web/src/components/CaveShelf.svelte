@@ -4,7 +4,9 @@
   // stopped, and the open ends where a new trip could pick up. Open it, add a trip to it, start a new
   // cave, or bring one in from a file. Nothing here changes a cave except by opening it.
   import { untrack } from 'svelte';
-  import { Star } from '@lucide/svelte';
+  import { Copy, Star } from '@lucide/svelte';
+  import { joinWithCode, leaveP2p, p2p } from '../lib/p2p.svelte';
+  import { live, me, rename } from '../lib/sync.svelte';
   import { cave } from '../lib/cave.svelte';
   import { DEMOS } from '../lib/demos';
   import { engine, loadEngine, type CaveSummary } from '../lib/engine';
@@ -21,6 +23,38 @@
   let from = $state('');
   let message = $state('');
   let menu = $state<{ id: string; x: number; y: number } | null>(null);
+  /** Joining a session in progress: the host's invite code pasted, and the reply being made. */
+  let joining = $state(false);
+  let inviteText = $state('');
+  let joinProblem = $state('');
+  let copiedReply = $state(false);
+
+  async function makeReply() {
+    joinProblem = (await joinWithCode(inviteText)) ?? '';
+  }
+
+  async function copyReply() {
+    try {
+      await navigator.clipboard.writeText(p2p.reply);
+      copiedReply = true;
+      setTimeout(() => (copiedReply = false), 1500);
+    } catch {
+      /* selectable: copy it by hand */
+    }
+  }
+
+  function startJoin() {
+    joining = true;
+    joinProblem = '';
+    p2p.error = '';
+  }
+
+  function cancelJoin() {
+    leaveP2p();
+    joining = false;
+    inviteText = '';
+    joinProblem = '';
+  }
 
   $effect(() => {
     if (shelf.open) {
@@ -141,10 +175,33 @@
           <button onclick={() => { shelf.open = false; cave.newDialog = true; }}>New cave…</button>
           <button onclick={importFile} title="A cave saved as a DXF file by CaveCAD">Import file…</button>
         </div>
+        <button class="join" class:sel={joining} onclick={startJoin} title="Someone is sharing a cave live: paste the invite code they sent you">Join a live session…</button>
       </div>
 
       <div class="detail">
-        {#if (record || sample) && summary}
+        {#if joining}
+          <h2>Join a session in progress</h2>
+          <p class="stats">Someone is sharing a cave live. Paste the invite code they sent you; you get a reply code to send back; when they paste it, their cave opens here and you work on it together. Nothing goes through a server.</p>
+          <label class="field">Your name <input value={me.name} maxlength="40" onchange={(e) => rename(e.currentTarget.value)} /></label>
+          <p class="step">1. Paste the host’s invite code.</p>
+          <textarea rows="3" placeholder="CAVE1-…" bind:value={inviteText} disabled={p2p.role === 'guest'} aria-label="Invite code from the host"></textarea>
+          {#if p2p.role !== 'guest'}
+            <div><button class="go" onclick={makeReply} disabled={!inviteText.trim()}>Make my reply code</button></div>
+          {:else}
+            <p class="step">2. Send this reply code back to the host.</p>
+            <div class="replybox">
+              <textarea readonly rows="3" value={p2p.reply || 'Making the code…'} aria-label="Your reply code" onfocus={(e) => e.currentTarget.select()}></textarea>
+              <button onclick={copyReply} disabled={!p2p.reply}><Copy size={13} /> {copiedReply ? 'Copied' : 'Copy'}</button>
+            </div>
+            <p class="stats" role="status">{live.status === 'live' ? 'You are in.' : p2p.waiting || 'Waiting for the host…'}</p>
+          {/if}
+          <label class="check"><input type="checkbox" bind:checked={p2p.following} /> Follow what the host is looking at</label>
+          <label class="check" title="A public STUN service tells each device its public address so they can find each other across networks. No cave data goes through it."><input type="checkbox" bind:checked={p2p.stun} disabled={p2p.role === 'guest'} /> Connect across the internet</label>
+          {#if joinProblem}<p class="err" role="alert">{joinProblem}</p>{/if}
+          {#if p2p.error}<p class="err" role="alert">{p2p.error}</p>{/if}
+          <div class="spacer"></div>
+          <div class="foot"><span class="grow"></span><button onclick={cancelJoin}>Back to my caves</button></div>
+        {:else if (record || sample) && summary}
           <h2>{summary.name}</h2>
           <p class="stats">
             {#if summary.empty}Nothing surveyed yet.{:else}{length(summary.length_m)} surveyed · {summary.stations} stations · {summary.trips.length} trip{summary.trips.length === 1 ? '' : 's'}{#if summary.depth_m !== null && summary.depth_m > 0} · {length(summary.depth_m)} deep{/if} · {health(summary)}{/if}
@@ -207,6 +264,14 @@
   .box { width: min(980px, 96vw); height: min(600px, 92vh); background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 10px; display: flex; outline: none; overflow: hidden; }
   .rail { width: 290px; flex: none; border-right: 1px solid var(--line); display: flex; flex-direction: column; gap: 8px; padding: 12px; }
   .list { flex: 1; overflow: auto; display: flex; flex-direction: column; gap: 2px; }
+  button.join { margin-top: 2px; }
+  button.join.sel { background: var(--accent-bg); border-color: var(--accent); }
+  .field { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); }
+  .field input { font: inherit; font-size: 13px; padding: 5px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel-2); color: var(--text); }
+  .step { margin: 0; font-size: 12px; }
+  .replybox { display: flex; gap: 6px; align-items: flex-start; }
+  .check { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
+  textarea { font: 11px/1.3 var(--mono, monospace); padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel-2); color: var(--text); resize: vertical; word-break: break-all; flex: 1; }
   .group { font-size: 11px; font-weight: 600; color: var(--muted); padding: 10px 6px 2px; }
   .cave { text-align: left; display: flex; flex-direction: column; gap: 1px; padding: 6px 8px; border: none; background: none; border-radius: 6px; color: var(--text); cursor: pointer; font: inherit; }
   .cave:hover { background: var(--panel-2); }
