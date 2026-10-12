@@ -51,3 +51,8 @@ any `crates/**/*.rs` changes, holds requests while it builds, then reloads the p
 shows the git hash and build time of what the page runs. Production: hashed assets are immutable,
 `index.html` and `build-info.json` are never cached (`public/_headers`). Never add a service worker
 that serves files cache-first.
+
+Panels: `apps/web/src/lib/workspace.svelte.ts` (dockview). Add a panel by adding an entry to `PANELS`.
+Panels are dockable, resizable, tabbable, floatable, maximizable, minimizable and closable; the
+View tab brings closed ones back; layout is remembered in localStorage (a stale layout is dropped).
+Dockview styles only ship in its all-in-one bundle, so the import path is deliberate.

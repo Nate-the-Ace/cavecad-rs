@@ -11,3 +11,6 @@
 * { box-sizing: border-box; }
 html, body, #app { height: 100%; margin: 0; background: var(--bg); }
 button { font: inherit; color: inherit; }
+.dv-actions { display: flex; align-items: center; height: 100%; gap: 2px; padding-right: 6px; }
+.dv-actions button { display: grid; place-items: center; width: 24px; height: 24px; padding: 0; background: none; border: 0; border-radius: 6px; color: var(--muted); cursor: pointer; }
+.dv-actions button:hover { background: var(--panel-2); color: var(--text); }

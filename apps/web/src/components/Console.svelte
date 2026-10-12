@@ -45,7 +45,6 @@
 
 <section>
   <div class="tools">
-    <strong>Console</strong>
     <select bind:value={min} aria-label="Minimum level">
       <option value="info">Info</option>
       <option value="detail">Detail</option>
@@ -58,7 +57,7 @@
     <button onclick={copy}>Copy</button>
     <button onclick={clear}>Clear</button>
   </div>
-  <div class="log" bind:this={box} onscroll={onScroll} role="log" aria-readonly="true">
+  <div class="log" bind:this={box} onscroll={onScroll} role="log">
     {#each shown as e (e.seq)}
       <div class={e.level}><span class="src">{e.source}</span> {e.message}</div>
     {/each}
@@ -66,7 +65,7 @@
 </section>
 
 <style>
-  section { display: grid; grid-template-rows: auto 1fr; background: var(--panel); border-top: 1px solid var(--line); min-height: 0; }
+  section { display: grid; grid-template-rows: auto 1fr; background: var(--panel); height: 100%; min-height: 0; }
   .tools { display: flex; align-items: center; gap: 8px; padding: 6px 10px; border-bottom: 1px solid var(--line); }
   .spacer { flex: 1; }
   select, input, .tools button { font: inherit; padding: 3px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--text); }
