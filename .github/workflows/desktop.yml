@@ -45,7 +45,7 @@ jobs:
             apps/desktop/src-tauri -> target
 
       - name: Install wasm-pack (the web app's engine is built with it)
-        uses: jetli/wasm-pack-action@v0.4.0
+        run: npm install -g wasm-pack
 
       - name: Linux libraries the window needs
         if: matrix.platform == 'ubuntu-22.04'

@@ -36,7 +36,7 @@ jobs:
       - uses: swatinem/rust-cache@v2
 
       - name: Install wasm-pack (the engine is built with it)
-        uses: jetli/wasm-pack-action@v0.4.0
+        run: npm install -g wasm-pack
 
       - name: Build the web app
         env:
