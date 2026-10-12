@@ -7,8 +7,13 @@ import { WebSocketServer } from 'ws';
 const MAX_ROOM = 64;
 const MAX_MESSAGE = 64 * 1024 * 1024;
 
-/** Room state is plain data so the tests can look at it. */
-export function createRelay() {
+/**
+ * Room state is plain data so the tests can look at it.
+ * `store` is optional and makes rooms survive a restart: `store.load(room)` returns the room's saved
+ * ops (synchronously) the first time anyone joins it, and `store.append(room, ops)` is told about
+ * every batch of new ops. Without a store the log lives only in memory.
+ */
+export function createRelay(store = null) {
   /** @type {Map<string, { log: unknown[]; peers: Set<import('ws').WebSocket>; seeder: import('ws').WebSocket | null }>} */
   const rooms = new Map();
 
@@ -32,7 +37,7 @@ export function createRelay() {
       if (msg.t === 'join' && !room) {
         name = String(msg.room ?? '').trim().slice(0, 60);
         if (!name) return send(ws, { t: 'error', message: 'A room needs a name.' });
-        if (!rooms.has(name)) rooms.set(name, { log: [], peers: new Set(), seeder: null });
+        if (!rooms.has(name)) rooms.set(name, { log: store ? store.load(name) : [], peers: new Set(), seeder: null });
         room = rooms.get(name);
         if (room.peers.size >= MAX_ROOM) return send(ws, { t: 'error', message: 'That room is full.' }), (room = null);
         // The first device into an empty room supplies the cave; everyone else receives it.
@@ -51,6 +56,7 @@ export function createRelay() {
         if (note.length <= 2000) for (const p of room.peers) if (p !== ws && p.readyState === p.OPEN) p.send(note);
       } else if (msg.t === 'ops' && room && Array.isArray(msg.ops) && msg.ops.length) {
         room.log.push(...msg.ops);
+        if (store) store.append(name, msg.ops);
         if (room.seeder === ws) room.seeder = null;
         for (const p of room.peers) if (p !== ws) send(p, { t: 'ops', ops: msg.ops });
       }

@@ -1,0 +1,14 @@
+# docker compose -f apps/server/docker-compose.yml up --build
+# Then open http://<this machine>:8080 on every device, View > Live editing, same room name, Join.
+services:
+  cavecad:
+    build:
+      context: ../..
+      dockerfile: apps/server/Dockerfile
+    ports:
+      - "8080:8080"
+    volumes:
+      - cavecad-data:/data   # every room's op log, so rooms survive restarts and upgrades
+    restart: unless-stopped
+volumes:
+  cavecad-data:

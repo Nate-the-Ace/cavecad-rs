@@ -454,3 +454,16 @@ Not done: the old trip-planner packet (printable card), and the stations.json si
 - Deselecting: only a picked station is ringed (Map), ringed (Profile) or highlighted (Stations table); the
   station the Cross Section panel shows no longer stays lit after a click on nothing. A click on empty
   space in the Map or Profile lets go.
+
+## 2026-10-12: The CaveCAD server (Docker)
+
+`apps/server` is the always-on relay from the live-editing notes: one container that serves the web
+app and `/sync`, and stores each room's op log on a volume so rooms survive restarts. It reuses
+`apps/web/scripts/sync-relay.mjs` unchanged apart from an optional `store` (load a room's saved ops
+when it is first joined, append each new batch); without a store the relay behaves as before. See
+`apps/server/README.md`.
+- Checked: `apps/server/tests/server.check.mjs` (static files and no path escape, ops survive a
+  restart, a torn last line is ignored and the next write still lands). Found by that test: a write
+  after a torn line glued onto it and was lost on the next load; the store now starts a fresh line.
+Not built: sign-in and permissions, trimming the log, per-cave access, a stored log that is
+snapshotted rather than replayed from the start.

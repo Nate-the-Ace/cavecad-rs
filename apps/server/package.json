@@ -1,0 +1,13 @@
+{
+  "name": "cavecad-server",
+  "private": true,
+  "version": "0.0.1",
+  "type": "module",
+  "scripts": {
+    "start": "node server.mjs",
+    "test": "node tests/server.check.mjs"
+  },
+  "dependencies": {
+    "ws": "^8.22.0"
+  }
+}
