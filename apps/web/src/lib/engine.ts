@@ -8,13 +8,15 @@ export interface ConsoleEvent {
   source: string;
   message: string;
 }
-export type Pt = [number, number];
+export type Pt = [number, number, number];
 export interface Scene {
-  stations: { label: string; at: Pt; z: number; anchor: boolean }[];
+  stations: { label: string; at: Pt; anchor: boolean }[];
   legs: { from: Pt; to: Pt; style: 'new' | 'closure' | 'tie' }[];
-  splays: [number, number, number, number][];
+  /** [x1, y1, z1, x2, y2, z2] */
+  splays: [number, number, number, number, number, number][];
   closures: { at: Pt; horizontal: number; vertical: number; percent: number | null }[];
-  bounds: [number, number, number, number] | null;
+  /** [minX, minY, minZ, maxX, maxY, maxZ] */
+  bounds: [number, number, number, number, number, number] | null;
   adjusted: boolean;
   skipped: number;
 }

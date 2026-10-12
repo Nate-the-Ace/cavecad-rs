@@ -1,4 +1,5 @@
-//! What the map canvas draws: stations, legs, splays and loop closures, in plan, in metres.
+//! What the 3D canvas draws: stations, legs, splays and loop closures, in metres (x east, y north,
+//! z up, relative to the survey's anchor).
 //!
 //! Derived data only: [`build`] reads a [`Document`] and runs the survey math; nothing is stored
 //! back. The canvas stays dumb: it receives a [`Scene`] and draws it.
@@ -9,18 +10,16 @@ use cave_survey::{LegKind, Params, adjust, extract, resolve};
 use serde::Serialize;
 use std::collections::HashMap;
 
-/// A point on the plan.
-pub type Pt = [f64; 2];
+/// A point in 3D: east, north, up.
+pub type Pt = [f64; 3];
 
 /// A surveyed station.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct StationDot {
     /// Label shown to people.
     pub label: String,
-    /// Plan position (east, north) in metres.
+    /// Position in metres.
     pub at: Pt,
-    /// Elevation in metres relative to the anchor.
-    pub z: f64,
     /// True for a station the network is pinned on.
     pub anchor: bool,
 }
@@ -68,12 +67,12 @@ pub struct Scene {
     pub stations: Vec<StationDot>,
     /// Survey legs.
     pub legs: Vec<SceneLeg>,
-    /// Splay rays as `[x1, y1, x2, y2]`.
-    pub splays: Vec<[f64; 4]>,
+    /// Splay rays as `[x1, y1, z1, x2, y2, z2]`.
+    pub splays: Vec<[f64; 6]>,
     /// Loop and tie misclosures (as surveyed, never from adjusted coordinates).
     pub closures: Vec<SceneClosure>,
-    /// `[min_x, min_y, max_x, max_y]`, or `None` when empty.
-    pub bounds: Option<[f64; 4]>,
+    /// `[min_x, min_y, min_z, max_x, max_y, max_z]`, or `None` when empty.
+    pub bounds: Option<[f64; 6]>,
     /// True if positions are least-squares adjusted.
     pub adjusted: bool,
     /// Shots left out, for the console and Check tools.
@@ -117,8 +116,7 @@ pub fn build(doc: &Document, use_adjustment: bool) -> Scene {
         if let Some(p) = pos(**id) {
             scene.stations.push(StationDot {
                 label: labels[*id].clone(),
-                at: [p.x, p.y],
-                z: p.z,
+                at: [p.x, p.y, p.z],
                 anchor: r.anchors.contains(*id),
             });
         }
@@ -131,23 +129,28 @@ pub fn build(doc: &Document, use_adjustment: bool) -> Scene {
                 LegKind::Tie => LegStyle::Tie,
             };
             scene.legs.push(SceneLeg {
-                from: [a.x, a.y],
-                to: [b.x, b.y],
+                from: [a.x, a.y, a.z],
+                to: [b.x, b.y, b.z],
                 style,
             });
         }
     }
     for s in ex.splays.iter().filter(|s| !s.exclude_from_plot) {
         if let Some(a) = pos(s.from) {
-            scene
-                .splays
-                .push([a.x, a.y, a.x + s.offset.x, a.y + s.offset.y]);
+            scene.splays.push([
+                a.x,
+                a.y,
+                a.z,
+                a.x + s.offset.x,
+                a.y + s.offset.y,
+                a.z + s.offset.z,
+            ]);
         }
     }
     for c in &r.closures {
         if let Some(p) = pos(c.at) {
             scene.closures.push(SceneClosure {
-                at: [p.x, p.y],
+                at: [p.x, p.y, p.z],
                 horizontal: c.horizontal,
                 vertical: c.vertical,
                 percent: c.percent,
@@ -155,15 +158,17 @@ pub fn build(doc: &Document, use_adjustment: bool) -> Scene {
         }
     }
     let mut pts: Vec<Pt> = scene.stations.iter().map(|s| s.at).collect();
-    pts.extend(scene.splays.iter().map(|s| [s[2], s[3]]));
-    scene.bounds = pts.iter().fold(None, |b: Option<[f64; 4]>, p| {
+    pts.extend(scene.splays.iter().map(|s| [s[3], s[4], s[5]]));
+    scene.bounds = pts.iter().fold(None, |b: Option<[f64; 6]>, p| {
         Some(match b {
-            None => [p[0], p[1], p[0], p[1]],
+            None => [p[0], p[1], p[2], p[0], p[1], p[2]],
             Some(b) => [
                 b[0].min(p[0]),
                 b[1].min(p[1]),
-                b[2].max(p[0]),
-                b[3].max(p[1]),
+                b[2].min(p[2]),
+                b[3].max(p[0]),
+                b[4].max(p[1]),
+                b[5].max(p[2]),
             ],
         })
     });
@@ -212,6 +217,26 @@ mod tests {
         assert!(adj.adjusted);
         assert_ne!(raw.stations[2].at, adj.stations[2].at);
         assert_eq!(raw.closures[0].horizontal, adj.closures[0].horizontal);
+    }
+
+    #[test]
+    fn elevation_is_kept_in_stations_legs_and_bounds() {
+        let text = r#"{"unit":"m","name":"up","shots":[
+            {"from":"A","to":"B","distance":10,"azimuth":0,"inclination":30},
+            {"from":"B","to":"","distance":2,"azimuth":90,"inclination":-90,"splay":true}]}"#;
+        let doc = cave_fixture::from_shot_list(text, ActorId(1)).unwrap();
+        let s = build(&doc, false);
+        assert!(
+            (s.stations[1].at[2] - 5.0).abs() < 1e-9,
+            "10 m at 30 degrees rises 5 m"
+        );
+        assert!((s.legs[0].to[2] - 5.0).abs() < 1e-9);
+        assert!(
+            (s.splays[0][5] - 3.0).abs() < 1e-9,
+            "a splay straight down drops 2 m from z=5"
+        );
+        let b = s.bounds.unwrap();
+        assert!(b[2] <= 0.0 + 1e-9 && b[5] >= 5.0 - 1e-9);
     }
 
     #[test]

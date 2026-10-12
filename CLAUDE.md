@@ -64,3 +64,11 @@ The QCAD-era app already solved the survey math. Port from `~/Documents/github/c
 ## CI is switched off
 
 The `ci` workflow is disabled on GitHub (Nathan's call, 2026-10-11: webapp-forward, no more failure emails). The file stays in `.github/workflows/ci.yml`; re-enable with `gh workflow enable ci`. Until then the checks are run by hand before every commit: `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test`, the wasm32 build line above, `python3 tools/make_code_index.py --check`, and `npx svelte-check` in `apps/web`.
+
+## Test caves (standing rule from Nathan, 2026-10-11)
+
+**Pitfall Cave is the default test cave** (opens first in the app; the main fixture for every check). **Plumbline Pit is the vertical-cave guard**: every decision about geometry, walls (LRUD), cameras or views must also be checked on Plumbline Pit (and Stairstep) so horizontal and vertical-style caves both keep working. A pitch has no bearing, so nothing may invent one (see the old app's "vertical bearing trap").
+
+## The canvas is 3D
+
+The whole canvas is a 3D view (three.js, `apps/web/src/lib/viewport/`): z is up, y is north. Plan is just the Top view. The view cube snaps to 26 directions; a flat face view switches to orthographic. Dev hook: `window.__view` in dev builds. Scene data (always 3D) comes from `cave-scene` through `cave-wasm`.

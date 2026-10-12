@@ -10,6 +10,7 @@
   },
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "^7.3.1",
+    "@types/three": "^0.186.0",
     "svelte": "^5.57.2",
     "svelte-check": "^4.7.6",
     "typescript": "^6.0.3",
@@ -17,6 +18,7 @@
   },
   "dependencies": {
     "@lucide/svelte": "^1.55.0",
-    "dockview-core": "^8.5.1"
+    "dockview-core": "^8.5.1",
+    "three": "^0.186.1"
   }
 }
