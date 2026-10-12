@@ -50,8 +50,9 @@
   $effect(() => {
     const f = from;
     void page; // taken names change when a shot is added
+    void ready;
     untrack(() => {
-      if (toTyped) return;
+      if (toTyped || !ready) return; // the engine may not be loaded yet
       const taken = new Set(engine.scanViewStations('map', false).map((s) => s.label));
       for (const r of page?.rows ?? []) taken.add(r.label);
       to = suggestNext(f, taken);
