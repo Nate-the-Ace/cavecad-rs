@@ -58,6 +58,10 @@ export class CaveView {
     this.scene.add(this.content);
     this.controls = new OrbitControls(this.persp, canvas);
     this.controls.screenSpacePanning = true;
+    // CAD mouse: middle drag pans, wheel zooms, left drag orbits (right drag pans too).
+    this.controls.mouseButtons = { LEFT: THREE.MOUSE.ROTATE, MIDDLE: THREE.MOUSE.PAN, RIGHT: THREE.MOUSE.PAN };
+    // Stops the browser's middle-click autoscroll from taking over the drag.
+    canvas.addEventListener('mousedown', (e) => e.button === 1 && e.preventDefault());
     this.controls.addEventListener('change', () => this.requestRender());
     this.applyTheme();
   }
