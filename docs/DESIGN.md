@@ -355,3 +355,15 @@ anyway?"; declining puts the picker back. Edits from other people in a live room
 (the file on this machine is not what they were saving). Joining a room replaces the cave and counts as
 clean. Not done: autosave to the browser's storage, and a "save, discard or cancel" choice (the browser
 confirm has only two buttons).
+
+## 2026-10-12: Fitting a drawn line again
+
+The selected line's tab has a **Curve detail** slider (1 to 10). Letting go of it fits the line again,
+as one undoable edit in the line's own panel. The hand movement a line was drawn from is long gone (only
+fit points are stored), so what is fitted is the curve on screen: sampled finely and reduced to the fewest
+points that keep it within a fraction of its length of itself (3% at detail 1, 0.67% at 5, 0.1% at 10).
+Lower detail gives fewer points, easier to edit; higher gives more, following the curve closely; the ends,
+the closed or open shape and the pen weights stay. Symbols and text have no curve and are left alone.
+`refit` is in `lib/spline.ts` (checked in `tests/spline.check.ts`), `refitLine` in the line editor and the
+Map's view (checked in `tests/lineeditor.check.ts`); the request goes through `cave.refit` and whichever
+panel holds the line does it (a panel opened later does not redo an old request).

@@ -64,6 +64,8 @@ export const cave = $state({
   station: '',
   /** The run the Profile panel is showing. */
   run: '',
+  /** A request to fit the selected line again at another curve detail; the panel that holds the line does it. */
+  refit: { id: '', detail: 5, seq: 0 },
 });
 
 /** What the canvas hides, by type and by trip. A view setting only: nothing is stored on the drawing. */
@@ -152,6 +154,11 @@ export function unsaved(): boolean {
   } catch {
     return false;
   }
+}
+
+/** Asks for a drawn line to be fitted again at another curve detail (1 loose to 10 close). */
+export function requestRefit(id: string, detail: number) {
+  cave.refit = { id, detail, seq: cave.refit.seq + 1 };
 }
 
 export function changed() {

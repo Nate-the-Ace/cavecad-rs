@@ -55,6 +55,14 @@
     void cave.selected;
     schedule();
   });
+  // the selected line is fitted again at another detail
+  let handledRefit = cave.refit.seq; // a panel opened later does not redo old requests
+  $effect(() => {
+    const r = cave.refit;
+    if (r.seq === handledRefit) return;
+    handledRefit = r.seq;
+    untrack(() => editor.refitLine(r.id, r.detail));
+  });
   // other people's pointers move
   $effect(() => {
     for (const o of Object.values(room.cursors)) void o.seen;

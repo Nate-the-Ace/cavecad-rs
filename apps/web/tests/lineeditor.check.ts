@@ -28,6 +28,15 @@ ok(ed.addPoint(25, 20) === true && saved.length === 2 && saved[1].pts.length ===
 ok(ed.addPoint(300, 300) === false, 'far from the line adds nothing');
 ok(ed.key({ key: 'Delete' } as KeyboardEvent) === true && removed[0] === 'a' && selected === '', 'Delete removes the selected line');
 ok(ed.key({ key: 'Delete' } as KeyboardEvent) === false, 'with nothing selected a key does nothing');
+// fitting a line again at another detail
+const dense: EditableLine = { id: 'd', kind: 'wall', points: Array.from({ length: 30 }, (_, i) => [i * 4, Math.sin(i / 4) * 30] as [number, number]), widths: null };
+lines.push(dense);
+saved.length = 0;
+ok(ed.refitLine('d', 1) === true && saved.length === 1 && saved[0].id === 'd' && saved[0].pts.length < 30, 'a loose re-fit has fewer points and is saved as one edit');
+ok(ed.refitLine('nothing', 5) === false, 'no such line');
+lines.push({ id: 'sym', kind: 'sym-pit', points: [[0, 0], [0, 10]], widths: null });
+ok(ed.refitLine('sym', 5) === false, 'a symbol has no curve to re-fit');
+lines.pop(); lines.pop();
 // the eraser end of a pen
 removed.length = 0; selected = 'b';
 ok(ed.eraseAt(300, 300) === false && removed.length === 0, 'the eraser over nothing deletes nothing');

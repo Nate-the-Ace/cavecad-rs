@@ -2,7 +2,7 @@
 // double-click to add a fit point, Delete to remove the line. One implementation for every view
 // that draws on a canvas (Profile, Cross Section). The view says where its lines are and how
 // world and screen relate; this decides what a press, a drag and a key do.
-import { distanceToCurve, insertionAt, nearestPoint, type Pt } from './spline.ts';
+import { distanceToCurve, insertionAt, nearestPoint, refit, type Pt } from './spline.ts';
 import { hitsStamp, isStampKind } from './symbols.ts';
 
 /** How near, in pixels, a point is to a line (a symbol counts as its whole body). */
@@ -111,6 +111,16 @@ export class LineEditor<T extends EditableLine = EditableLine> {
       }
     }
     return false;
+  }
+
+  /** Fits a drawn line again at another curve detail (1 to 10), as one edit. Returns true if it changed. */
+  refitLine(id: string, detail: number): boolean {
+    const line = this.shown().find((k) => k.id === id);
+    if (!line || isStampKind(line.kind) || line.points.length < 3) return false;
+    const f = refit(line.points, line.widths, !!line.closed, detail);
+    if (f.pts.length === line.points.length && f.pts.every((p, i) => p[0] === line.points[i][0] && p[1] === line.points[i][1])) return false;
+    this.h.commit(id, f.pts, f.widths);
+    return true;
   }
 
   /** Lets go of a picked-up fit point without saving (a second finger arrived: it was a gesture). */

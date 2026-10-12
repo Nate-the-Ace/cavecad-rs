@@ -91,6 +91,15 @@
     });
   });
 
+  // The selected map line is fitted again at another detail.
+  let handledRefit = cave.refit.seq;
+  $effect(() => {
+    const r = cave.refit;
+    if (r.seq === handledRefit) return;
+    handledRefit = r.seq;
+    untrack(() => view?.refitLine(r.id, r.detail));
+  });
+
   // Other people's pointers on the plan.
   $effect(() => {
     for (const o of Object.values(room.cursors)) void o.seen;

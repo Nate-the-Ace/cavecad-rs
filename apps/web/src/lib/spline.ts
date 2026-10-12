@@ -130,3 +130,28 @@ export function fitStroke(pts: Pt[], widths: number[] | null, tol: number, close
   }
   return f;
 }
+
+/** How far a re-fit may stray from the curve it is fitted to, as a fraction of the curve's length, for a curve detail from 1 (few points) to 10 (follows the curve closely). */
+export function detailFraction(detail: number): number {
+  const d = Math.min(10, Math.max(1, detail));
+  return 0.03 * Math.pow(0.035, (d - 1) / 9); // 1 -> 3% of the length, 5 -> 0.67%, 10 -> 0.1%
+}
+
+/**
+ * Fits a line that is already drawn again at another curve detail. The raw hand movement is long
+ * gone, so the curve that is on screen is what is fitted: sampled finely, then reduced to the fewest
+ * points that keep it within `detailFraction(detail)` of its length. A lower detail gives fewer
+ * points (easier to edit), a higher one more (closer to the curve); the ends and pen weights stay.
+ */
+export function refit(pts: Pt[], widths: number[] | null, closed: boolean, detail: number): { pts: Pt[]; widths: number[] | null } {
+  if (pts.length < 3) return { pts, widths };
+  const dense = smooth(pts, widths, 10, closed);
+  let length = 0;
+  for (let i = 1; i < dense.pts.length; i++) length += Math.hypot(dense.pts[i][0] - dense.pts[i - 1][0], dense.pts[i][1] - dense.pts[i - 1][1]);
+  const tol = length * detailFraction(detail);
+  const f = simplify(dense.pts, dense.widths, tol);
+  if (!closed) return f;
+  // the last sample of a closed curve is its first point again
+  const out = { pts: f.pts.slice(0, -1), widths: f.widths ? f.widths.slice(0, -1) : null };
+  return out.pts.length >= 3 ? out : { pts, widths };
+}

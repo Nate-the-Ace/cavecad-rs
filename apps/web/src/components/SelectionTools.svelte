@@ -3,7 +3,7 @@
   // Done sit in the tab's Command group.) Each is one undoable edit in the view the line was drawn in.
   import { onMount } from 'svelte';
   import { Spline, FlipHorizontal2 } from '@lucide/svelte';
-  import { cave, changed } from '../lib/cave.svelte';
+  import { cave, changed, option, requestRefit } from '../lib/cave.svelte';
   import { engine, loadEngine, type TypeStyle } from '../lib/engine';
   import { isStampKind } from '../lib/symbols';
   import { fillDefs, isFillKind } from '../lib/fills';
@@ -50,6 +50,12 @@
       <span>{info?.closed ? 'Open' : 'Close'}</span>
     </button>
     {/if}
+    {#if !isSymbol && info}
+      <label class="detail" title="Fit the line again with more or fewer points. Fewer points are easier to edit; more follow the curve closely.">
+        <span>Curve detail</span>
+        <input type="range" min="1" max="10" step="1" value={option('detail', 5)} onchange={(e) => requestRefit(cave.selected, Number(e.currentTarget.value))} aria-label="Curve detail" />
+      </label>
+    {/if}
     {#if isSymbol && info}
       <input class="words" type="text" value={info.text} placeholder={info.kind === 'text' ? 'The text' : 'Label'} maxlength="200" aria-label={info.kind === 'text' ? 'The text' : 'Label'} onchange={(e) => run(engine.setLineText(cave.selected, e.currentTarget.value))} />
       <span class="tip">Drag the dot to move it, the square to turn and resize it.</span>
@@ -73,6 +79,8 @@
   .tool.pressed { background: var(--accent-bg); outline: 1px solid var(--accent); }
   .words { width: 170px; height: 26px; box-sizing: border-box; padding: 0 8px; background: var(--panel-2); color: var(--text); border: 1px solid var(--line); border-radius: var(--radius); font: inherit; font-size: 13px; }
   .kind { font: inherit; font-size: 13px; height: 26px; padding: 0 6px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel-2); color: var(--text); }
+  .detail { display: flex; flex-direction: column; gap: 2px; font-size: 11px; color: var(--muted); justify-content: center; height: calc(var(--ribbon-body) - 1px); }
+  .detail input { width: 110px; }
   .tip { font-size: 11px; color: var(--muted); max-width: 150px; line-height: 1.25; }
   .msg { font-size: 11px; color: var(--danger); max-width: 130px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 </style>

@@ -12,7 +12,7 @@ import { drawMarks, isFillKind, marksFor } from '../fills';
 import { isKindHidden, ornamentFor, refreshFlipped } from '../section-glyph';
 import { drawCursor } from '../presence-draw';
 import { defaultMapOffset, drawHandles, drawStrokes, glyphCurves, hits, leaderEnd } from '../section-glyph';
-import { distanceToCurve, fitStroke, nearestPoint, smooth } from '../spline';
+import { distanceToCurve, fitStroke, nearestPoint, refit, smooth } from '../spline';
 import { PICKUP_REACH, joinFit } from '../line-editor';
 import { looks } from '../ink';
 import { elevationColor, inkColor, readTheme, type ViewTheme } from './theme';
@@ -87,6 +87,15 @@ export class CaveView {
     this.drawOptions = o;
   }
   /** Called with a plan stroke (east, north metres) when the person lifts the pen. */
+  /** Fits a map line again at another curve detail (1 to 10), as one edit. */
+  refitLine(id: string, detail: number): boolean {
+    const line = this.mapLines.find((k) => k.id === id);
+    if (!line || isStampKind(line.kind) || line.points.length < 3) return false;
+    const f = refit(line.points.map((p) => [p[0], p[1]] as [number, number]), line.widths, line.closed, detail);
+    if (f.pts.length === line.points.length && f.pts.every((p, i) => p[0] === line.points[i][0] && p[1] === line.points[i][1])) return false;
+    this.onLineEdited(id, f.pts, f.widths);
+    return true;
+  }
   /** Where this pointer is on the plan, in the map's metres: told to the others when sharing. */
   onCursor: (x: number, y: number) => void = () => {};
   private remoteCursors: { x: number; y: number; name: string; color: string }[] = [];
