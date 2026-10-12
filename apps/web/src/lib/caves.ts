@@ -55,12 +55,18 @@ export async function openSample(id: string): Promise<string | null> {
 }
 
 /**
- * Opens a cave and starts a new trip on it, tied in at `station` when one was picked (the Notebook
- * starts that trip's first shot there). Returns a sentence when it could not.
+ * Starts a new trip on a sample cave: the sample becomes a working copy on the shelf (it has to be
+ * kept to grow), and the new trip picks up at `station`. Returns a sentence when it could not.
  */
-export async function newTripOn(id: string, station: string): Promise<string | null> {
-  const problem = await openKept(id);
+export async function newTripOnSample(id: string, station: string): Promise<string | null> {
+  const problem = await openSample(id);
   if (problem) return problem;
+  if (!(await storeOpenCave(`sample:${id}`))) return shelf.problem || 'The sample could not be kept.';
+  return startTrip(station);
+}
+
+/** Starts a trip on the cave now open (tied in at `station`), with the scans and notebook laid out. */
+function startTrip(station: string): string | null {
   const trips = engine.notebookTrips();
   const made = engine.notebookNewTrip(`Trip ${trips.length + 1}`);
   if (made.startsWith('error')) return made.replace(/^error: /, '');
@@ -70,6 +76,16 @@ export async function newTripOn(id: string, station: string): Promise<string | n
   workLayout(); // the scans and the notebook side by side, ready to type
   void storeOpenCave();
   return null;
+}
+
+/**
+ * Opens a cave and starts a new trip on it, tied in at `station` when one was picked (the Notebook
+ * starts that trip's first shot there). Returns a sentence when it could not.
+ */
+export async function newTripOn(id: string, station: string): Promise<string | null> {
+  const problem = await openKept(id);
+  if (problem) return problem;
+  return startTrip(station);
 }
 
 /** Opens a cave and goes straight to one trip's page. */

@@ -1814,3 +1814,11 @@ pub fn shelf_summarize(dxf: &str) -> String {
     serde_json::to_string(&doc.as_ref().map(cave_shelf::summarize))
         .unwrap_or_else(|_| "null".into())
 }
+
+/// What the shelf shows about a sample cave given as shot-list JSON, without opening it.
+#[wasm_bindgen]
+pub fn shelf_summarize_demo(json: &str) -> String {
+    let doc = cave_fixture::from_shot_list(json, ActorId(1)).ok();
+    serde_json::to_string(&doc.as_ref().map(cave_shelf::summarize))
+        .unwrap_or_else(|_| "null".into())
+}

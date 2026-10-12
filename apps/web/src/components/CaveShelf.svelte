@@ -9,7 +9,7 @@
   import { DEMOS } from '../lib/demos';
   import { engine, loadEngine, type CaveSummary } from '../lib/engine';
   import { openDxf } from '../lib/files';
-  import { openAtTrip, newTripOn, openKept, openSample } from '../lib/caves';
+  import { openAtTrip, newTripOn, newTripOnSample, openKept, openSample } from '../lib/caves';
   import { dxfOf, forgetCave, loadShelf, setFavorite, setStartup, shelf, summaryOf, type ShelfRecord } from '../lib/shelf.svelte';
   import { formatLength } from '../lib/units';
 
@@ -37,17 +37,21 @@
   $effect(() => {
     if (!shelf.open) return;
     untrack(() => {
-      if (!picked || (!record && !sample)) picked = shelf.records.find((r) => r.id === shelf.currentId)?.id ?? shelf.records[0]?.id ?? '';
+      if (!picked || (!record && !sample)) picked = shelf.records.find((r) => r.id === shelf.currentId)?.id ?? shelf.records[0]?.id ?? `sample:${DEMOS[0].id}`;
     });
   });
 
-  // What the cave on the right says about itself: kept with the record, read once if it has none.
+  // What the cave on the right says about itself: kept with the record, read once if it has none (a
+  // sample is read from its own file).
   $effect(() => {
     const rec = record;
-    untrack(() => {
-      summary = rec?.summary ?? null;
-      from = '';
-      if (rec && !rec.summary) void summaryOf(rec).then((s) => rec.id === picked && (summary = s));
+    const smp = sample;
+    void loadEngine().then(() => {
+      untrack(() => {
+        summary = rec?.summary ?? (smp ? engine.shelfSummarizeDemo(smp.json) : null);
+        from = '';
+        if (rec && !rec.summary) void summaryOf(rec).then((s) => rec.id === picked && (summary = s));
+      });
     });
   });
 
@@ -69,7 +73,7 @@
   }
 
   const open = () => (record ? run(openKept(record.id)) : sample ? run(openSample(sample.id)) : undefined);
-  const newTrip = () => record && run(newTripOn(record.id, from));
+  const newTrip = () => (record ? run(newTripOn(record.id, from)) : sample ? run(newTripOnSample(sample.id, from)) : undefined);
   const atTrip = (index: number) => record && run(openAtTrip(record.id, index));
 
   async function importFile() {
@@ -140,12 +144,12 @@
       </div>
 
       <div class="detail">
-        {#if record && summary}
+        {#if (record || sample) && summary}
           <h2>{summary.name}</h2>
           <p class="stats">
             {#if summary.empty}Nothing surveyed yet.{:else}{length(summary.length_m)} surveyed · {summary.stations} stations · {summary.trips.length} trip{summary.trips.length === 1 ? '' : 's'}{#if summary.depth_m !== null && summary.depth_m > 0} · {length(summary.depth_m)} deep{/if} · {health(summary)}{/if}
           </p>
-          <p class="stored">Kept in this browser · last saved {when(record.updated)}</p>
+          {#if record}<p class="stored">Kept in this browser · last saved {when(record.updated)}</p>{:else}<p class="stored">A sample cave. Open it to look around, or start a trip on it (it is then kept in this browser as your own copy).</p>{/if}
           {#if summary.ends.length}
             <div class="ends">
               <span class="lead">Open ends</span>
@@ -166,9 +170,6 @@
               </tbody>
             </table>
           </div>
-        {:else if sample}
-          <h2>{sample.title.replace(/ \(.*\)$/, '')}</h2>
-          <p class="stats">{sample.title}. A sample cave from the test suite: open it to look around or try a tool. It is not kept unless you save it.</p>
         {:else}
           <p class="none big">Pick a cave on the left, or start a new one.</p>
         {/if}
@@ -178,7 +179,7 @@
         <div class="foot">
           <label><input type="checkbox" checked={shelf.startup} onchange={(e) => setStartup(e.currentTarget.checked)} /> Open this window at startup</label>
           <span class="grow"></span>
-          <button onclick={newTrip} disabled={!record || !summary} title="Open the cave and start a new trip on it">{from ? `New trip from ${from}` : 'New trip'}</button>
+          <button onclick={newTrip} disabled={(!record && !sample) || !summary} title="Open the cave and start a new trip on it">{from ? `New trip from ${from}` : 'New trip'}</button>
           <button class="go" onclick={open} disabled={!record && !sample}>Open</button>
           <button onclick={close}>{cave.hasCave ? 'Close' : 'Start empty'}</button>
         </div>
