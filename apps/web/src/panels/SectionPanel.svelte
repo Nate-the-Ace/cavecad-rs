@@ -12,7 +12,7 @@
   import { LineEditor, endpointNear, joinFit } from '../lib/line-editor';
   import { Touches } from '../lib/touch';
   import { PenGuard, isEraser, widthFor } from '../lib/pen';
-  import { isStampKind } from '../lib/symbols';
+  import { isStampKind, needsWords } from '../lib/symbols';
   import { isFillKind } from '../lib/fills';
   import { cursorsFor, live as room, reportCursor } from '../lib/sync.svelte';
   import { drawCursor } from '../lib/presence-draw';
@@ -417,7 +417,7 @@
     const stroked = live;
     live = null;
     if (isStampKind(cave.tool) && stroked.pts.length === 2 && cave.station) {
-      if (cave.tool === 'text' && !option('label', '').trim()) {
+      if (needsWords(cave.tool) && !option('label', '').trim()) {
         message = 'Type the text in the ribbon first.';
         schedule();
         return;

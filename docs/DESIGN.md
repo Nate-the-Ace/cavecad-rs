@@ -387,3 +387,15 @@ download the rows shown as a checklist CSV (elevations only, never positions).
   station could not be used (missing or impossible readings), not the old validator's wider checks; a lead
   with a later trip beyond it gets a "pushed?" suggestion that only a person can apply.
 Not done: the old trip-planner packet (printable card), and the stations.json sidecar (live editing replaces it).
+
+## 2026-10-12: Callout (a note with a leader arrow)
+- A callout is one stroke of type `callout` with two points: what it points at, then where the note goes
+  (drag from the thing to the spot). The words are the stroke's text; the leader (tip, elbow, landing on
+  the note's edge) and the arrow head are derived every time (`cave-shape/src/callout.rs`), a port of the
+  old `CsCallout.reflow`/`sideFor`, golden-checked on 60 cases (`tests/callout_golden.rs`). The old app
+  needed a linked text + leader pair joined by an id; one stroke cannot drift apart.
+- The leader leaves the note's near edge facing the arrow, so the note grows away from it; note height is a
+  third of the drag, so the drag sets size like the Text tool. Works in the Map, Profile and Cross Section
+  and is exported to DXF (text, leader and arrow head on `CAVE-CALLOUTS-<view>`).
+- Not done: several arrows on one note, the curved leader style (the engine has it, no button yet), the
+  note styles (hazard, dig...: use Show/types instead), and the elevation callout that reads a floor height.

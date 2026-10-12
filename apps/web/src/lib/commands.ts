@@ -93,7 +93,7 @@ export const FILL_OPTIONS: OptionDef[] = [DRAW_OPTIONS[0], DRAW_OPTIONS[2]];
 /** The options of a running command (`wall`, `ledge`, ...), or none. */
 export function optionsFor(command: string): OptionDef[] {
   if (!command) return [];
-  if (command === 'text') return TEXT_OPTIONS;
+  if (command === 'text' || command === 'callout') return TEXT_OPTIONS;
   if (command.startsWith('fill-')) return FILL_OPTIONS;
   return command.startsWith('sym-') ? SYMBOL_OPTIONS : DRAW_OPTIONS;
 }

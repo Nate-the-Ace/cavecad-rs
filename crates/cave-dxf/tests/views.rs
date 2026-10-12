@@ -29,6 +29,7 @@ fn drawn() -> Document {
     for (kind, pts, text) in [
         ("sym-pit", sym_line.to_vec(), "P 19"),
         ("text", sym_line.to_vec(), "Big room"),
+        ("callout", vec![p(0.0, 0.0), p(5.0, 3.0)], "Bad air"),
         ("fill-sand", loop_pts.to_vec(), ""),
         ("ledge", wavy.to_vec(), ""),
         ("wall", wavy.to_vec(), ""),
@@ -110,6 +111,10 @@ fn the_drawn_cave_still_reads_back_exactly() {
         .map(|id| back.entity(*id).unwrap().text(Field::FeatureType))
         .collect();
     assert!(kinds.iter().any(|k| k == "fill-sand") && kinds.iter().any(|k| k == "text"));
+    assert!(
+        text.contains("CAVE-CALLOUTS-MAP") && text.contains("Bad air"),
+        "the callout is exported with its leader"
+    );
     let _ = Value::Flag(true);
 }
 

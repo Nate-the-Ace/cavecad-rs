@@ -3,7 +3,7 @@
   import { Home, Maximize, Box, Square, Palette, Eye } from '@lucide/svelte';
   import PanelUndo from './PanelUndo.svelte';
   import { DEMOS } from '../lib/demos';
-  import { isSymbolKind, symbolDef } from '../lib/symbols';
+  import { isSymbolKind, needsWords, symbolDef } from '../lib/symbols';
   import { confirmDiscard } from '../lib/files';
   import { cursorsFor, live as room, reportCursor } from '../lib/sync.svelte';
   import { leave } from '../lib/sync.svelte';
@@ -246,7 +246,7 @@
         engine.log('warn', 'draw', 'A fill needs a loop: draw all the way around the area.');
         return;
       }
-      if (cave.tool === 'text' && !text.trim()) {
+      if (needsWords(cave.tool) && !text.trim()) {
         engine.log('warn', 'draw', 'Type the text in the ribbon first.');
         return;
       }

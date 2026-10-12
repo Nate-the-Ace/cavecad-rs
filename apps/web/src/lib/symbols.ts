@@ -80,9 +80,34 @@ export function hitsSymbol(p0: [number, number], p1: [number, number], x: number
   return Math.hypot(x - pl.cx, y - pl.cy) <= Math.max(pl.r, 6) + pad;
 }
 
-/** True for a type that is placed by a click and a drag rather than drawn: a symbol, or text. */
+/** True for a type that is placed by a click and a drag rather than drawn: a symbol, text or a callout. */
 export function isStampKind(kind: string | undefined): boolean {
-  return isSymbolKind(kind) || kind === 'text';
+  return isSymbolKind(kind) || kind === 'text' || kind === 'callout';
+}
+
+/** True for a type that is nothing without its words (text, a callout). */
+export function needsWords(kind: string | undefined): boolean {
+  return kind === 'text' || kind === 'callout';
+}
+
+/** A callout laid out: the note's box, the leader and the arrow head (all from the engine). */
+export interface CalloutLayout {
+  height: number;
+  side: 'left' | 'right';
+  note: [number, number, number, number];
+  leader: [number, number][];
+  head: [number, number][];
+}
+let calloutSource: ((tip: [number, number], at: [number, number], chars: number) => CalloutLayout) | null = null;
+/** Installs the engine's callout layout (call once it has loaded). */
+export function setCalloutSource(f: (tip: [number, number], at: [number, number], chars: number) => CalloutLayout) {
+  calloutSource = f;
+}
+
+/** A callout's layout on the canvas: dragged from the thing pointed at (`p0`) to where the note goes (`p1`). */
+function calloutLayout(p0: [number, number], p1: [number, number], text: string): CalloutLayout | null {
+  if (!calloutSource || Math.hypot(p1[0] - p0[0], p1[1] - p0[1]) < 3) return null;
+  return calloutSource(p0, p1, Math.max(1, text.length));
 }
 
 /** Where a stamp's words go and how big: for text, at the first point, turned to the aim; for a symbol's label, to its right. */
@@ -93,6 +118,26 @@ function wordsPlacement(kind: string, pl: ReturnType<typeof placement>): { x: nu
 
 /** Draws a symbol (with its label) or a text stroke at `p0`, aimed toward `p1`. */
 export function drawStamp(g: CanvasRenderingContext2D, kind: string, p0: [number, number], p1: [number, number], text = ''): void {
+  if (kind === 'callout') {
+    const l = calloutLayout(p0, p1, text);
+    if (!l) return;
+    g.beginPath();
+    l.leader.forEach((q, i) => (i === 0 ? g.moveTo(q[0], q[1]) : g.lineTo(q[0], q[1])));
+    g.stroke();
+    g.beginPath();
+    l.head.forEach((q, i) => (i === 0 ? g.moveTo(q[0], q[1]) : g.lineTo(q[0], q[1])));
+    g.stroke();
+    if (text) {
+      g.save();
+      g.fillStyle = g.strokeStyle;
+      g.font = `${l.height}px system-ui, sans-serif`;
+      g.textBaseline = 'middle';
+      g.textAlign = 'left';
+      g.fillText(text, l.note[0], (l.note[1] + l.note[3]) / 2);
+      g.restore();
+    }
+    return;
+  }
   const pl = placement(p0, p1);
   if (kind !== 'text') drawSymbol(g, kind, p0, p1);
   if (!text || pl.r < 1) return;
@@ -109,6 +154,16 @@ export function drawStamp(g: CanvasRenderingContext2D, kind: string, p0: [number
 
 /** True when the screen point is on a placed stamp: a symbol's body or label, or the words of a text stroke. */
 export function hitsStamp(kind: string, text: string | undefined, p0: [number, number], p1: [number, number], x: number, y: number, pad = 4): boolean {
+  if (kind === 'callout') {
+    const l = calloutLayout(p0, p1, text ?? '');
+    if (!l) return Math.hypot(x - p0[0], y - p0[1]) <= pad + 6;
+    const inNote = x >= l.note[0] - pad && x <= l.note[2] + pad && y >= Math.min(l.note[1], l.note[3]) - pad && y <= Math.max(l.note[1], l.note[3]) + pad;
+    if (inNote) return true;
+    for (let i = 1; i < l.leader.length; i++) {
+      if (distToSegment(x, y, l.leader[i - 1], l.leader[i]) <= pad + 2) return true;
+    }
+    return false;
+  }
   const pl = placement(p0, p1);
   if (!text) return hitsSymbol(p0, p1, x, y, pad);
   const w = wordsPlacement(kind, pl);
@@ -119,4 +174,12 @@ export function hitsStamp(kind: string, text: string | undefined, p0: [number, n
   const across = -dx * Math.sin(w.angle) + dy * Math.cos(w.angle);
   const inWords = along >= -pad && along <= text.length * w.size * 0.6 + pad && Math.abs(across) <= w.size * 0.6 + pad;
   return inWords || (kind !== 'text' && hitsSymbol(p0, p1, x, y, pad));
+}
+
+function distToSegment(x: number, y: number, a: [number, number], b: [number, number]): number {
+  const dx = b[0] - a[0];
+  const dy = b[1] - a[1];
+  const len2 = dx * dx + dy * dy;
+  const t = len2 < 1e-12 ? 0 : Math.max(0, Math.min(1, ((x - a[0]) * dx + (y - a[1]) * dy) / len2));
+  return Math.hypot(x - (a[0] + t * dx), y - (a[1] + t * dy));
 }

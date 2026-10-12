@@ -410,6 +410,14 @@ pub fn ornament(
     serde_json::json!({"spine": spine, "lines": lines}).to_string()
 }
 
+/// The drawing of a callout: dragged from `tip` to `at`, with a note of `chars` characters.
+/// `{height, side, note:[x1,y1,x2,y2], leader:[[x,y]..], head:[[x,y]..]}` as JSON.
+#[wasm_bindgen]
+pub fn callout(tip_x: f64, tip_y: f64, at_x: f64, at_y: f64, chars: usize, curved: bool) -> String {
+    let l = cave_shape::callout::layout([tip_x, tip_y], [at_x, at_y], chars, curved);
+    serde_json::to_string(&l).unwrap_or_default()
+}
+
 /// Ids of the shaped lines whose ornament is flipped to the left of travel (JSON array).
 #[wasm_bindgen]
 pub fn flipped_lines() -> String {

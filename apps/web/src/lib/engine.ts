@@ -1,9 +1,9 @@
 // Loads the Rust engine (WASM) once and re-exports the few calls the UI uses.
-import init, { start, log, console_events, console_clear, engine_version, open_demo, scene, profile_runs, profile_band, add_profile_sketch, undo, redo, edit_state, passage_mesh, shading, palette, open_dxf, save_dxf, section_stations, section_at, add_section_sketch, map_sections, place_section, map_profile_sketches, add_map_line, map_lines, draw_tools, edit_line, delete_line, set_line_closed, set_line_kind, line_info, set_line_flip, set_line_text, ornament, flipped_lines, revision, station_rows, set_station_mark, symbols, fills, fill_marks, draw_tool_groups, sync_outbox, sync_apply, sync_snapshot, sync_load } from '../wasm/cave_wasm.js';
+import init, { start, log, console_events, console_clear, engine_version, open_demo, scene, profile_runs, profile_band, add_profile_sketch, undo, redo, edit_state, passage_mesh, shading, palette, open_dxf, save_dxf, section_stations, section_at, add_section_sketch, map_sections, place_section, map_profile_sketches, add_map_line, map_lines, draw_tools, edit_line, delete_line, set_line_closed, set_line_kind, line_info, set_line_flip, set_line_text, ornament, callout, flipped_lines, revision, station_rows, set_station_mark, symbols, fills, fill_marks, draw_tool_groups, sync_outbox, sync_apply, sync_snapshot, sync_load } from '../wasm/cave_wasm.js';
 
 import { setInkPalette } from './ink';
 import { setOrnamentSource } from './section-glyph';
-import { setSymbolCatalogue, type SymbolDef } from './symbols';
+import { setCalloutSource, setSymbolCatalogue, type SymbolDef } from './symbols';
 import { setFillSource, type FillDef, type Marks } from './fills';
 import type { StationRow } from './station-table';
 
@@ -164,6 +164,7 @@ export function loadEngine(): Promise<void> {
     start();
     setInkPalette(JSON.parse(palette()));
     setSymbolCatalogue(JSON.parse(symbols()));
+    setCalloutSource((tip, at, chars) => JSON.parse(callout(tip[0], tip[1], at[0], at[1], chars, false)));
     setFillSource(engine);
   });
   return ready;

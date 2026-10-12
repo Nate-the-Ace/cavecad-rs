@@ -57,7 +57,7 @@
       </label>
     {/if}
     {#if isSymbol && info}
-      <input class="words" type="text" value={info.text} placeholder={info.kind === 'text' ? 'The text' : 'Label'} maxlength="200" aria-label={info.kind === 'text' ? 'The text' : 'Label'} onchange={(e) => run(engine.setLineText(cave.selected, e.currentTarget.value))} />
+      <input class="words" type="text" value={info.text} placeholder={info.kind === 'text' ? 'The text' : info.kind === 'callout' ? 'The note' : 'Label'} maxlength="200" aria-label={info.kind === 'text' ? 'The text' : info.kind === 'callout' ? 'The note' : 'Label'} onchange={(e) => run(engine.setLineText(cave.selected, e.currentTarget.value))} />
       <span class="tip">Drag the dot to move it, the square to turn and resize it.</span>
     {/if}
     {#if info && shaped.includes(info.kind)}

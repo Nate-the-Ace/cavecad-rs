@@ -353,6 +353,16 @@ pub const PALETTE: &[Style] = &[
     ),
     s("text", "Text", Text, 1.4, Solid, 1.0, 0.4, "CAVE-TEXT"),
     s(
+        "callout",
+        "Callout",
+        Text,
+        1.2,
+        Solid,
+        1.0,
+        0.4,
+        "CAVE-CALLOUTS",
+    ),
+    s(
         "flowstone",
         "Flowstone",
         Muted,
@@ -496,6 +506,7 @@ pub const DRAW_TOOLS: &[&str] = &[
     "slope",
     "sketch",
     "text",
+    "callout",
     "underlying",
     "presumed",
     "narrow",
@@ -520,6 +531,7 @@ pub const TOOL_GROUPS: &[(&str, &[&str])] = &[
             "slope",
             "sketch",
             "text",
+            "callout",
         ],
     ),
     (

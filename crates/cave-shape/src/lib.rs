@@ -7,6 +7,8 @@
 //! Ornament lies on one side of the direction of travel: side `+1` is the right of travel (the
 //! right normal of tangent `(tx, ty)` is `(ty, -tx)`), `-1` the left.
 
+pub mod callout;
+
 use cave_fill::Rng;
 use serde::Serialize;
 

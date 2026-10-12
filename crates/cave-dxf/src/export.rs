@@ -435,6 +435,26 @@ fn draw_stroke(g: &mut Geometry, doc: &Document, s: &Stroke, suffix: &str) {
         }
         return;
     }
+    if s.kind == "callout" {
+        if let [tip, at, ..] = s.points {
+            // A callout: the note, its leader and the arrow head, in the callout layer.
+            let l = cave_shape::callout::layout(
+                [tip[0], tip[1]],
+                [at[0], at[1]],
+                s.text.chars().count(),
+                false,
+            );
+            g.text(
+                "text",
+                [l.note[0], l.note[1].min(l.note[3]), 0.0],
+                l.height,
+                s.text,
+            );
+            g.lwpolyline_suffixed(s.kind, suffix, &l.leader, None);
+            g.lwpolyline_suffixed(s.kind, suffix, &l.head, None);
+        }
+        return;
+    }
     if s.kind == "text" {
         if let [a, b, ..] = s.points {
             // A text stroke: its words at the first point, as tall as the distance to the second.
