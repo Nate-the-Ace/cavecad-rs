@@ -238,8 +238,8 @@
     changed();
   }
 
-  const setMode = (warp: boolean) => {
-    engine.scanSetMode(cave.trip, align.view, scans.selected, warp ? 'warp' : 'rigid');
+  const setMode = (mode: 'rigid' | 'warp' | 'rubber') => {
+    engine.scanSetMode(cave.trip, align.view, scans.selected, mode);
     changed();
   };
 
@@ -467,7 +467,13 @@
         <span class="match">{a.label || `${formatLength(a.x ?? 0, cave.units, 1)}, ${formatLength(a.y ?? 0, cave.units, 1)}`}<button class="x" aria-label="Remove this match" onclick={() => unmatch(i)}><X size={11} /></button></span>
       {/each}
       {#if al && al.anchors.length >= 3}
-        <label title="Also stretch and skew across and down to take out scanner distortion"><input type="checkbox" checked={al.mode === 'warp'} onchange={(e) => setMode(e.currentTarget.checked)} /> Stretch to fit</label>
+        <label title="Rigid keeps the scan's shape. Stretch also takes out a scanner's stretch and skew. Rubber sheet bends the scan so every match lands exactly on its station, and the places between follow smoothly.">Fit
+          <select value={al.mode} aria-label="How the scan is fitted" onchange={(e) => setMode(e.currentTarget.value as 'rigid' | 'warp' | 'rubber')}>
+            <option value="rigid">Rigid</option>
+            <option value="warp">Stretch</option>
+            <option value="rubber">Rubber sheet</option>
+          </select>
+        </label>
       {/if}
       {#if placed}<span class="rms" title="How far, on average, the matched spots land from their stations">off by {formatLength(placed.rms, cave.units, 2)} on average</span>{/if}
     </div>

@@ -4,6 +4,7 @@ import init, { start, log, console_events, console_clear, engine_version, open_d
 import { setInkPalette } from './ink';
 import { setOrnamentSource } from './section-glyph';
 import { setCalloutSource, setSymbolCatalogue, type SymbolDef } from './symbols';
+import type { Warp } from './scan-warp';
 import { setFillSource, type FillDef, type Marks } from './fills';
 import type { StationRow } from './station-table';
 import type { Lrud, NotebookPage, TripChoice } from './notebook';
@@ -237,13 +238,15 @@ export interface ScanPlacement {
   matrix: [number, number, number, number, number, number];
   used: number;
   rms: number;
-  mode: 'rigid' | 'warp';
+  mode: 'rigid' | 'warp' | 'rubber';
+  /** The rubber-sheet warp when the scan is fitted that way (it replaces the matrix for drawing). */
+  warp?: Warp | null;
   /** The outline it is trimmed to (scan pixels), or null for the whole scan. */
   trim: [number, number][] | null;
 }
 /** The spots on a scan matched to stations. */
 export interface ScanAlignment {
-  mode: 'rigid' | 'warp';
+  mode: 'rigid' | 'warp' | 'rubber';
   anchors: { px: number; py: number; station: string; label: string; x: number | null; y: number | null }[];
 }
 /** One trip's line in the Cave Shelf. */
@@ -355,7 +358,7 @@ export const engine = {
   /** Matches a spot on a scan (pixels from its top left) with a station (its id) or a point in the view (`x:y`, metres). */
   scanAddAnchor: (trip: string, view: string, path: string, px: number, py: number, target: string): string => scan_add_anchor(trip, view, path, px, py, target),
   scanRemoveAnchor: (trip: string, view: string, path: string, index: number): string => scan_remove_anchor(trip, view, path, index),
-  scanSetMode: (trip: string, view: string, path: string, mode: 'rigid' | 'warp'): string => scan_set_mode(trip, view, path, mode),
+  scanSetMode: (trip: string, view: string, path: string, mode: 'rigid' | 'warp' | 'rubber'): string => scan_set_mode(trip, view, path, mode),
   /** The outline a scan is trimmed to in a view (scan pixels), or null. */
   scanTrim: (trip: string, view: string, path: string): [number, number][] | null => JSON.parse(scan_trim(trip, view, path)),
   /** Trims a scan to a traced outline (thinned to within `tolerance` pixels); an empty outline takes the trim off. */

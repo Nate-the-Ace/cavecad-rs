@@ -17,6 +17,10 @@ pub enum FitMode {
     /// Also stretch and skew across and down to take out a flatbed scanner's distortion (three or
     /// more matches; with two it is the same as rigid).
     Warp,
+    /// Rubber-sheet: the scan bends so that every match lands exactly on its station and the
+    /// places between follow smoothly (three or more matches not in a line; otherwise it is the same
+    /// as warp).
+    Rubber,
 }
 
 /// What a spot on a scan is matched to.
@@ -67,6 +71,7 @@ impl Alignment {
         let mode = match self.mode {
             FitMode::Rigid => "rigid",
             FitMode::Warp => "warp",
+            FitMode::Rubber => "rubber",
         };
         let mut out = String::from(mode);
         for a in &self.anchors {
@@ -84,6 +89,7 @@ impl Alignment {
         let mode = match parts.next()? {
             "rigid" => FitMode::Rigid,
             "warp" => FitMode::Warp,
+            "rubber" => FitMode::Rubber,
             _ => return None,
         };
         let finite = |s: &str| s.parse::<f64>().ok().filter(|v| v.is_finite());
@@ -288,7 +294,7 @@ pub fn fit(pairs: &[Pair], mode: FitMode) -> Option<Fit> {
         ])
     };
     let m = match mode {
-        FitMode::Warp if pairs.len() >= 3 => warp().or_else(rigid)?,
+        FitMode::Warp | FitMode::Rubber if pairs.len() >= 3 => warp().or_else(rigid)?,
         _ => rigid()?,
     };
     let at = |p: &(f64, f64)| {
@@ -314,6 +320,119 @@ pub fn fit(pairs: &[Pair], mode: FitMode) -> Option<Fit> {
     })
 }
 
+/// A rubber-sheet warp: a thin-plate spline taking a scan pixel `(px, py)` (y down) to the view's
+/// metres, exactly through every match. With `u = (px - origin.0) / scale` and `v = (py - origin.1) / scale`:
+/// `x = ax[0] + ax[1] u + ax[2] v + sum(wx[i] * U(|(u, v) - centers[i]|))`, `U(r) = r^2 ln r`, and
+/// the same for `y` with `ay` and `wy`.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct Tps {
+    /// The scan pixel taken as the centre of the working frame.
+    pub origin: (f64, f64),
+    /// Pixels per working unit.
+    pub scale: f64,
+    /// The matched spots in the working frame.
+    pub centers: Vec<(f64, f64)>,
+    /// The spline's weights for x and y.
+    pub wx: Vec<f64>,
+    /// See `wx`.
+    pub wy: Vec<f64>,
+    /// The affine part for x: constant, along u, along v.
+    pub ax: [f64; 3],
+    /// See `ax`.
+    pub ay: [f64; 3],
+}
+
+fn kernel(r2: f64) -> f64 {
+    if r2 < 1e-18 { 0.0 } else { 0.5 * r2 * r2.ln() } // r^2 ln r with r^2 given
+}
+
+impl Tps {
+    /// Where a scan pixel lands in the view (metres).
+    pub fn at(&self, px: f64, py: f64) -> (f64, f64) {
+        let (u, v) = ((px - self.origin.0) / self.scale, (py - self.origin.1) / self.scale);
+        let (mut x, mut y) = (self.ax[0] + self.ax[1] * u + self.ax[2] * v, self.ay[0] + self.ay[1] * u + self.ay[2] * v);
+        for (i, c) in self.centers.iter().enumerate() {
+            let k = kernel((u - c.0).powi(2) + (v - c.1).powi(2));
+            x += self.wx[i] * k;
+            y += self.wy[i] * k;
+        }
+        (x, y)
+    }
+}
+
+/// Fits a rubber-sheet through the matches. Needs three or more spots that are not in a line and
+/// are all different; otherwise `None`.
+pub fn rubber(pairs: &[Pair]) -> Option<Tps> {
+    let n = pairs.len();
+    if n < 3 {
+        return None;
+    }
+    let nf = n as f64;
+    let origin = (
+        pairs.iter().map(|p| p.0.0).sum::<f64>() / nf,
+        pairs.iter().map(|p| p.0.1).sum::<f64>() / nf,
+    );
+    let scale = pairs
+        .iter()
+        .map(|p| (p.0.0 - origin.0).hypot(p.0.1 - origin.1))
+        .fold(0.0, f64::max);
+    if scale < 1e-9 {
+        return None;
+    }
+    let centers: Vec<(f64, f64)> = pairs
+        .iter()
+        .map(|p| ((p.0.0 - origin.0) / scale, (p.0.1 - origin.1) / scale))
+        .collect();
+    let m = n + 3;
+    // [K P; P^T 0] [w; a] = [target; 0], solved for x and y together by elimination.
+    let mut a = vec![vec![0.0; m + 2]; m];
+    for i in 0..n {
+        for j in 0..n {
+            a[i][j] = kernel((centers[i].0 - centers[j].0).powi(2) + (centers[i].1 - centers[j].1).powi(2));
+        }
+        a[i][i] += 1e-9;
+        a[i][n] = 1.0;
+        a[i][n + 1] = centers[i].0;
+        a[i][n + 2] = centers[i].1;
+        a[n][i] = 1.0;
+        a[n + 1][i] = centers[i].0;
+        a[n + 2][i] = centers[i].1;
+        a[i][m] = pairs[i].1.0;
+        a[i][m + 1] = pairs[i].1.1;
+    }
+    for col in 0..m {
+        let pivot = (col..m).max_by(|&r, &s| a[r][col].abs().total_cmp(&a[s][col].abs()))?;
+        if a[pivot][col].abs() < 1e-12 {
+            return None; // in a line, or two spots the same
+        }
+        a.swap(col, pivot);
+        for r in 0..m {
+            if r != col {
+                let f = a[r][col] / a[col][col];
+                if f != 0.0 {
+                    for c in col..m + 2 {
+                        a[r][c] -= f * a[col][c];
+                    }
+                }
+            }
+        }
+    }
+    let sol = |c: usize| -> Vec<f64> { (0..m).map(|r| a[r][c] / a[r][r]).collect() };
+    let (sx, sy) = (sol(m), sol(m + 1));
+    if sx.iter().chain(&sy).any(|v| !v.is_finite()) {
+        return None;
+    }
+    Some(Tps {
+        origin,
+        scale,
+        centers,
+        wx: sx[..n].to_vec(),
+        wy: sy[..n].to_vec(),
+        ax: [sx[n], sx[n + 1], sx[n + 2]],
+        ay: [sy[n], sy[n + 1], sy[n + 2]],
+    })
+}
+
 /// A scan placed in a view.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct Placed {
@@ -331,6 +450,8 @@ pub struct Placed {
     pub mode: FitMode,
     /// The outline it is trimmed to (scan pixels), or `None` for the whole scan.
     pub trim: Option<crate::Outline>,
+    /// The rubber-sheet warp, when the scan is fitted that way: it replaces `matrix` for drawing.
+    pub warp: Option<Tps>,
 }
 
 /// The size of one pixel in metres in a fit (the square root of its area scale).
@@ -380,6 +501,7 @@ pub fn placements(doc: &Document, view: &str, positions: &Positions) -> Vec<Plac
                     used: pairs.len(),
                     rms: f.rms,
                     mode: al.mode,
+                    warp: if al.mode == FitMode::Rubber { rubber(&pairs) } else { None },
                 });
             }
         }
@@ -397,6 +519,7 @@ pub fn placements(doc: &Document, view: &str, positions: &Positions) -> Vec<Plac
                 used: 1,
                 rms: 0.0,
                 mode,
+                warp: None,
             });
         }
     }
@@ -469,6 +592,34 @@ mod tests {
         assert!(f.rms < 1e-9);
         let r = fit(&pairs(want, &pts), FitMode::Rigid).unwrap();
         assert!(r.rms > 0.01, "a rigid fit cannot take out a skew");
+    }
+
+    #[test]
+    fn a_rubber_sheet_passes_exactly_through_every_match_and_is_affine_when_the_data_is() {
+        // A bent set of matches: every one must land exactly.
+        let bent = [
+            ((0.0, 0.0), (0.0, 0.0)),
+            ((100.0, 0.0), (10.0, 0.5)),
+            ((100.0, 100.0), (10.2, -9.0)),
+            ((0.0, 100.0), (-0.5, -10.0)),
+            ((50.0, 50.0), (5.0, -5.5)),
+        ];
+        let t = rubber(&bent).unwrap();
+        for ((px, py), (x, y)) in bent {
+            let (rx, ry) = t.at(px, py);
+            assert!((rx - x).abs() < 1e-6 && (ry - y).abs() < 1e-6, "({px},{py}) -> ({rx},{ry}) not ({x},{y})");
+        }
+        // Matches that are exactly affine make a spline that is the same affine map everywhere.
+        let m = [0.01, 0.002, 3.0, -0.001, -0.012, 8.0];
+        let p = pairs(m, &[(0.0, 0.0), (900.0, 30.0), (40.0, 700.0), (800.0, 650.0)]);
+        let t = rubber(&p).unwrap();
+        for (px, py) in [(10.0, 10.0), (450.0, 300.0), (1200.0, -200.0)] {
+            let (x, y) = t.at(px, py);
+            assert!((x - (m[0] * px + m[1] * py + m[2])).abs() < 1e-6 && (y - (m[3] * px + m[4] * py + m[5])).abs() < 1e-6);
+        }
+        // In a line, or fewer than three: nothing to bend.
+        assert!(rubber(&pairs(m, &[(0.0, 0.0), (10.0, 10.0), (20.0, 20.0)])).is_none());
+        assert!(rubber(&p[..2]).is_none());
     }
 
     #[test]

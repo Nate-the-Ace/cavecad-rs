@@ -9,6 +9,7 @@ import type { MapSection, PassageBuffers, ProfileSketch3d, Scene, TypeStyle } fr
 import { PenGuard, isEraser, widthFor } from '../pen';
 import { drawStamp, drawStationMarker, hitsStamp, isStampKind, placement } from '../symbols';
 import { drawMarks, isFillKind, marksFor } from '../fills';
+import { warpGrid, type Warp } from '../scan-warp';
 import { isKindHidden, ornamentFor, refreshFlipped } from '../section-glyph';
 import { drawCursor } from '../presence-draw';
 import { defaultMapOffset, drawHandles, drawStrokes, glyphCurves, hits, leaderEnd } from '../section-glyph';
@@ -563,7 +564,7 @@ export class CaveView {
    * at height `z`. Drawn before the lines and without depth, so the passage never hides it and the
    * survey is drawn over it.
    */
-  setScans(list: { key: string; url: string; matrix: number[]; z: number; opacity: number; trim?: [number, number][] | null }[]) {
+  setScans(list: { key: string; url: string; matrix: number[]; z: number; opacity: number; trim?: [number, number][] | null; warp?: Warp | null }[]) {
     const keep = new Set(list.map((l) => l.key));
     for (const [key, s] of this.scans) {
       if (!keep.has(key)) this.removeScan(key, s);
@@ -618,6 +619,8 @@ export class CaveView {
         geo.setIndex([0, 1, 2, 0, 2, 3]);
         const mat = new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthTest: false, depthWrite: false, side: THREE.DoubleSide });
         const mesh = new THREE.Mesh(geo, mat);
+        mesh.userData.box = box;
+        mesh.userData.flat = geo;
         mesh.matrixAutoUpdate = false;
         mesh.renderOrder = -10;
         mesh.frustumCulled = false;
@@ -630,9 +633,40 @@ export class CaveView {
     this.requestRender();
   }
 
-  private placeScan(mesh: THREE.Mesh, item: { matrix: number[]; z: number; opacity: number }) {
+  private placeScan(mesh: THREE.Mesh, item: { matrix: number[]; z: number; opacity: number; warp?: Warp | null }) {
     const m = item.matrix;
-    mesh.matrix.set(m[0], m[1], 0, m[2], m[3], m[4], 0, m[5], 0, 0, 1, item.z, 0, 0, 0, 1);
+    const flat = mesh.userData.flat as THREE.BufferGeometry;
+    if (item.warp) {
+      // A rubber sheet: a grid over the picture, each node where the warp puts it, so the matrix is only the height.
+      const box = mesh.userData.box as { x0: number; y0: number; w: number; h: number };
+      const grid = warpGrid(item.warp, box);
+      const pos = new Float32Array(grid.dst.length * 3);
+      const uv = new Float32Array(grid.dst.length * 2);
+      grid.dst.forEach((d, i) => {
+        pos.set([d[0], d[1], 0], i * 3);
+        uv.set([(grid.src[i][0] - box.x0) / box.w, 1 - (grid.src[i][1] - box.y0) / box.h], i * 2);
+      });
+      const index: number[] = [];
+      for (let j = 0; j < grid.rows; j++) {
+        for (let i = 0; i < grid.cols; i++) {
+          const a = j * (grid.cols + 1) + i;
+          index.push(a, a + 1, a + grid.cols + 1, a + 1, a + grid.cols + 2, a + grid.cols + 1);
+        }
+      }
+      const g = new THREE.BufferGeometry();
+      g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+      g.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+      g.setIndex(index);
+      if (mesh.geometry !== flat) mesh.geometry.dispose();
+      mesh.geometry = g;
+      mesh.matrix.set(1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, item.z, 0, 0, 0, 1);
+    } else {
+      if (mesh.geometry !== flat) {
+        mesh.geometry.dispose();
+        mesh.geometry = flat;
+      }
+      mesh.matrix.set(m[0], m[1], 0, m[2], m[3], m[4], 0, m[5], 0, 0, 1, item.z, 0, 0, 0, 1);
+    }
     mesh.matrixWorldNeedsUpdate = true;
     (mesh.material as THREE.MeshBasicMaterial).opacity = item.opacity;
     this.requestRender();
@@ -641,6 +675,7 @@ export class CaveView {
   private removeScan(key: string, s: { mesh: THREE.Mesh }) {
     this.scene.remove(s.mesh);
     s.mesh.geometry.dispose();
+    (s.mesh.userData.flat as THREE.BufferGeometry | undefined)?.dispose();
     const mat = s.mesh.material as THREE.MeshBasicMaterial;
     mat.map?.dispose();
     mat.dispose();

@@ -1711,16 +1711,16 @@ pub fn scan_remove_anchor(trip: &str, view: &str, path: &str, index: usize) -> S
     })
 }
 
-/// Chooses how a scan's matches are fitted: `rigid` or `warp`.
+/// Chooses how a scan's matches are fitted: `rigid`, `warp` (stretch and skew) or `rubber` (a rubber sheet).
 #[wasm_bindgen]
 pub fn scan_set_mode(trip: &str, view: &str, path: &str, mode: &str) -> String {
     let Some(trip) = parse_id(trip) else {
         return "error: no such trip".into();
     };
-    let mode = if mode == "rigid" {
-        cave_scans::FitMode::Rigid
-    } else {
-        cave_scans::FitMode::Warp
+    let mode = match mode {
+        "rigid" => cave_scans::FitMode::Rigid,
+        "rubber" => cave_scans::FitMode::Rubber,
+        _ => cave_scans::FitMode::Warp,
     };
     scoped_edit("scans", |doc| {
         cave_scans::set_mode(doc, trip, view, path, mode)
