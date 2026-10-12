@@ -40,6 +40,9 @@ pub struct Shading {
 
 /// A leg seen from the camera: `[across, up, depth]` with depth growing toward the camera.
 struct Foot {
+    /// The leg's ends in the world (for a perspective camera).
+    wa: Pt,
+    wb: Pt,
     a: Pt,
     b: Pt,
     half: f64,
@@ -53,6 +56,8 @@ pub struct Footprints {
     u: Pt,
     v: Pt,
     w: Pt,
+    /// Where a perspective camera is; `None` for an orthographic one (parallel view rays).
+    eye: Option<Pt>,
 }
 
 /// Looking straight down (plan view).
@@ -66,6 +71,7 @@ impl Footprints {
         pos: &dyn Fn(Id) -> Option<Vec3>,
         lruds: &HashMap<Id, StationLrud>,
         view: Pt,
+        eye: Option<Pt>,
     ) -> Self {
         let width = |s: Id| {
             lruds
@@ -91,6 +97,8 @@ impl Footprints {
             .filter_map(|l| {
                 let (a, b) = (pos(l.from)?, pos(l.to)?);
                 Some(Foot {
+                    wa: [a.x, a.y, a.z],
+                    wb: [b.x, b.y, b.z],
                     a: proj([a.x, a.y, a.z]),
                     b: proj([b.x, b.y, b.z]),
                     half: width(l.from).max(width(l.to)).max(MIN_HALF),
@@ -99,10 +107,25 @@ impl Footprints {
                 })
             })
             .collect();
-        Footprints { feet, u, v, w }
+        Footprints { feet, u, v, w, eye }
     }
 
     fn covers(&self, p: Pt, own: &HashSet<Id>) -> bool {
+        if let Some(eye) = self.eye {
+            // Perspective: the sight line from the eye to the point must pass within the leg's
+            // radius of the leg, at least CLEAR nearer the eye than the point.
+            let len = dist(eye, p);
+            if len < 1e-9 {
+                return false;
+            }
+            return self.feet.iter().any(|f| {
+                if own.contains(&f.from) || own.contains(&f.to) {
+                    return false;
+                }
+                let (s, d) = closest(eye, p, f.wa, f.wb);
+                d <= f.half && s * len <= len - CLEAR
+            });
+        }
         let p = [dot(p, self.u), dot(p, self.v), dot(p, self.w)];
         self.feet.iter().any(|f| {
             if own.contains(&f.from) || own.contains(&f.to) {
@@ -167,6 +190,47 @@ impl Footprints {
     }
 }
 
+fn dist(a: Pt, b: Pt) -> f64 {
+    ((a[0] - b[0]).powi(2) + (a[1] - b[1]).powi(2) + (a[2] - b[2]).powi(2)).sqrt()
+}
+
+/// Closest approach of segment `p1-q1` to segment `p2-q2`: the fraction along the first segment
+/// where it happens and the distance there.
+fn closest(p1: Pt, q1: Pt, p2: Pt, q2: Pt) -> (f64, f64) {
+    let sub = |a: Pt, b: Pt| [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+    let (d1, d2, r) = (sub(q1, p1), sub(q2, p2), sub(p1, p2));
+    let (a, e, f) = (dot(d1, d1), dot(d2, d2), dot(d2, r));
+    let (mut s, mut t);
+    if e < 1e-12 {
+        s = if a < 1e-12 {
+            0.0
+        } else {
+            (-dot(d1, r) / a).clamp(0.0, 1.0)
+        };
+        t = 0.0;
+    } else {
+        let c = dot(d1, r);
+        let b = dot(d1, d2);
+        let den = a * e - b * b;
+        s = if den > 1e-12 {
+            ((b * f - c * e) / den).clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        t = (b * s + f) / e;
+        if t < 0.0 {
+            t = 0.0;
+            s = (-c / a).clamp(0.0, 1.0);
+        } else if t > 1.0 {
+            t = 1.0;
+            s = ((b - c) / a).clamp(0.0, 1.0);
+        }
+    }
+    let c1 = [p1[0] + d1[0] * s, p1[1] + d1[1] * s, p1[2] + d1[2] * s];
+    let c2 = [p2[0] + d2[0] * t, p2[1] + d2[1] * t, p2[2] + d2[2] * t];
+    (s, dist(c1, c2))
+}
+
 fn dot(a: Pt, b: Pt) -> f64 {
     a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
 }
@@ -199,6 +263,8 @@ mod tests {
 
     fn foot(a: Pt, b: Pt, from: u128, to: u128) -> Foot {
         Foot {
+            wa: a,
+            wb: b,
             a,
             b,
             half: 2.0,
@@ -209,7 +275,7 @@ mod tests {
 
     fn fp(feet: Vec<Foot>) -> Footprints {
         // Top view: the basis is (east, north, up)... check by construction below.
-        let mut f = Footprints::new(&[], &|_| None, &HashMap::new(), TOP);
+        let mut f = Footprints::new(&[], &|_| None, &HashMap::new(), TOP, None);
         f.feet = feet;
         f
     }
@@ -255,7 +321,7 @@ mod tests {
     fn from_the_side_the_nearer_passage_covers_the_farther_one() {
         // Camera looks from the north (view = +y). A passage along x at y=10 is nearer the camera
         // than a line along x at y=0 at the same height, so the line is under it.
-        let mut f = Footprints::new(&[], &|_| None, &HashMap::new(), [0.0, 1.0, 0.0]);
+        let mut f = Footprints::new(&[], &|_| None, &HashMap::new(), [0.0, 1.0, 0.0], None);
         let proj = |p: Pt| [dot(p, f.u), dot(p, f.v), dot(p, f.w)];
         let (a, b) = (proj([0.0, 10.0, 0.0]), proj([10.0, 10.0, 0.0]));
         f.feet = vec![foot(a, b, 1, 2)];
@@ -276,5 +342,24 @@ mod tests {
             &mut under,
         );
         assert!(under.is_empty());
+    }
+
+    #[test]
+    fn a_perspective_eye_sees_the_nearer_passage_cover_the_farther() {
+        // Eye 100 m up. A passage 10 m up covers the point straight below it, but not one far
+        // off to the side whose sight line misses it.
+        let mut f = Footprints::new(
+            &[],
+            &|_| None,
+            &HashMap::new(),
+            TOP,
+            Some([0.0, 0.0, 100.0]),
+        );
+        f.feet = vec![foot([0.0, 0.0, 10.0], [10.0, 0.0, 10.0], 1, 2)];
+        assert!(f.covers([5.0, 0.0, 0.0], &HashSet::new()));
+        assert!(!f.covers([5.0, 30.0, 0.0], &HashSet::new()));
+        // Sight lines converge on the eye: a point offset 4 m at the floor passes the 2 m tube
+        // at 10 m height only 3.6 m off, so a wider offset is clear of it.
+        assert!(!f.covers([5.0, 4.0, 0.0], &HashSet::new()));
     }
 }

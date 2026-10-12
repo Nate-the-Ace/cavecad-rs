@@ -150,6 +150,7 @@ export class CaveView {
     this.controls.object = this.camera;
     this.controls.update();
     this.onProjection(kind);
+    if (this.reshade()) this.rebuild();
     this.requestRender();
   }
 
@@ -271,24 +272,32 @@ export class CaveView {
   }
 
   /** Asks for the over/under split of the lines as seen from the current camera (the engine does the work). */
-  shadingFor: ((view: [number, number, number]) => Scene['shading']) | null = null;
+  shadingFor: ((view: [number, number, number], perspective: boolean) => Scene['shading']) | null = null;
   private shadingTimer = 0;
   private shadedFrom = new THREE.Vector3(0, 0, 1);
+  private shadedPersp = false;
 
   /** Re-works the over/under split if the camera has moved; true when it changed. */
   private reshade(): boolean {
     if (!this.data || !this.shadingFor) return false;
-    const w = this.cameraOffset.normalize();
-    if (w.angleTo(this.shadedFrom) < 0.02) return false;
-    this.shadedFrom.copy(w);
-    this.data.shading = this.shadingFor([w.x, w.y, w.z]);
+    // A perspective camera sees along diverging rays, so what covers what depends on where the eye is;
+    // an orthographic one only on the direction it looks from.
+    const persp = this.camera === this.persp;
+    const offset = this.cameraOffset;
+    const key = persp ? this.camera.position.clone() : offset.clone().normalize();
+    const moved = persp ? key.distanceTo(this.shadedFrom) > 0.01 * offset.length() : key.angleTo(this.shadedFrom) < 0.02 ? false : true;
+    if (persp === this.shadedPersp && !moved) return false;
+    this.shadedFrom.copy(key);
+    this.shadedPersp = persp;
+    this.data.shading = this.shadingFor([key.x, key.y, key.z], persp);
     return true;
   }
 
   setScene(scene: Scene | null, refit = true) {
     this.data = scene;
     this.shadedFrom.set(0, 0, 1); // a fresh scene is shaded for the view from above
-    if (!refit) this.reshade();
+    this.shadedPersp = false;
+    if (!refit || this.camera === this.persp) this.reshade();
     this.rebuild();
     if (refit) this.resetView();
   }

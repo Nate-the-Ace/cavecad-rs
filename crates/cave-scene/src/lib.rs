@@ -98,17 +98,17 @@ pub struct Scene {
 
 /// Builds the scene, adjusting loops when `use_adjustment` is set and the solver converges.
 pub fn build(doc: &Document, use_adjustment: bool) -> Scene {
-    build_seen_from(doc, use_adjustment, under::TOP)
+    build_seen_from(doc, use_adjustment, under::TOP, None)
 }
 
 /// Only the over/under split of the lines, for a camera looking from `view` (the direction from
-/// the cave toward the camera). Cheap to ask again whenever the camera settles.
-pub fn shading(doc: &Document, use_adjustment: bool, view: Pt) -> Shading {
-    build_seen_from(doc, use_adjustment, view).shading
+/// the cave toward the camera), or from the point `eye` for a perspective camera. Cheap to ask again whenever the camera settles.
+pub fn shading(doc: &Document, use_adjustment: bool, view: Pt, eye: Option<Pt>) -> Shading {
+    build_seen_from(doc, use_adjustment, view, eye).shading
 }
 
 /// [`build`] with the over/under split worked out for a camera at `view`.
-pub fn build_seen_from(doc: &Document, use_adjustment: bool, view: Pt) -> Scene {
+pub fn build_seen_from(doc: &Document, use_adjustment: bool, view: Pt, eye: Option<Pt>) -> Scene {
     let ex = extract(doc);
     let r = resolve(&ex.legs, &ex.fixed);
     let adj = use_adjustment
@@ -190,7 +190,7 @@ pub fn build_seen_from(doc: &Document, use_adjustment: bool, view: Pt) -> Scene 
         start_lruds: &ex.start_lruds,
         splays: &ex.splays,
     });
-    let feet = under::Footprints::new(&r.legs, &pos, &ex.lruds, view);
+    let feet = under::Footprints::new(&r.legs, &pos, &ex.lruds, view, eye);
     for run in walls.left.iter().chain(&walls.right) {
         // Only the outside of the shell: loops where the line doubles back are dropped.
         let shell = cave_walls::outer_shell(&run.points);

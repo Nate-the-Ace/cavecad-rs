@@ -81,8 +81,8 @@ export const engine = {
   clear: () => console_clear(),
   openDemo: (json: string): string => open_demo(json),
   scene: (adjusted: boolean): Scene => JSON.parse(scene(adjusted)),
-  /** Which drawn lines run under another passage, for a camera looking from `dir` toward the cave. */
-  shading: (adjusted: boolean, dir: [number, number, number]): Scene['shading'] => JSON.parse(shading(adjusted, dir[0], dir[1], dir[2])),
+  /** Which drawn lines run under another passage, for a camera looking from `dir` toward the cave (for perspective, `dir` is the eye's position). */
+  shading: (adjusted: boolean, dir: [number, number, number], perspective: boolean): Scene['shading'] => JSON.parse(shading(adjusted, dir[0], dir[1], dir[2], perspective)),
   profileRuns: (adjusted: boolean): RunInfo[] => JSON.parse(profile_runs(adjusted)),
   profileBand: (run: string, adjusted: boolean): ProfileScene | null => JSON.parse(profile_band(run, adjusted)),
   /** Adds a stroke drawn on a run's band; every edit goes through the document's one edit path. */
