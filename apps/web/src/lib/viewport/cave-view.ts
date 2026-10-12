@@ -7,6 +7,7 @@ import { LineSegmentsGeometry } from 'three/addons/lines/LineSegmentsGeometry.js
 import { LineMaterial } from 'three/addons/lines/LineMaterial.js';
 import type { PassageBuffers, Scene, TypeStyle } from '../engine';
 import { elevationColor, inkColor, readTheme, type ViewTheme } from './theme';
+import { metresPer, niceNumber, unitName, type Units } from '../units';
 
 export type Projection = 'perspective' | 'orthographic';
 export type Dir = [number, number, number];
@@ -44,6 +45,7 @@ export class CaveView {
   private elevationColors = false;
   private showWalls = true;
   private showLabels = true;
+  private units: Units = 'metric';
   /** How each type looks; set once from the engine's palette. */
   private palette = new Map<string, TypeStyle>();
   private passage: THREE.Mesh | null = null;
@@ -275,6 +277,12 @@ export class CaveView {
     this.requestRender();
   }
 
+  /** Units for the scale bar. */
+  setUnits(u: Units) {
+    this.units = u;
+    this.requestRender();
+  }
+
   /** Station labels follow the "label" type in the view filter. */
   setShowLabels(on: boolean) {
     this.showLabels = on;
@@ -448,7 +456,9 @@ export class CaveView {
       if (k.percent !== null && pxPerM > 1.2) g.fillText(`${k.percent.toFixed(2)}%`, p[0] + 10, p[1] + 4);
     }
     if (this.projection === 'orthographic') {
-      const metres = niceLength(110 / pxPerM);
+      const per = metresPer(this.units); // metres in one display unit
+      const length = niceNumber(110 / pxPerM / per);
+      const metres = length * per;
       g.strokeStyle = css.text;
       g.fillStyle = css.text;
       g.lineWidth = 2;
@@ -456,7 +466,7 @@ export class CaveView {
       g.moveTo(16, this.height - 18);
       g.lineTo(16 + metres * pxPerM, this.height - 18);
       g.stroke();
-      g.fillText(`${metres} m`, 16, this.height - 24);
+      g.fillText(`${length} ${unitName(this.units)}`, 16, this.height - 24);
     }
   }
 
@@ -466,12 +476,6 @@ export class CaveView {
     this.controls.dispose();
     this.renderer.dispose();
   }
-}
-
-function niceLength(target: number): number {
-  const p = Math.pow(10, Math.floor(Math.log10(target)));
-  const m = target / p;
-  return (m >= 5 ? 5 : m >= 2 ? 2 : 1) * p;
 }
 
 let dot: THREE.CanvasTexture | null = null;

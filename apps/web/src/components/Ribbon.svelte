@@ -1,8 +1,9 @@
 <script lang="ts">
   import { engine } from '../lib/engine';
   import { openDxf, saveDxf } from '../lib/files';
+  import { cave, setUnits } from '../lib/cave.svelte';
   import { PANELS, panelState, resetLayout, togglePanel } from '../lib/workspace.svelte';
-  import { FileInput, FolderOpen, Save, Route, Waypoints, Pencil, Spline, PaintBucket, PanelTop, Scissors, Box, Map as MapIcon, Terminal, LayoutDashboard, Activity } from '@lucide/svelte';
+  import { FileInput, FolderOpen, Save, Ruler, Footprints, Route, Waypoints, Pencil, Spline, PaintBucket, PanelTop, Scissors, Box, Map as MapIcon, Terminal, LayoutDashboard, Activity } from '@lucide/svelte';
   import type { Component } from 'svelte';
 
   interface Item {
@@ -47,6 +48,7 @@
     Sheets: [],
     View: [
       { name: 'Panels', items: [panelItem('map', MapIcon), panelItem('profile', Activity), panelItem('console', Terminal)] },
+      { name: 'Units', items: [{ label: 'Metric', icon: Ruler, run: () => setUnits('metric'), pressed: () => cave.units === 'metric' }, { label: 'Imperial', icon: Footprints, run: () => setUnits('imperial'), pressed: () => cave.units === 'imperial' }] },
       { name: 'Layout', items: [{ label: 'Reset', icon: LayoutDashboard, run: resetLayout }] },
     ],
   };

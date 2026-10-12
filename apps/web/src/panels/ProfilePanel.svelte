@@ -2,6 +2,7 @@
   import { onMount, untrack } from 'svelte';
   import { Pencil, Hand, Undo2, Redo2, Maximize } from '@lucide/svelte';
   import { cave, changed } from '../lib/cave.svelte';
+  import { formatLength, inUnits, metresPer, niceNumber, unitName } from '../lib/units';
   import { engine, loadEngine, type ProfileScene, type RunInfo } from '../lib/engine';
 
   let wrap: HTMLDivElement;
@@ -43,6 +44,7 @@
     void cave.version;
     void cave.adjusted;
     void cave.run;
+    void cave.units; // axis labels and run lengths redraw in the new units
     // refresh() both reads and writes panel state; only the three values above may re-trigger it.
     untrack(refresh);
   });
@@ -81,12 +83,6 @@
     return { bg: v('--panel-2'), text: v('--text'), muted: v('--muted'), accent: v('--accent'), line: v('--line'), warn: v('--warn') };
   };
 
-  function niceStep(target: number): number {
-    const p = Math.pow(10, Math.floor(Math.log10(target)));
-    const m = target / p;
-    return (m >= 5 ? 5 : m >= 2 ? 2 : 1) * p;
-  }
-
   function stroke(g: CanvasRenderingContext2D, pts: [number, number][], widths: number[] | null, color: string, base = 2.6) {
     g.strokeStyle = color;
     g.lineCap = 'round';
@@ -121,7 +117,8 @@
     }
 
     // grid: elevation lines every nice step, labelled at the left
-    const step = niceStep(60 / scale);
+    const per = metresPer(cave.units); // metres in one display unit
+    const step = niceNumber(60 / scale / per) * per;
     g.strokeStyle = c.line;
     g.fillStyle = c.muted;
     g.lineWidth = 1;
@@ -134,7 +131,7 @@
       g.moveTo(0, y);
       g.lineTo(width, y);
       g.stroke();
-      g.fillText(`${+z.toFixed(2)} m`, 6, y - 3);
+      g.fillText(`${+inUnits(z, cave.units).toFixed(2)} ${unitName(cave.units)}`, 6, y - 3);
     }
 
     g.setLineDash([5, 4]);
@@ -278,7 +275,7 @@
   ></canvas>
   <div class="bar">
     <select bind:value={cave.run} aria-label="Run">
-      {#each runs as r}<option value={r.key}>{r.key} · {r.stations} stations · {Math.round(r.length)} m{r.tie ? ` · from ${r.tie}` : ''}</option>{/each}
+      {#each runs as r}<option value={r.key}>{r.key} · {r.stations} stations · {formatLength(r.length, cave.units)}{r.tie ? ` · from ${r.tie}` : ''}</option>{/each}
     </select>
     <button class:on={tool === 'sketch'} title="Sketch (pen or mouse)" onclick={() => (tool = 'sketch')}><Pencil size={15} /></button>
     <button class:on={tool === 'pan'} title="Pan" onclick={() => (tool = 'pan')}><Hand size={15} /></button>
