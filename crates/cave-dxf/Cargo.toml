@@ -13,6 +13,9 @@ cave-doc = { path = "../cave-doc" }
 cave-scene = { path = "../cave-scene" }
 cave-style = { path = "../cave-style" }
 cave-symbols = { path = "../cave-symbols" }
+cave-fill = { path = "../cave-fill" }
+cave-shape = { path = "../cave-shape" }
+cave-geom = { path = "../cave-geom" }
 
 [dev-dependencies]
 cave-draw = { path = "../cave-draw" }

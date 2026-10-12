@@ -272,6 +272,17 @@ impl Geometry<'_> {
         self.lwpolyline_on(layer, color, pts, widths);
     }
 
+    /// A circle of `key`'s type on its layer with `suffix` added.
+    fn circle_suffixed(&mut self, key: &str, suffix: &str, c: [f64; 2], r: f64) {
+        let st = style(key);
+        let color = dxf_color(st.ink);
+        let layer = cave_style::dxf_layer(key, Some(suffix));
+        self.layers.insert(layer_name(&layer), (color, st.linetype));
+        self.entity("CIRCLE", &layer, Some(color), "AcDbCircle");
+        self.point3(10, [c[0], c[1], 0.0]);
+        self.w.num(40, r.max(1e-6));
+    }
+
     /// A placed symbol as polylines on its catalogue layer (with `suffix`, as other profile
     /// linework has).
     fn symbol(&mut self, sym: &cave_symbols::Symbol, at: [f64; 2], aim: [f64; 2], suffix: &str) {
@@ -361,6 +372,237 @@ fn draw_scene(g: &mut Geometry, doc: &Document, scene: &Scene) {
     }
 }
 
+/// One stroke as the drawing holds it (fit points in the drawing's own units).
+struct Stroke<'a> {
+    id: &'a str,
+    kind: &'a str,
+    points: &'a [[f64; 2]],
+    widths: Option<&'a [f64]>,
+    closed: bool,
+    text: &'a str,
+}
+
+/// Samples per span when a curve is written out as a polyline.
+const PER_SPAN: usize = 10;
+
+/// The curve through the fit points, with the pen weight at every sample (linear between fit points).
+fn curve_with_widths(
+    pts: &[[f64; 2]],
+    widths: Option<&[f64]>,
+    closed: bool,
+) -> (Vec<[f64; 2]>, Option<Vec<f64>>) {
+    let curve = cave_geom::spline::smooth(pts, closed, PER_SPAN);
+    let n = pts.len();
+    let w = widths.filter(|w| w.len() == n && n >= 3).map(|w| {
+        let spans = if closed { n } else { n - 1 };
+        let mut out = vec![w[0]];
+        for i in 0..spans {
+            let next = w[(i + 1) % n];
+            for s in 1..=PER_SPAN {
+                out.push(w[i] + (next - w[i]) * s as f64 / PER_SPAN as f64);
+            }
+        }
+        out
+    });
+    (
+        curve,
+        w.or_else(|| widths.filter(|w| w.len() == pts.len()).map(<[f64]>::to_vec)),
+    )
+}
+
+/// Draws one stroke from any view, in its own look: a symbol as its drawing (with its label), text
+/// as text, a fill as its outline and marks, a shaped line as its spine and ornament, and any other
+/// line as the smooth curve through its fit points. `suffix` names the view (`PROFILE`, `MAP`,
+/// `SECTION`) so each view's linework has its own layers.
+fn draw_stroke(g: &mut Geometry, doc: &Document, s: &Stroke, suffix: &str) {
+    if let (Some(sym), [a, b, ..]) = (cave_symbols::symbol(s.kind), s.points) {
+        // A placed symbol: its drawing on the symbol's own layer, not a line between two points.
+        g.symbol(sym, *a, *b, suffix);
+        if !s.text.is_empty() {
+            // its label sits to the symbol's right, a little larger than the symbol's radius
+            let r = (b[0] - a[0]).hypot(b[1] - a[1]);
+            if r > 0.0 {
+                let (ux, uy) = ((b[0] - a[0]) / r, (b[1] - a[1]) / r);
+                g.text(
+                    "text",
+                    [a[0] + 1.3 * r * uy, a[1] - 1.3 * r * ux, 0.0],
+                    0.9 * r,
+                    s.text,
+                );
+            }
+        }
+        return;
+    }
+    if s.kind == "text" {
+        if let [a, b, ..] = s.points {
+            // A text stroke: its words at the first point, as tall as the distance to the second.
+            g.text(
+                "text",
+                [a[0], a[1], 0.0],
+                (b[0] - a[0]).hypot(b[1] - a[1]),
+                s.text,
+            );
+        }
+        return;
+    }
+    if cave_fill::is_fill_key(s.kind) {
+        let curve = cave_geom::spline::smooth(s.points, true, PER_SPAN);
+        let mut outline = curve.clone();
+        if let Some(first) = outline.first().copied() {
+            outline.push(first);
+        }
+        g.lwpolyline_suffixed(s.kind, suffix, &outline, None);
+        let marks = cave_fill::marks(s.kind, &curve, cave_fill::seed_of(s.id));
+        for line in &marks.lines {
+            g.lwpolyline_suffixed(s.kind, suffix, line, None);
+        }
+        for c in &marks.circles {
+            g.circle_suffixed(s.kind, suffix, [c[0], c[1]], c[2]);
+        }
+        return;
+    }
+    let (curve, widths) = curve_with_widths(s.points, s.widths, s.closed);
+    let shape = cave_shape::shape(s.kind);
+    if shape.is_none_or(|sh| !sh.hide_spine) {
+        let mut line = curve.clone();
+        if s.closed
+            && let Some(first) = line.first().copied()
+        {
+            line.push(first);
+            if let Some(w) = &widths {
+                // the closing sample repeats the first weight
+                let mut w = w.clone();
+                w.push(w[0]);
+                g.lwpolyline_suffixed(s.kind, suffix, &line, Some(&w));
+                draw_ornament(g, doc, s, &curve, suffix);
+                return;
+            }
+        }
+        g.lwpolyline_suffixed(s.kind, suffix, &line, widths.as_deref());
+    }
+    draw_ornament(g, doc, s, &curve, suffix);
+}
+
+/// The marks of a shaped line (hachures, fans, scallops), on the side the stroke says.
+fn draw_ornament(g: &mut Geometry, doc: &Document, s: &Stroke, curve: &[[f64; 2]], suffix: &str) {
+    if cave_shape::shape(s.kind).is_none() {
+        return;
+    }
+    let flip =
+        s.id.parse::<cave_id::Id>()
+            .ok()
+            .and_then(|id| doc.entity(id))
+            .is_some_and(|e| e.flag(cave_doc::Field::FeatureFlip));
+    let side = if flip { -1.0 } else { 1.0 };
+    for line in cave_shape::ornament(s.kind, curve, s.closed, side, 1.0) {
+        g.lwpolyline_suffixed(s.kind, suffix, &line, None);
+    }
+}
+
+/// Where a station's section sits beside the station when nobody placed it: just east of the
+/// station on a map, clear of the strokes (the same rule the app uses).
+fn default_map_offset(sketches: &[cave_scene::SectionSketch]) -> [f64; 3] {
+    let min_u = sketches
+        .iter()
+        .flat_map(|k| k.points.iter().map(|p| p[0]))
+        .fold(f64::INFINITY, f64::min);
+    [(-min_u).max(0.0) + 1.5, 0.0, 0.0]
+}
+
+/// Where a station's section sits on a band when nobody placed it: just above the station.
+fn default_band_offset(sketches: &[cave_scene::SectionSketch]) -> [f64; 2] {
+    let min_v = sketches
+        .iter()
+        .flat_map(|k| k.points.iter().map(|p| p[1]))
+        .fold(f64::INFINITY, f64::min);
+    [0.0, (-min_v).max(0.0) + 2.0]
+}
+
+/// A station's cross section drawn with its station's `base` as the origin (across = x, up = y).
+fn draw_section<S: SectionLike>(
+    g: &mut Geometry,
+    doc: &Document,
+    sec: &S,
+    base: [f64; 2],
+    suffix: &str,
+) {
+    for sk in sec.sketches() {
+        let pts: Vec<[f64; 2]> = sk
+            .points
+            .iter()
+            .map(|p| [base[0] + p[0], base[1] + p[1]])
+            .collect();
+        let stroke = Stroke {
+            id: &sk.id,
+            kind: &sk.kind,
+            points: &pts,
+            widths: sk.widths.as_deref(),
+            closed: sk.closed,
+            text: &sk.text,
+        };
+        draw_stroke(g, doc, &stroke, suffix);
+    }
+    if !sec.label().is_empty() {
+        g.text(
+            "label",
+            [base[0], base[1] - 1.2, 0.0],
+            0.8,
+            &format!("Section at {}", sec.label()),
+        );
+    }
+}
+
+/// What both kinds of placed section (on the map, on a band) share.
+trait SectionLike {
+    fn label(&self) -> &str;
+    fn sketches(&self) -> &[cave_scene::SectionSketch];
+}
+impl SectionLike for cave_scene::BandSection {
+    fn label(&self) -> &str {
+        &self.label
+    }
+    fn sketches(&self) -> &[cave_scene::SectionSketch] {
+        &self.sketches
+    }
+}
+impl SectionLike for cave_scene::MapSection {
+    fn label(&self) -> &str {
+        &self.label
+    }
+    fn sketches(&self) -> &[cave_scene::SectionSketch] {
+        &self.sketches
+    }
+}
+
+/// Everything drawn on the map (strokes lifted to the passage's height are written flat, in plan),
+/// and every station's cross section beside its station.
+fn draw_map_work(g: &mut Geometry, doc: &Document, adjusted: bool) {
+    for sk in cave_scene::map_lines_3d(doc, adjusted) {
+        let pts: Vec<[f64; 2]> = sk.points.iter().map(|p| [p[0], p[1]]).collect();
+        let stroke = Stroke {
+            id: &sk.id,
+            kind: &sk.kind,
+            points: &pts,
+            widths: sk.widths.as_deref(),
+            closed: sk.closed,
+            text: &sk.text,
+        };
+        draw_stroke(g, doc, &stroke, "MAP");
+    }
+    for sec in cave_scene::map_sections(doc, adjusted, &cave_scene::ViewFilter::default()) {
+        let off = sec
+            .placement
+            .unwrap_or_else(|| default_map_offset(&sec.sketches));
+        draw_section(
+            g,
+            doc,
+            &sec,
+            [sec.at[0] + off[0], sec.at[1] + off[1]],
+            "SECTION",
+        );
+    }
+}
+
 /// Profile bands and their sketches, laid out in a column below the plan so they cannot be
 /// mistaken for it. Band coordinates: x is distance along the run, y is elevation.
 fn draw_profiles(g: &mut Geometry, doc: &Document, adjusted: bool, plan_min: [f64; 2]) {
@@ -399,31 +641,23 @@ fn draw_profiles(g: &mut Geometry, doc: &Document, adjusted: bool, plan_min: [f6
         }
         for sk in &p.sketches {
             let pts: Vec<[f64; 2]> = sk.points.iter().map(|q| at(q[0], q[1])).collect();
-            if let (Some(sym), [a, b, ..]) = (cave_symbols::symbol(&sk.kind), pts.as_slice()) {
-                // A placed symbol: its drawing on the symbol's own layer, not a line between two points.
-                g.symbol(sym, *a, *b, "PROFILE");
-                if !sk.text.is_empty() {
-                    // its label sits to the symbol's right, a little larger than the symbol's radius
-                    let r = (b[0] - a[0]).hypot(b[1] - a[1]);
-                    let (ux, uy) = ((b[0] - a[0]) / r, (b[1] - a[1]) / r);
-                    let at = [a[0] + 1.3 * r * uy, a[1] - 1.3 * r * ux, 0.0];
-                    g.text("text", at, 0.9 * r, &sk.text);
-                }
-                continue;
-            }
-            if sk.kind == "text"
-                && let [a, b, ..] = pts.as_slice()
-            {
-                // A text stroke: its words at the first point, as tall as the distance to the second.
-                g.text(
-                    "text",
-                    [a[0], a[1], 0.0],
-                    (b[0] - a[0]).hypot(b[1] - a[1]),
-                    &sk.text,
-                );
-                continue;
-            }
-            g.lwpolyline_suffixed(&sk.kind, "PROFILE", &pts, sk.widths.as_deref());
+            let stroke = Stroke {
+                id: &sk.id,
+                kind: &sk.kind,
+                points: &pts,
+                widths: sk.widths.as_deref(),
+                closed: sk.closed,
+                text: &sk.text,
+            };
+            draw_stroke(g, doc, &stroke, "PROFILE");
+        }
+        // cross sections drawn at stations, where the band shows them (placed by hand, or beside the station)
+        for sec in &p.sections {
+            let off = sec
+                .placement
+                .unwrap_or_else(|| default_band_offset(&sec.sketches));
+            let base = at(sec.s + off[0], sec.z + off[1]);
+            draw_section(g, doc, sec, base, "PROFILE");
         }
         base_y -= (b[3] - b[1]) + 60.0;
     }
@@ -477,6 +711,7 @@ pub fn export(doc: &Document, opts: &ExportOptions) -> String {
             layers: BTreeMap::new(),
         };
         draw_scene(&mut g, doc, &scene);
+        draw_map_work(&mut g, doc, opts.adjusted);
         let plan_min = scene.bounds.map_or([0.0, 0.0], |b| [b[0], b[1]]);
         draw_profiles(&mut g, doc, opts.adjusted, plan_min);
         draw_carriers(&mut g, &payload, &chunks);

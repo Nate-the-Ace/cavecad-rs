@@ -282,3 +282,22 @@ re-reads when opened, so what was just drawn is there. Hiding a type hides it ev
 Cross Section and Map draw nothing of it, and it cannot be picked, edited or erased while hidden (the
 line editor, the eraser and the map's hit tests skip it). It is a view setting only: nothing is stored on
 the drawing. DXF export still writes everything, as before.
+
+## 2026-10-12: DXF export of everything drawn, in every view
+
+The export now writes what is drawn in the Map and in each station's Cross Section, as well as the
+Profile, and it writes each stroke in its own look instead of as a line through its fit points:
+- **Curves are smooth.** A line is written as the centripetal Catmull-Rom curve the screen draws
+  (`cave_geom::spline::smooth`, checked against the web app's own code in `tests/spline_golden.rs`),
+  with the pen weight carried along it.
+- **Symbols** are their drawings on the symbol's own layer, with their label as text; **text** is
+  text; **fills** are their outline, their hatch or scatter lines and their dots as circles (made by
+  the same code and seed as the screen, so they match); **shaped lines** are their spine and their
+  ornament on the side the stroke says (flipped or not).
+- **Sections** sit beside their stations, at the hand-placed offset or the default beside the station,
+  in the Map (layer suffix `-SECTION`) and on the bands (`-PROFILE`); map strokes carry `-MAP`. Layers
+  stay one per type and view, never per trip unless asked.
+- Checked by `crates/cave-dxf/tests/views.rs`: every kind lands on its layer, curves have their
+  samples, the file reads back as the identical cave, and exporting twice gives the same file.
+Not done: the water tint (a solid fill is only its outline in DXF), a leader line from a section to
+its station, and per-trip layers for strokes.

@@ -10,6 +10,7 @@
 mod arc;
 mod path;
 mod point;
+pub mod spline;
 mod transform;
 
 pub use arc::Arc;
