@@ -30,6 +30,8 @@ function startupSetting(): boolean {
 export const shelf = $state({
   /** The shelf window is showing. */
   open: false,
+  /** Open it on the Join a live session page (from the ribbon). */
+  join: false,
   records: [] as ShelfRecord[],
   /** The record the open cave is saved to ('' for a sample or a cave not yet stored). */
   currentId: '',

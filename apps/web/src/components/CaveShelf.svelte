@@ -60,6 +60,13 @@
     if (shelf.open) {
       void loadEngine().then(() => loadShelf());
       message = '';
+      if (shelf.join) {
+        // Asked for from the ribbon: straight to the join page.
+        shelf.join = false;
+        joining = true;
+        joinProblem = '';
+        p2p.error = '';
+      }
     }
   });
 

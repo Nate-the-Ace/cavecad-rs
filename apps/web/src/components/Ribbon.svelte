@@ -2,6 +2,8 @@
   import { engine, loadEngine } from '../lib/engine';
   import { openDxf, saveDxf } from '../lib/files';
   import { shelf } from '../lib/shelf.svelte';
+  import { leaveP2p, p2p } from '../lib/p2p.svelte';
+  import { leave, live } from '../lib/sync.svelte';
   import { cave, clearPick, setCompactRibbon, setUnits } from '../lib/cave.svelte';
   import DrawTools from './DrawTools.svelte';
   import ThemeGroup from './ThemeGroup.svelte';
@@ -17,7 +19,7 @@
   import { fillLabel } from '../lib/fills';
   import { onMount } from 'svelte';
   import { PANELS, panelState, resetLayout, showPanel, togglePanel } from '../lib/workspace.svelte';
-  import { Check, Trash2, Library, FilePlus, FileInput, FolderOpen, Save, Ruler, Footprints, Route, Waypoints, Scissors, Map as MapIcon, Terminal, LayoutDashboard, Activity, Shapes, Table2, BookOpen, ScanLine, FileText, ChevronDown, PanelTop } from '@lucide/svelte';
+  import { Check, Trash2, LogIn, LogOut, Users, Library, FilePlus, FileInput, FolderOpen, Save, Ruler, Footprints, Route, Waypoints, Scissors, Map as MapIcon, Terminal, LayoutDashboard, Activity, Shapes, Table2, BookOpen, ScanLine, FileText, ChevronDown, PanelTop } from '@lucide/svelte';
   import type { Component } from 'svelte';
 
   interface Item {
@@ -59,6 +61,14 @@
     Home: [
       { name: 'File', items: [{ label: 'Caves', icon: Library, run: () => (shelf.open = true) }, { label: 'New', icon: FilePlus, run: () => (cave.newDialog = true) }, { label: 'Open', icon: FolderOpen, run: open }, { label: 'Save', icon: Save, run: save }, { label: 'Save as', icon: Save, run: saveAs }] },
       { name: 'Survey', items: [stub('Import', FileInput), stub('Draw', Route), stub('Adjust', Waypoints)] },
+      {
+        name: 'Live',
+        items: [
+          { label: 'Share', icon: Users, run: () => (p2p.dialog = true), pressed: () => live.status === 'live' && p2p.role === 'host' },
+          { label: 'Join', icon: LogIn, run: () => { shelf.join = true; shelf.open = true; }, pressed: () => live.status === 'live' && p2p.role === 'guest' },
+          { label: 'Leave', icon: LogOut, run: () => { leaveP2p(); leave(); } },
+        ],
+      },
     ],
     Draw: [
       { name: 'Linework', items: [], custom: DrawTools, props: { group: 'Linework' } },
