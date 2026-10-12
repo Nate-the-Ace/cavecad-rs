@@ -1,7 +1,7 @@
 //! Problems a merge can leave behind. Merging never fails on these; the Check tools show them.
 
 use crate::document::Document;
-use crate::field::{Field, Kind};
+use crate::field::{Field, Kind, Value};
 use cave_id::Id;
 use std::collections::BTreeMap;
 
@@ -52,7 +52,6 @@ const REFS: &[(Field, Kind)] = &[
 const REQUIRED: &[(Field, Kind)] = &[
     (Field::ShotFrom, Kind::Shot),
     (Field::FeatureLayer, Kind::Feature),
-    (Field::FeaturePath, Kind::Feature),
     (Field::SymbolLayer, Kind::Symbol),
     (Field::SymbolAt, Kind::Symbol),
     (Field::TextLayer, Kind::Text),
@@ -109,6 +108,32 @@ pub fn validate(doc: &Document) -> Vec<Issue> {
             for &(field, _) in REQUIRED.iter().filter(|(_, k)| *k == kind) {
                 if is_empty(&e.get(field)) {
                     out.push(Issue::MissingRequired { entity: id, field });
+                }
+            }
+            if kind == Kind::Feature {
+                let anchored = e.get(Field::FeatureAnchored);
+                let drawn = e.path(Field::FeaturePath).is_some()
+                    || matches!(anchored, Value::Anchored(Some(_)));
+                if !drawn {
+                    out.push(Issue::MissingRequired {
+                        entity: id,
+                        field: Field::FeaturePath,
+                    });
+                }
+                // A stroke hung on stations that no longer exist cannot be placed.
+                if let Value::Anchored(Some(a)) = anchored {
+                    let mut seen = std::collections::BTreeSet::new();
+                    for st in a.stations() {
+                        if seen.insert(st)
+                            && doc.entity(st).is_none_or(|t| t.kind() != Kind::Station)
+                        {
+                            out.push(Issue::DanglingReference {
+                                entity: id,
+                                field: Field::FeatureAnchored,
+                                target: st,
+                            });
+                        }
+                    }
                 }
             }
             if kind == Kind::Shot

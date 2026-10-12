@@ -1,5 +1,6 @@
 //! What can be stored on a trip, station or shot, and the value types each field holds.
 
+use crate::anchored::AnchoredPath;
 use cave_geom::{Path, Point};
 use cave_id::Id;
 use serde::{Deserialize, Serialize};
@@ -41,6 +42,8 @@ pub enum ValueType {
     Path,
     /// Free-form text tags, name to value.
     Map,
+    /// A stroke anchored to stations; `None` means not drawn.
+    Anchored,
 }
 
 /// A stored value.
@@ -60,6 +63,8 @@ pub enum Value {
     Path(Option<Path>),
     /// Free-form tags. Stored whole; edits replace it.
     Map(BTreeMap<String, String>),
+    /// A stroke anchored to stations, or `None` for not drawn. Stored whole.
+    Anchored(Option<AnchoredPath>),
 }
 
 impl Value {
@@ -73,6 +78,7 @@ impl Value {
             Value::Point(_) => ValueType::Point,
             Value::Path(_) => ValueType::Path,
             Value::Map(_) => ValueType::Map,
+            Value::Anchored(_) => ValueType::Anchored,
         }
     }
 
@@ -83,6 +89,7 @@ impl Value {
             Value::Number(Some(n)) => n.is_finite(),
             Value::Point(Some(p)) => p.is_finite(),
             Value::Path(Some(p)) => p.validate().is_ok(),
+            Value::Anchored(Some(a)) => a.is_valid(),
             _ => true,
         }
     }
@@ -207,6 +214,8 @@ pub enum Field {
     FeatureStation,
     /// For profile sketches, the run (key) whose band the stroke was drawn on.
     FeatureRun,
+    /// A stroke anchored to stations (follows the survey when it changes).
+    FeatureAnchored,
     /// Free-form tags.
     FeatureTags,
     /// Layer a symbol is drawn on.
@@ -306,6 +315,7 @@ impl Field {
             FeatureTrip => (K::Feature, V::Ref),
             FeatureStation => (K::Feature, V::Ref),
             FeatureRun => (K::Feature, V::Text),
+            FeatureAnchored => (K::Feature, V::Anchored),
             FeatureTags => (K::Feature, V::Map),
             SymbolLayer => (K::Symbol, V::Ref),
             SymbolName => (K::Symbol, V::Text),
@@ -332,6 +342,7 @@ impl Field {
             ValueType::Point => Value::Point(None),
             ValueType::Path => Value::Path(None),
             ValueType::Map => Value::Map(BTreeMap::new()),
+            ValueType::Anchored => Value::Anchored(None),
         }
     }
 }

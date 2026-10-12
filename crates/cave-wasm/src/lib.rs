@@ -164,10 +164,11 @@ pub fn profile_band(run: &str, adjusted: bool) -> String {
 }
 
 /// Adds a stroke sketched on a run's band. `points` is JSON `[[s, z], ...]`; `widths` is JSON
-/// `[w, ...]` (pen pressure) or an empty string. Goes through the document's one edit path and
+/// `[w, ...]` (pen pressure) or an empty string; `adjusted` says which positions the band was
+/// drawn from. The stroke is anchored to the band's stations. Goes through the document's one edit path and
 /// is undoable. Returns `ok` or `error: ...`.
 #[wasm_bindgen]
-pub fn add_profile_sketch(run: &str, points: &str, widths: &str) -> String {
+pub fn add_profile_sketch(run: &str, points: &str, widths: &str, adjusted: bool) -> String {
     let Ok(points) = serde_json::from_str::<Vec<[f64; 2]>>(points) else {
         return "error: unreadable stroke".into();
     };
@@ -179,8 +180,10 @@ pub fn add_profile_sketch(run: &str, points: &str, widths: &str) -> String {
     let result = DOC.with(|d| {
         let mut slot = d.borrow_mut();
         let doc = slot.as_mut().ok_or("no cave is open")?;
-        let (_, actions) = cave_draw::profile_sketch(doc, &mut random_ids(), run, &points, widths)
-            .map_err(|e| format!("{e:?}"))?;
+        let frames = cave_scene::profile_frames(doc, run, adjusted).ok_or("no such run")?;
+        let (_, actions) =
+            cave_draw::profile_sketch(doc, &mut random_ids(), run, &points, widths, &frames)
+                .map_err(|e| format!("{e:?}"))?;
         let edit = doc.edit(actions).map_err(|e| format!("{e:?}"))?;
         HISTORY.with(|h| h.borrow_mut().record(&edit));
         Ok::<(), String>(())

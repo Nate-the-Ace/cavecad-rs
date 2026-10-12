@@ -2,11 +2,11 @@
 //!
 //! Every function returns `Action`s for `Document::edit`; nothing here writes to a document
 //! directly. That is the rule that keeps undo, history and (later) co-editing working: a tool
-//! never edits around the one edit path. Geometry captured with a pen keeps its pressure as
-//! per-point widths, which change how the line is drawn and never where it is.
+//! never edits around the one edit path. Strokes are anchored to stations, so they follow the
+//! survey when it changes. Pen pressure is kept as per-point widths, which change how the line is
+//! drawn and never where it is.
 
-use cave_doc::{Action, Document, Field, Kind, Value};
-use cave_geom::{Path, PathError, Point};
+use cave_doc::{Action, AnchorError, Document, Field, Frame, Kind, Value, anchor_stroke};
 use cave_id::{Id, IdSource};
 
 /// `Feature.type` of a stroke sketched on a profile band.
@@ -26,46 +26,48 @@ pub enum DrawError {
     TooShort,
     /// A coordinate or pen weight was not a usable number.
     BadStroke,
+    /// The run has no usable stretch of survey to anchor the stroke to.
+    NoStations,
 }
 
-impl From<PathError> for DrawError {
-    fn from(e: PathError) -> Self {
+impl From<AnchorError> for DrawError {
+    fn from(e: AnchorError) -> Self {
         match e {
-            PathError::TooShort => DrawError::TooShort,
-            PathError::NotFinite | PathError::BadWidths => DrawError::BadStroke,
+            AnchorError::TooShort => DrawError::TooShort,
+            AnchorError::BadStroke => DrawError::BadStroke,
+            AnchorError::NoFrames => DrawError::NoStations,
         }
     }
 }
 
-/// Actions that add a stroke sketched on the profile band of `run`. Points are `(s, z)` in metres
-/// on the band (distance along the run, elevation). `widths` is optional pen weight per point
-/// (1.0 is the normal line weight). Creates the sketch layer first if the cave has none yet.
-/// Returns the new feature's id with the actions.
+/// Actions that add a stroke sketched on the profile band of `run`.
+///
+/// `points` are `(s, z)` in metres on the band (distance along the run, elevation); `frames` are
+/// the band's consecutive station pairs with their band positions, and the stroke is anchored to
+/// the nearest of them. `widths` is optional pen weight per point (1.0 is the normal weight).
+/// Creates the sketch layer first if the cave has none yet. Returns the new feature's id with the
+/// actions.
 pub fn profile_sketch(
     doc: &Document,
     ids: &mut impl IdSource,
     run: &str,
     points: &[[f64; 2]],
     widths: Option<Vec<f64>>,
+    frames: &[Frame],
 ) -> Result<(Id, Vec<Action>), DrawError> {
     // Drop repeated points: a stroke that never moved is not a line.
-    let mut pts: Vec<Point> = Vec::with_capacity(points.len());
-    let mut kept: Vec<usize> = Vec::new();
+    let mut kept: Vec<usize> = Vec::with_capacity(points.len());
     for (i, p) in points.iter().enumerate() {
-        let pt = Point::new(p[0], p[1]);
-        if pts.last() != Some(&pt) {
-            pts.push(pt);
+        if kept.last().is_none_or(|&k| points[k] != *p) {
             kept.push(i);
         }
     }
-    let mut path = Path::polyline(&pts, false);
-    if let Some(w) = widths {
-        if w.len() != points.len() {
-            return Err(DrawError::BadStroke);
-        }
-        path = path.with_widths(kept.iter().map(|&i| w[i]).collect())?;
+    if widths.as_ref().is_some_and(|w| w.len() != points.len()) {
+        return Err(DrawError::BadStroke);
     }
-    path.validate()?;
+    let pts: Vec<[f64; 2]> = kept.iter().map(|&i| points[i]).collect();
+    let widths = widths.map(|w| kept.iter().map(|&i| w[i]).collect());
+    let anchored = anchor_stroke(&pts, frames, widths)?;
 
     let layer = sketch_layer_id();
     let mut actions = Vec::new();
@@ -105,8 +107,8 @@ pub fn profile_sketch(
         },
         Action::Set {
             id,
-            field: Field::FeaturePath,
-            value: Value::Path(Some(path)),
+            field: Field::FeatureAnchored,
+            value: Value::Anchored(Some(anchored)),
         },
     ]);
     Ok((id, actions))
@@ -115,23 +117,54 @@ pub fn profile_sketch(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use cave_doc::{ActorId, History, validate};
+    use cave_doc::{ActorId, History, Issue, validate};
     use cave_id::SeqIds;
+
+    /// A document with two stations and the frame between them.
+    fn cave() -> (Document, Vec<Frame>, [Id; 2]) {
+        let mut doc = Document::new(ActorId(1));
+        let (a, b) = (Id::from_name("st:a"), Id::from_name("st:b"));
+        let mut actions = Vec::new();
+        for (id, label) in [(a, "A1"), (b, "A2")] {
+            actions.push(Action::Create {
+                id,
+                kind: Kind::Station,
+            });
+            actions.push(Action::Set {
+                id,
+                field: Field::StationLabel,
+                value: Value::Text(label.into()),
+            });
+        }
+        doc.edit(actions).unwrap();
+        let frames = vec![Frame {
+            a,
+            b,
+            pa: [0.0, 0.0],
+            pb: [10.0, 0.0],
+        }];
+        (doc, frames, [a, b])
+    }
 
     fn stroke() -> Vec<[f64; 2]> {
         vec![[0.0, 0.0], [1.0, 0.5], [2.0, 0.0]]
     }
 
     #[test]
-    fn a_sketch_is_a_valid_feature_on_the_shared_layer() {
-        let mut doc = Document::new(ActorId(1));
-        let mut ids = SeqIds::new(1);
-        let (id, actions) = profile_sketch(&doc, &mut ids, "A", &stroke(), None).unwrap();
+    fn a_sketch_is_a_valid_anchored_feature_on_the_shared_layer() {
+        let (mut doc, frames, [a, b]) = cave();
+        let (id, actions) =
+            profile_sketch(&doc, &mut SeqIds::new(1), "A", &stroke(), None, &frames).unwrap();
         doc.edit(actions).unwrap();
         let e = doc.entity(id).unwrap();
-        assert_eq!(e.text(Field::FeatureRun), "A");
-        assert_eq!(e.text(Field::FeatureType), PROFILE_SKETCH);
-        assert_eq!(e.path(Field::FeaturePath).unwrap().points().len(), 3);
+        assert_eq!(
+            (e.text(Field::FeatureRun), e.text(Field::FeatureType)),
+            ("A".into(), PROFILE_SKETCH.to_string())
+        );
+        let Value::Anchored(Some(anchored)) = e.get(Field::FeatureAnchored) else {
+            panic!("not anchored")
+        };
+        assert_eq!(anchored.frames, vec![(a, b)]);
         assert!(doc.entity(sketch_layer_id()).is_some());
         assert!(
             validate(&doc).is_empty(),
@@ -140,29 +173,56 @@ mod tests {
     }
 
     #[test]
+    fn deleting_a_station_the_sketch_hangs_on_is_flagged() {
+        let (mut doc, frames, [a, _]) = cave();
+        let (id, actions) =
+            profile_sketch(&doc, &mut SeqIds::new(1), "A", &stroke(), None, &frames).unwrap();
+        doc.edit(actions).unwrap();
+        doc.edit(vec![Action::Remove {
+            id: a,
+            kind: Kind::Station,
+        }])
+        .unwrap();
+        assert!(validate(&doc).contains(&Issue::DanglingReference {
+            entity: id,
+            field: Field::FeatureAnchored,
+            target: a
+        }));
+    }
+
+    #[test]
     fn the_layer_is_created_once_and_a_second_stroke_reuses_it() {
-        let mut doc = Document::new(ActorId(1));
+        let (mut doc, frames, _) = cave();
         let mut ids = SeqIds::new(1);
-        let (_, a) = profile_sketch(&doc, &mut ids, "A", &stroke(), None).unwrap();
-        doc.edit(a).unwrap();
-        let (_, b) = profile_sketch(&doc, &mut ids, "A", &stroke(), None).unwrap();
-        assert!(!b.iter().any(|x| matches!(
+        let (_, first) = profile_sketch(&doc, &mut ids, "A", &stroke(), None, &frames).unwrap();
+        doc.edit(first).unwrap();
+        let (_, second) = profile_sketch(&doc, &mut ids, "A", &stroke(), None, &frames).unwrap();
+        assert!(!second.iter().any(|x| matches!(
             x,
             Action::Create {
                 kind: Kind::Layer,
                 ..
             }
         )));
-        doc.edit(b).unwrap();
-        assert_eq!(doc.ids_of(Kind::Layer).len(), 1);
-        assert_eq!(doc.ids_of(Kind::Feature).len(), 2);
+        doc.edit(second).unwrap();
+        assert_eq!(
+            (
+                doc.ids_of(Kind::Layer).len(),
+                doc.ids_of(Kind::Feature).len()
+            ),
+            (1, 2)
+        );
     }
 
     #[test]
     fn two_people_creating_the_layer_independently_agree() {
-        let (mut a, mut b) = (Document::new(ActorId(1)), Document::new(ActorId(2)));
-        let (_, ea) = profile_sketch(&a, &mut SeqIds::new(1), "A", &stroke(), None).unwrap();
-        let (_, eb) = profile_sketch(&b, &mut SeqIds::new(2), "A", &stroke(), None).unwrap();
+        let (base, frames, _) = cave();
+        let mut a = base.clone();
+        let mut b = Document::from_json(&base.to_json(), ActorId(2)).unwrap();
+        let (_, ea) =
+            profile_sketch(&a, &mut SeqIds::new(1), "A", &stroke(), None, &frames).unwrap();
+        let (_, eb) =
+            profile_sketch(&b, &mut SeqIds::new(2), "A", &stroke(), None, &frames).unwrap();
         let (ops_a, ops_b) = (a.edit(ea).unwrap().ops, b.edit(eb).unwrap().ops);
         for op in &ops_b {
             a.apply(op).unwrap();
@@ -176,37 +236,8 @@ mod tests {
     }
 
     #[test]
-    fn pen_pressure_is_kept_as_widths_and_never_moves_points() {
-        let doc = Document::new(ActorId(1));
-        let (_, actions) = profile_sketch(
-            &doc,
-            &mut SeqIds::new(1),
-            "A",
-            &stroke(),
-            Some(vec![0.4, 1.6, 0.8]),
-        )
-        .unwrap();
-        let path = actions.iter().find_map(|a| match a {
-            Action::Set {
-                value: Value::Path(Some(p)),
-                ..
-            } => Some(p.clone()),
-            _ => None,
-        });
-        let path = path.unwrap();
-        assert_eq!(path.widths(), Some(&[0.4, 1.6, 0.8][..]));
-        assert_eq!(
-            path.points(),
-            stroke()
-                .iter()
-                .map(|p| Point::new(p[0], p[1]))
-                .collect::<Vec<_>>()
-        );
-    }
-
-    #[test]
-    fn repeated_points_are_dropped_with_their_widths() {
-        let doc = Document::new(ActorId(1));
+    fn pen_pressure_is_kept_as_widths_and_repeated_points_are_dropped_with_theirs() {
+        let (doc, frames, _) = cave();
         let pts = vec![[0.0, 0.0], [0.0, 0.0], [1.0, 1.0]];
         let (_, actions) = profile_sketch(
             &doc,
@@ -214,48 +245,53 @@ mod tests {
             "A",
             &pts,
             Some(vec![1.0, 1.1, 1.2]),
+            &frames,
         )
         .unwrap();
-        let p = actions.iter().find_map(|a| match a {
+        let anchored = actions.iter().find_map(|a| match a {
             Action::Set {
-                value: Value::Path(Some(p)),
+                value: Value::Anchored(Some(p)),
                 ..
             } => Some(p.clone()),
             _ => None,
         });
-        let p = p.unwrap();
-        assert_eq!(p.points().len(), 2);
-        assert_eq!(p.widths().unwrap().len(), 2);
+        let anchored = anchored.unwrap();
+        assert_eq!(anchored.points.len(), 2);
+        assert_eq!(anchored.widths, Some(vec![1.0, 1.2]));
     }
 
     #[test]
     fn bad_strokes_are_refused() {
-        let doc = Document::new(ActorId(1));
+        let (doc, frames, _) = cave();
         let mut ids = SeqIds::new(1);
+        let run = |pts: &[[f64; 2]], w: Option<Vec<f64>>, f: &[Frame], ids: &mut SeqIds| {
+            profile_sketch(&doc, ids, "A", pts, w, f).unwrap_err()
+        };
         assert_eq!(
-            profile_sketch(&doc, &mut ids, "A", &[[0.0, 0.0]], None).unwrap_err(),
+            run(&[[0.0, 0.0]], None, &frames, &mut ids),
             DrawError::TooShort
         );
         assert_eq!(
-            profile_sketch(&doc, &mut ids, "A", &[[1.0, 1.0], [1.0, 1.0]], None).unwrap_err(),
+            run(&[[1.0, 1.0], [1.0, 1.0]], None, &frames, &mut ids),
             DrawError::TooShort
         );
         assert_eq!(
-            profile_sketch(&doc, &mut ids, "A", &[[0.0, 0.0], [f64::NAN, 1.0]], None).unwrap_err(),
+            run(&[[0.0, 0.0], [f64::NAN, 1.0]], None, &frames, &mut ids),
             DrawError::BadStroke
         );
         assert_eq!(
-            profile_sketch(&doc, &mut ids, "A", &stroke(), Some(vec![1.0])).unwrap_err(),
+            run(&stroke(), Some(vec![1.0]), &frames, &mut ids),
             DrawError::BadStroke
         );
+        assert_eq!(run(&stroke(), None, &[], &mut ids), DrawError::NoStations);
     }
 
     #[test]
     fn a_sketch_can_be_undone_and_redone() {
-        let mut doc = Document::new(ActorId(1));
+        let (mut doc, frames, _) = cave();
         let mut history = History::new();
         let (id, actions) =
-            profile_sketch(&doc, &mut SeqIds::new(1), "A", &stroke(), None).unwrap();
+            profile_sketch(&doc, &mut SeqIds::new(1), "A", &stroke(), None, &frames).unwrap();
         let edit = doc.edit(actions).unwrap();
         history.record(&edit);
         history.undo(&mut doc).unwrap();

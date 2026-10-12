@@ -209,7 +209,7 @@
     const stroked = live;
     live = null;
     if (stroked.pts.length >= 2 && cave.run) {
-      const result = engine.addSketch(cave.run, stroked.pts, stroked.pressure ? stroked.widths : null);
+      const result = engine.addSketch(cave.run, stroked.pts, stroked.pressure ? stroked.widths : null, cave.adjusted);
       message = result === 'ok' ? '' : result;
       changed();
     }
@@ -281,9 +281,9 @@
     <button title="Redo (Shift+Ctrl/Cmd+Z)" disabled={!canRedo} onclick={doRedo}><Redo2 size={15} /></button>
     <button title="Fit band (or double middle-click)" onclick={fit}><Maximize size={15} /></button>
   </div>
-  {#if band?.note || message || (band && band.omitted > 0)}
+  {#if band?.note || message || (band && (band.omitted > 0 || band.unplaced > 0))}
     <div class="note">
-      {#if message}{message}{:else if band?.note}{band.note}{:else if band}{band.omitted} station{band.omitted === 1 ? '' : 's'} on side branches are not on this band.{/if}
+      {#if message}{message}{:else if band?.note}{band.note}{:else if band && band.unplaced > 0}{band.unplaced} sketch{band.unplaced === 1 ? '' : 'es'} hang on stations that are not on this band.{:else if band}{band.omitted} station{band.omitted === 1 ? '' : 's'} on side branches are not on this band.{/if}
     </div>
   {/if}
 </div>

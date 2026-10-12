@@ -6,7 +6,7 @@
 
 mod profile;
 
-pub use profile::{ProfileScene, RunInfo, profile_scene, runs};
+pub use profile::{ProfileScene, RunInfo, profile_frames, profile_scene, runs};
 
 use cave_doc::Document;
 use cave_id::Id;

@@ -7,6 +7,7 @@
 //! Layers of data: authored survey data lives here; drawing data comes next; derived data
 //! (positions, adjustment, walls) is never stored and is recomputed from these.
 
+mod anchored;
 mod check;
 mod clock;
 mod document;
@@ -16,6 +17,7 @@ mod history;
 mod json;
 mod op;
 
+pub use anchored::{AnchorError, AnchorPoint, AnchoredPath, Frame, anchor_stroke};
 pub use check::{Issue, validate};
 pub use clock::{ActorId, Clock, Stamp};
 pub use document::{ApplyError, Document, Edit};

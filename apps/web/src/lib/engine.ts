@@ -37,6 +37,8 @@ export interface ProfileScene {
   ceiling: [number, number][][];
   floor: [number, number][][];
   sketches: { id: string; points: [number, number][]; widths: number[] | null }[];
+  /** Sketches that cannot be placed because a station they hang on is not on this band. */
+  unplaced: number;
   omitted: number;
   note: string | null;
   /** [minS, minZ, maxS, maxZ] */
@@ -66,7 +68,7 @@ export const engine = {
   profileRuns: (adjusted: boolean): RunInfo[] => JSON.parse(profile_runs(adjusted)),
   profileBand: (run: string, adjusted: boolean): ProfileScene | null => JSON.parse(profile_band(run, adjusted)),
   /** Adds a stroke drawn on a run's band; every edit goes through the document's one edit path. */
-  addSketch: (run: string, points: [number, number][], widths: number[] | null): string => add_profile_sketch(run, JSON.stringify(points), widths ? JSON.stringify(widths) : ''),
+  addSketch: (run: string, points: [number, number][], widths: number[] | null, adjusted: boolean): string => add_profile_sketch(run, JSON.stringify(points), widths ? JSON.stringify(widths) : '', adjusted),
   undo: (): boolean => undo(),
   redo: (): boolean => redo(),
   editState: (): { undo: boolean; redo: boolean } => JSON.parse(edit_state()),
@@ -81,3 +83,6 @@ export async function loadBuildInfo(): Promise<BuildInfo | null> {
     return null;
   }
 }
+
+// Dev-only handle for tests and debugging in the browser console.
+if (import.meta.env.DEV) (window as unknown as { __engine: typeof engine }).__engine = engine;

@@ -2,7 +2,7 @@
 //!
 //! Coordinates are `(s, z)` in metres: `s` is distance along the run, `z` is elevation.
 
-use cave_doc::{Document, Field, Kind};
+use cave_doc::{Document, Field, Frame, Kind, Value};
 use cave_id::Id;
 use cave_profile::{Graph, LegInfo, group_runs, tie_name_of_run, unroll_band};
 use cave_survey::{LegKind, Params, Vec3, adjust, extract, resolve};
@@ -65,6 +65,8 @@ pub struct ProfileScene {
     pub floor: Vec<Vec<[f64; 2]>>,
     /// Strokes sketched on this band, oldest first.
     pub sketches: Vec<Sketch>,
+    /// Sketches that cannot be placed because a station they hang on is not on this band.
+    pub unplaced: usize,
     /// How many run stations are not on the band (side branches).
     pub omitted: usize,
     /// Plain-language note when the band stopped short.
@@ -185,6 +187,9 @@ pub fn profile_scene(doc: &Document, key: &str, use_adjustment: bool) -> Option<
     let run = grouped.runs.iter().find(|r| r.key == key)?;
     let band = unroll_band(run, tie_station(&s, key), &g, &s.labels, &z_of, &s.lruds);
 
+    // Sketches are anchored to stations: place them from where the stations are NOW.
+    let at: HashMap<Id, [f64; 2]> = band.stations.iter().map(|x| (x.id, [x.s, x.z])).collect();
+    let mut unplaced = 0;
     let sketches: Vec<Sketch> = doc
         .ids_of(Kind::Feature)
         .into_iter()
@@ -195,11 +200,17 @@ pub fn profile_scene(doc: &Document, key: &str, use_adjustment: bool) -> Option<
             {
                 return None;
             }
-            let path = e.path(Field::FeaturePath)?;
+            let Value::Anchored(Some(anchored)) = e.get(Field::FeatureAnchored) else {
+                return None;
+            };
+            let Some(points) = anchored.place(&|st| at.get(&st).copied()) else {
+                unplaced += 1;
+                return None;
+            };
             Some(Sketch {
                 id: id.to_string(),
-                points: path.points().iter().map(|p| [p.x, p.y]).collect(),
-                widths: path.widths().map(<[f64]>::to_vec),
+                points,
+                widths: anchored.widths.clone(),
             })
         })
         .collect();
@@ -249,10 +260,32 @@ pub fn profile_scene(doc: &Document, key: &str, use_adjustment: bool) -> Option<
         ceiling,
         floor,
         sketches,
+        unplaced,
         omitted: band.omitted.len(),
         note,
         bounds,
     })
+}
+
+/// The band's consecutive station pairs with their band positions: what a new stroke anchors to.
+pub fn profile_frames(doc: &Document, key: &str, use_adjustment: bool) -> Option<Vec<Frame>> {
+    let s = solve(doc, use_adjustment);
+    let g = graph(&s);
+    let z_of = |id: Id| s.positions.get(&id).map(|p| p.z);
+    let grouped = group_runs(&s.labels, &s.order);
+    let run = grouped.runs.iter().find(|r| r.key == key)?;
+    let band = unroll_band(run, tie_station(&s, key), &g, &s.labels, &z_of, &s.lruds);
+    Some(
+        band.stations
+            .windows(2)
+            .map(|w| Frame {
+                a: w[0].id,
+                b: w[1].id,
+                pa: [w[0].s, w[0].z],
+                pb: [w[1].s, w[1].z],
+            })
+            .collect(),
+    )
 }
 
 #[cfg(test)]
@@ -302,21 +335,115 @@ mod tests {
     fn unknown_runs_are_none_and_sketches_come_back_on_their_own_run() {
         let mut doc = cave();
         assert!(profile_scene(&doc, "Z", false).is_none());
+        let frames = profile_frames(&doc, "A", false).unwrap();
+        assert_eq!(frames.len(), 2, "three stations, two frames");
         let (_, actions) = cave_draw::profile_sketch(
             &doc,
             &mut SeqIds::new(7),
             "A",
             &[[0.0, 0.0], [5.0, 1.0]],
             Some(vec![0.5, 1.5]),
+            &frames,
         )
         .unwrap();
         doc.edit(actions).unwrap();
         let a = profile_scene(&doc, "A", false).unwrap();
         assert_eq!(a.sketches.len(), 1);
         assert_eq!(a.sketches[0].widths.as_deref(), Some(&[0.5, 1.5][..]));
+        assert_eq!(a.unplaced, 0);
+        for (got, want) in a.sketches[0].points.iter().zip([[0.0, 0.0], [5.0, 1.0]]) {
+            assert!(
+                (got[0] - want[0]).abs() < 1e-9 && (got[1] - want[1]).abs() < 1e-9,
+                "placed where it was drawn"
+            );
+        }
         assert!(
             profile_scene(&doc, "B", false).unwrap().sketches.is_empty(),
             "sketches belong to their run"
+        );
+    }
+
+    #[test]
+    fn a_sketch_stays_attached_to_its_station_when_adjustment_moves_it() {
+        // A loop with a vertical bust: adjusting moves the stations' elevations.
+        let text = r#"{"unit":"m","name":"loop","shots":[
+            {"from":"A1","to":"A2","distance":10,"azimuth":0,"inclination":0},
+            {"from":"A2","to":"A3","distance":10,"azimuth":90,"inclination":0},
+            {"from":"A3","to":"A4","distance":10,"azimuth":180,"inclination":0},
+            {"from":"A4","to":"A1","distance":10,"azimuth":270,"inclination":5}]}"#;
+        let mut doc = cave_fixture::from_shot_list(text, ActorId(1)).unwrap();
+        let raw = profile_scene(&doc, "A", false).unwrap();
+        let last = raw.stations.last().unwrap();
+        let frames = profile_frames(&doc, "A", false).unwrap();
+        let stroke = [[last.s + 0.5, last.z + 1.0], [last.s + 1.5, last.z + 1.0]];
+        let (_, actions) =
+            cave_draw::profile_sketch(&doc, &mut SeqIds::new(3), "A", &stroke, None, &frames)
+                .unwrap();
+        doc.edit(actions).unwrap();
+
+        let (before, after) = (
+            profile_scene(&doc, "A", false).unwrap(),
+            profile_scene(&doc, "A", true).unwrap(),
+        );
+        let (st0, st1) = (
+            before.stations.last().unwrap(),
+            after.stations.last().unwrap(),
+        );
+        let moved = (st1.z - st0.z).abs();
+        assert!(
+            moved > 0.05,
+            "adjustment really moved the station ({moved:.3} m)"
+        );
+        let (p0, p1) = (before.sketches[0].points[0], after.sketches[0].points[0]);
+        // The sketch moves with its station (turning slightly with the leg it hangs on) instead of
+        // staying where it was on the page.
+        let (dz_station, dz_sketch) = (st1.z - st0.z, p1[1] - p0[1]);
+        assert!(
+            (dz_station - dz_sketch).abs() < 0.1 * moved.max(0.05),
+            "sketch moved {dz_sketch:.3}, station moved {dz_station:.3}"
+        );
+        let dist = |p: [f64; 2], st: &BandDot| (p[0] - st.s).hypot(p[1] - st.z);
+        assert!(
+            (dist(p0, st0) - dist(p1, st1)).abs() < 0.02,
+            "same distance from its station"
+        );
+    }
+
+    #[test]
+    fn a_sketch_whose_stations_are_gone_is_counted_not_drawn() {
+        let mut doc = cave();
+        let frames = profile_frames(&doc, "A", false).unwrap();
+        let (_, actions) = cave_draw::profile_sketch(
+            &doc,
+            &mut SeqIds::new(5),
+            "A",
+            &[[1.0, 0.0], [2.0, 0.0]],
+            None,
+            &frames,
+        )
+        .unwrap();
+        doc.edit(actions).unwrap();
+        let first = profile_scene(&doc, "A", false).unwrap();
+        assert_eq!(first.sketches.len(), 1);
+        // Remove every shot touching the first station, leaving the stroke hanging on a station
+        // that is no longer on the band.
+        let victim = doc
+            .ids_of(Kind::Station)
+            .into_iter()
+            .find(|id| {
+                doc.entity(*id)
+                    .is_some_and(|e| e.text(Field::StationLabel) == "A1")
+            })
+            .unwrap();
+        doc.edit(vec![cave_doc::Action::Remove {
+            id: victim,
+            kind: Kind::Station,
+        }])
+        .unwrap();
+        let after = profile_scene(&doc, "A", false).unwrap();
+        assert!(
+            after.sketches.is_empty() && after.unplaced == 1,
+            "not placed, and counted"
         );
     }
 }
