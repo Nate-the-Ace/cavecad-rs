@@ -1,5 +1,5 @@
 // Loads the Rust engine (WASM) once and re-exports the few calls the UI uses.
-import init, { start, log, console_events, console_clear, engine_version, open_demo, scene, profile_runs, profile_band, add_profile_sketch, undo, redo, edit_state, passage_mesh, shading, palette, open_dxf, save_dxf, section_stations, section_at, add_section_sketch, map_sections, place_section, map_profile_sketches, add_map_line, map_lines, draw_tools, edit_line, delete_line, set_line_closed, set_line_kind, line_info, set_line_flip, set_line_text, ornament, callout, sheet_options, sheet_plan, flipped_lines, revision, station_rows, set_station_mark, station_detail, shot_detail, set_shot, set_station_walls, set_station_note, set_station_benchmark, symbols, fills, fill_marks, draw_tool_groups, sync_outbox, sync_apply, sync_snapshot, sync_load, notebook_trips, notebook_page, notebook_set_reading, notebook_set_walls, notebook_set_note, notebook_set_trip_field, notebook_set_declination, notebook_add_shot, notebook_remove_shot, notebook_rename_station, notebook_new_trip, scan_links, scan_link, scan_unlink, scan_placements, scan_alignment, scan_add_anchor, scan_remove_anchor, scan_set_mode, scan_trim, scan_set_trim } from '../wasm/cave_wasm.js';
+import init, { start, log, console_events, console_clear, engine_version, open_demo, scene, profile_runs, profile_band, add_profile_sketch, undo, redo, edit_state, passage_mesh, shading, palette, open_dxf, save_dxf, section_stations, section_at, add_section_sketch, map_sections, place_section, map_profile_sketches, add_map_line, map_lines, draw_tools, edit_line, delete_line, set_line_closed, set_line_kind, line_info, set_line_flip, set_line_text, ornament, callout, sheet_options, sheet_plan, flipped_lines, revision, station_rows, set_station_mark, station_detail, shot_detail, set_shot, set_station_walls, set_station_note, set_station_benchmark, symbols, fills, fill_marks, draw_tool_groups, sync_outbox, sync_apply, sync_snapshot, sync_load, notebook_trips, notebook_page, notebook_set_reading, notebook_set_walls, notebook_set_note, notebook_set_trip_field, notebook_set_declination, notebook_add_shot, notebook_remove_shot, notebook_rename_station, notebook_new_trip, scan_links, scan_link, scan_unlink, scan_placements, scan_alignment, scan_add_anchor, scan_remove_anchor, scan_set_mode, scan_trim, scan_set_trim, scan_view_stations } from '../wasm/cave_wasm.js';
 
 import { setInkPalette } from './ink';
 import { setOrnamentSource } from './section-glyph';
@@ -244,7 +244,7 @@ export interface ScanPlacement {
 /** The spots on a scan matched to stations. */
 export interface ScanAlignment {
   mode: 'rigid' | 'warp';
-  anchors: { px: number; py: number; station: string; label: string }[];
+  anchors: { px: number; py: number; station: string; label: string; x: number | null; y: number | null }[];
 }
 export interface BuildInfo {
   builtAt: string | null;
@@ -318,17 +318,19 @@ export const engine = {
   /** Links a scan to a trip (one undoable edit in the Scans panel's history). */
   scanLink: (trip: string, path: string): string => scan_link(trip, path),
   scanUnlink: (trip: string, path: string): string => scan_unlink(trip, path),
-  /** Where each aligned scan sits under the map now. */
-  scanPlacements: (adjusted: boolean): ScanPlacement[] => JSON.parse(scan_placements(adjusted)),
-  scanAlignment: (trip: string, path: string): ScanAlignment | null => JSON.parse(scan_alignment(trip, path)),
-  /** Matches a spot on a scan (pixels from its top left) with the station it is. */
-  scanAddAnchor: (trip: string, path: string, px: number, py: number, station: string): string => scan_add_anchor(trip, path, px, py, station),
-  scanRemoveAnchor: (trip: string, path: string, index: number): string => scan_remove_anchor(trip, path, index),
-  scanSetMode: (trip: string, path: string, mode: 'rigid' | 'warp'): string => scan_set_mode(trip, path, mode),
-  /** The outline a scan is trimmed to on a trip (scan pixels), or null. */
-  scanTrim: (trip: string, path: string): [number, number][] | null => JSON.parse(scan_trim(trip, path)),
+  /** Where each scan placed in a view sits now (`map`, `profile:<run>` or `section:<station>`). */
+  scanPlacements: (view: string, adjusted: boolean): ScanPlacement[] => JSON.parse(scan_placements(view, adjusted)),
+  /** The stations a view shows: what a spot on a scan can be matched to there. */
+  scanViewStations: (view: string, adjusted: boolean): { id: string; label: string }[] => JSON.parse(scan_view_stations(view, adjusted)),
+  scanAlignment: (trip: string, view: string, path: string): ScanAlignment | null => JSON.parse(scan_alignment(trip, view, path)),
+  /** Matches a spot on a scan (pixels from its top left) with a station (its id) or a point in the view (`x:y`, metres). */
+  scanAddAnchor: (trip: string, view: string, path: string, px: number, py: number, target: string): string => scan_add_anchor(trip, view, path, px, py, target),
+  scanRemoveAnchor: (trip: string, view: string, path: string, index: number): string => scan_remove_anchor(trip, view, path, index),
+  scanSetMode: (trip: string, view: string, path: string, mode: 'rigid' | 'warp'): string => scan_set_mode(trip, view, path, mode),
+  /** The outline a scan is trimmed to in a view (scan pixels), or null. */
+  scanTrim: (trip: string, view: string, path: string): [number, number][] | null => JSON.parse(scan_trim(trip, view, path)),
   /** Trims a scan to a traced outline (thinned to within `tolerance` pixels); an empty outline takes the trim off. */
-  scanSetTrim: (trip: string, path: string, outline: [number, number][], tolerance = 1.5): string => scan_set_trim(trip, path, JSON.stringify(outline), tolerance),
+  scanSetTrim: (trip: string, view: string, path: string, outline: [number, number][], tolerance = 1.5): string => scan_set_trim(trip, view, path, JSON.stringify(outline), tolerance),
   /** Goes up whenever the open cave really changes; compared with the value at the last save. */
   revision: (): number => revision(),
   /** Local edits since the last call (JSON ops, as a string; `[]` when none). */

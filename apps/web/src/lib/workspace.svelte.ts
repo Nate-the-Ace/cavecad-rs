@@ -127,7 +127,8 @@ function defaultLayout(a: DockviewApi) {
   a.addPanel({ id: 'symbols', component: 'symbols', title: PANELS.symbols.title, position: { referencePanel: 'console', direction: 'within' } });
   a.addPanel({ id: 'stations', component: 'stations', title: PANELS.stations.title, position: { referencePanel: 'console', direction: 'within' } });
   a.addPanel({ id: 'notebook', component: 'notebook', title: PANELS.notebook.title, position: { referencePanel: 'console', direction: 'within' } });
-  a.addPanel({ id: 'scans', component: 'scans', title: PANELS.scans.title, position: { referencePanel: 'profile', direction: 'within' } });
+  // Below the Profile, not tabbed with it: aligning a scan needs the scan and the view side by side.
+  a.addPanel({ id: 'scans', component: 'scans', title: PANELS.scans.title, position: { referencePanel: 'profile', direction: 'below' }, initialHeight: 320 });
   a.panels.find((p) => p.id === 'profile')?.api.setActive();
 }
 

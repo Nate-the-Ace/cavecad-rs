@@ -98,6 +98,7 @@ function load(name: string, found: Map<string, File>) {
   forgetSelection();
   for (const u of mapUrls.values()) URL.revokeObjectURL(u);
   mapUrls.clear();
+  images.clear();
   files.clear();
   for (const [p, f] of found) files.set(p, f);
   scans.folder = name;
@@ -189,8 +190,46 @@ export function mapUrl(path: string): string | null {
   return u;
 }
 
-/** Aligning: a spot on the scan waiting for the station it is. */
-export const align = $state({ on: false, pending: null as { px: number; py: number } | null });
+/**
+ * Aligning: a spot on the scan waiting for what it is. `view` says which drawing the scan is being
+ * placed in (`map`, `profile:<run>` or `section:<station>`); `point` is a place clicked in that
+ * drawing, which the Scans panel picks up as the spot's match.
+ */
+export const align = $state({
+  on: false,
+  pending: null as { px: number; py: number } | null,
+  /** Which drawing the scan is being placed in: the Map, the Profile's run on show, or the Cross Section's station on show. */
+  kind: 'map' as 'map' | 'profile' | 'section',
+  view: 'map',
+  point: { x: 0, y: 0, seq: 0 },
+});
+
+/** Whether a drawing is the one a scan is being aligned in and is waiting for a clicked place. */
+export const waitingForPoint = (view: string): boolean => align.on && align.pending !== null && align.view === view;
+
+/** Hands a place clicked in a drawing to the Scans panel. */
+export function givePoint(x: number, y: number) {
+  align.point = { x, y, seq: align.point.seq + 1 };
+}
+
+const images = new Map<string, HTMLImageElement>();
+
+/**
+ * The picture of a scan for a 2D view to draw (made once per scan), or `null` while it loads or when
+ * the scan is not in the open folder. `redraw` is called when it has loaded.
+ */
+export function scanImage(path: string, redraw: () => void): HTMLImageElement | null {
+  let img = images.get(path);
+  if (!img) {
+    const url = mapUrl(path);
+    if (!url) return null;
+    img = new Image();
+    img.onload = redraw;
+    img.src = url;
+    images.set(path, img);
+  }
+  return img.complete && img.naturalWidth > 0 ? img : null;
+}
 
 /** Trimming: the outline being traced, point by point. */
 export const trimming = $state({ on: false, draft: [] as [number, number][] });
@@ -204,4 +243,4 @@ export function toggleFolder(path: string) {
 }
 
 // Dev-only handle for tests and debugging in the browser console.
-if (import.meta.env.DEV) (window as unknown as { __scans: unknown }).__scans = { addFiles, select, scans };
+if (import.meta.env.DEV) (window as unknown as { __scans: unknown }).__scans = { addFiles, select, scans, align };

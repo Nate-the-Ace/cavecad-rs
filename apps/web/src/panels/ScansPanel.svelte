@@ -32,17 +32,18 @@
   $effect(() => {
     void cave.version;
     void cave.opened;
+    void align.view; // what the panel shows is read again for the new view
     void ready;
     untrack(() => {
       if (!ready) return;
       trips = engine.notebookTrips();
       links = engine.scanLinks();
       if (!trips.some((t) => t.id === cave.trip)) cave.trip = trips[0]?.id ?? '';
-      stations = engine.stationRows(cave.adjusted).map((r) => ({ id: r.id, station: r.station })).filter((r) => r.id);
-      al = scans.selected && cave.trip ? engine.scanAlignment(cave.trip, scans.selected) : null;
-      const p = engine.scanPlacements(cave.adjusted).find((x) => x.trip === cave.trip && x.path === scans.selected);
+      stations = engine.scanViewStations(align.view, cave.adjusted).map((r) => ({ id: r.id, station: r.label }));
+      al = scans.selected && cave.trip ? engine.scanAlignment(cave.trip, align.view, scans.selected) : null;
+      const p = engine.scanPlacements(align.view, cave.adjusted).find((x) => x.trip === cave.trip && x.path === scans.selected);
       placed = p ? { used: p.used, rms: p.rms } : null;
-      savedTrim = scans.selected && cave.trip ? engine.scanTrim(cave.trip, scans.selected) : null;
+      savedTrim = scans.selected && cave.trip ? engine.scanTrim(cave.trip, align.view, scans.selected) : null;
     });
   });
 
@@ -71,6 +72,23 @@
     });
   });
 
+  // Which drawing the scan is being placed in follows the run and station on show in the Profile and Cross Section.
+  $effect(() => {
+    const v = align.kind === 'profile' ? (cave.run ? `profile:${cave.run}` : 'map') : align.kind === 'section' ? (cave.station ? `section:${cave.station}` : 'map') : 'map';
+    if (v !== align.view) {
+      align.view = v;
+    }
+  });
+
+  // A place clicked in the Profile or Cross Section completes a match.
+  let handledPoint = align.point.seq;
+  $effect(() => {
+    const pt = align.point;
+    if (pt.seq === handledPoint) return;
+    handledPoint = pt.seq;
+    untrack(() => match(`${pt.x}:${pt.y}`));
+  });
+
   // A different scan or trip: whatever was half done is dropped.
   $effect(() => {
     void scans.selected;
@@ -92,7 +110,7 @@
 
   /** Trims the scan to the outline traced (a dragged loop, or points closed with Enter). */
   function saveTrim(outline: [number, number][]) {
-    const r = engine.scanSetTrim(cave.trip, scans.selected, outline);
+    const r = engine.scanSetTrim(cave.trip, align.view, scans.selected, outline);
     scans.message = r.startsWith('error') ? 'That outline is too small or not a shape.' : '';
     trimming.draft = [];
     if (!r.startsWith('error')) trimming.on = false;
@@ -109,9 +127,10 @@
   function match(station: string) {
     const p = align.pending;
     if (!p || !station || !scans.selected) return;
-    const r = engine.scanAddAnchor(cave.trip, scans.selected, p.px, p.py, station);
+    const r = engine.scanAddAnchor(cave.trip, align.view, scans.selected, p.px, p.py, station);
     scans.message = r.startsWith('error') ? r.replace(/^error: /, '') : '';
     align.pending = null;
+    chosen = '';
     changed();
   }
 
@@ -119,17 +138,17 @@
   $effect(() => {
     const pick = cave.pick;
     untrack(() => {
-      if (align.on && align.pending && pick.kind === 'station' && pick.id) match(pick.id);
+      if (align.on && align.pending && align.view === 'map' && pick.kind === 'station' && pick.id) match(pick.id);
     });
   });
 
   function unmatch(i: number) {
-    engine.scanRemoveAnchor(cave.trip, scans.selected, i);
+    engine.scanRemoveAnchor(cave.trip, align.view, scans.selected, i);
     changed();
   }
 
   const setMode = (warp: boolean) => {
-    engine.scanSetMode(cave.trip, scans.selected, warp ? 'warp' : 'rigid');
+    engine.scanSetMode(cave.trip, align.view, scans.selected, warp ? 'warp' : 'rigid');
     changed();
   };
 
@@ -191,6 +210,15 @@
     <button class:on={align.on} onclick={() => { align.on = !align.on; if (align.on) stopTrim(); }} disabled={!linkedHere} title={linkedHere ? 'Match spots on this scan to stations so it lies under the Map and you can trace over it' : 'Link the scan to the trip first'}><Crosshair size={14} /> Align under map</button>
     <label title="Draw aligned scans under the Map"><input type="checkbox" checked={showUnder} onchange={(e) => setOption('showScans', e.currentTarget.checked)} /> Show under map</label>
     <label title="How much of the scan shows through under the Map">Strength <input type="range" min="0.1" max="1" step="0.05" value={opacity} oninput={(e) => setOption('scanOpacity', +e.currentTarget.value)} /></label>
+    {#if linkedHere}
+      <label title="Which drawing the scan is placed in. Each has its own placement and outline, so one page can serve the Map, a Profile and a Cross Section.">Place in
+        <select bind:value={align.kind} aria-label="Place the scan in">
+          <option value="map">Map</option>
+          <option value="profile" disabled={!cave.run}>Profile{cave.run ? ` (run ${cave.run})` : ''}</option>
+          <option value="section" disabled={!cave.station}>Cross Section{cave.station ? ` (${stations.find((s) => s.id === cave.station)?.station ?? 'station'})` : ''}</option>
+        </select>
+      </label>
+    {/if}
     <button onclick={() => showPanel('notebook')} title="Show the notebook page for this trip"><BookOpen size={14} /> Notebook</button>
     {#if scans.message}<span class="msg" role="status">{scans.message}</span>{/if}
   </div>
@@ -212,18 +240,18 @@
     <div class="alignbar" role="group" aria-label="Align under the map">
       <span class="hint">
         {#if align.pending}
-          Now click that spot's station on the Map, or choose it:
+          {align.kind === 'map' ? `Now click that spot's station on the Map, or choose it:` : `Now click the same place in the ${align.kind === 'profile' ? 'Profile' : 'Cross Section'}, or choose its station:`}
           <select bind:value={chosen} aria-label="Station" onchange={() => match(chosen)}>
             <option value="">Station…</option>
             {#each stations as s}<option value={s.id}>{s.station}</option>{/each}
           </select>
           <button onclick={() => (align.pending = null)}>Cancel</button>
         {:else}
-          Click a spot on the scan that you can find on the Map (a station mark). {#if !al || al.anchors.length < 2}Two matches place the scan; more fit it better.{/if}
+          Click a spot on the scan that you can find in the {align.kind === 'map' ? 'Map (a station mark)' : align.kind === 'profile' ? 'Profile (a station, or any place on it)' : 'Cross Section (the station, or any place on it)'}. {#if !al || al.anchors.length < 2}Two matches place the scan; more fit it better.{/if}
         {/if}
       </span>
       {#each al?.anchors ?? [] as a, i}
-        <span class="match">{a.label || '?'}<button class="x" aria-label="Remove the match at {a.label}" onclick={() => unmatch(i)}><X size={11} /></button></span>
+        <span class="match">{a.label || `${formatLength(a.x ?? 0, cave.units, 1)}, ${formatLength(a.y ?? 0, cave.units, 1)}`}<button class="x" aria-label="Remove this match" onclick={() => unmatch(i)}><X size={11} /></button></span>
       {/each}
       {#if al && al.anchors.length >= 3}
         <label title="Also stretch and skew across and down to take out scanner distortion"><input type="checkbox" checked={al.mode === 'warp'} onchange={(e) => setMode(e.currentTarget.checked)} /> Stretch to fit</label>
@@ -260,7 +288,7 @@
       </div>
     </div>
     {#if scans.url}
-      {#key scans.url}<ScanViewer url={scans.url} kind={scans.kind} name={scans.selected} marks={align.on && linkedHere ? (al?.anchors ?? []).map((a) => ({ px: a.px, py: a.py, label: a.label })) : []} pending={align.on ? align.pending : null} picking={(align.on || trimming.on) && linkedHere} onpick={picked} trim={linkedHere ? savedTrim : null} draft={trimming.on ? trimming.draft : []} tracing={trimming.on && linkedHere} onstroke={saveTrim} />{/key}
+      {#key scans.url}<ScanViewer url={scans.url} kind={scans.kind} name={scans.selected} marks={align.on && linkedHere ? (al?.anchors ?? []).map((a) => ({ px: a.px, py: a.py, label: a.label || `${formatLength(a.x ?? 0, cave.units, 1)}, ${formatLength(a.y ?? 0, cave.units, 1)}` })) : []} pending={align.on ? align.pending : null} picking={(align.on || trimming.on) && linkedHere} onpick={picked} trim={linkedHere ? savedTrim : null} draft={trimming.on ? trimming.draft : []} tracing={trimming.on && linkedHere} onstroke={saveTrim} />{/key}
     {:else}
       <div class="empty">{scans.paths.length ? 'Pick a scan to see it.' : ''}</div>
     {/if}

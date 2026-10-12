@@ -17,7 +17,9 @@
   import { tolerancePx } from '../lib/commands';
   import type { BandSection } from '../lib/engine';
   import { formatLength, inUnits, metresPer, niceNumber, unitName } from '../lib/units';
-  import { engine, loadEngine, type ProfileScene, type RunInfo } from '../lib/engine';
+  import { engine, loadEngine, type ProfileScene, type RunInfo, type ScanPlacement } from '../lib/engine';
+  import { drawScan } from '../lib/scan-draw';
+  import { givePoint, have, scanImage, scans, waitingForPoint } from '../lib/scans.svelte';
 
   let wrap: HTMLDivElement;
   let canvas: HTMLCanvasElement;
@@ -30,6 +32,8 @@
   /** Label of the picked station (ringed in the highlight colour). */
   let pickedLabel = '';
   let message = $state('');
+  /** Scans placed on this band, drawn under the survey. */
+  let placed: ScanPlacement[] = [];
 
   // View: pixels per metre (uniform, so the profile is true to scale), and where s=0, z=0 sits.
   let scale = 1;
@@ -99,6 +103,7 @@
     runs = engine.profileRuns(cave.adjusted);
     if (!runs.some((r) => r.key === cave.run)) cave.run = runs[0]?.key ?? '';
     band = cave.run ? engine.profileBand(cave.run, cave.adjusted) : null;
+    placed = cave.run ? engine.scanPlacements(`profile:${cave.run}`, cave.adjusted).filter((p) => !filter.hiddenTrips.includes(p.trip) && have(p.path)) : [];
     const dots = band ? engine.scene(cave.adjusted).stations : [];
     fixed = new Set(dots.filter((x) => x.benchmark).map((x) => x.label));
     pickedLabel = cave.pick.kind === 'station' ? (dots.find((x) => x.id === cave.pick.id)?.label ?? '') : '';
@@ -111,6 +116,10 @@
     void cave.adjusted;
     void cave.run;
     void cave.pick;
+    void scans.paths.length; // scans appear when their folder is opened
+    void filter.hiddenTrips.length;
+    void option('showScans', true);
+    void option('scanOpacity', 0.5);
     void cave.showSections.profile; // sketches beside stations appear and disappear with the toggle
     void cave.units; // axis labels and run lengths redraw in the new units
     // refresh() both reads and writes panel state; only the three values above may re-trigger it.
@@ -200,6 +209,14 @@
       g.lineTo(width, y);
       g.stroke();
       g.fillText(`${+inUnits(z, cave.units).toFixed(2)} ${unitName(cave.units)}`, 6, y - 3);
+    }
+
+    // scans placed on this band lie under everything the survey draws
+    if (option('showScans', true)) {
+      for (const sp of placed) {
+        const img = scanImage(sp.path, schedule);
+        if (img) drawScan(g, img, sp, { ox, oy, scale }, option('scanOpacity', 0.5));
+      }
     }
 
     g.setLineDash([5, 4]);
@@ -300,6 +317,13 @@
   function onDown(e: PointerEvent) {
     canvas.setPointerCapture(e.pointerId);
     canvas.focus();
+    if (e.button === 0 && cave.run && waitingForPoint(`profile:${cave.run}`)) {
+      // Aligning a scan: this place is what the spot picked on the scan is.
+      const r = canvas.getBoundingClientRect();
+      const w = toWorld(e.clientX - r.left, e.clientY - r.top);
+      givePoint(w[0], w[1]);
+      return;
+    }
     if (e.pointerType === 'pen') {
       guard.pen(e);
       // A pen landing means anything a resting hand started was never a gesture.

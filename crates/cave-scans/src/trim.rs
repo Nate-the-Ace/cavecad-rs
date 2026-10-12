@@ -2,7 +2,7 @@
 //! the page, the margins, the other sketches and the binder holes, stays out of the views. Only the
 //! outline is stored, in scan pixels; the picture is never changed.
 
-use crate::{ScanError, clean_path};
+use crate::{ScanError, key, key_checked};
 use cave_doc::{Action, Document, Field, Kind, Value};
 use cave_id::Id;
 
@@ -39,10 +39,10 @@ fn area(o: &Outline) -> f64 {
         / 2.0
 }
 
-/// The outline a scan is trimmed to on a trip, or `None` when it is not trimmed.
-pub fn trim(doc: &Document, trip: Id, path: &str) -> Option<Outline> {
+/// The outline a scan is trimmed to on a trip in a view, or `None` when it is not trimmed.
+pub fn trim(doc: &Document, trip: Id, view: &str, path: &str) -> Option<Outline> {
     let e = doc.entity(trip).filter(|e| e.kind() == Kind::Trip)?;
-    decode(e.map(Field::TripScanTrim).get(&clean_path(path)?)?)
+    decode(e.map(Field::TripScanTrim).get(&key(view, path)?)?)
 }
 
 /// Sets the outline a scan is trimmed to, or with `None` takes the trim off. The outline needs three
@@ -50,10 +50,11 @@ pub fn trim(doc: &Document, trip: Id, path: &str) -> Option<Outline> {
 pub fn set_trim(
     doc: &Document,
     trip: Id,
+    view: &str,
     path: &str,
     want: Option<Outline>,
 ) -> Result<Vec<Action>, ScanError> {
-    let path = clean_path(path).ok_or(ScanError::BadPath)?;
+    let k = key_checked(view, path)?;
     let e = doc
         .entity(trip)
         .filter(|e| e.kind() == Kind::Trip)
@@ -69,10 +70,10 @@ pub fn set_trim(
             {
                 return Err(ScanError::BadOutline);
             }
-            map.insert(path, encode(&o));
+            map.insert(k, encode(&o));
         }
         None => {
-            map.remove(&path);
+            map.remove(&k);
         }
     }
     if map == e.map(Field::TripScanTrim) {
@@ -162,22 +163,22 @@ mod tests {
         let mut h = History::new();
         let square = vec![[10.0, 10.0], [200.0, 10.0], [200.0, 150.0], [10.0, 150.0]];
         let e = doc
-            .edit(set_trim(&doc, trip, "a/p.png", Some(square.clone())).unwrap())
+            .edit(set_trim(&doc, trip, "map", "a/p.png", Some(square.clone())).unwrap())
             .unwrap();
         h.record(&e);
-        assert_eq!(trim(&doc, trip, "a\\p.png"), Some(square.clone()));
+        assert_eq!(trim(&doc, trip, "map", "a\\p.png"), Some(square.clone()));
         assert!(
-            set_trim(&doc, trip, "a/p.png", Some(square.clone()))
+            set_trim(&doc, trip, "map", "a/p.png", Some(square.clone()))
                 .unwrap()
                 .is_empty()
         );
         let e = doc
-            .edit(set_trim(&doc, trip, "a/p.png", None).unwrap())
+            .edit(set_trim(&doc, trip, "map", "a/p.png", None).unwrap())
             .unwrap();
         h.record(&e);
-        assert_eq!(trim(&doc, trip, "a/p.png"), None);
+        assert_eq!(trim(&doc, trip, "map", "a/p.png"), None);
         h.undo(&mut doc).unwrap();
-        assert_eq!(trim(&doc, trip, "a/p.png"), Some(square));
+        assert_eq!(trim(&doc, trip, "map", "a/p.png"), Some(square));
     }
 
     #[test]
@@ -190,12 +191,12 @@ mod tests {
             vec![[0.0, 0.0], [f64::NAN, 1.0], [20.0, 20.0]],
         ] {
             assert_eq!(
-                set_trim(&doc, trip, "p.png", Some(bad)),
+                set_trim(&doc, trip, "map", "p.png", Some(bad)),
                 Err(ScanError::BadOutline)
             );
         }
         assert_eq!(
-            set_trim(&doc, trip, "../p.png", None),
+            set_trim(&doc, trip, "map", "../p.png", None),
             Err(ScanError::BadPath)
         );
     }
@@ -232,24 +233,27 @@ mod tests {
         let (mut doc, trip) = cave();
         doc.edit(crate::link(&doc, trip, "p.png").unwrap()).unwrap();
         let sq = vec![[0.0, 0.0], [50.0, 0.0], [50.0, 50.0]];
-        doc.edit(set_trim(&doc, trip, "p.png", Some(sq)).unwrap())
+        doc.edit(set_trim(&doc, trip, "map", "p.png", Some(sq)).unwrap())
             .unwrap();
         doc.edit(crate::unlink(&doc, trip, "p.png").unwrap())
             .unwrap();
-        assert_eq!(trim(&doc, trip, "p.png"), None);
+        assert_eq!(trim(&doc, trip, "map", "p.png"), None);
     }
 
     #[test]
     fn the_outline_survives_a_saved_file() {
         let (mut doc, trip) = cave();
         let sq = vec![[0.5, 0.25], [50.0, 0.0], [50.0, 50.75]];
-        doc.edit(set_trim(&doc, trip, "p.png", Some(sq)).unwrap())
+        doc.edit(set_trim(&doc, trip, "map", "p.png", Some(sq)).unwrap())
             .unwrap();
         let text = cave_dxf::export(&doc, &cave_dxf::ExportOptions::default());
         let back = cave_dxf::import(&text, ActorId(2))
             .unwrap()
             .document
             .unwrap();
-        assert_eq!(trim(&back, trip, "p.png"), trim(&doc, trip, "p.png"));
+        assert_eq!(
+            trim(&back, trip, "map", "p.png"),
+            trim(&doc, trip, "map", "p.png")
+        );
     }
 }

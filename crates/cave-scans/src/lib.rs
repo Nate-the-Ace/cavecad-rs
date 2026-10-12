@@ -8,14 +8,43 @@ mod align;
 mod trim;
 
 pub use align::{
-    Alignment, Anchor, Fit, FitMode, Pair, Placed, add_anchor, alignment, fit, placements,
-    remove_anchor, set_alignment, set_mode,
+    Alignment, Anchor, Fit, FitMode, Pair, Placed, Positions, Target, add_anchor, alignment, fit,
+    placements, remove_anchor, set_alignment, set_mode,
 };
 pub use trim::{Outline, set_trim, simplify, trim};
 
 use cave_doc::{Action, Document, Field, Kind, Value};
 use cave_id::Id;
 use serde::Serialize;
+
+/// The view scans are placed under the map in.
+pub const MAP: &str = "map";
+
+/// A view as it is kept: `map`, `profile:<run key>` or `section:<station id>`. A scan can be placed
+/// differently in each, since each drawing has its own frame.
+pub fn clean_view(view: &str) -> Option<String> {
+    let v = view.trim();
+    let ok = v == MAP
+        || v.strip_prefix("profile:").is_some_and(|k| !k.is_empty())
+        || v.strip_prefix("section:").is_some_and(|k| !k.is_empty());
+    (ok && v.len() <= 120 && !v.contains('|') && !v.chars().any(|c| c.is_control()))
+        .then(|| v.to_string())
+}
+
+/// The key a scan's record in a view is kept under: `<view>|<path>`.
+pub(crate) fn key(view: &str, path: &str) -> Option<String> {
+    Some(format!("{}|{}", clean_view(view)?, clean_path(path)?))
+}
+
+pub(crate) fn key_checked(view: &str, path: &str) -> Result<String, ScanError> {
+    clean_view(view).ok_or(ScanError::BadView)?;
+    key(view, path).ok_or(ScanError::BadPath)
+}
+
+/// A kept key back into its view and path.
+pub(crate) fn split_key(key: &str) -> Option<(&str, &str)> {
+    key.split_once('|')
+}
 
 /// Longest path kept.
 pub const MAX_PATH: usize = 300;
@@ -25,6 +54,8 @@ pub const MAX_PATH: usize = 300;
 pub enum ScanError {
     /// There is no such trip.
     NoSuchTrip,
+    /// The view is not `map`, `profile:<run>` or `section:<station>`.
+    BadView,
     /// A match names a station that is not in the cave.
     NoSuchStation,
     /// The outline is not a closed shape with some area (three or more points, finite, on the scan).
@@ -120,9 +151,21 @@ pub fn unlink(doc: &Document, trip: Id, path: &str) -> Result<Vec<Action>, ScanE
     }
     let kept: Vec<String> = now.into_iter().filter(|p| *p != path).collect();
     let mut actions = write(trip, &kept);
-    // A scan taken off the trip takes its placement with it.
-    actions.extend(align::set_alignment(doc, trip, &path, None)?);
-    actions.extend(trim::set_trim(doc, trip, &path, None)?);
+    // A scan taken off the trip takes its placements and trims, in every view, with it.
+    if let Some(e) = doc.entity(trip) {
+        for field in [Field::TripScanAlign, Field::TripScanTrim] {
+            let mut map = e.map(field);
+            let before = map.len();
+            map.retain(|k, _| split_key(k).is_none_or(|(_, p)| p != path));
+            if map.len() != before {
+                actions.push(Action::Set {
+                    id: trip,
+                    field,
+                    value: Value::Map(map),
+                });
+            }
+        }
+    }
     Ok(actions)
 }
 
@@ -211,6 +254,8 @@ mod tests {
         assert_eq!(links(&back), links(&doc));
     }
 
+    use crate::align::Target::{Point, Station};
+
     #[test]
     fn matches_are_stored_placed_undone_and_dropped_with_the_link() {
         use std::collections::HashMap;
@@ -227,45 +272,181 @@ mod tests {
         run!(doc, link(&doc, trips[0], "p1.png").unwrap());
         run!(
             doc,
-            add_anchor(&doc, trips[0], "p1.png", 0.0, 0.0, st[0]).unwrap()
+            add_anchor(
+                &doc,
+                trips[0],
+                "map",
+                "p1.png",
+                0.0,
+                0.0,
+                Station { id: st[0] }
+            )
+            .unwrap()
         );
         run!(
             doc,
-            add_anchor(&doc, trips[0], "p1.png", 100.0, 0.0, st[1]).unwrap()
+            add_anchor(
+                &doc,
+                trips[0],
+                "map",
+                "p1.png",
+                100.0,
+                0.0,
+                Station { id: st[1] }
+            )
+            .unwrap()
         );
-        let al = alignment(&doc, trips[0], "p1.png").unwrap();
+        let al = alignment(&doc, trips[0], "map", "p1.png").unwrap();
         assert_eq!((al.mode, al.anchors.len()), (FitMode::Warp, 2));
         let pos: HashMap<_, _> = [(st[0], (10.0, 20.0)), (st[1], (11.0, 20.0))].into();
-        let placed = placements(&doc, &pos);
+        let placed = placements(&doc, "map", &pos);
         assert_eq!(placed.len(), 1);
         assert!((placed[0].matrix[0] - 0.01).abs() < 1e-9 && placed[0].used == 2);
         // The survey moves (adjusted): the same matches place the scan somewhere else.
         let moved: HashMap<_, _> = [(st[0], (0.0, 0.0)), (st[1], (2.0, 0.0))].into();
-        assert!((placements(&doc, &moved)[0].matrix[0] - 0.02).abs() < 1e-9);
-        // One spot is not a placement; a station that is gone from the map is skipped.
-        assert!(placements(&doc, &[(st[0], (0.0, 0.0))].into()).is_empty());
+        assert!((placements(&doc, "map", &moved)[0].matrix[0] - 0.02).abs() < 1e-9);
+        // One spot is not a placement; a station that is gone from the view is skipped.
+        assert!(placements(&doc, "map", &[(st[0], (0.0, 0.0))].into()).is_empty());
+        assert!(
+            placements(&doc, "profile:A", &pos).is_empty(),
+            "another view has no matches"
+        );
         run!(
             doc,
-            set_mode(&doc, trips[0], "p1.png", FitMode::Rigid).unwrap()
+            set_mode(&doc, trips[0], "map", "p1.png", FitMode::Rigid).unwrap()
         );
         assert_eq!(
-            alignment(&doc, trips[0], "p1.png").unwrap().mode,
+            alignment(&doc, trips[0], "map", "p1.png").unwrap().mode,
             FitMode::Rigid
         );
-        run!(doc, remove_anchor(&doc, trips[0], "p1.png", 0).unwrap());
+        run!(
+            doc,
+            remove_anchor(&doc, trips[0], "map", "p1.png", 0).unwrap()
+        );
         assert_eq!(
-            alignment(&doc, trips[0], "p1.png").unwrap().anchors.len(),
+            alignment(&doc, trips[0], "map", "p1.png")
+                .unwrap()
+                .anchors
+                .len(),
             1
         );
         run!(doc, unlink(&doc, trips[0], "p1.png").unwrap());
         assert!(
-            alignment(&doc, trips[0], "p1.png").is_none(),
+            alignment(&doc, trips[0], "map", "p1.png").is_none(),
             "unlinking drops the placement"
         );
-        assert!(placements(&doc, &pos).is_empty());
+        assert!(placements(&doc, "map", &pos).is_empty());
         assert_eq!(
-            add_anchor(&doc, trips[0], "p1.png", 1.0, 1.0, trips[1]),
+            add_anchor(
+                &doc,
+                trips[0],
+                "map",
+                "p1.png",
+                1.0,
+                1.0,
+                Station { id: trips[1] }
+            ),
             Err(ScanError::NoSuchStation)
+        );
+    }
+
+    #[test]
+    fn one_scan_is_placed_separately_in_each_view() {
+        use std::collections::HashMap;
+        let (mut doc, trips) = cave();
+        let st = doc.ids_of(Kind::Station);
+        doc.edit(link(&doc, trips[0], "p.png").unwrap()).unwrap();
+        for (view, scale) in [("map", 1.0), ("profile:A", 2.0), ("section:X", 3.0)] {
+            doc.edit(
+                add_anchor(
+                    &doc,
+                    trips[0],
+                    view,
+                    "p.png",
+                    0.0,
+                    0.0,
+                    Point { x: 0.0, y: 0.0 },
+                )
+                .unwrap(),
+            )
+            .unwrap();
+            doc.edit(
+                add_anchor(
+                    &doc,
+                    trips[0],
+                    view,
+                    "p.png",
+                    100.0,
+                    0.0,
+                    Point {
+                        x: 100.0 * scale,
+                        y: 0.0,
+                    },
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        }
+        doc.edit(
+            set_trim(
+                &doc,
+                trips[0],
+                "profile:A",
+                "p.png",
+                Some(vec![[0.0, 0.0], [90.0, 0.0], [90.0, 90.0]]),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let none: HashMap<_, _> = [(st[0], (0.0, 0.0))].into();
+        for (view, scale) in [("map", 1.0), ("profile:A", 2.0), ("section:X", 3.0)] {
+            let p = placements(&doc, view, &none);
+            assert_eq!(p.len(), 1, "{view}");
+            assert!(
+                (p[0].matrix[0] - scale).abs() < 1e-9,
+                "{view}: {:?}",
+                p[0].matrix
+            );
+            assert_eq!(
+                p[0].trim.is_some(),
+                view == "profile:A",
+                "a trim belongs to its own view"
+            );
+        }
+        // A point in the view needs no station, and unlinking clears every view's record.
+        doc.edit(unlink(&doc, trips[0], "p.png").unwrap()).unwrap();
+        for view in ["map", "profile:A", "section:X"] {
+            assert!(alignment(&doc, trips[0], view, "p.png").is_none());
+        }
+        assert!(trim(&doc, trips[0], "profile:A", "p.png").is_none());
+    }
+
+    #[test]
+    fn views_are_checked() {
+        assert_eq!(clean_view("map").as_deref(), Some("map"));
+        assert!(clean_view("profile:A13a").is_some() && clean_view("section:ABC").is_some());
+        for bad in [
+            "",
+            "plan",
+            "profile:",
+            "section:",
+            "map|x",
+            "profile:a\u{1}",
+        ] {
+            assert!(clean_view(bad).is_none(), "{bad:?}");
+        }
+        let (doc, trips) = cave();
+        assert_eq!(
+            add_anchor(
+                &doc,
+                trips[0],
+                "plan",
+                "p.png",
+                1.0,
+                1.0,
+                Point { x: 0.0, y: 0.0 }
+            ),
+            Err(ScanError::BadView)
         );
     }
 
@@ -274,16 +455,42 @@ mod tests {
         let (mut doc, trips) = cave();
         let st = doc.ids_of(Kind::Station);
         doc.edit(link(&doc, trips[0], "p1.png").unwrap()).unwrap();
-        doc.edit(add_anchor(&doc, trips[0], "p1.png", 12.5, 30.25, st[3]).unwrap())
-            .unwrap();
+        doc.edit(
+            add_anchor(
+                &doc,
+                trips[0],
+                "map",
+                "p1.png",
+                12.5,
+                30.25,
+                Station { id: st[3] },
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        doc.edit(
+            add_anchor(
+                &doc,
+                trips[0],
+                "section:Q",
+                "p1.png",
+                1.5,
+                3.25,
+                Point { x: -0.5, y: 2.25 },
+            )
+            .unwrap(),
+        )
+        .unwrap();
         let text = cave_dxf::export(&doc, &cave_dxf::ExportOptions::default());
         let back = cave_dxf::import(&text, ActorId(2))
             .unwrap()
             .document
             .unwrap();
-        assert_eq!(
-            alignment(&back, trips[0], "p1.png"),
-            alignment(&doc, trips[0], "p1.png")
-        );
+        for view in ["map", "section:Q"] {
+            assert_eq!(
+                alignment(&back, trips[0], view, "p1.png"),
+                alignment(&doc, trips[0], view, "p1.png")
+            );
+        }
     }
 }

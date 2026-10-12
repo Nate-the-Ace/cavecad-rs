@@ -2,11 +2,11 @@
 //! fit that follows from them. Only the matches are stored (a scan's spots and the station each one
 //! is), so a placed scan moves with the survey when it is adjusted or revised.
 
-use crate::{ScanError, clean_path};
+use crate::{ScanError, key, key_checked};
 use cave_doc::{Action, Document, Field, Kind, Value};
 use cave_id::Id;
 use serde::Serialize;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 
 /// How a scan is fitted to its matches.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
@@ -19,18 +19,37 @@ pub enum FitMode {
     Warp,
 }
 
-/// One spot on a scan and the station it is. `px`, `py` are pixels from the scan's top left.
+/// What a spot on a scan is matched to.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+#[serde(tag = "kind", rename_all = "lowercase")]
+pub enum Target {
+    /// A station: the spot follows it when the survey changes.
+    Station {
+        /// The station.
+        id: Id,
+    },
+    /// A fixed place in the view (metres in the view's own frame): for a drawing that shows
+    /// something no station marks, such as a wall point on a cross section.
+    Point {
+        /// Across (profile: along the run; section: across the passage).
+        x: f64,
+        /// Up (elevation, or up the passage).
+        y: f64,
+    },
+}
+
+/// One spot on a scan and what it is. `px`, `py` are pixels from the scan's top left.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize)]
 pub struct Anchor {
     /// Pixels from the left edge.
     pub px: f64,
     /// Pixels from the top edge.
     pub py: f64,
-    /// The station this spot is.
-    pub station: Id,
+    /// What the spot is.
+    pub target: Target,
 }
 
-/// A scan's matches and how to fit them.
+/// A scan's matches in one view, and how to fit them.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct Alignment {
     /// Rigid or warped.
@@ -38,6 +57,10 @@ pub struct Alignment {
     /// The matches, in the order they were made.
     pub anchors: Vec<Anchor>,
 }
+
+/// Where each station is in a view: east and north on the map, along and up on a profile band,
+/// across and up on a cross section.
+pub type Positions = HashMap<Id, (f64, f64)>;
 
 impl Alignment {
     fn encode(&self) -> String {
@@ -47,7 +70,11 @@ impl Alignment {
         };
         let mut out = String::from(mode);
         for a in &self.anchors {
-            out.push_str(&format!(";{},{},{}", a.px, a.py, a.station));
+            let target = match a.target {
+                Target::Station { id } => id.to_string(),
+                Target::Point { x, y } => format!("{x}:{y}"),
+            };
+            out.push_str(&format!(";{},{},{}", a.px, a.py, target));
         }
         out
     }
@@ -59,46 +86,43 @@ impl Alignment {
             "warp" => FitMode::Warp,
             _ => return None,
         };
+        let finite = |s: &str| s.parse::<f64>().ok().filter(|v| v.is_finite());
         let anchors = parts
             .filter(|p| !p.is_empty())
             .map(|p| {
                 let mut f = p.split(',');
-                Some(Anchor {
-                    px: f.next()?.parse().ok().filter(|v: &f64| v.is_finite())?,
-                    py: f.next()?.parse().ok().filter(|v: &f64| v.is_finite())?,
-                    station: f.next()?.parse().ok()?,
-                })
+                let (px, py, t) = (finite(f.next()?)?, finite(f.next()?)?, f.next()?);
+                let target = match t.split_once(':') {
+                    Some((x, y)) => Target::Point {
+                        x: finite(x)?,
+                        y: finite(y)?,
+                    },
+                    None => Target::Station {
+                        id: t.parse().ok()?,
+                    },
+                };
+                Some(Anchor { px, py, target })
             })
             .collect::<Option<Vec<_>>>()?;
         Some(Alignment { mode, anchors })
     }
 }
 
-/// The matches kept for a scan on a trip, or `None` when it has none.
-pub fn alignment(doc: &Document, trip: Id, path: &str) -> Option<Alignment> {
+/// The matches kept for a scan on a trip in a view, or `None` when it has none.
+pub fn alignment(doc: &Document, trip: Id, view: &str, path: &str) -> Option<Alignment> {
     let e = doc.entity(trip).filter(|e| e.kind() == Kind::Trip)?;
-    Alignment::decode(e.map(Field::TripScanAlign).get(&clean_path(path)?)?)
+    Alignment::decode(e.map(Field::TripScanAlign).get(&key(view, path)?)?)
 }
 
-pub(crate) fn all(doc: &Document, trip: Id) -> BTreeMap<String, Alignment> {
-    doc.entity(trip)
-        .map(|e| {
-            e.map(Field::TripScanAlign)
-                .into_iter()
-                .filter_map(|(k, v)| Alignment::decode(&v).map(|a| (k, a)))
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
-/// Writes (or, with `None`, clears) a scan's matches.
+/// Writes (or, with `None`, clears) a scan's matches in a view.
 pub fn set_alignment(
     doc: &Document,
     trip: Id,
+    view: &str,
     path: &str,
     want: Option<Alignment>,
 ) -> Result<Vec<Action>, ScanError> {
-    let path = clean_path(path).ok_or(ScanError::BadPath)?;
+    let k = key_checked(view, path)?;
     let e = doc
         .entity(trip)
         .filter(|e| e.kind() == Kind::Trip)
@@ -106,16 +130,17 @@ pub fn set_alignment(
     let mut map = e.map(Field::TripScanAlign);
     match want.filter(|a| !a.anchors.is_empty()) {
         Some(a) => {
-            if a.anchors.iter().any(|x| {
-                doc.entity(x.station)
-                    .is_none_or(|e| e.kind() != Kind::Station)
-            }) {
+            let bad = |x: &Anchor| match x.target {
+                Target::Station { id } => doc.entity(id).is_none_or(|e| e.kind() != Kind::Station),
+                Target::Point { x, y } => !x.is_finite() || !y.is_finite(),
+            };
+            if a.anchors.iter().any(bad) {
                 return Err(ScanError::NoSuchStation);
             }
-            map.insert(path, a.encode());
+            map.insert(k, a.encode());
         }
         None => {
-            map.remove(&path);
+            map.remove(&k);
         }
     }
     if map == e.map(Field::TripScanAlign) {
@@ -128,54 +153,57 @@ pub fn set_alignment(
     }])
 }
 
-/// Adds a match (the spot `px`, `py` on the scan is `station`).
+/// Adds a match (the spot `px`, `py` on the scan is `target`).
 pub fn add_anchor(
     doc: &Document,
     trip: Id,
+    view: &str,
     path: &str,
     px: f64,
     py: f64,
-    station: Id,
+    target: Target,
 ) -> Result<Vec<Action>, ScanError> {
     if !px.is_finite() || !py.is_finite() || px < 0.0 || py < 0.0 {
         return Err(ScanError::BadPath);
     }
-    let mut a = alignment(doc, trip, path).unwrap_or(Alignment {
+    let mut a = alignment(doc, trip, view, path).unwrap_or(Alignment {
         mode: FitMode::Warp,
         anchors: Vec::new(),
     });
-    a.anchors.push(Anchor { px, py, station });
-    set_alignment(doc, trip, path, Some(a))
+    a.anchors.push(Anchor { px, py, target });
+    set_alignment(doc, trip, view, path, Some(a))
 }
 
 /// Takes away the match at `index`.
 pub fn remove_anchor(
     doc: &Document,
     trip: Id,
+    view: &str,
     path: &str,
     index: usize,
 ) -> Result<Vec<Action>, ScanError> {
-    let Some(mut a) = alignment(doc, trip, path) else {
+    let Some(mut a) = alignment(doc, trip, view, path) else {
         return Ok(Vec::new());
     };
     if index < a.anchors.len() {
         a.anchors.remove(index);
     }
-    set_alignment(doc, trip, path, Some(a))
+    set_alignment(doc, trip, view, path, Some(a))
 }
 
 /// Chooses how the matches are fitted.
 pub fn set_mode(
     doc: &Document,
     trip: Id,
+    view: &str,
     path: &str,
     mode: FitMode,
 ) -> Result<Vec<Action>, ScanError> {
-    let Some(mut a) = alignment(doc, trip, path) else {
+    let Some(mut a) = alignment(doc, trip, view, path) else {
         return Ok(Vec::new());
     };
     a.mode = mode;
-    set_alignment(doc, trip, path, Some(a))
+    set_alignment(doc, trip, view, path, Some(a))
 }
 
 /// A fit: `[a, b, c, d, e, f]` taking a pixel (from the top left, y down) to the map:
@@ -286,16 +314,16 @@ pub fn fit(pairs: &[Pair], mode: FitMode) -> Option<Fit> {
     })
 }
 
-/// A scan placed under the map.
+/// A scan placed in a view.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct Placed {
     /// The trip it is linked to.
     pub trip: Id,
     /// The scan.
     pub path: String,
-    /// Pixel to map, see [`Fit`].
+    /// Pixel to the view's metres, see [`Fit`].
     pub matrix: [f64; 6],
-    /// Matches used (those whose station is on the map).
+    /// Matches used (those whose station is in the view).
     pub used: usize,
     /// Mean miss of the matches, metres.
     pub rms: f64,
@@ -305,25 +333,38 @@ pub struct Placed {
     pub trim: Option<crate::Outline>,
 }
 
-/// Every scan with enough matches, placed from where its stations are now (`positions`: east, north).
-pub fn placements(doc: &Document, positions: &HashMap<Id, (f64, f64)>) -> Vec<Placed> {
+/// Every scan with enough matches in `view`, placed from where its stations are now in that view.
+pub fn placements(doc: &Document, view: &str, positions: &Positions) -> Vec<Placed> {
     let mut out = Vec::new();
     for trip in doc.ids_of(Kind::Trip) {
+        let Some(e) = doc.entity(trip) else { continue };
         let linked = crate::scans_of(doc, trip);
-        for (path, al) in all(doc, trip) {
-            if !linked.contains(&path) {
+        for (k, text) in e.map(Field::TripScanAlign) {
+            let Some((v, path)) = crate::split_key(&k) else {
+                continue;
+            };
+            if v != view || !linked.iter().any(|p| p == path) {
                 continue;
             }
+            let Some(al) = Alignment::decode(&text) else {
+                continue;
+            };
             let pairs: Vec<_> = al
                 .anchors
                 .iter()
-                .filter_map(|a| positions.get(&a.station).map(|p| ((a.px, a.py), *p)))
+                .filter_map(|a| {
+                    let at = match a.target {
+                        Target::Station { id } => *positions.get(&id)?,
+                        Target::Point { x, y } => (x, y),
+                    };
+                    Some(((a.px, a.py), at))
+                })
                 .collect();
             if let Some(f) = fit(&pairs, al.mode) {
                 out.push(Placed {
                     trip,
-                    trim: crate::trim(doc, trip, &path),
-                    path,
+                    trim: crate::trim(doc, trip, view, path),
+                    path: path.to_string(),
                     matrix: f.matrix,
                     used: pairs.len(),
                     rms: f.rms,

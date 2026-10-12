@@ -106,7 +106,7 @@
       const z = (scene?.bounds?.[2] ?? 0) - 0.5;
       const list = on
         ? engine
-            .scanPlacements(cave.adjusted)
+            .scanPlacements('map', cave.adjusted)
             .filter((p) => !filter.hiddenTrips.includes(p.trip) && have(p.path))
             .map((p) => ({ key: `${p.trip}/${p.path}`, url: mapUrl(p.path)!, matrix: p.matrix, z, opacity, trim: p.trim }))
         : [];

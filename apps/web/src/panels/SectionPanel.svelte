@@ -19,7 +19,9 @@
   import { fitStroke } from '../lib/spline';
   import { tolerancePx } from '../lib/commands';
   import { cave, changed, option, filter, wireFilter } from '../lib/cave.svelte';
-  import { engine, loadEngine, type SectionStation, type StationSection } from '../lib/engine';
+  import { drawScan } from '../lib/scan-draw';
+  import { givePoint, have, scanImage, scans, waitingForPoint } from '../lib/scans.svelte';
+  import { engine, loadEngine, type ScanPlacement, type SectionStation, type StationSection } from '../lib/engine';
   import { metresPer, niceNumber, unitName } from '../lib/units';
 
   let wrap: HTMLDivElement;
@@ -82,6 +84,9 @@
   const toWorld = (x: number, y: number): [number, number] => [(x - ox) / scale, (oy - y) / scale];
   const toScreen = (u: number, v: number): [number, number] => [ox + u * scale, oy - v * scale];
 
+  /** Scans placed on this section, drawn under the sketch. */
+  let placed: ScanPlacement[] = [];
+
   /** The station shown is a fixed one of the survey (its triangle gets a dot). */
   let fixedHere = false;
 
@@ -90,6 +95,7 @@
     stations = engine.sectionStations(cave.adjusted, true, wireFilter());
     if (!stations.some((s) => s.id === cave.station)) cave.station = (stations.find((s) => s.outlined) ?? stations[0])?.id ?? '';
     section = cave.station ? engine.sectionAt(cave.adjusted, cave.station, true, wireFilter()) : null;
+    placed = cave.station ? engine.scanPlacements(`section:${cave.station}`, cave.adjusted).filter((p) => !filter.hiddenTrips.includes(p.trip) && have(p.path)) : [];
     fixedHere = !!cave.station && engine.scene(cave.adjusted).stations.some((x) => x.id === cave.station && x.benchmark);
     frameOnce();
     schedule();
@@ -101,6 +107,9 @@
     void cave.adjusted;
     void cave.station;
     void filter.hiddenTrips.length;
+    void scans.paths.length; // scans appear when their folder is opened
+    void option('showScans', true);
+    void option('scanOpacity', 0.5);
     void ready;
     untrack(refresh);
   });
@@ -156,6 +165,14 @@
     const c = css();
     const s = section;
     if (!s) return;
+
+    // scans placed on this section lie under everything drawn here
+    if (option('showScans', true)) {
+      for (const sp of placed) {
+        const img = scanImage(sp.path, schedule);
+        if (img) drawScan(g, img, sp, { ox, oy, scale }, option('scanOpacity', 0.5));
+      }
+    }
 
     // the station: its survey point triangle, where the section is cut
     const [cx, cy] = toScreen(0, 0);
@@ -263,6 +280,13 @@
   function onDown(e: PointerEvent) {
     canvas.setPointerCapture(e.pointerId);
     canvas.focus();
+    if (e.button === 0 && cave.station && waitingForPoint(`section:${cave.station}`)) {
+      // Aligning a scan: this place is what the spot picked on the scan is.
+      const r = canvas.getBoundingClientRect();
+      const w = toWorld(e.clientX - r.left, e.clientY - r.top);
+      givePoint(w[0], w[1]);
+      return;
+    }
     if (e.pointerType === 'pen') {
       guard.pen(e);
       // A pen landing means anything a resting hand started was never a gesture.
