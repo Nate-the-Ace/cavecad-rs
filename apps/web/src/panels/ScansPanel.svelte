@@ -13,7 +13,7 @@
   import { formatLength } from '../lib/units';
   import type { TripChoice } from '../lib/notebook';
   import { treeRows } from '../lib/scan-tree';
-  import { addFiles, align, trimming, checkRemembered, have, pickFolder, reopenRemembered, scans, select, toggleFolder } from '../lib/scans.svelte';
+  import { addFiles, align, dropItems, trimming, checkRemembered, have, pickFolder, reopenRemembered, scans, select, toggleFolder } from '../lib/scans.svelte';
   import { showPanel } from '../lib/workspace.svelte';
 
   let ready = $state(false);
@@ -169,8 +169,12 @@
   function drop(e: DragEvent) {
     e.preventDefault();
     over = false;
-    const list = [...(e.dataTransfer?.files ?? [])];
-    if (list.length) addFiles(list);
+    const items = e.dataTransfer?.items;
+    if (items?.length) void dropItems(items);
+    else {
+      const list = [...(e.dataTransfer?.files ?? [])];
+      if (list.length) addFiles(list);
+    }
   }
 
   function onKey(e: KeyboardEvent) {
@@ -283,7 +287,7 @@
             </button>
           {/if}
         {:else}
-          <p class="none">{scans.paths.length ? 'No scan matches.' : 'Open the folder your scans are in, or drop scan files here. They stay on this machine.'}</p>
+          <p class="none">{scans.paths.length ? 'No scan matches.' : 'Open the folder your scans are in, or drop the folder (or scan files) here. They stay on this machine.'}</p>
         {/each}
       </div>
     </div>

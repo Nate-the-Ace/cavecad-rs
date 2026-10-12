@@ -110,22 +110,96 @@ function load(name: string, found: Map<string, File>) {
 /** Picks a scans folder and reads its picture and PDF files. Returns false if the person cancelled. */
 export async function pickFolder(): Promise<boolean> {
   const p = window as unknown as Picker;
-  if (!p.showDirectoryPicker) {
-    scans.message = 'This browser cannot open a folder. Drop the scan files onto the panel instead.';
-    return false;
+  // Inside a frame (the hosted copy) the directory picker is refused, and the plain folder input must
+  // be opened straight from the click, so it is used from the start.
+  const framed = window.self !== window.top;
+  if (p.showDirectoryPicker && !framed) {
+    try {
+      const handle = await p.showDirectoryPicker({ mode: 'read' });
+      await readFolder(handle);
+      await keep(handle);
+      remembered = handle;
+      scans.remembered = '';
+      return true;
+    } catch (e) {
+      if (e instanceof DOMException && e.name === 'AbortError') return false;
+      // Not allowed here (a page inside a frame, as on the hosted copy): use the plain folder input.
+    }
   }
-  try {
-    const handle = await p.showDirectoryPicker({ mode: 'read' });
-    await readFolder(handle);
-    await keep(handle);
-    remembered = handle;
-    scans.remembered = '';
-    return true;
-  } catch (e) {
-    if (e instanceof DOMException && e.name === 'AbortError') return false;
-    scans.message = 'The folder could not be read.';
-    return false;
+  return pickFolderWithInput();
+}
+
+/**
+ * The folder picker every browser has: a file input that takes a whole folder. It cannot be
+ * remembered for next time, but it works where the directory picker is blocked.
+ */
+function pickFolderWithInput(): Promise<boolean> {
+  return new Promise((resolve) => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.multiple = true;
+    input.setAttribute('webkitdirectory', '');
+    input.onchange = () => {
+      const list = [...(input.files ?? [])];
+      if (!list.length) return resolve(false);
+      const found = new Map<string, File>();
+      let folder = '';
+      for (const f of list) {
+        const rel = (f as File & { webkitRelativePath?: string }).webkitRelativePath || f.name;
+        const parts = rel.split('/');
+        folder = parts.length > 1 ? parts[0] : folder;
+        const inside = parts.length > 1 ? parts.slice(1).join('/') : rel; // paths are relative to the folder itself
+        if (scanKind(inside)) found.set(inside, f);
+      }
+      load(folder || 'scans', found);
+      resolve(true);
+    };
+    input.oncancel = () => resolve(false);
+    input.click();
+  });
+}
+
+/** Reads a dropped folder or file entry (and everything inside a folder) into `out`. */
+async function walkEntry(entry: FileSystemEntry, prefix: string, out: Map<string, File>, budget: { n: number }) {
+  if (budget.n <= 0) return;
+  if (entry.isFile) {
+    const path = `${prefix}${entry.name}`;
+    if (!scanKind(path)) return;
+    budget.n -= 1;
+    out.set(path, await new Promise<File>((res, rej) => (entry as FileSystemFileEntry).file(res, rej)));
+  } else if (entry.isDirectory && !entry.name.startsWith('.')) {
+    const reader = (entry as FileSystemDirectoryEntry).createReader();
+    for (;;) {
+      const batch = await new Promise<FileSystemEntry[]>((res, rej) => reader.readEntries(res, rej));
+      if (!batch.length) break;
+      for (const child of batch) await walkEntry(child, `${prefix}${entry.name}/`, out, budget);
+    }
   }
+}
+
+/**
+ * Adds what was dropped on the panel: files, or a whole folder (its scans, at any depth, keeping
+ * their folder paths). A dropped folder becomes the scans folder.
+ */
+export async function dropItems(items: DataTransferItemList): Promise<void> {
+  const entries = [...items].map((i) => i.webkitGetAsEntry?.()).filter((e): e is FileSystemEntry => !!e);
+  const folders = entries.filter((e) => e.isDirectory);
+  const found = new Map<string, File>();
+  if (folders.length === 1 && entries.length === 1) {
+    // One folder dropped: its own name is the scans folder, so paths start inside it.
+    const root = folders[0] as FileSystemDirectoryEntry;
+    const reader = root.createReader();
+    for (;;) {
+      const batch = await new Promise<FileSystemEntry[]>((res, rej) => reader.readEntries(res, rej));
+      if (!batch.length) break;
+      for (const child of batch) await walkEntry(child, '', found, { n: 5000 });
+    }
+    load(root.name, found);
+    return;
+  }
+  for (const e of entries) await walkEntry(e, '', found, { n: 5000 });
+  for (const [path, f] of files) if (!found.has(path)) found.set(path, f);
+  load(scans.folder || 'dropped files', found);
 }
 
 async function readFolder(handle: DirHandle) {
