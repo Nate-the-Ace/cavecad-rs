@@ -13,7 +13,7 @@
   import { formatLength } from '../lib/units';
   import type { TripChoice } from '../lib/notebook';
   import { countDone, filesUnder, foldersOf, treeRows, withoutComplete, type TreeRow } from '../lib/scan-tree';
-  import { addFiles, align, dropItems, trimming, checkRemembered, have, pickFolder, reopenRemembered, scans, select, setFolders, toggleFolder } from '../lib/scans.svelte';
+  import { addFiles, align, dropItems, trimming, checkRemembered, have, forgetCopy, pickFolder, reopenRemembered, scans, select, setFolders, toggleFolder } from '../lib/scans.svelte';
   import { showPanel } from '../lib/workspace.svelte';
 
   let ready = $state(false);
@@ -336,6 +336,12 @@
         {/each}
       {/if}
       <div class="head">{scans.folder || 'Scans'} {#if scans.paths.length}<span class="n">{scans.paths.length}</span>{/if}</div>
+      {#if scans.keptBytes}
+        <div class="kept" title="This browser keeps a copy of your scans so a refresh does not lose them. It stays on this machine.">
+          {scans.restored ? 'Kept from last time' : 'Copy kept in this browser'} · {(scans.keptBytes / 1048576).toFixed(0)} MB
+          <button class="link" onclick={forgetCopy}>Forget it</button>
+        </div>
+      {/if}
       {#if scans.paths.length}
         <input type="search" placeholder="Find a scan" bind:value={filter} aria-label="Find a scan" />
         <label class="hide" title="Show only the pages that still need attention"><input type="checkbox" bind:checked={hideDone} /> Hide complete <span class="n">{totalDone}/{scans.paths.length}</span></label>
@@ -400,6 +406,8 @@
   .menu hr { border: none; border-top: 1px solid var(--line); margin: 4px 2px; width: 100%; }
   .menu button { border: none; background: none; text-align: left; padding: 6px 8px; border-radius: 4px; }
   .menu button:hover { background: var(--accent-bg); }
+  .kept { font-size: 11px; color: var(--muted); padding: 0 4px 4px; }
+  .kept .link { border: none; background: none; color: var(--accent); padding: 0 2px; font-size: 11px; cursor: pointer; text-decoration: underline; }
   .none { color: var(--muted); font-size: 12px; padding: 8px 4px; }
   .empty { flex: 1; display: grid; place-items: center; color: var(--muted); }
 </style>

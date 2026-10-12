@@ -29,6 +29,10 @@ export const scans = $state({
   /** Folders (paths) the tree has folded. */
   collapsed: [] as string[],
   message: '',
+  /** The pages on show came back from the copy this browser keeps (not read from the folder just now). */
+  restored: false,
+  /** Bytes of the kept copy, or 0. */
+  keptBytes: 0,
 });
 
 const files = new Map<string, File>();
@@ -38,8 +42,12 @@ const DB = 'cavecad-scans';
 
 function db(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
-    const r = indexedDB.open(DB, 1);
-    r.onupgradeneeded = () => r.result.createObjectStore('folder');
+    const r = indexedDB.open(DB, 2);
+    r.onupgradeneeded = () => {
+      const names = r.result.objectStoreNames;
+      if (!names.contains('folder')) r.result.createObjectStore('folder');
+      if (!names.contains('files')) r.result.createObjectStore('files'); // path to the page itself
+    };
     r.onsuccess = () => resolve(r.result);
     r.onerror = () => reject(r.error);
   });
@@ -73,12 +81,100 @@ async function recall(): Promise<DirHandle | null> {
   }
 }
 
+/**
+ * Keeps a copy of the pages in this browser, so a refresh (or coming back tomorrow) finds them
+ * again with no folder to pick. Stored on this machine only. If there is no room, the pages work for
+ * this visit and the person is told they will be picked again next time.
+ */
+async function keepCopy(name: string, found: Map<string, File>) {
+  try {
+    const d = await db();
+    await new Promise<void>((resolve, reject) => {
+      const tx = d.transaction(['files', 'folder'], 'readwrite');
+      const store = tx.objectStore('files');
+      store.clear();
+      let bytes = 0;
+      for (const [path, f] of found) {
+        store.put(f, path);
+        bytes += f.size;
+      }
+      tx.objectStore('folder').put({ name, bytes, count: found.size }, 'copy');
+      tx.oncomplete = () => {
+        scans.keptBytes = bytes;
+        resolve();
+      };
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error);
+    });
+  } catch {
+    scans.keptBytes = 0;
+    scans.message = 'This browser had no room to keep a copy of the scans, so they will need to be opened again after a refresh.';
+  }
+}
+
+/** Brings back the pages kept from last time. Returns whether there were any. */
+async function restoreCopy(): Promise<boolean> {
+  try {
+    const d = await db();
+    const meta = await new Promise<{ name: string; bytes: number } | undefined>((resolve) => {
+      const r = d.transaction('folder').objectStore('folder').get('copy');
+      r.onsuccess = () => resolve(r.result);
+      r.onerror = () => resolve(undefined);
+    });
+    if (!meta) return false;
+    const found = new Map<string, File>();
+    await new Promise<void>((resolve) => {
+      const r = d.transaction('files').objectStore('files').openCursor();
+      r.onsuccess = () => {
+        const c = r.result;
+        if (!c) return resolve();
+        if (c.value instanceof Blob) found.set(String(c.key), c.value as File);
+        c.continue();
+      };
+      r.onerror = () => resolve();
+    });
+    if (!found.size) return false;
+    load(meta.name, found, false);
+    scans.restored = true;
+    scans.keptBytes = meta.bytes;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Throws away the kept copy (the folder on disk is untouched). */
+export async function forgetCopy() {
+  try {
+    const d = await db();
+    await new Promise<void>((resolve) => {
+      const tx = d.transaction(['files', 'folder'], 'readwrite');
+      tx.objectStore('files').clear();
+      tx.objectStore('folder').delete('copy');
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => resolve();
+    });
+  } catch {
+    /* nothing kept */
+  }
+  scans.keptBytes = 0;
+  scans.restored = false;
+}
+
 let remembered: DirHandle | null = null;
 
 /** Looks for a folder remembered from last time (call once when the panel opens). */
-export async function checkRemembered() {
-  remembered = await recall();
-  scans.remembered = remembered?.name ?? '';
+let starting: Promise<void> | null = null;
+
+export function checkRemembered(): Promise<void> {
+  // Once only, however many parts of the app ask: the app at start-up (so scans are on the maps
+  // before the panel is ever opened) and the panel.
+  starting ??= (async () => {
+    if (scans.paths.length === 0) await restoreCopy(); // pages kept from last time come back by themselves
+    remembered = await recall();
+    scans.remembered = remembered?.name ?? '';
+  })();
+  return starting;
 }
 
 async function walk(dir: DirHandle, prefix: string, out: Map<string, File>, budget: { n: number }) {
@@ -94,7 +190,7 @@ async function walk(dir: DirHandle, prefix: string, out: Map<string, File>, budg
   }
 }
 
-function load(name: string, found: Map<string, File>) {
+function load(name: string, found: Map<string, File>, saveCopy = true) {
   forgetSelection();
   for (const u of mapUrls.values()) URL.revokeObjectURL(u);
   mapUrls.clear();
@@ -104,7 +200,9 @@ function load(name: string, found: Map<string, File>) {
   scans.folder = name;
   scans.paths = [...files.keys()];
   scans.collapsed = [];
+  scans.restored = false;
   scans.message = scans.paths.length ? '' : 'No scans (pictures or PDFs) were found there.';
+  if (saveCopy && found.size) void keepCopy(name, found);
 }
 
 /** Picks a scans folder and reads its picture and PDF files. Returns false if the person cancelled. */

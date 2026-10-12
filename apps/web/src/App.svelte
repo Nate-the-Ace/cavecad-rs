@@ -8,6 +8,7 @@
   import { guardUnload } from './lib/files';
   import { installDiagnostics } from './lib/diagnostics';
   import { readInviteFromUrl } from './lib/sync.svelte';
+  import { checkRemembered } from './lib/scans.svelte';
 
   let version = $state('loading engine…');
   let info = $state<BuildInfo | null>(null);
@@ -18,6 +19,7 @@
     const teardown = initWorkspace(host);
     installDiagnostics();
     readInviteFromUrl();
+    void checkRemembered(); // the scans kept from last time come back before any panel is opened
     const unguard = guardUnload();
     (async () => {
       try {
