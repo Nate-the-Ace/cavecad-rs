@@ -5,12 +5,14 @@
 //! sharing a cave never shares a scan, and a path can never point outside the scans folder.
 
 mod align;
+mod marks;
 mod trim;
 
 pub use align::{
     Alignment, Anchor, Fit, FitMode, Pair, Placed, Positions, Target, add_anchor, alignment, fit,
     placements, remove_anchor, set_alignment, set_mode,
 };
+pub use marks::{MAX_MARKS, completed, scan_id, set_complete};
 pub use trim::{Outline, set_trim, simplify, trim};
 
 use cave_doc::{Action, Document, Field, Kind, Value};

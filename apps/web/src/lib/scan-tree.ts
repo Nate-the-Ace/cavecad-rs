@@ -61,3 +61,23 @@ export function treeRows(paths: string[], collapsed: ReadonlySet<string>, filter
   walk(root, '', 0);
   return rows;
 }
+
+/** The scans inside a folder (all levels), as paths. */
+export function filesUnder(paths: string[], folder: string): string[] {
+  const prefix = folder + '/';
+  return paths.filter((p) => p.startsWith(prefix) && scanKind(p));
+}
+
+/** How many of `paths` are in `done`. */
+export function countDone(paths: string[], done: ReadonlySet<string>): number {
+  return paths.reduce((n, p) => n + (done.has(p) ? 1 : 0), 0);
+}
+
+/** Drops complete scans, and folders with nothing left in them, from the rows (to see what still needs attention). */
+export function withoutComplete(rows: TreeRow[], done: ReadonlySet<string>, all: string[]): TreeRow[] {
+  return rows.filter((r) => {
+    if (r.kind === 'file') return !done.has(r.path);
+    const inside = filesUnder(all, r.path);
+    return inside.length === 0 || countDone(inside, done) < inside.length;
+  });
+}

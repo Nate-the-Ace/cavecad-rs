@@ -1768,3 +1768,27 @@ pub fn new_cave(name: &str, trip: &str, unit: &str) -> String {
         Err(e) => format!("error: {e:?}"),
     }
 }
+
+/// Every scanned page marked complete (JSON array of paths).
+#[wasm_bindgen]
+pub fn scan_completed() -> String {
+    DOC.with(|d| {
+        let v = d
+            .borrow()
+            .as_ref()
+            .map(cave_scans::completed)
+            .unwrap_or_default();
+        serde_json::to_string(&v).unwrap_or_else(|_| "[]".into())
+    })
+}
+
+/// Marks pages (JSON array of paths) complete or incomplete: one undoable edit in the Scans history.
+#[wasm_bindgen]
+pub fn scan_set_complete(paths: &str, complete: bool) -> String {
+    let Ok(paths) = serde_json::from_str::<Vec<String>>(paths) else {
+        return "error: unreadable list of pages".into();
+    };
+    scoped_edit("scans", |doc| {
+        cave_scans::set_complete(doc, &paths, complete)
+    })
+}

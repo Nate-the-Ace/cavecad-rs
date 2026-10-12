@@ -21,6 +21,9 @@ pub enum Kind {
     Symbol,
     /// A piece of text on the map.
     Text,
+    /// A scanned page the team keeps track of (which pages have been dealt with). Its id comes from
+    /// its path, so two people marking the same page write to the same entity and agree.
+    Scan,
 }
 
 /// The type of value a field holds.
@@ -247,6 +250,10 @@ pub enum Field {
     SymbolTags,
     /// The trip whose ground the text sits on.
     TextTrip,
+    /// The scan's path relative to the scans folder.
+    ScanPath,
+    /// The page has been dealt with (typed up, traced). Unmarked means it still needs attention.
+    ScanComplete,
     /// The words.
     TextBody,
     /// Where the text starts.
@@ -336,6 +343,8 @@ impl Field {
             SymbolScale => (K::Symbol, V::Number),
             SymbolTrip => (K::Symbol, V::Ref),
             SymbolTags => (K::Symbol, V::Map),
+            ScanPath => (K::Scan, V::Text),
+            ScanComplete => (K::Scan, V::Flag),
             TextTrip => (K::Text, V::Ref),
             TextBody => (K::Text, V::Text),
             TextAt => (K::Text, V::Point),

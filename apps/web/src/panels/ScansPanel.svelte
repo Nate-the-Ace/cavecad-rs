@@ -5,14 +5,14 @@
   // to a trip's page brings up its scan and picking a linked scan turns the notebook to its trip. The
   // pictures are never uploaded and never go into the cave.
   import { untrack } from 'svelte';
-  import { ChevronDown, ChevronRight, FolderOpen, Folder, Link2, Unlink2, BookOpen, Crosshair, Scissors, X } from '@lucide/svelte';
+  import { ChevronDown, ChevronRight, FolderOpen, Folder, Link2, Unlink2, BookOpen, Check, Crosshair, Scissors, X } from '@lucide/svelte';
   import PanelUndo from '../components/PanelUndo.svelte';
   import ScanViewer from '../components/ScanViewer.svelte';
   import { cave, changed, clearPick, option, setOption, setPick } from '../lib/cave.svelte';
   import { engine, loadEngine, type ScanAlignment } from '../lib/engine';
   import { formatLength } from '../lib/units';
   import type { TripChoice } from '../lib/notebook';
-  import { treeRows } from '../lib/scan-tree';
+  import { countDone, filesUnder, treeRows, withoutComplete, type TreeRow } from '../lib/scan-tree';
   import { addFiles, align, dropItems, trimming, checkRemembered, have, pickFolder, reopenRemembered, scans, select, toggleFolder } from '../lib/scans.svelte';
   import { showPanel } from '../lib/workspace.svelte';
 
@@ -22,6 +22,11 @@
   let filter = $state('');
   let over = $state(false);
   let al = $state<ScanAlignment | null>(null);
+  /** Pages marked complete, and whether the tree hides them (to see what still needs attention). */
+  let done = $state<Set<string>>(new Set());
+  let hideDone = $state(false);
+  /** The right-click menu: what it is for and where it is. */
+  let menu = $state<{ row: TreeRow | { kind: 'file'; path: string; name: string; depth: number; count: number; collapsed: boolean }; x: number; y: number } | null>(null);
   let stations = $state<{ id: string; station: string }[]>([]);
   let chosen = $state('');
   let placed = $state<{ used: number; rms: number } | null>(null);
@@ -39,6 +44,7 @@
       trips = engine.notebookTrips();
       links = engine.scanLinks();
       if (!trips.some((t) => t.id === cave.trip)) cave.trip = trips[0]?.id ?? '';
+      done = new Set(engine.scanCompleted());
       stations = engine.scanViewStations(align.view, cave.adjusted).map((r) => ({ id: r.id, station: r.label }));
       al = scans.selected && cave.trip ? engine.scanAlignment(cave.trip, align.view, scans.selected) : null;
       const p = engine.scanPlacements(align.view, cave.adjusted).find((x) => x.trip === cave.trip && x.path === scans.selected);
@@ -47,7 +53,9 @@
     });
   });
 
-  const rows = $derived(treeRows(scans.paths, new Set(scans.collapsed), filter));
+  const allRows = $derived(treeRows(scans.paths, new Set(scans.collapsed), filter));
+  const rows = $derived(hideDone ? withoutComplete(allRows, done, scans.paths) : allRows);
+  const totalDone = $derived(countDone(scans.paths, done));
   const mine = $derived(links.filter((l) => l.trip === cave.trip).map((l) => l.path));
   const tripsOf = (path: string) => links.filter((l) => l.path === path).map((l) => l.trip);
   const tripNumber = (id: string) => (trips.find((t) => t.id === id)?.index ?? 0) + 1;
@@ -155,6 +163,25 @@
   const showUnder = $derived(option('showScans', true));
   const opacity = $derived(option('scanOpacity', 0.5));
 
+  /** The pages a menu entry acts on: the page itself, or everything inside a folder. */
+  const targets = (r: TreeRow) => (r.kind === 'file' ? [r.path] : filesUnder(scans.paths, r.path));
+  const allDone = (r: TreeRow) => {
+    const t = targets(r);
+    return t.length > 0 && countDone(t, done) === t.length;
+  };
+
+  function mark(r: TreeRow, complete: boolean) {
+    const res = engine.scanSetComplete(targets(r), complete);
+    scans.message = res.startsWith('error') ? res.replace(/^error: /, '') : '';
+    menu = null;
+    changed();
+  }
+
+  function openMenu(e: MouseEvent, r: TreeRow) {
+    e.preventDefault();
+    menu = { row: r, x: Math.min(e.clientX, window.innerWidth - 200), y: Math.min(e.clientY, window.innerHeight - 90) };
+  }
+
   function toggleLink() {
     if (!scans.selected || !cave.trip) return;
     const r = linkedHere ? engine.scanUnlink(cave.trip, scans.selected) : engine.scanLink(cave.trip, scans.selected);
@@ -178,6 +205,10 @@
   }
 
   function onKey(e: KeyboardEvent) {
+    if (e.key === 'Escape' && menu) {
+      menu = null;
+      return;
+    }
     const t = e.target as HTMLElement;
     if (t.tagName === 'INPUT' || t.tagName === 'SELECT') return;
     if (trimming.on) {
@@ -195,6 +226,22 @@
     }
   }
 </script>
+
+{#if menu}
+  <!-- svelte-ignore a11y_no_static_element_interactions, a11y_click_events_have_key_events: the veil only closes the menu (Escape does too) -->
+  <div class="veil" onclick={() => (menu = null)} oncontextmenu={(e) => { e.preventDefault(); menu = null; }}></div>
+  <div class="menu" role="menu" style="left: {menu.x}px; top: {menu.y}px">
+    <div class="what">{menu.row.name}</div>
+    {#if menu.row.kind === 'folder'}
+      <button role="menuitem" onclick={() => menu && mark(menu.row as TreeRow, true)}>Mark all complete</button>
+      <button role="menuitem" onclick={() => menu && mark(menu.row as TreeRow, false)}>Mark all incomplete</button>
+    {:else if done.has(menu.row.path)}
+      <button role="menuitem" onclick={() => menu && mark(menu.row as TreeRow, false)}>Mark incomplete</button>
+    {:else}
+      <button role="menuitem" onclick={() => menu && mark(menu.row as TreeRow, true)}>Mark complete</button>
+    {/if}
+  </div>
+{/if}
 
 <!-- svelte-ignore a11y_no_noninteractive_element_interactions: the panel takes dropped files and Ctrl/Cmd+Z for its own undo -->
 <div class="panel" class:over role="region" aria-label="Scans" tabindex="-1" onkeydown={onKey} ondragover={(e) => { e.preventDefault(); over = true; }} ondragleave={() => (over = false)} ondrop={drop}>
@@ -274,16 +321,18 @@
       <div class="head">{scans.folder || 'Scans'} {#if scans.paths.length}<span class="n">{scans.paths.length}</span>{/if}</div>
       {#if scans.paths.length}
         <input type="search" placeholder="Find a scan" bind:value={filter} aria-label="Find a scan" />
+        <label class="hide" title="Show only the pages that still need attention"><input type="checkbox" bind:checked={hideDone} /> Hide complete <span class="n">{totalDone}/{scans.paths.length}</span></label>
       {/if}
       <div class="tree" role="tree">
         {#each rows as r (r.path)}
           {#if r.kind === 'folder'}
-            <button class="folder" style="padding-left: {6 + r.depth * 14}px" role="treeitem" aria-selected="false" aria-expanded={!r.collapsed} onclick={() => toggleFolder(r.path)}>
-              {#if r.collapsed}<ChevronRight size={13} />{:else}<ChevronDown size={13} />{/if}<Folder size={13} /> {r.name} <span class="n">{r.count}</span>
+            <button class="folder" class:complete={allDone(r)} style="padding-left: {6 + r.depth * 14}px" role="treeitem" aria-selected="false" aria-expanded={!r.collapsed} oncontextmenu={(e) => openMenu(e, r)} onclick={() => toggleFolder(r.path)}>
+              {#if r.collapsed}<ChevronRight size={13} />{:else}<ChevronDown size={13} />{/if}<Folder size={13} /> {r.name}
+              <span class="n" title="Pages marked complete / pages in this folder">{countDone(filesUnder(scans.paths, r.path), done)}/{r.count}</span>{#if allDone(r)}<Check size={12} class="ok" />{/if}
             </button>
           {:else}
-            <button class="file" class:sel={scans.selected === r.path} style="padding-left: {20 + r.depth * 14}px" role="treeitem" aria-selected={scans.selected === r.path} title={r.path} onclick={() => select(r.path)}>
-              {r.name}{#each tripsOf(r.path) as t}<span class="chip" title="Linked to trip {tripNumber(t)}">{tripNumber(t)}</span>{/each}
+            <button class="file" class:sel={scans.selected === r.path} class:complete={done.has(r.path)} style="padding-left: {20 + r.depth * 14}px" role="treeitem" aria-selected={scans.selected === r.path} title={r.path} oncontextmenu={(e) => openMenu(e, r)} onclick={() => select(r.path)}>
+              {#if done.has(r.path)}<Check size={12} class="ok" />{/if}{r.name}{#each tripsOf(r.path) as t}<span class="chip" title="Linked to trip {tripNumber(t)}">{tripNumber(t)}</span>{/each}
             </button>
           {/if}
         {:else}
@@ -325,6 +374,14 @@
   .side button.sel { background: var(--accent-bg); }
   .side button.gone { color: var(--muted); text-decoration: line-through; }
   .chip { margin-left: 6px; padding: 0 5px; border-radius: 999px; border: 1px solid var(--line); font-size: 10px; color: var(--muted); }
+  .side button.complete { color: var(--muted); }
+  .side :global(.ok) { color: #34c759; flex: none; margin-right: 3px; }
+  .hide { display: flex; align-items: center; gap: 4px; font-size: 11px; color: var(--muted); padding: 2px 4px; }
+  .veil { position: fixed; inset: 0; z-index: 60; }
+  .menu { position: fixed; z-index: 61; min-width: 170px; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 4px; box-shadow: 0 6px 24px rgba(0, 0, 0, 0.35); display: flex; flex-direction: column; }
+  .menu .what { font-size: 11px; color: var(--muted); padding: 4px 8px; max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .menu button { border: none; background: none; text-align: left; padding: 6px 8px; border-radius: 4px; }
+  .menu button:hover { background: var(--accent-bg); }
   .none { color: var(--muted); font-size: 12px; padding: 8px 4px; }
   .empty { flex: 1; display: grid; place-items: center; color: var(--muted); }
 </style>
