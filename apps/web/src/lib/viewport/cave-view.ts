@@ -555,6 +555,7 @@ export class CaveView {
   }
 
   private readonly scans = new Map<string, { mesh: THREE.Mesh; url: string }>();
+  private static readonly SCAN_MAX = 4096;
 
   /**
    * Draws scans placed under the map. Each is a picture whose pixels are carried to the map by
@@ -562,39 +563,67 @@ export class CaveView {
    * at height `z`. Drawn before the lines and without depth, so the passage never hides it and the
    * survey is drawn over it.
    */
-  setScans(list: { key: string; url: string; matrix: number[]; z: number; opacity: number }[]) {
+  setScans(list: { key: string; url: string; matrix: number[]; z: number; opacity: number; trim?: [number, number][] | null }[]) {
     const keep = new Set(list.map((l) => l.key));
     for (const [key, s] of this.scans) {
       if (!keep.has(key)) this.removeScan(key, s);
     }
     for (const item of list) {
       const have = this.scans.get(item.key);
-      if (have && have.url === item.url) {
+      const sig = item.url + '|' + (item.trim ? item.trim.join(';') : '');
+      if (have && have.url === sig) {
         this.placeScan(have.mesh, item);
         continue;
       }
       if (have) this.removeScan(item.key, have);
-      new THREE.TextureLoader().load(item.url, (tex) => {
-        if (this.scans.has(item.key)) tex.dispose();
-        else if (!keep.has(item.key)) tex.dispose();
-        else {
-          tex.colorSpace = THREE.SRGBColorSpace;
-          tex.anisotropy = 4;
-          const w = tex.image.width as number;
-          const h = tex.image.height as number;
-          const geo = new THREE.BufferGeometry();
-          geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array([0, 0, 0, w, 0, 0, w, h, 0, 0, h, 0]), 3));
-          geo.setAttribute('uv', new THREE.BufferAttribute(new Float32Array([0, 1, 1, 1, 1, 0, 0, 0]), 2));
-          geo.setIndex([0, 1, 2, 0, 2, 3]);
-          const mat = new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthTest: false, depthWrite: false, side: THREE.DoubleSide });
-          const mesh = new THREE.Mesh(geo, mat);
-          mesh.matrixAutoUpdate = false;
-          mesh.renderOrder = -10;
-          mesh.frustumCulled = false;
-          this.scans.set(item.key, { mesh, url: item.url });
-          this.placeScan(mesh, item);
-          this.scene.add(mesh);
+      new THREE.TextureLoader().load(item.url, (loaded) => {
+        if (this.scans.has(item.key) || !keep.has(item.key)) {
+          loaded.dispose();
+          return;
         }
+        const img = loaded.image as CanvasImageSource & { width: number; height: number };
+        const full = { x0: 0, y0: 0, w: img.width as number, h: img.height as number };
+        let tex: THREE.Texture = loaded;
+        let box = full;
+        if (item.trim && item.trim.length >= 3) {
+          // Keep only the traced outline: its bounding box is drawn with everything outside it clear.
+          const xs = item.trim.map((p) => p[0]);
+          const ys = item.trim.map((p) => p[1]);
+          const x0 = Math.max(0, Math.floor(Math.min(...xs)));
+          const y0 = Math.max(0, Math.floor(Math.min(...ys)));
+          const w = Math.max(1, Math.min(full.w, Math.ceil(Math.max(...xs))) - x0);
+          const h = Math.max(1, Math.min(full.h, Math.ceil(Math.max(...ys))) - y0);
+          const k = Math.min(1, CaveView.SCAN_MAX / Math.max(w, h));
+          const canvas = document.createElement('canvas');
+          canvas.width = Math.max(1, Math.round(w * k));
+          canvas.height = Math.max(1, Math.round(h * k));
+          const g = canvas.getContext('2d')!;
+          g.scale(k, k);
+          g.translate(-x0, -y0);
+          g.beginPath();
+          item.trim.forEach((p, i) => (i ? g.lineTo(p[0], p[1]) : g.moveTo(p[0], p[1])));
+          g.closePath();
+          g.clip();
+          g.drawImage(img, 0, 0);
+          loaded.dispose();
+          tex = new THREE.CanvasTexture(canvas);
+          box = { x0, y0, w, h };
+        }
+        tex.colorSpace = THREE.SRGBColorSpace;
+        tex.anisotropy = 4;
+        const { x0, y0, w, h } = box;
+        const geo = new THREE.BufferGeometry();
+        geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array([x0, y0, 0, x0 + w, y0, 0, x0 + w, y0 + h, 0, x0, y0 + h, 0]), 3));
+        geo.setAttribute('uv', new THREE.BufferAttribute(new Float32Array([0, 1, 1, 1, 1, 0, 0, 0]), 2));
+        geo.setIndex([0, 1, 2, 0, 2, 3]);
+        const mat = new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthTest: false, depthWrite: false, side: THREE.DoubleSide });
+        const mesh = new THREE.Mesh(geo, mat);
+        mesh.matrixAutoUpdate = false;
+        mesh.renderOrder = -10;
+        mesh.frustumCulled = false;
+        this.scans.set(item.key, { mesh, url: sig });
+        this.placeScan(mesh, item);
+        this.scene.add(mesh);
         this.requestRender();
       });
     }

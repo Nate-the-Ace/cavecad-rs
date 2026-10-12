@@ -5,7 +5,7 @@
   // to a trip's page brings up its scan and picking a linked scan turns the notebook to its trip. The
   // pictures are never uploaded and never go into the cave.
   import { untrack } from 'svelte';
-  import { ChevronDown, ChevronRight, FolderOpen, Folder, Link2, Unlink2, BookOpen, Crosshair, X } from '@lucide/svelte';
+  import { ChevronDown, ChevronRight, FolderOpen, Folder, Link2, Unlink2, BookOpen, Crosshair, Scissors, X } from '@lucide/svelte';
   import PanelUndo from '../components/PanelUndo.svelte';
   import ScanViewer from '../components/ScanViewer.svelte';
   import { cave, changed, clearPick, option, setOption, setPick } from '../lib/cave.svelte';
@@ -13,7 +13,7 @@
   import { formatLength } from '../lib/units';
   import type { TripChoice } from '../lib/notebook';
   import { treeRows } from '../lib/scan-tree';
-  import { addFiles, align, checkRemembered, have, pickFolder, reopenRemembered, scans, select, toggleFolder } from '../lib/scans.svelte';
+  import { addFiles, align, trimming, checkRemembered, have, pickFolder, reopenRemembered, scans, select, toggleFolder } from '../lib/scans.svelte';
   import { showPanel } from '../lib/workspace.svelte';
 
   let ready = $state(false);
@@ -25,6 +25,7 @@
   let stations = $state<{ id: string; station: string }[]>([]);
   let chosen = $state('');
   let placed = $state<{ used: number; rms: number } | null>(null);
+  let savedTrim = $state<[number, number][] | null>(null);
   loadEngine().then(() => (ready = true));
   checkRemembered();
 
@@ -41,6 +42,7 @@
       al = scans.selected && cave.trip ? engine.scanAlignment(cave.trip, scans.selected) : null;
       const p = engine.scanPlacements(cave.adjusted).find((x) => x.trip === cave.trip && x.path === scans.selected);
       placed = p ? { used: p.used, rms: p.rms } : null;
+      savedTrim = scans.selected && cave.trip ? engine.scanTrim(cave.trip, scans.selected) : null;
     });
   });
 
@@ -74,13 +76,34 @@
     void scans.selected;
     void cave.trip;
     align.pending = null;
+    trimming.draft = [];
   });
 
   /** A spot on the scan was clicked: it waits for its station (click it on the Map, or choose it here). */
   function picked(px: number, py: number) {
+    if (trimming.on) {
+      trimming.draft = [...trimming.draft, [px, py]];
+      return;
+    }
     align.pending = { px, py };
     chosen = '';
     clearPick();
+  }
+
+  /** Trims the scan to the outline traced (a dragged loop, or points closed with Enter). */
+  function saveTrim(outline: [number, number][]) {
+    const r = engine.scanSetTrim(cave.trip, scans.selected, outline);
+    scans.message = r.startsWith('error') ? 'That outline is too small or not a shape.' : '';
+    trimming.draft = [];
+    if (!r.startsWith('error')) trimming.on = false;
+    changed();
+  }
+
+  const closeOutline = () => trimming.draft.length >= 3 && saveTrim(trimming.draft);
+  const clearTrim = () => saveTrim([]);
+  function stopTrim() {
+    trimming.on = false;
+    trimming.draft = [];
   }
 
   function match(station: string) {
@@ -134,6 +157,15 @@
   function onKey(e: KeyboardEvent) {
     const t = e.target as HTMLElement;
     if (t.tagName === 'INPUT' || t.tagName === 'SELECT') return;
+    if (trimming.on) {
+      if (e.key === 'Enter') return void closeOutline();
+      if (e.key === 'Escape') return stopTrim();
+      if (e.key === 'Backspace') {
+        e.preventDefault();
+        trimming.draft = trimming.draft.slice(0, -1);
+        return;
+      }
+    }
     if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z') {
       e.preventDefault();
       if (e.shiftKey ? engine.redo('scans') : engine.undo('scans')) changed();
@@ -155,13 +187,27 @@
     <button onclick={toggleLink} disabled={!scans.selected || !cave.trip} title={linkedHere ? 'Take this scan off the trip' : 'Link this scan to the trip, so the notebook page and the scan stay together'}>
       {#if linkedHere}<Unlink2 size={14} /> Unlink{:else}<Link2 size={14} /> Link to trip{/if}
     </button>
-    <button class:on={align.on} onclick={() => (align.on = !align.on)} disabled={!linkedHere} title={linkedHere ? 'Match spots on this scan to stations so it lies under the Map and you can trace over it' : 'Link the scan to the trip first'}><Crosshair size={14} /> Align under map</button>
+    <button class:on={trimming.on} onclick={() => { trimming.on = !trimming.on; trimming.draft = []; if (trimming.on) align.on = false; }} disabled={!linkedHere} title={linkedHere ? 'Keep only the part of the scan you trace round (the sketch), so the rest does not clutter the views' : 'Link the scan to the trip first'}><Scissors size={14} /> Trim to outline</button>
+    <button class:on={align.on} onclick={() => { align.on = !align.on; if (align.on) stopTrim(); }} disabled={!linkedHere} title={linkedHere ? 'Match spots on this scan to stations so it lies under the Map and you can trace over it' : 'Link the scan to the trip first'}><Crosshair size={14} /> Align under map</button>
     <label title="Draw aligned scans under the Map"><input type="checkbox" checked={showUnder} onchange={(e) => setOption('showScans', e.currentTarget.checked)} /> Show under map</label>
     <label title="How much of the scan shows through under the Map">Strength <input type="range" min="0.1" max="1" step="0.05" value={opacity} oninput={(e) => setOption('scanOpacity', +e.currentTarget.value)} /></label>
     <button onclick={() => showPanel('notebook')} title="Show the notebook page for this trip"><BookOpen size={14} /> Notebook</button>
     {#if scans.message}<span class="msg" role="status">{scans.message}</span>{/if}
   </div>
 
+  {#if trimming.on && linkedHere}
+    <div class="alignbar" role="group" aria-label="Trim to an outline">
+      <span class="hint">Drag a loop round the part to keep, or click its corners one by one, then close the outline.</span>
+      <button onclick={closeOutline} disabled={trimming.draft.length < 3} title="Close the outline and trim (Enter)">Close outline</button>
+      <button onclick={() => (trimming.draft = trimming.draft.slice(0, -1))} disabled={!trimming.draft.length} title="Take back the last corner (Backspace)">Undo corner</button>
+      <button onclick={stopTrim} title="Stop without changing anything (Esc)">Cancel</button>
+    </div>
+  {:else if savedTrim && linkedHere}
+    <div class="alignbar" role="status">
+      <span class="hint">Trimmed to an outline: what is outside it is dimmed here and left out of the Map.</span>
+      <button onclick={clearTrim}>Use the whole scan</button>
+    </div>
+  {/if}
   {#if align.on && linkedHere}
     <div class="alignbar" role="group" aria-label="Align under the map">
       <span class="hint">
@@ -214,7 +260,7 @@
       </div>
     </div>
     {#if scans.url}
-      {#key scans.url}<ScanViewer url={scans.url} kind={scans.kind} name={scans.selected} marks={align.on && linkedHere ? (al?.anchors ?? []).map((a) => ({ px: a.px, py: a.py, label: a.label })) : []} pending={align.on ? align.pending : null} picking={align.on && linkedHere} onpick={picked} />{/key}
+      {#key scans.url}<ScanViewer url={scans.url} kind={scans.kind} name={scans.selected} marks={align.on && linkedHere ? (al?.anchors ?? []).map((a) => ({ px: a.px, py: a.py, label: a.label })) : []} pending={align.on ? align.pending : null} picking={(align.on || trimming.on) && linkedHere} onpick={picked} trim={linkedHere ? savedTrim : null} draft={trimming.on ? trimming.draft : []} tracing={trimming.on && linkedHere} onstroke={saveTrim} />{/key}
     {:else}
       <div class="empty">{scans.paths.length ? 'Pick a scan to see it.' : ''}</div>
     {/if}

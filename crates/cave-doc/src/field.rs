@@ -122,6 +122,9 @@ pub enum Field {
     /// How each linked scan is placed under the map: scan path to `mode;px,py,station;...` (see
     /// `cave-scans`). The anchors are kept, never the resulting transform, so a scan follows the survey.
     TripScanAlign,
+    /// The outline each linked scan is trimmed to: scan path to `px,py;px,py;...` (pixels from the
+    /// scan's top left). Everything outside it is left out of the views. The scan itself is never changed.
+    TripScanTrim,
     /// Walls at the trip's first station (nothing arrives there, so no shot carries them).
     TripStartLeft,
     /// See `TripStartLeft`.
@@ -280,7 +283,7 @@ impl Field {
             TripTapeMode => (K::Trip, V::Text),
             TripOrder => (K::Trip, V::Number),
             TripCaveName | TripInstruments | TripStartNote | TripScans => (K::Trip, V::Text),
-            TripScanAlign => (K::Trip, V::Map),
+            TripScanAlign | TripScanTrim => (K::Trip, V::Map),
             TripStartLeft | TripStartRight | TripStartUp | TripStartDown => (K::Trip, V::Number),
             TripStartLeftOpen | TripStartRightOpen | TripStartUpOpen | TripStartDownOpen => {
                 (K::Trip, V::Flag)

@@ -5,11 +5,13 @@
 //! sharing a cave never shares a scan, and a path can never point outside the scans folder.
 
 mod align;
+mod trim;
 
 pub use align::{
     Alignment, Anchor, Fit, FitMode, Pair, Placed, add_anchor, alignment, fit, placements,
     remove_anchor, set_alignment, set_mode,
 };
+pub use trim::{Outline, set_trim, simplify, trim};
 
 use cave_doc::{Action, Document, Field, Kind, Value};
 use cave_id::Id;
@@ -25,6 +27,8 @@ pub enum ScanError {
     NoSuchTrip,
     /// A match names a station that is not in the cave.
     NoSuchStation,
+    /// The outline is not a closed shape with some area (three or more points, finite, on the scan).
+    BadOutline,
     /// The path is empty, absolute, climbs out of the folder, or is otherwise not a plain relative path.
     BadPath,
 }
@@ -118,6 +122,7 @@ pub fn unlink(doc: &Document, trip: Id, path: &str) -> Result<Vec<Action>, ScanE
     let mut actions = write(trip, &kept);
     // A scan taken off the trip takes its placement with it.
     actions.extend(align::set_alignment(doc, trip, &path, None)?);
+    actions.extend(trim::set_trim(doc, trip, &path, None)?);
     Ok(actions)
 }
 

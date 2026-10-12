@@ -301,6 +301,8 @@ pub struct Placed {
     pub rms: f64,
     /// How it was fitted.
     pub mode: FitMode,
+    /// The outline it is trimmed to (scan pixels), or `None` for the whole scan.
+    pub trim: Option<crate::Outline>,
 }
 
 /// Every scan with enough matches, placed from where its stations are now (`positions`: east, north).
@@ -320,6 +322,7 @@ pub fn placements(doc: &Document, positions: &HashMap<Id, (f64, f64)>) -> Vec<Pl
             if let Some(f) = fit(&pairs, al.mode) {
                 out.push(Placed {
                     trip,
+                    trim: crate::trim(doc, trip, &path),
                     path,
                     matrix: f.matrix,
                     used: pairs.len(),

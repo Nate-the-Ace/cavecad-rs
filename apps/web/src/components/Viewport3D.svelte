@@ -108,7 +108,7 @@
         ? engine
             .scanPlacements(cave.adjusted)
             .filter((p) => !filter.hiddenTrips.includes(p.trip) && have(p.path))
-            .map((p) => ({ key: `${p.trip}/${p.path}`, url: mapUrl(p.path)!, matrix: p.matrix, z, opacity }))
+            .map((p) => ({ key: `${p.trip}/${p.path}`, url: mapUrl(p.path)!, matrix: p.matrix, z, opacity, trim: p.trim }))
         : [];
       view.setScans(list);
     });

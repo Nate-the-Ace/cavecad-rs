@@ -1624,3 +1624,28 @@ pub fn scan_set_mode(trip: &str, path: &str, mode: &str) -> String {
     };
     scoped_edit("scans", |doc| cave_scans::set_mode(doc, trip, path, mode))
 }
+
+/// The outline a scan is trimmed to on a trip: JSON `[[px, py], ...]`, or `null`.
+#[wasm_bindgen]
+pub fn scan_trim(trip: &str, path: &str) -> String {
+    DOC.with(|d| {
+        let out = parse_id(trip)
+            .zip(d.borrow().as_ref())
+            .and_then(|(t, doc)| cave_scans::trim(doc, t, path));
+        serde_json::to_string(&out).unwrap_or_else(|_| "null".into())
+    })
+}
+
+/// Trims a scan to an outline (JSON `[[px, py], ...]`, scan pixels), thinned first so a hand-traced
+/// loop stays within `tolerance` pixels of what was drawn. An empty outline takes the trim off.
+#[wasm_bindgen]
+pub fn scan_set_trim(trip: &str, path: &str, outline: &str, tolerance: f64) -> String {
+    let (Some(trip), Ok(points)) = (
+        parse_id(trip),
+        serde_json::from_str::<Vec<[f64; 2]>>(outline),
+    ) else {
+        return "error: bad trip or outline".into();
+    };
+    let want = (!points.is_empty()).then(|| cave_scans::simplify(&points, tolerance));
+    scoped_edit("scans", |doc| cave_scans::set_trim(doc, trip, path, want))
+}

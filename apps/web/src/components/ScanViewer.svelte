@@ -13,6 +13,10 @@
     pending = null,
     picking = false,
     onpick,
+    trim = null,
+    draft = [],
+    tracing = false,
+    onstroke,
   }: {
     url: string;
     kind?: 'image' | 'pdf';
@@ -24,6 +28,13 @@
     /** A click on the scan picks a spot (instead of nothing). */
     picking?: boolean;
     onpick?: (px: number, py: number) => void;
+    /** The saved outline the scan is trimmed to: what is outside is dimmed. */
+    trim?: [number, number][] | null;
+    /** An outline being traced, point by point. */
+    draft?: [number, number][];
+    /** A drag draws a line round the part to keep (a plain click still picks a point). */
+    tracing?: boolean;
+    onstroke?: (points: [number, number][]) => void;
   } = $props();
 
   let box = $state<HTMLDivElement>();
@@ -33,6 +44,8 @@
   let turn = $state(0);
   let natural = $state({ w: 1, h: 1 });
   let downAt: { x: number; y: number } | null = null;
+  let stroke = $state<[number, number][] | null>(null);
+  let drawing = false;
   const pointers = new Map<number, { x: number; y: number }>();
   let pinch = 0;
   /** True until the person zooms or pans: then a resized panel keeps the scan fitted. */
@@ -82,12 +95,25 @@
     box?.setPointerCapture(e.pointerId);
     pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
     downAt = pointers.size === 1 ? { x: e.clientX, y: e.clientY } : null;
+    drawing = tracing && e.button === 0 && e.pointerType !== 'touch' ? pointers.size === 1 : tracing && e.pointerType === 'touch' && pointers.size === 1;
+    if (pointers.size > 1) {
+      drawing = false;
+      stroke = null;
+    }
     pinch = 0;
   }
 
   function move(e: PointerEvent) {
     const p = pointers.get(e.pointerId);
     if (!p) return;
+    if (drawing && pointers.size === 1) {
+      const q = pixelAt(e.clientX, e.clientY);
+      const last = stroke?.[stroke.length - 1];
+      if (!stroke && downAt && Math.hypot(e.clientX - downAt.x, e.clientY - downAt.y) >= 4) stroke = [[...Object.values(pixelAt(downAt.x, downAt.y))] as [number, number]];
+      if (stroke && (!last || Math.hypot(q.px - last[0], q.py - last[1]) * scale >= 3)) stroke = [...stroke, [q.px, q.py]];
+      pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      return;
+    }
     if (pointers.size === 2) {
       pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
       const [a, b] = [...pointers.values()];
@@ -124,6 +150,15 @@
   }
 
   const up = (e: PointerEvent) => {
+    if (stroke) {
+      if (stroke.length >= 8) onstroke?.(stroke);
+      stroke = null;
+      downAt = null;
+      drawing = false;
+      pointers.delete(e.pointerId);
+      return;
+    }
+    drawing = false;
     // A press that did not move is a pick (when picking), not the end of a pan.
     if (picking && downAt && pointers.size === 1 && Math.hypot(e.clientX - downAt.x, e.clientY - downAt.y) < 4) {
       const p = pixelAt(e.clientX, e.clientY);
@@ -157,9 +192,21 @@
       <span class="zoom">{Math.round(scale * 100)}%</span>
     </div>
         <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions: the scan takes the wheel, drags and keys for zoom, pan, fit and turn -->
-    <div bind:this={box} class="stage" class:picking role="application" aria-label={name} tabindex="0" onwheel={wheel} onpointerdown={down} onpointermove={move} onpointerup={up} onpointercancel={up} ondblclick={fit} onkeydown={key}>
+    <div bind:this={box} class="stage" class:picking={picking || tracing} role="application" aria-label={name} tabindex="0" onwheel={wheel} onpointerdown={down} onpointermove={move} onpointerup={up} onpointercancel={up} ondblclick={fit} onkeydown={key}>
       <div class="plane" style="width: {natural.w}px; height: {natural.h}px; transform: translate(-50%, -50%) translate({x}px, {y}px) scale({scale}) rotate({turn * 90}deg)">
         <img src={url} alt={name} draggable="false" onload={loaded} />
+        <svg class="trim" width={natural.w} height={natural.h} viewBox="0 0 {natural.w} {natural.h}" aria-hidden="true">
+          {#if trim}
+            <path class="dim" fill-rule="evenodd" d="M0 0H{natural.w}V{natural.h}H0Z M{trim.map((p) => p.join(' ')).join(' L')}Z" />
+            <polygon class="edge" points={trim.map((p) => p.join(',')).join(' ')} vector-effect="non-scaling-stroke" />
+          {/if}
+          {#if draft.length}
+            <polyline class="draft" points={draft.map((p) => p.join(',')).join(' ')} vector-effect="non-scaling-stroke" />
+            {#if draft.length > 1}<line class="closing" x1={draft[draft.length - 1][0]} y1={draft[draft.length - 1][1]} x2={draft[0][0]} y2={draft[0][1]} vector-effect="non-scaling-stroke" />{/if}
+            {#each draft as p}<circle cx={p[0]} cy={p[1]} r={4 / scale} class="dot" />{/each}
+          {/if}
+          {#if stroke}<polyline class="draft" points={stroke.map((p) => p.join(',')).join(' ')} vector-effect="non-scaling-stroke" />{/if}
+        </svg>
         {#each marks as m}
           <div class="pin" style="left: {m.px}px; top: {m.py}px"><span style="transform: scale({1 / scale}) rotate({-turn * 90}deg)"><i></i>{m.label}</span></div>
         {/each}
@@ -178,6 +225,12 @@
   .plane { position: absolute; left: 50%; top: 50%; transform-origin: center; }
   img { display: block; width: 100%; height: 100%; max-width: none; user-select: none; -webkit-user-drag: none; image-rendering: auto; }
   .stage.picking { cursor: crosshair; }
+  .trim { position: absolute; left: 0; top: 0; pointer-events: none; overflow: visible; }
+  .trim .dim { fill: rgba(0, 0, 0, 0.55); }
+  .trim .edge { fill: none; stroke: #0a84ff; stroke-width: 2; stroke-dasharray: 8 5; }
+  .trim .draft { fill: none; stroke: #0a84ff; stroke-width: 2; }
+  .trim .closing { stroke: #0a84ff; stroke-width: 1; stroke-dasharray: 3 4; }
+  .trim .dot { fill: #0a84ff; }
   .pin { position: absolute; width: 0; height: 0; }
   .pin span { position: absolute; left: 0; top: 0; transform-origin: 0 0; display: block; color: #ff4d2e; font: 600 12px sans-serif; white-space: nowrap; text-shadow: 0 0 3px #fff, 0 0 3px #fff; pointer-events: none; }
   .pin i { position: absolute; left: -7px; top: -7px; width: 14px; height: 14px; border-radius: 50%; border: 2px solid #ff4d2e; background: rgba(255, 77, 46, 0.2); }

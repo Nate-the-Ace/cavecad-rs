@@ -192,6 +192,9 @@ export function mapUrl(path: string): string | null {
 /** Aligning: a spot on the scan waiting for the station it is. */
 export const align = $state({ on: false, pending: null as { px: number; py: number } | null });
 
+/** Trimming: the outline being traced, point by point. */
+export const trimming = $state({ on: false, draft: [] as [number, number][] });
+
 /** True when the scan is in the folder now open. */
 export const have = (path: string) => files.has(path);
 
