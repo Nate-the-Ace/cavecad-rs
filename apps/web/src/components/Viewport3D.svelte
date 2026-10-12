@@ -7,6 +7,7 @@
   import { cave, changed, filter, setShown, wireFilter } from '../lib/cave.svelte';
   import { ViewCube } from '../lib/viewport/view-cube';
   import { forgetFile } from '../lib/files';
+  import { showPanel } from '../lib/workspace.svelte';
 
   let wrap: HTMLDivElement;
   let gl: HTMLCanvasElement;
@@ -54,6 +55,28 @@
     const u = cave.units; // read first so the effect always tracks it
     view?.setUnits(u);
   });
+
+  // The station the Cross Section panel shows is ringed on the map.
+  $effect(() => {
+    const id = cave.station;
+    view?.setSelected(id);
+  });
+
+  // A plain click on a station picks it for the Cross Section panel (a drag orbits, as always).
+  let down: { x: number; y: number } | null = null;
+  function onDown(e: PointerEvent) {
+    down = e.button === 0 ? { x: e.clientX, y: e.clientY } : null;
+  }
+  function onUp(e: PointerEvent) {
+    const d = down;
+    down = null;
+    if (!d || !view || Math.hypot(e.clientX - d.x, e.clientY - d.y) > 4) return;
+    const hit = view.pickStation(e.clientX, e.clientY);
+    if (!hit) return;
+    cave.station = hit.id;
+    showPanel('section');
+    engine.log('info', 'section', `cross section at ${hit.label}`);
+  }
 
   // A cave opened from a file replaces the one on screen.
   let seenOpen = 0;
@@ -118,7 +141,7 @@
 </script>
 
 <div class="vp" bind:this={wrap}>
-  <canvas bind:this={gl}></canvas>
+  <canvas bind:this={gl} onpointerdown={onDown} onpointerup={onUp}></canvas>
   <canvas bind:this={overlay} class="overlay"></canvas>
   <div class="bar">
     <select bind:value={demo} onchange={() => open(demo)} aria-label="Demo cave">

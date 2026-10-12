@@ -290,6 +290,10 @@ pub struct LegRings {
     pub from: Id,
     /// End station.
     pub to: Id,
+    /// Direction of travel used for the start ring's plane.
+    pub dir_a: Vec3,
+    /// Direction of travel used for the end ring's plane.
+    pub dir_b: Vec3,
     /// Start position.
     pub a: Vec3,
     /// End position.
@@ -570,6 +574,8 @@ pub fn build_with_rings(input: &MeshInput, sink: &mut dyn FnMut(&LegRings)) -> M
             shot: leg.shot,
             from: leg.from,
             to: leg.to,
+            dir_a,
+            dir_b,
             a,
             b,
             ring_a: ring_a.clone(),

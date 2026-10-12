@@ -7,10 +7,14 @@
 //! drawn and never where it is.
 
 use cave_doc::{Action, AnchorError, Document, Field, Frame, Kind, Value, anchor_stroke};
+use cave_geom::{Path, Point};
 use cave_id::{Id, IdSource};
 
 /// `Feature.type` of a stroke sketched on a profile band.
 pub const PROFILE_SKETCH: &str = "profile-sketch";
+
+/// `Feature.type` of a stroke sketched on a station's cross section.
+pub const SECTION_SKETCH: &str = "section-sketch";
 
 /// Why a stroke could not be turned into actions.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -85,6 +89,83 @@ pub fn profile_sketch(
             value: Value::Anchored(Some(anchored)),
         },
     ]);
+    Ok((id, actions))
+}
+
+/// Actions that add a stroke sketched on the cross section at `station`.
+///
+/// `points` are `[across, up]` in metres in the section's plane (right and up as the passage is
+/// seen looking along it), measured from the station. A section sketch is a feature of type
+/// `section-sketch` that names its station; `trip` (the trip that surveyed the station) lets the
+/// trip filter hide it with its passage. `widths` is optional pen weight per point.
+pub fn section_sketch(
+    doc: &Document,
+    ids: &mut impl IdSource,
+    station: Id,
+    points: &[[f64; 2]],
+    widths: Option<Vec<f64>>,
+    trip: Option<Id>,
+) -> Result<(Id, Vec<Action>), DrawError> {
+    if doc
+        .entity(station)
+        .is_none_or(|e| e.kind() != Kind::Station)
+    {
+        return Err(DrawError::NoStations);
+    }
+    if widths.as_ref().is_some_and(|w| w.len() != points.len()) {
+        return Err(DrawError::BadStroke);
+    }
+    let mut kept: Vec<usize> = Vec::with_capacity(points.len());
+    for (i, p) in points.iter().enumerate() {
+        if !p[0].is_finite() || !p[1].is_finite() {
+            return Err(DrawError::BadStroke);
+        }
+        if kept.last().is_none_or(|&k| points[k] != *p) {
+            kept.push(i);
+        }
+    }
+    if kept.len() < 2 {
+        return Err(DrawError::TooShort);
+    }
+    let pts: Vec<Point> = kept
+        .iter()
+        .map(|&i| Point::new(points[i][0], points[i][1]))
+        .collect();
+    let mut path = Path::polyline(&pts, false);
+    if let Some(w) = widths {
+        path = path
+            .with_widths(kept.iter().map(|&i| w[i]).collect())
+            .map_err(|_| DrawError::BadStroke)?;
+    }
+    let id = ids.next_id();
+    let mut actions = vec![
+        Action::Create {
+            id,
+            kind: Kind::Feature,
+        },
+        Action::Set {
+            id,
+            field: Field::FeatureType,
+            value: Value::Text(SECTION_SKETCH.into()),
+        },
+        Action::Set {
+            id,
+            field: Field::FeatureStation,
+            value: Value::Ref(Some(station)),
+        },
+        Action::Set {
+            id,
+            field: Field::FeaturePath,
+            value: Value::Path(Some(path)),
+        },
+    ];
+    if let Some(trip) = trip {
+        actions.push(Action::Set {
+            id,
+            field: Field::FeatureTrip,
+            value: Value::Ref(Some(trip)),
+        });
+    }
     Ok((id, actions))
 }
 
@@ -246,5 +327,83 @@ mod tests {
         assert!(doc.entity(id).is_none());
         history.redo(&mut doc).unwrap();
         assert!(doc.entity(id).is_some());
+    }
+
+    #[test]
+    fn a_section_sketch_names_its_station_keeps_pressure_and_undoes() {
+        let (mut doc, _, [a, _]) = cave();
+        let pts = vec![[0.0, 0.0], [0.0, 0.0], [1.0, 0.5], [2.0, 0.0]];
+        let (id, actions) = section_sketch(
+            &doc,
+            &mut SeqIds::new(5),
+            a,
+            &pts,
+            Some(vec![0.5, 0.6, 1.0, 1.5]),
+            None,
+        )
+        .unwrap();
+        let mut history = History::new();
+        let edit = doc.edit(actions).unwrap();
+        history.record(&edit);
+        let e = doc.entity(id).unwrap();
+        assert_eq!(e.text(Field::FeatureType), SECTION_SKETCH);
+        assert_eq!(e.reference(Field::FeatureStation), Some(a));
+        let Value::Path(Some(path)) = e.get(Field::FeaturePath) else {
+            panic!("no path")
+        };
+        assert_eq!(path.points().len(), 3, "the repeated point is dropped");
+        assert_eq!(path.widths(), Some(&[0.5, 1.0, 1.5][..]), "with its weight");
+        assert!(validate(&doc).is_empty());
+        history.undo(&mut doc).unwrap();
+        assert!(doc.ids_of(Kind::Feature).is_empty(), "undo removes it");
+    }
+
+    #[test]
+    fn a_section_sketch_needs_a_station_and_a_real_line() {
+        let (doc, _, [a, _]) = cave();
+        let ids = &mut SeqIds::new(1);
+        let line = [[0.0, 0.0], [1.0, 1.0]];
+        let nowhere = Id::from_name("nothing");
+        assert_eq!(
+            section_sketch(&doc, ids, nowhere, &line, None, None).unwrap_err(),
+            DrawError::NoStations
+        );
+        assert_eq!(
+            section_sketch(&doc, ids, a, &[[1.0, 1.0], [1.0, 1.0]], None, None).unwrap_err(),
+            DrawError::TooShort
+        );
+        assert_eq!(
+            section_sketch(&doc, ids, a, &[[0.0, 0.0], [f64::NAN, 1.0]], None, None).unwrap_err(),
+            DrawError::BadStroke
+        );
+        assert_eq!(
+            section_sketch(&doc, ids, a, &line, Some(vec![1.0]), None).unwrap_err(),
+            DrawError::BadStroke
+        );
+    }
+
+    #[test]
+    fn deleting_the_station_a_section_sketch_hangs_on_is_flagged() {
+        let (mut doc, _, [a, _]) = cave();
+        let (id, actions) = section_sketch(
+            &doc,
+            &mut SeqIds::new(1),
+            a,
+            &[[0.0, 0.0], [1.0, 1.0]],
+            None,
+            None,
+        )
+        .unwrap();
+        doc.edit(actions).unwrap();
+        doc.edit(vec![Action::Remove {
+            id: a,
+            kind: Kind::Station,
+        }])
+        .unwrap();
+        assert!(validate(&doc).contains(&Issue::DanglingReference {
+            entity: id,
+            field: Field::FeatureStation,
+            target: a
+        }));
     }
 }

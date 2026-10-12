@@ -45,6 +45,7 @@ export class CaveView {
   private elevationColors = false;
   private showWalls = true;
   private showLabels = true;
+  private selected = '';
   private units: Units = 'metric';
   /** How each type looks; set once from the engine's palette. */
   private palette = new Map<string, TypeStyle>();
@@ -277,6 +278,33 @@ export class CaveView {
     this.requestRender();
   }
 
+  /** The station (id) to ring on the map, e.g. the one the Cross Section panel shows. */
+  setSelected(id: string) {
+    this.selected = id;
+    this.requestRender();
+  }
+
+  /** The station under a screen point (within `radius` pixels), or null: what a click snaps to. */
+  pickStation(clientX: number, clientY: number, radius = 14): { id: string; label: string } | null {
+    const s = this.data;
+    if (!s) return null;
+    const rect = this.canvas.getBoundingClientRect();
+    const x = clientX - rect.left;
+    const y = clientY - rect.top;
+    let best: { id: string; label: string } | null = null;
+    let bestD = radius;
+    for (const st of s.stations) {
+      const p = this.project(st.at);
+      if (!p) continue;
+      const d = Math.hypot(p[0] - x, p[1] - y);
+      if (d <= bestD) {
+        bestD = d;
+        best = { id: st.id, label: st.label };
+      }
+    }
+    return best;
+  }
+
   /** Units for the scale bar. */
   setUnits(u: Units) {
     this.units = u;
@@ -443,6 +471,15 @@ export class CaveView {
         const p = this.project(st.at);
         if (p && p[0] > -20 && p[1] > -20 && p[0] < this.width + 20 && p[1] < this.height + 20) g.fillText(st.label, p[0] + 6, p[1] - 5);
       }
+    }
+    const chosen = this.selected ? s.stations.find((st) => st.id === this.selected) : undefined;
+    const cp = chosen ? this.project(chosen.at) : null;
+    if (cp) {
+      g.strokeStyle = this.theme.css.text;
+      g.lineWidth = 2;
+      g.beginPath();
+      g.arc(cp[0], cp[1], 9, 0, Math.PI * 2);
+      g.stroke();
     }
     g.strokeStyle = css.danger;
     g.fillStyle = css.danger;

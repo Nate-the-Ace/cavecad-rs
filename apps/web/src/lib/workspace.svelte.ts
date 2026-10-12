@@ -170,6 +170,15 @@ export function togglePanel(id: string) {
   refreshOpen();
 }
 
+/** Brings a panel to the front, opening it first if it is closed. */
+export function showPanel(id: string) {
+  if (!api) return;
+  const existing = api.getPanel(id);
+  if (existing) existing.api.setActive();
+  else togglePanel(id);
+  api.getPanel(id)?.api.setActive();
+}
+
 /** Puts every panel back where it started. */
 export function resetLayout() {
   if (!api) return;

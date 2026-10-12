@@ -211,30 +211,66 @@ pub fn save_dxf(adjusted: bool) -> String {
     })
 }
 
-/// The legs a cross section can be cut along (JSON array), in survey order.
+/// The stations a cross section can be cut at (JSON array), in survey order.
 #[wasm_bindgen]
-pub fn section_legs(adjusted: bool, filter: &str) -> String {
+pub fn section_stations(adjusted: bool, fill_gaps: bool, filter: &str) -> String {
     let filter = parse_filter(filter);
     DOC.with(|d| {
-        let legs = match d.borrow().as_ref() {
-            Some(doc) => cave_scene::section_legs(doc, adjusted, &filter),
+        let list = match d.borrow().as_ref() {
+            Some(doc) => cave_scene::section_stations(doc, adjusted, fill_gaps, &filter),
             None => Vec::new(),
         };
-        serde_json::to_string(&legs).unwrap_or_else(|_| "[]".to_string())
+        serde_json::to_string(&list).unwrap_or_else(|_| "[]".to_string())
     })
 }
 
-/// The cross section across `shot`, `t` (0 to 1) of the way along it (JSON), or `null`.
+/// The cross section at one station (an id as text) with its sketches (JSON), or `null`.
 #[wasm_bindgen]
-pub fn section_cut(adjusted: bool, shot: &str, t: f64, fill_gaps: bool, filter: &str) -> String {
+pub fn section_at(adjusted: bool, station: &str, fill_gaps: bool, filter: &str) -> String {
     let filter = parse_filter(filter);
     DOC.with(|d| {
-        let cut = d
+        let section = d
             .borrow()
             .as_ref()
-            .and_then(|doc| cave_scene::section_cut(doc, adjusted, shot, t, fill_gaps, &filter));
-        serde_json::to_string(&cut).unwrap_or_else(|_| "null".to_string())
+            .and_then(|doc| cave_scene::section_at(doc, adjusted, station, fill_gaps, &filter));
+        serde_json::to_string(&section).unwrap_or_else(|_| "null".to_string())
     })
+}
+
+/// Adds a stroke sketched on the cross section at `station` (an id as text). `points` are
+/// `[across, up]` metres in the section's plane; `widths` is pen weight per point or empty. Goes
+/// through the one edit path and is undoable. Returns `ok` or `error: ...`.
+#[wasm_bindgen]
+pub fn add_section_sketch(station: &str, points: &str, widths: &str, adjusted: bool) -> String {
+    let Ok(points) = serde_json::from_str::<Vec<[f64; 2]>>(points) else {
+        return "error: unreadable stroke".into();
+    };
+    let widths: Option<Vec<f64>> = if widths.is_empty() {
+        None
+    } else {
+        serde_json::from_str(widths).ok()
+    };
+    let Ok(station_id) = station.parse::<cave_id::Id>() else {
+        return "error: no such station".into();
+    };
+    let result = DOC.with(|d| {
+        let mut slot = d.borrow_mut();
+        let doc = slot.as_mut().ok_or("no cave is open")?;
+        let trip = cave_scene::section_trip(doc, adjusted, station);
+        let (_, actions) =
+            cave_draw::section_sketch(doc, &mut random_ids(), station_id, &points, widths, trip)
+                .map_err(|e| format!("{e:?}"))?;
+        let edit = doc.edit(actions).map_err(|e| format!("{e:?}"))?;
+        HISTORY.with(|h| h.borrow_mut().record(&edit));
+        Ok::<(), String>(())
+    });
+    match result {
+        Ok(()) => {
+            tracing::info!(source = "sketch", "added a stroke to a cross section");
+            "ok".into()
+        }
+        Err(e) => format!("error: {e}"),
+    }
 }
 
 /// The view filter the viewer sends (JSON); anything unreadable hides nothing.
@@ -497,5 +533,28 @@ mod tests {
             assert!(!r["message"].as_str().unwrap().is_empty());
         }
         assert_eq!(scene(false, "{}"), before, "the open cave is untouched");
+    }
+
+    #[test]
+    fn stations_and_sections_come_back_as_json() {
+        // (Adding a sketch draws ids from the browser's random source, so it is tested in the
+        // crates under it; here only the reading side.)
+        open_demo(CAVE);
+        let list: serde_json::Value =
+            serde_json::from_str(&section_stations(false, true, "{}")).unwrap();
+        let b = list
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|s| s["label"] == "B")
+            .unwrap();
+        let id = b["id"].as_str().unwrap().to_string();
+        let sec: serde_json::Value =
+            serde_json::from_str(&section_at(false, &id, true, "{}")).unwrap();
+        assert_eq!(sec["label"], "B");
+        assert!(sec["sketches"].as_array().unwrap().is_empty());
+        assert_eq!(section_at(false, "nope", true, "{}"), "null");
+        assert!(add_section_sketch("nope", "[[0,0],[1,1]]", "", false).starts_with("error"));
+        assert!(add_section_sketch(&id, "garbage", "", false).starts_with("error"));
     }
 }

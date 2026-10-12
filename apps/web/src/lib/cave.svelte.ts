@@ -24,6 +24,8 @@ export const cave = $state({
   opened: 0,
   /** Name of the file the cave came from or will be saved to. */
   fileName: 'cave.dxf',
+  /** The station (id) the Cross Section panel is showing; empty until one is picked. */
+  station: '',
   /** The run the Profile panel is showing. */
   run: '',
 });

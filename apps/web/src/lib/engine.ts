@@ -1,5 +1,5 @@
 // Loads the Rust engine (WASM) once and re-exports the few calls the UI uses.
-import init, { start, log, console_events, console_clear, engine_version, open_demo, scene, profile_runs, profile_band, add_profile_sketch, undo, redo, edit_state, passage_mesh, shading, palette, open_dxf, save_dxf, section_legs, section_cut } from '../wasm/cave_wasm.js';
+import init, { start, log, console_events, console_clear, engine_version, open_demo, scene, profile_runs, profile_band, add_profile_sketch, undo, redo, edit_state, passage_mesh, shading, palette, open_dxf, save_dxf, section_stations, section_at, add_section_sketch } from '../wasm/cave_wasm.js';
 
 export type Level = 'debug' | 'detail' | 'info' | 'warn' | 'error';
 export interface ConsoleEvent {
@@ -10,7 +10,7 @@ export interface ConsoleEvent {
 }
 export type Pt = [number, number, number];
 export interface Scene {
-  stations: { label: string; at: Pt; anchor: boolean }[];
+  stations: { id: string; label: string; at: Pt; anchor: boolean }[];
   /** Palette types with something in this cave, and its trips: what the filter can list. */
   types: string[];
   trips: { id: string; name: string }[];
@@ -74,34 +74,33 @@ export interface TypeStyle {
   under_opacity: number;
   layer: string;
 }
-/** A leg a cross section can be cut along. */
-export interface SectionLeg {
-  shot: string;
-  from: string;
-  to: string;
-  /** Metres. */
-  length: number;
+/** A station a cross section can be cut at. */
+export interface SectionStation {
+  id: string;
+  label: string;
+  /** Enough wall measurements for an outline. */
+  outlined: boolean;
+  /** Sketches already on its section. */
+  sketches: number;
 }
-/** One cut across the passage. Points are [across, up] in metres from the axis. */
-export interface Section {
-  shot: string;
-  from: string;
-  to: string;
-  t: number;
-  length: number;
-  along: number;
-  nearest: string;
-  nearest_distance: number;
-  at_station: boolean;
+/** A stroke sketched on a cross section: [across, up] metres from the station. */
+export interface SectionSketch {
+  id: string;
+  points: [number, number][];
+  widths: number[] | null;
+}
+/** The cross section at one station. Points are [across, up] in metres from the station. */
+export interface StationSection {
+  id: string;
+  label: string;
   outline: [number, number][];
-  from_points: [number, number][];
-  to_points: [number, number][];
-  from_inferred: boolean;
-  to_inferred: boolean;
+  measured: [number, number][];
+  inferred: boolean;
   /** What "up the page" means: 'up', or 'north' in a shaft. */
   up_means: 'up' | 'north';
   /** Why there is no outline. */
   note: string | null;
+  sketches: SectionSketch[];
 }
 export interface BuildInfo {
   builtAt: string | null;
@@ -130,10 +129,12 @@ export const engine = {
   openDxf: (text: string): { ok: boolean; message: string; warnings: string[] } => JSON.parse(open_dxf(text)),
   /** The open cave as DXF text (the whole cave is inside the file). */
   saveDxf: (adjusted: boolean): string => save_dxf(adjusted),
-  /** The legs a cross section can be cut along. */
-  sectionLegs: (adjusted: boolean, filter = '{}'): SectionLeg[] => JSON.parse(section_legs(adjusted, filter)),
-  /** The cross section `t` (0..1) of the way along a leg. */
-  sectionCut: (adjusted: boolean, shot: string, t: number, fillGaps: boolean, filter = '{}'): Section | null => JSON.parse(section_cut(adjusted, shot, t, fillGaps, filter)),
+  /** The stations a cross section can be cut at. */
+  sectionStations: (adjusted: boolean, fillGaps: boolean, filter = '{}'): SectionStation[] => JSON.parse(section_stations(adjusted, fillGaps, filter)),
+  /** The cross section at a station, with its sketches. */
+  sectionAt: (adjusted: boolean, station: string, fillGaps: boolean, filter = '{}'): StationSection | null => JSON.parse(section_at(adjusted, station, fillGaps, filter)),
+  /** Adds a stroke drawn on a station's cross section; every edit goes through the document's one edit path. */
+  addSectionSketch: (station: string, points: [number, number][], widths: number[] | null, adjusted: boolean): string => add_section_sketch(station, JSON.stringify(points), widths ? JSON.stringify(widths) : '', adjusted),
   /** The type palette. */
   palette: (): TypeStyle[] => JSON.parse(palette()),
   profileRuns: (adjusted: boolean): RunInfo[] => JSON.parse(profile_runs(adjusted)),

@@ -1,64 +1,59 @@
 <script lang="ts">
-  // Cross Section: a cut across the passage anywhere along a surveyed leg, drawn from the walls
-  // measured at the two stations (the same rings the 3D tube is built from). Between stations it is
-  // a blend and says how far it is from the nearer station.
+  // Cross Section: the passage cut across at a station, drawn from the walls measured there (the
+  // same ring the 3D tube is built from), with a pen or mouse to sketch the real shape on top.
+  // Sections live at stations: pick one here (or click a station on the map). Sketches belong to
+  // their station and follow it when the survey is adjusted.
   import { onMount, untrack } from 'svelte';
-  import { cave, filter, wireFilter } from '../lib/cave.svelte';
-  import { engine, loadEngine, type Section, type SectionLeg } from '../lib/engine';
-  import { formatLength, metresPer, niceNumber, unitName } from '../lib/units';
-  import LengthField from '../components/LengthField.svelte';
+  import { Pencil, Hand, Undo2, Redo2, Maximize, ChevronLeft, ChevronRight } from '@lucide/svelte';
+  import { cave, changed, filter, wireFilter } from '../lib/cave.svelte';
+  import { engine, loadEngine, type SectionStation, type StationSection } from '../lib/engine';
+  import { metresPer, niceNumber, unitName } from '../lib/units';
 
   let wrap: HTMLDivElement;
   let canvas: HTMLCanvasElement;
   let width = $state(0);
   let height = $state(0);
   let ready = $state(false);
-  let legs = $state.raw<SectionLeg[]>([]);
-  let shot = $state('');
-  let t = $state(1);
-  let dist = $state<number | null>(null);
-  let section = $state.raw<Section | null>(null);
-  let frame = 0;
+  let stations = $state.raw<SectionStation[]>([]);
+  let section = $state.raw<StationSection | null>(null);
+  let tool = $state<'sketch' | 'pan'>('sketch');
+  let canUndo = $state(false);
+  let canRedo = $state(false);
+  let message = $state('');
   let barH = $state(50);
 
-  const leg = $derived(legs.find((l) => l.shot === shot) ?? null);
+  // View: pixels per metre, and where the station (the origin) sits on the canvas.
+  let scale = 20;
+  let ox = 0;
+  let oy = 0;
+  let frame = 0;
+  let framed = '';
+  let live: { pts: [number, number][]; widths: number[]; pressure: boolean } | null = null;
 
-  // The list of legs follows the cave, the adjustment and the trip filter.
+  const index = $derived(stations.findIndex((s) => s.id === cave.station));
+  const toWorld = (x: number, y: number): [number, number] => [(x - ox) / scale, (oy - y) / scale];
+  const toScreen = (u: number, v: number): [number, number] => [ox + u * scale, oy - v * scale];
+
+  function refresh() {
+    if (!ready) return;
+    stations = engine.sectionStations(cave.adjusted, true, wireFilter());
+    if (!stations.some((s) => s.id === cave.station)) cave.station = (stations.find((s) => s.outlined) ?? stations[0])?.id ?? '';
+    section = cave.station ? engine.sectionAt(cave.adjusted, cave.station, true, wireFilter()) : null;
+    const st = engine.editState();
+    canUndo = st.undo;
+    canRedo = st.redo;
+    frameOnce();
+    schedule();
+  }
+
+  // Re-read whenever the cave changes, a station is picked, or the adjustment or trip filter does.
   $effect(() => {
     void cave.version;
     void cave.adjusted;
+    void cave.station;
     void filter.hiddenTrips.length;
-    if (!ready) return;
-    untrack(() => {
-      legs = engine.sectionLegs(cave.adjusted, wireFilter());
-      if (!legs.some((l) => l.shot === shot)) {
-        shot = legs[0]?.shot ?? '';
-        t = 1; // the end station of a leg always has the walls measured with the shot into it
-      }
-    });
-  });
-
-  // The cut follows the leg and position (and whatever changed under it).
-  $effect(() => {
-    void cave.version;
-    void cave.adjusted;
-    void filter.hiddenTrips.length;
-    const s = shot;
-    const at = t;
-    if (!ready) return;
-    untrack(() => {
-      section = s ? engine.sectionCut(cave.adjusted, s, at, true, wireFilter()) : null;
-      if (leg) dist = at * leg.length;
-      schedule();
-    });
-  });
-
-  // Typing a distance moves the position.
-  $effect(() => {
-    const d = dist;
-    untrack(() => {
-      if (d !== null && leg && Math.abs(d / leg.length - t) > 1e-9) t = Math.min(1, Math.max(0, d / leg.length));
-    });
+    void ready;
+    untrack(refresh);
   });
 
   $effect(() => {
@@ -66,8 +61,30 @@
     void barH;
     void width;
     void height;
+    untrack(frameOnce);
     schedule();
   });
+
+  /** Frames the section whenever a different station is shown (not after every stroke). */
+  function frameOnce() {
+    if (section && framed !== section.id && width > 0) {
+      framed = section.id;
+      fit();
+    }
+  }
+
+  function fit() {
+    const s = section;
+    if (!s || width === 0) return;
+    const all = [...s.outline, ...s.measured, ...s.sketches.flatMap((k) => k.points)];
+    const reach = Math.max(1, ...all.flatMap((p) => [Math.abs(p[0]), Math.abs(p[1])])) * 1.12;
+    const top = barH + 16;
+    const room = [width / 2 - 20, (height - top - 48) / 2];
+    scale = Math.max(2, Math.min(room[0], room[1]) / reach);
+    ox = width / 2;
+    oy = top + (height - top - 48) / 2;
+    schedule();
+  }
 
   function schedule() {
     if (!frame) frame = requestAnimationFrame(() => ((frame = 0), draw()));
@@ -79,13 +96,20 @@
     return { text: v('--text'), muted: v('--muted'), line: v('--line'), accent: v('--accent'), accentBg: v('--accent-bg') };
   };
 
-  /** Largest distance from the axis of anything that can be drawn for this leg: a stable scale while sliding. */
-  const reach = (s: Section | null) => {
-    if (!s) return 1;
-    const all = [...s.outline, ...s.from_points, ...s.to_points];
-    return Math.max(1, ...all.flatMap((p) => [Math.abs(p[0]), Math.abs(p[1])]));
-  };
-  let stable = { shot: '', reach: 1 };
+  function stroke(g: CanvasRenderingContext2D, pts: [number, number][], widths: number[] | null, color: string, base = 2.6) {
+    g.strokeStyle = color;
+    g.lineCap = 'round';
+    g.lineJoin = 'round';
+    for (let i = 1; i < pts.length; i++) {
+      const a = toScreen(pts[i - 1][0], pts[i - 1][1]);
+      const b = toScreen(pts[i][0], pts[i][1]);
+      g.lineWidth = base * (widths ? (widths[i - 1] + widths[i]) / 2 : 1);
+      g.beginPath();
+      g.moveTo(a[0], a[1]);
+      g.lineTo(b[0], b[1]);
+      g.stroke();
+    }
+  }
 
   function draw() {
     if (!canvas || width === 0) return;
@@ -98,68 +122,56 @@
     const c = css();
     const s = section;
     if (!s) return;
-    if (stable.shot !== s.shot || reach(s) > stable.reach) stable = { shot: s.shot, reach: Math.max(reach(s), stable.shot === s.shot ? stable.reach : 0) };
-    const top = barH + 16; // room for the control bar
-    const cx = width / 2;
-    const cy = top + (height - top - 40) / 2;
-    const px = Math.max(5, Math.min(width / 2 - 24, (height - top - 40) / 2 - 8)) / stable.reach; // pixels per metre
-    const at = (p: [number, number]): [number, number] => [cx + p[0] * px, cy - p[1] * px];
 
-    // axis cross
+    // axis cross at the station
+    const [cx, cy] = toScreen(0, 0);
     g.strokeStyle = c.line;
     g.lineWidth = 1;
     g.beginPath();
-    g.moveTo(cx - 12, cy);
-    g.lineTo(cx + 12, cy);
-    g.moveTo(cx, cy - 12);
-    g.lineTo(cx, cy + 12);
+    g.moveTo(cx - 14, cy);
+    g.lineTo(cx + 14, cy);
+    g.moveTo(cx, cy - 14);
+    g.lineTo(cx, cy + 14);
     g.stroke();
 
-    // measured points at the two stations (the evidence the outline is made from)
-    const dots = (pts: [number, number][], color: string, hollow: boolean, strong: boolean) => {
-      g.globalAlpha = strong ? 1 : 0.55;
-      g.strokeStyle = color;
-      g.fillStyle = color;
-      g.lineWidth = 1.5;
-      for (const p of pts) {
-        const [x, y] = at(p);
-        g.beginPath();
-        if (hollow) g.rect(x - 3.5, y - 3.5, 7, 7);
-        else g.arc(x, y, 3.5, 0, Math.PI * 2);
-        if (hollow) g.stroke();
-        else g.fill();
-      }
-      g.globalAlpha = 1;
-    };
-    const nearStart = s.t <= 0.5;
-    dots(s.to_points, c.muted, true, !nearStart || s.at_station);
-    dots(s.from_points, c.accent, false, nearStart || s.at_station);
-
+    // the measured outline: a guide to trace against, never the passage itself
     if (s.outline.length >= 3) {
       g.beginPath();
       s.outline.forEach((p, i) => {
-        const [x, y] = at(p);
+        const [x, y] = toScreen(p[0], p[1]);
         if (i === 0) g.moveTo(x, y);
         else g.lineTo(x, y);
       });
       g.closePath();
       g.fillStyle = c.accentBg;
-      g.globalAlpha = 0.55;
+      g.globalAlpha = 0.4;
       g.fill();
       g.globalAlpha = 1;
-      g.strokeStyle = c.text;
-      g.lineWidth = 2.2;
+      g.setLineDash([6, 4]);
+      g.strokeStyle = c.muted;
+      g.lineWidth = 1.5;
       g.lineJoin = 'round';
       g.stroke();
+      g.setLineDash([]);
     }
+    g.fillStyle = c.muted;
+    for (const p of s.measured) {
+      const [x, y] = toScreen(p[0], p[1]);
+      g.beginPath();
+      g.arc(x, y, 3.2, 0, Math.PI * 2);
+      g.fill();
+    }
+
+    // what has been sketched
+    for (const k of s.sketches) stroke(g, k.points, k.widths, c.text);
+    if (live && live.pts.length > 1) stroke(g, live.pts, live.pressure ? live.widths : null, c.accent);
 
     // up arrow and what it means
     g.fillStyle = c.muted;
     g.strokeStyle = c.muted;
     g.font = '11px system-ui, sans-serif';
-    g.textAlign = 'left';
     g.lineWidth = 1.5;
-    const ay = height - 52; // bottom of the arrow, above the caption
+    const ay = height - 56;
     g.beginPath();
     g.moveTo(width - 28, ay);
     g.lineTo(width - 28, ay - 26);
@@ -170,49 +182,123 @@
     g.textAlign = 'right';
     g.fillText(s.up_means === 'north' ? 'north' : 'up', width - 38, ay - 10);
 
-    // legend: which marks are measured at which end
-    g.textAlign = 'left';
-    g.fillStyle = c.accent;
-    g.beginPath();
-    g.arc(20, height - 62, 3.5, 0, Math.PI * 2);
-    g.fill();
-    g.fillStyle = c.muted;
-    g.fillText(`measured at ${s.from}`, 30, height - 58);
-    g.strokeStyle = c.muted;
-    g.lineWidth = 1.5;
-    g.strokeRect(16.5, height - 82.5, 7, 7);
-    g.fillText(`measured at ${s.to}`, 30, height - 75);
-
-    // scale bar
+    // scale bar in the chosen units
     const per = metresPer(cave.units);
-    const len = niceNumber(100 / px / per);
+    const len = niceNumber(100 / scale / per);
     g.strokeStyle = c.text;
     g.fillStyle = c.text;
     g.lineWidth = 2;
     g.textAlign = 'left';
     g.beginPath();
-    g.moveTo(16, height - 36);
-    g.lineTo(16 + len * per * px, height - 36);
+    g.moveTo(16, height - 44);
+    g.lineTo(16 + len * per * scale, height - 44);
     g.stroke();
-    g.fillText(`${len} ${unitName(cave.units)}`, 16, height - 42);
+    g.fillText(`${len} ${unitName(cave.units)}`, 16, height - 50);
+  }
+
+  // ---- input: pen and mouse draw, fingers and middle button pan, wheel zooms -------------------
+  let panning: { x: number; y: number } | null = null;
+  let lastMiddle = 0;
+
+  function addPoint(e: PointerEvent) {
+    if (!live) return;
+    const rect = canvas.getBoundingClientRect();
+    const p = toWorld(e.clientX - rect.left, e.clientY - rect.top);
+    const last = live.pts[live.pts.length - 1];
+    if (last && Math.hypot(p[0] - last[0], p[1] - last[1]) * scale < 1.5) return;
+    live.pts.push(p);
+    // Pressure only changes how thick the line is drawn, never where it goes.
+    live.widths.push(e.pointerType === 'pen' ? 0.4 + 1.2 * e.pressure : 1);
+  }
+
+  function onDown(e: PointerEvent) {
+    canvas.setPointerCapture(e.pointerId);
+    canvas.focus();
+    const middle = e.button === 1;
+    if (middle) {
+      e.preventDefault();
+      if (e.timeStamp - lastMiddle < 350) fit();
+      lastMiddle = e.timeStamp;
+    }
+    const draws = tool === 'sketch' && !middle && e.button === 0 && e.pointerType !== 'touch' && !!section;
+    if (draws) {
+      live = { pts: [], widths: [], pressure: e.pointerType === 'pen' };
+      addPoint(e);
+    } else {
+      panning = { x: e.clientX, y: e.clientY };
+    }
+  }
+
+  function onMove(e: PointerEvent) {
+    if (live) {
+      const samples = e.getCoalescedEvents?.() ?? [];
+      for (const ev of samples.length > 0 ? samples : [e]) addPoint(ev);
+      schedule();
+    } else if (panning) {
+      ox += e.clientX - panning.x;
+      oy += e.clientY - panning.y;
+      panning = { x: e.clientX, y: e.clientY };
+      schedule();
+    }
+  }
+
+  function onUp() {
+    panning = null;
+    if (!live) return;
+    const stroked = live;
+    live = null;
+    if (stroked.pts.length >= 2 && cave.station) {
+      const result = engine.addSectionSketch(cave.station, stroked.pts, stroked.pressure ? stroked.widths : null, cave.adjusted);
+      message = result === 'ok' ? '' : result;
+      changed();
+    }
+    schedule();
+  }
+
+  function onWheel(e: WheelEvent) {
+    e.preventDefault();
+    const rect = canvas.getBoundingClientRect();
+    const mx = e.clientX - rect.left;
+    const my = e.clientY - rect.top;
+    const f = Math.exp(-e.deltaY * 0.0015);
+    ox = mx - (mx - ox) * f;
+    oy = my - (my - oy) * f;
+    scale *= f;
+    schedule();
+  }
+
+  function doUndo() {
+    if (engine.undo()) changed();
+  }
+  function doRedo() {
+    if (engine.redo()) changed();
+  }
+  function onKey(e: KeyboardEvent) {
+    if (!(e.metaKey || e.ctrlKey) || e.key.toLowerCase() !== 'z') return;
+    e.preventDefault();
+    if (e.shiftKey) doRedo();
+    else doUndo();
+  }
+
+  function step(by: number) {
+    const next = stations[index + by];
+    if (next) cave.station = next.id;
   }
 
   const caption = $derived.by(() => {
     const s = section;
     if (!s) return '';
-    const u = cave.units;
-    const place = s.at_station
-      ? `At station ${s.nearest}: its own measured outline.`
-      : `${formatLength(s.nearest_distance, u, 1)} from ${s.nearest}, blended from the walls measured at ${s.from} and ${s.to}.`;
-    const infer = [s.from_inferred ? s.from : '', s.to_inferred ? s.to : ''].filter(Boolean);
-    const inferred = infer.length ? ` ${infer.join(' and ')} had no measurements, so ${infer.length > 1 ? 'those sections are' : 'that section is'} inferred from neighbouring stations.` : '';
-    return `${place}${inferred}`;
+    if (s.note) return s.note;
+    const n = s.measured.length;
+    const base = `${n} measured wall point${n === 1 ? '' : 's'} at ${s.label}${s.inferred ? ', inferred from neighbouring stations (no measurements here)' : ''}. The dashed outline is a guide to trace against.`;
+    return base;
   });
 
   onMount(() => {
     const ro = new ResizeObserver(() => {
       width = wrap.clientWidth;
       height = wrap.clientHeight;
+      schedule();
     });
     ro.observe(wrap);
     const dark = window.matchMedia('(prefers-color-scheme: dark)');
@@ -227,30 +313,48 @@
 </script>
 
 <div class="section" bind:this={wrap}>
-  <canvas bind:this={canvas} style="width:{width}px;height:{height}px"></canvas>
+  <canvas
+    bind:this={canvas}
+    tabindex="0"
+    style="width:{width}px;height:{height}px;cursor:{tool === 'sketch' ? 'crosshair' : 'grab'}"
+    onpointerdown={onDown}
+    onpointermove={onMove}
+    onpointerup={onUp}
+    onpointercancel={onUp}
+    onwheel={onWheel}
+    onkeydown={onKey}
+    oncontextmenu={(e) => e.preventDefault()}
+  ></canvas>
   <div class="bar" bind:clientHeight={barH}>
-    <select bind:value={shot} onchange={() => (t = 1)} aria-label="Leg">
-      {#each legs as l}<option value={l.shot}>{l.from} – {l.to} · {formatLength(l.length, cave.units, 1)}</option>{/each}
+    <button title="Previous station" disabled={index <= 0} onclick={() => step(-1)}><ChevronLeft size={15} /></button>
+    <select bind:value={cave.station} aria-label="Station">
+      {#each stations as s}<option value={s.id}>{s.label}{s.outlined ? '' : ' (no walls)'}{s.sketches ? ` · ${s.sketches} sketch${s.sketches === 1 ? '' : 'es'}` : ''}</option>{/each}
     </select>
-    <input type="range" min="0" max="1" step="0.005" bind:value={t} aria-label="Position along the leg" disabled={!leg} />
-    {#if leg}<LengthField id="section-distance" label="From {section?.from ?? leg.from}" bind:value={dist} min={0} />{/if}
+    <button title="Next station" disabled={index < 0 || index >= stations.length - 1} onclick={() => step(1)}><ChevronRight size={15} /></button>
+    <button class:on={tool === 'sketch'} title="Sketch (pen or mouse)" onclick={() => (tool = 'sketch')}><Pencil size={15} /></button>
+    <button class:on={tool === 'pan'} title="Pan" onclick={() => (tool = 'pan')}><Hand size={15} /></button>
+    <button title="Undo (Ctrl/Cmd+Z)" disabled={!canUndo} onclick={doUndo}><Undo2 size={15} /></button>
+    <button title="Redo (Shift+Ctrl/Cmd+Z)" disabled={!canRedo} onclick={doRedo}><Redo2 size={15} /></button>
+    <button title="Fit (or double middle-click)" onclick={fit}><Maximize size={15} /></button>
   </div>
-  {#if !legs.length && ready}
-    <div class="empty">No legs to cut a section across yet.</div>
-  {:else if section?.note}
-    <div class="note warn" role="status">{section.note}</div>
+  {#if ready && !stations.length}
+    <div class="empty">Open a cave with surveyed legs to cut cross sections at its stations.</div>
+  {:else if message}
+    <div class="note warn" role="status">{message}</div>
   {:else if caption}
-    <div class="note">{caption}</div>
+    <div class="note" class:warn={!!section?.note} role="status">{caption}</div>
   {/if}
 </div>
 
 <style>
   .section { position: relative; height: 100%; overflow: hidden; background: var(--panel-2); }
-  canvas { position: absolute; inset: 0; display: block; }
-  .bar { position: absolute; top: 8px; left: 8px; right: 8px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; padding: 6px 8px; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); font-size: 12px; width: fit-content; max-width: calc(100% - 16px); }
-  select { font: inherit; padding: 3px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--text); max-width: 220px; }
-  input[type='range'] { width: 140px; accent-color: var(--accent); }
+  canvas { position: absolute; inset: 0; display: block; touch-action: none; outline: none; }
+  .bar { position: absolute; top: 8px; left: 8px; right: 8px; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; padding: 6px 8px; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); font-size: 12px; width: fit-content; max-width: calc(100% - 16px); }
+  select, button { font: inherit; padding: 3px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--text); cursor: pointer; display: inline-grid; place-items: center; }
+  select { max-width: 200px; }
+  button.on { background: var(--accent-bg); }
+  button:disabled { opacity: 0.4; cursor: default; }
   .note { position: absolute; left: 8px; right: 8px; bottom: 8px; padding: 6px 10px; font-size: 12px; color: var(--muted); background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); }
   .note.warn { color: var(--text); border-color: var(--warn); }
-  .empty { position: absolute; inset: 0; display: grid; place-items: center; color: var(--muted); font-size: 13px; }
+  .empty { position: absolute; inset: 0; display: grid; place-items: center; padding: 16px; text-align: center; color: var(--muted); font-size: 13px; }
 </style>

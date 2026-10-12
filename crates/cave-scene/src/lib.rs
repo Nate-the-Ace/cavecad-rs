@@ -14,7 +14,9 @@ mod under;
 pub use filter::{TripInfo, ViewFilter};
 pub use mesh::{ColorMode, Mesh, passage_mesh};
 pub use profile::{ProfileScene, RunInfo, profile_frames, profile_scene, runs};
-pub use section::{Section, SectionLeg, section_cut, section_legs};
+pub use section::{
+    SectionSketch, SectionStation, StationSection, section_at, section_stations, section_trip,
+};
 pub use under::Shading;
 
 use cave_doc::{Document, Field, Kind};
@@ -29,6 +31,8 @@ pub type Pt = [f64; 3];
 /// A surveyed station.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct StationDot {
+    /// The station's id as text (what a cross section is asked for by).
+    pub id: String,
     /// Label shown to people.
     pub label: String,
     /// Position in metres.
@@ -277,6 +281,7 @@ pub fn build_seen_from(
     {
         if let Some(p) = pos(**id) {
             scene.stations.push(StationDot {
+                id: id.to_string(),
                 label: labels[*id].clone(),
                 at: [p.x, p.y, p.z],
                 anchor: r.anchors.contains(*id),

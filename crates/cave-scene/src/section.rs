@@ -1,76 +1,76 @@
-//! The Cross Section panel: a cut across the passage anywhere along a surveyed leg.
+//! The Cross Section panel: the passage cut across at a station, and the sketches drawn on it.
 //!
-//! The outline is made from the same rings as the 3D tube (every measured LRUD tick and splay tip
-//! at the two stations, projected across the passage), so a cut at a station IS the tube's ring
-//! there. Between stations it is a straight blend of the two end rings and says so: the caption
-//! states how far the cut is from the nearer station. Nothing is smoothed and nothing is invented;
-//! a station with too few measurements gives a plain-words refusal, not a guess (unless "fill
-//! gaps" is on, in which case the inferred ring is labelled as an inference).
+//! Sections are cut at stations only (that is where they are sketched). The outline is the ring of
+//! measured wall points at the station, built exactly as the 3D tube builds it (every LRUD tick and
+//! splay tip, projected across the passage), so the panel and the tube always agree. It is a guide
+//! to trace against, never the passage itself. A station with too few measurements gets a plain-words
+//! note instead of an outline, and can still be sketched on (the field-book page is the evidence
+//! then); where "fill gaps" supplies an inferred ring the section says so.
+//!
+//! Sketches are `section-sketch` features naming their station, with points in the section's own
+//! plane (`[across, up]` metres from the station, the plane's orientation being the tube's frame at
+//! that station), so they follow the station when the survey is adjusted.
 
 use crate::{ViewFilter, solved::solve};
-use cave_doc::{Document, Field};
+use cave_doc::{Document, Field, Kind, Value};
 use cave_id::Id;
 use cave_mesh::{
     ColorMode, LegRings, LoftMode, MeshInput, RingPoint, build_with_rings, cut_outline, frame_at,
 };
-use cave_survey::{LegKind, Vec3};
+use cave_survey::Vec3;
 use serde::Serialize;
+use std::collections::HashMap;
 
-/// A leg a cross section can be cut along.
+/// A station a section can be cut at.
 #[derive(Clone, Debug, PartialEq, Serialize)]
-pub struct SectionLeg {
-    /// The shot (its id as text).
-    pub shot: String,
-    /// Label of the start station.
-    pub from: String,
-    /// Label of the end station.
-    pub to: String,
-    /// Length of the leg in metres.
-    pub length: f64,
+pub struct SectionStation {
+    /// The station's id as text.
+    pub id: String,
+    /// Its label.
+    pub label: String,
+    /// True when there are enough measured (or inferred) wall points for an outline.
+    pub outlined: bool,
+    /// Sketches already drawn on this station's section.
+    pub sketches: usize,
 }
 
-/// One cut. Points are `[across, up]` in metres from the axis, in the plane across the passage.
+/// A stroke sketched on a section, `[across, up]` metres from the station.
 #[derive(Clone, Debug, PartialEq, Serialize)]
-pub struct Section {
-    /// The shot.
-    pub shot: String,
-    /// Start station label.
-    pub from: String,
-    /// End station label.
-    pub to: String,
-    /// Fraction of the way from start to end.
-    pub t: f64,
-    /// Length of the leg.
-    pub length: f64,
-    /// Metres from the start station.
-    pub along: f64,
-    /// The nearer end station.
-    pub nearest: String,
-    /// Metres from the nearer end station.
-    pub nearest_distance: f64,
-    /// True when the cut is at a station (its own measured ring, no blending).
-    pub at_station: bool,
-    /// The closed outline, in angle order. Empty when the cut is refused (see `note`).
+pub struct SectionSketch {
+    /// The feature's id as text.
+    pub id: String,
+    /// The stroke.
+    pub points: Vec<[f64; 2]>,
+    /// Pen weight per point, when drawn with pressure.
+    pub widths: Option<Vec<f64>>,
+}
+
+/// The section at one station. Points are `[across, up]` in metres from the station.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct StationSection {
+    /// The station's id as text.
+    pub id: String,
+    /// Its label.
+    pub label: String,
+    /// The closed outline in angle order; empty when there are too few measurements.
     pub outline: Vec<[f64; 2]>,
-    /// Measured points at the start station, drawn as evidence.
-    pub from_points: Vec<[f64; 2]>,
-    /// Measured points at the end station.
-    pub to_points: Vec<[f64; 2]>,
-    /// The start ring is an inference from neighbours.
-    pub from_inferred: bool,
-    /// The end ring is an inference from neighbours.
-    pub to_inferred: bool,
+    /// The measured wall points the outline is made from.
+    pub measured: Vec<[f64; 2]>,
+    /// The ring is an inference from neighbouring stations, not a measurement.
+    pub inferred: bool,
     /// What "up the page" means: `up`, or `north` in a shaft where no direction is up.
     pub up_means: String,
     /// Why there is no outline, in words a caver can act on.
     pub note: Option<String>,
+    /// Sketches on this section.
+    pub sketches: Vec<SectionSketch>,
 }
 
 fn dot(a: Vec3, b: Vec3) -> f64 {
     a.x * b.x + a.y * b.y + a.z * b.z
 }
 
-/// Runs the tube's own ring building and hands back the rings of every ordinary leg.
+/// The tube's rings for every ordinary leg of what the filter leaves visible.
 fn leg_rings(
     doc: &Document,
     use_adjustment: bool,
@@ -111,143 +111,164 @@ fn leg_rings(
     out
 }
 
+/// Where a station's section comes from: the first ordinary leg arriving at it (walls are recorded
+/// with the shot into a station), else the first leaving it. `(rings, at the leg's end, t)`.
+fn pick(rings: &[LegRings], station: Id) -> Option<(&LegRings, bool)> {
+    rings
+        .iter()
+        .find(|r| r.to == station)
+        .map(|r| (r, true))
+        .or_else(|| rings.iter().find(|r| r.from == station).map(|r| (r, false)))
+}
+
 fn label(doc: &Document, id: Id) -> String {
     doc.entity(id)
         .map(|e| e.text(Field::StationLabel))
         .unwrap_or_default()
 }
 
-/// Every leg a section can be cut along, in survey order.
-pub fn section_legs(doc: &Document, use_adjustment: bool, filter: &ViewFilter) -> Vec<SectionLeg> {
-    let s = solve(doc, use_adjustment);
-    s.resolved
-        .legs
-        .iter()
-        .filter(|l| l.kind == LegKind::New)
-        .filter(|l| {
-            filter.trip_shown(
-                doc.entity(l.shot)
-                    .and_then(|e| e.reference(Field::ShotTrip)),
-            )
-        })
-        .filter_map(|l| {
-            let (a, b) = (s.positions.get(&l.from)?, s.positions.get(&l.to)?);
-            let length = b.minus(*a).norm();
-            (length > 1e-9).then(|| SectionLeg {
-                shot: l.shot.to_string(),
-                from: label(doc, l.from),
-                to: label(doc, l.to),
-                length,
+/// The sketches on `station`'s section that the trip filter leaves visible.
+fn sketches_of(doc: &Document, station: Id, filter: &ViewFilter) -> Vec<SectionSketch> {
+    doc.ids_of(Kind::Feature)
+        .into_iter()
+        .filter_map(|id| {
+            let e = doc.entity(id)?;
+            if e.text(Field::FeatureType) != cave_draw::SECTION_SKETCH
+                || e.reference(Field::FeatureStation) != Some(station)
+                || !filter.trip_shown(e.reference(Field::FeatureTrip))
+            {
+                return None;
+            }
+            let Value::Path(Some(path)) = e.get(Field::FeaturePath) else {
+                return None;
+            };
+            Some(SectionSketch {
+                id: id.to_string(),
+                points: path.points().iter().map(|p| [p.x, p.y]).collect(),
+                widths: path.widths().map(<[f64]>::to_vec),
             })
         })
         .collect()
 }
 
 /// Why a station's ring cannot make an outline, in words a caver can act on.
-fn thin_reason(name: &str, measured: usize) -> String {
-    if measured == 0 {
+fn thin_reason(name: &str, directions: usize) -> String {
+    if directions == 0 {
         format!(
-            "Station {name} has no measured wall points of its own, so there is no outline to cut. \
-             Walls are recorded with the shot INTO a station, so the first station of a survey chain has none."
+            "Station {name} has no measured wall points of its own, so there is no outline to trace against. \
+             Walls are recorded with the shot INTO a station, so the first station of a survey chain has none. \
+             You can still sketch here."
         )
     } else {
         format!(
-            "Station {name} has only {measured} measured wall point{}; 3 are needed to make an outline.",
-            if measured == 1 { "" } else { "s" }
+            "Station {name} has only {directions} measured wall direction{}; 3 are needed for an outline. You can still sketch here.",
+            if directions == 1 { "" } else { "s" }
         )
     }
 }
 
-/// The cut along `shot`, `t` (0 to 1) of the way from its start station to its end. `None` when
-/// the shot is not a leg that can be cut. A cut that cannot be made still returns a [`Section`]
-/// with an empty outline and a `note`.
-pub fn section_cut(
+/// Every station a section can be cut at, in survey order, with whether it has an outline.
+pub fn section_stations(
     doc: &Document,
     use_adjustment: bool,
-    shot: &str,
-    t: f64,
     fill_gaps: bool,
     filter: &ViewFilter,
-) -> Option<Section> {
-    let shot_id: Id = shot.parse().ok()?;
-    let t = if t.is_finite() {
-        t.clamp(0.0, 1.0)
+) -> Vec<SectionStation> {
+    let rings = leg_rings(doc, use_adjustment, fill_gaps, filter);
+    let mut seen: Vec<Id> = Vec::new();
+    for r in &rings {
+        for s in [r.from, r.to] {
+            if !seen.contains(&s) {
+                seen.push(s);
+            }
+        }
+    }
+    let mut counts: HashMap<Id, usize> = HashMap::new();
+    for id in doc.ids_of(Kind::Feature) {
+        if let Some(e) = doc.entity(id)
+            && e.text(Field::FeatureType) == cave_draw::SECTION_SKETCH
+            && filter.trip_shown(e.reference(Field::FeatureTrip))
+            && let Some(st) = e.reference(Field::FeatureStation)
+        {
+            *counts.entry(st).or_default() += 1;
+        }
+    }
+    seen.into_iter()
+        .map(|id| SectionStation {
+            id: id.to_string(),
+            label: label(doc, id),
+            outlined: pick(&rings, id)
+                .is_some_and(|(r, end)| cut_outline(r, if end { 1.0 } else { 0.0 }).is_some()),
+            sketches: counts.get(&id).copied().unwrap_or(0),
+        })
+        .collect()
+}
+
+/// The trip that surveyed `station` (the trip of the first shot touching it), for filing a new
+/// sketch under it so the trip filter hides the sketch with its passage.
+pub fn section_trip(doc: &Document, use_adjustment: bool, station: &str) -> Option<Id> {
+    let station: Id = station.parse().ok()?;
+    let s = solve(doc, use_adjustment);
+    s.resolved
+        .legs
+        .iter()
+        .find(|l| l.from == station || l.to == station)
+        .and_then(|l| doc.entity(l.shot)?.reference(Field::ShotTrip))
+}
+
+/// The section at `station` (an id as text), or `None` when it is not a station on any leg.
+pub fn section_at(
+    doc: &Document,
+    use_adjustment: bool,
+    station: &str,
+    fill_gaps: bool,
+    filter: &ViewFilter,
+) -> Option<StationSection> {
+    let id: Id = station.parse().ok()?;
+    let rings = leg_rings(doc, use_adjustment, fill_gaps, filter);
+    let (leg, at_end) = pick(&rings, id)?;
+    let (centre, dir, ring, inferred): (Vec3, Vec3, &[RingPoint], bool) = if at_end {
+        (leg.b, leg.dir_b, &leg.ring_b, leg.inferred_b)
     } else {
-        0.0
+        (leg.a, leg.dir_a, &leg.ring_a, leg.inferred_a)
     };
-    let rings = leg_rings(doc, use_adjustment, fill_gaps, filter)
-        .into_iter()
-        .find(|r| r.shot == shot_id)?;
-    let along_vec = rings.b.minus(rings.a);
-    let length = along_vec.norm();
-    let frame = frame_at(along_vec)?;
-    let axis = Vec3::new(
-        rings.a.x + along_vec.x * t,
-        rings.a.y + along_vec.y * t,
-        rings.a.z + along_vec.z * t,
-    );
-    let flat = |origin: Vec3, p: Vec3| {
-        let w = p.minus(origin);
+    let frame = frame_at(dir)?;
+    let flat = |p: Vec3| {
+        let w = p.minus(centre);
         [dot(w, frame.right), dot(w, frame.up)]
     };
-    let ring_pts = |r: &[RingPoint], origin: Vec3| -> Vec<[f64; 2]> {
-        r.iter().map(|p| flat(origin, p.p)).collect()
-    };
-    let (from, to) = (label(doc, rings.from), label(doc, rings.to));
-    let (near_from, nearest_distance) = if t <= 0.5 {
-        (true, length * t)
-    } else {
-        (false, length * (1.0 - t))
-    };
-    let mut section = Section {
-        shot: shot.to_string(),
-        from: from.clone(),
-        to: to.clone(),
-        t,
-        length,
-        along: length * t,
-        nearest: if near_from { from.clone() } else { to.clone() },
-        nearest_distance,
-        at_station: t <= 1e-6 || t >= 1.0 - 1e-6,
-        outline: Vec::new(),
-        from_points: ring_pts(&rings.ring_a, rings.a),
-        to_points: ring_pts(&rings.ring_b, rings.b),
-        from_inferred: rings.inferred_a,
-        to_inferred: rings.inferred_b,
+    let name = label(doc, id);
+    let outline: Vec<[f64; 2]> = cut_outline(leg, if at_end { 1.0 } else { 0.0 })
+        .map(|o| o.iter().map(|(_, p)| flat(*p)).collect())
+        .unwrap_or_default();
+    let note = outline.is_empty().then(|| {
+        // Count directions, not points: two measurements the same way make one wall point.
+        let mut angles: Vec<f64> = ring.iter().map(|p| p.angle).collect();
+        angles.dedup_by(|x, y| (*x - *y).abs() < 1e-9);
+        thin_reason(&name, angles.len())
+    });
+    Some(StationSection {
+        id: station.to_string(),
+        label: name,
+        measured: ring.iter().map(|p| flat(p.p)).collect(),
+        outline,
+        inferred,
         up_means: if frame.forward.z.abs() > 0.98 {
             "north"
         } else {
             "up"
         }
         .to_string(),
-        note: None,
-    };
-    match cut_outline(&rings, t) {
-        Some(o) => section.outline = o.iter().map(|(_, p)| flat(axis, *p)).collect(),
-        None => {
-            let thin = if t >= 1.0 - 1e-6 || (t > 1e-6 && rings.ring_a.len() >= 3) {
-                (&to, rings.ring_b.len())
-            } else {
-                (&from, rings.ring_a.len())
-            };
-            // Count directions, not points: two measurements the same way make one wall point.
-            let ring = if std::ptr::eq(thin.0, &from) {
-                &rings.ring_a
-            } else {
-                &rings.ring_b
-            };
-            let mut angles: Vec<f64> = ring.iter().map(|p| p.angle).collect();
-            angles.dedup_by(|x, y| (*x - *y).abs() < 1e-9);
-            section.note = Some(thin_reason(thin.0, angles.len().min(thin.1)));
-        }
-    }
-    Some(section)
+        note,
+        sketches: sketches_of(doc, id, filter),
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use cave_doc::ActorId;
+    use cave_id::SeqIds;
 
     const BOX: &str = r#"{"unit":"m","name":"b","trips":[{"name":"b","startLrud":{"left":1,"right":1,"up":1,"down":1}}],"shots":[
         {"from":"A1","to":"A2","distance":10,"azimuth":0,"inclination":0,"left":1,"right":1,"up":1,"down":1},
@@ -257,13 +278,20 @@ mod tests {
         cave_fixture::from_shot_list(text, ActorId(1)).unwrap()
     }
 
-    fn legs(d: &Document) -> Vec<SectionLeg> {
-        section_legs(d, false, &ViewFilter::default())
+    fn all() -> ViewFilter {
+        ViewFilter::default()
     }
 
-    fn cut(d: &Document, leg: usize, t: f64) -> Section {
-        let l = &legs(d)[leg];
-        section_cut(d, false, &l.shot, t, false, &ViewFilter::default()).unwrap()
+    fn station(d: &Document, name: &str) -> String {
+        section_stations(d, false, false, &all())
+            .into_iter()
+            .find(|s| s.label == name)
+            .unwrap_or_else(|| panic!("no station {name}"))
+            .id
+    }
+
+    fn at(d: &Document, name: &str) -> StationSection {
+        section_at(d, false, &station(d, name), false, &all()).unwrap()
     }
 
     fn has(points: &[[f64; 2]], u: f64, v: f64) -> bool {
@@ -273,69 +301,102 @@ mod tests {
     }
 
     #[test]
-    fn the_legs_are_listed_with_labels_and_lengths() {
-        let l = legs(&doc(BOX));
-        assert_eq!(l.len(), 2);
-        assert_eq!((l[0].from.as_str(), l[0].to.as_str()), ("A1", "A2"));
-        assert!((l[0].length - 10.0).abs() < 1e-9);
+    fn stations_are_listed_in_survey_order_with_whether_they_have_an_outline() {
+        let list = section_stations(&doc(BOX), false, false, &all());
+        let labels: Vec<_> = list.iter().map(|s| s.label.as_str()).collect();
+        assert_eq!(labels, ["A1", "A2", "A3"]);
+        assert!(list.iter().all(|s| s.outlined && s.sketches == 0));
     }
 
     #[test]
-    fn a_cut_at_a_station_is_that_stations_measured_ring() {
-        let d = doc(BOX);
-        let s = cut(&d, 0, 1.0);
-        assert!(s.at_station && s.note.is_none());
-        assert_eq!((s.nearest.as_str(), s.nearest_distance), ("A2", 0.0));
-        assert_eq!(
-            s.outline.len(),
-            4,
-            "four measured walls, no invented vertices"
-        );
-        for (u, v) in [(1.0, 0.0), (-1.0, 0.0), (0.0, 1.0), (0.0, -1.0)] {
+    fn a_stations_section_is_its_measured_ring() {
+        let s = at(&doc(BOX), "A3");
+        assert!(s.note.is_none() && !s.inferred);
+        assert_eq!(s.outline.len(), 4, "four measured walls, nothing invented");
+        for (u, v) in [(3.0, 0.0), (-3.0, 0.0), (0.0, 3.0), (0.0, -3.0)] {
             assert!(has(&s.outline, u, v), "{u},{v}");
         }
-    }
-
-    #[test]
-    fn halfway_between_stations_is_the_blend_and_says_how_far_from_the_nearer() {
-        let d = doc(BOX);
-        // Leg 1 runs A2 (1 m walls: it arrived by the first shot) to A3 (3 m walls).
-        let s = cut(&d, 1, 0.5);
-        assert!(!s.at_station);
-        assert!((s.nearest_distance - 5.0).abs() < 1e-9);
-        for (u, v) in [(2.0, 0.0), (-2.0, 0.0), (0.0, 2.0), (0.0, -2.0)] {
-            assert!(has(&s.outline, u, v), "{u},{v}: {:?}", s.outline);
-        }
-        assert!(s.from_points.len() == 4 && s.to_points.len() == 4);
+        assert_eq!(s.measured.len(), 4);
         assert_eq!(s.up_means, "up");
     }
 
     #[test]
-    fn a_station_with_no_measurements_is_refused_in_plain_words() {
+    fn a_station_with_no_measurements_says_why_and_can_still_be_sketched_on() {
         let text = r#"{"unit":"m","name":"n","shots":[
             {"from":"A1","to":"A2","distance":10,"azimuth":0,"inclination":0}]}"#;
         let d = doc(text);
-        let s = cut(&d, 0, 0.0);
+        assert!(
+            section_stations(&d, false, false, &all())
+                .iter()
+                .all(|s| !s.outlined)
+        );
+        let s = at(&d, "A1");
         assert!(s.outline.is_empty());
         let note = s.note.unwrap();
         assert!(
-            note.contains("A1") && note.contains("no measured wall points"),
-            "{note}"
+            note.contains("A1")
+                && note.contains("no measured wall points")
+                && note.contains("sketch")
         );
     }
 
     #[test]
-    fn a_shaft_cuts_with_north_up_the_page() {
+    fn a_shaft_has_north_up_the_page_and_finite_geometry() {
         let text = r#"{"unit":"m","name":"s","trips":[{"name":"s","startLrud":{"left":1,"right":1,"up":1,"down":1}}],"shots":[
             {"from":"A1","to":"A2","distance":10,"azimuth":0,"inclination":-90,"left":2,"right":2,"up":2,"down":2}]}"#;
-        let d = doc(text);
-        let s = cut(&d, 0, 0.5);
+        let s = at(&doc(text), "A2");
         assert_eq!(s.up_means, "north");
-        assert!(s.outline.iter().flatten().all(|v| v.is_finite()) && s.outline.len() >= 3);
+        assert!(s.outline.len() >= 3 && s.outline.iter().flatten().all(|v| v.is_finite()));
     }
 
     #[test]
-    fn every_leg_of_the_test_caves_cuts_to_finite_geometry_or_says_why_not() {
+    fn sketches_come_back_on_their_own_station_and_follow_the_trip_filter() {
+        let mut d = doc(BOX);
+        let a2: Id = station(&d, "A2").parse().unwrap();
+        let trip = section_trip(&d, false, &a2.to_string());
+        assert!(trip.is_some());
+        let (_, actions) = cave_draw::section_sketch(
+            &d,
+            &mut SeqIds::new(9),
+            a2,
+            &[[0.0, 0.0], [1.0, 0.5], [2.0, 0.0]],
+            Some(vec![0.5, 1.0, 1.5]),
+            trip,
+        )
+        .unwrap();
+        d.edit(actions).unwrap();
+        let s = at(&d, "A2");
+        assert_eq!(s.sketches.len(), 1);
+        assert_eq!(
+            s.sketches[0].points,
+            vec![[0.0, 0.0], [1.0, 0.5], [2.0, 0.0]]
+        );
+        assert_eq!(s.sketches[0].widths.as_deref(), Some(&[0.5, 1.0, 1.5][..]));
+        assert!(
+            at(&d, "A3").sketches.is_empty(),
+            "sketches belong to their station"
+        );
+        let counted = section_stations(&d, false, false, &all());
+        assert_eq!(counted.iter().map(|s| s.sketches).sum::<usize>(), 1);
+        let hidden = ViewFilter {
+            hidden_trips: [trip.unwrap().to_string()].into(),
+            ..ViewFilter::default()
+        };
+        assert!(
+            section_at(&d, false, &a2.to_string(), false, &hidden).is_none(),
+            "with the trip hidden the station is not on any visible leg"
+        );
+    }
+
+    #[test]
+    fn unknown_stations_are_none() {
+        let d = doc(BOX);
+        assert!(section_at(&d, false, "nope", false, &all()).is_none());
+        assert!(section_at(&d, false, &Id::from_name("x").to_string(), false, &all()).is_none());
+    }
+
+    #[test]
+    fn every_station_of_the_test_caves_gives_finite_geometry_or_says_why_not() {
         for name in [
             "PitfallCave.json",
             "PlumblinePit.json",
@@ -346,45 +407,29 @@ mod tests {
                 env!("CARGO_MANIFEST_DIR")
             );
             let d = doc(&std::fs::read_to_string(path).unwrap());
-            let all = ViewFilter::default();
-            let (mut cut_ok, mut refused) = (0, 0);
-            for l in section_legs(&d, true, &all) {
-                for t in [0.0, 0.3, 0.5, 1.0] {
-                    let s = section_cut(&d, true, &l.shot, t, true, &all).unwrap();
-                    if s.outline.is_empty() {
-                        assert!(s.note.is_some(), "{name} {}-{} at {t}", l.from, l.to);
-                        refused += 1;
-                    } else {
-                        assert!(
-                            s.outline.len() >= 3,
-                            "{name} {}-{} at {t}: {:?}",
-                            l.from,
-                            l.to,
-                            s.outline
-                        );
-                        assert!(s.outline.iter().flatten().all(|v| v.is_finite()), "{name}");
-                        cut_ok += 1;
-                    }
+            let (mut outlined, mut noted) = (0, 0);
+            for st in section_stations(&d, true, true, &all()) {
+                let s = section_at(&d, true, &st.id, true, &all()).unwrap();
+                assert_eq!(s.outline.is_empty(), !st.outlined, "{name} {}", st.label);
+                if s.outline.is_empty() {
+                    assert!(s.note.is_some(), "{name} {}", st.label);
+                    noted += 1;
+                } else {
+                    assert!(s.outline.len() >= 3);
+                    assert!(
+                        s.outline
+                            .iter()
+                            .chain(&s.measured)
+                            .flatten()
+                            .all(|v| v.is_finite())
+                    );
+                    outlined += 1;
                 }
             }
             assert!(
-                cut_ok > 0,
-                "{name}: something can be cut ({refused} refused)"
+                outlined > 0,
+                "{name}: something has an outline ({noted} noted)"
             );
         }
-    }
-
-    #[test]
-    fn unknown_shots_and_odd_fractions_are_safe() {
-        let d = doc(BOX);
-        let all = ViewFilter::default();
-        assert!(section_cut(&d, false, "not-an-id", 0.5, false, &all).is_none());
-        let l = &legs(&d)[0];
-        let s = section_cut(&d, false, &l.shot, f64::NAN, false, &all).unwrap();
-        assert_eq!(s.t, 0.0);
-        assert_eq!(
-            section_cut(&d, false, &l.shot, 7.0, false, &all).unwrap().t,
-            1.0
-        );
     }
 }
