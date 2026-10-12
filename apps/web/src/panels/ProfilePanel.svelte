@@ -4,7 +4,9 @@
   import { Undo2, Redo2, Maximize } from '@lucide/svelte';
   import { looks } from '../lib/ink';
   import { cave, changed, setShowSections } from '../lib/cave.svelte';
-  import { defaultBandOffset, drawStrokes, glyphCurves, hits, leaderEnd } from '../lib/section-glyph';
+  import { defaultBandOffset, drawHandles, drawStrokes, glyphCurves, hits, leaderEnd } from '../lib/section-glyph';
+  import { LineEditor } from '../lib/line-editor';
+  import { simplify } from '../lib/spline';
   import type { BandSection } from '../lib/engine';
   import { formatLength, inUnits, metresPer, niceNumber, unitName } from '../lib/units';
   import { engine, loadEngine, type ProfileScene, type RunInfo } from '../lib/engine';
@@ -24,6 +26,29 @@
   let ox = 0;
   let oy = 0;
   let frame = 0;
+  // Drawn lines can be selected and their fit points moved, added and deleted.
+  const editor = new LineEditor({
+    lines: () => band?.sketches ?? [],
+    toScreen: (p) => toScreen(p[0], p[1]),
+    toWorld: (x, y) => toWorld(x, y),
+    selected: () => cave.selected,
+    select: (id) => (cave.selected = id),
+    commit: (id, pts, widths) => {
+      const r = engine.editLine(id, pts, widths, cave.adjusted);
+      message = r === 'ok' ? '' : r;
+      changed();
+    },
+    remove: (id) => {
+      engine.deleteLine(id);
+      changed();
+    },
+    redraw: () => schedule(),
+  });
+  $effect(() => {
+    void cave.selected;
+    schedule();
+  });
+
   // Cross-section sketches sit beside their stations; a drag moves one, and the drop is saved.
   const liveOffsets = new Map<string, [number, number]>();
   let dragSection: { id: string; x: number; y: number } | null = null;
@@ -156,7 +181,8 @@
     g.setLineDash([]);
     for (const l of band.legs) stroke(g, [[l[0], l[1]], [l[2], l[3]]], null, c.text, 2);
     const look = looks();
-    drawStrokes(g, band.sketches, toScreen, look);
+    drawStrokes(g, editor.display(), toScreen, look, 1, cave.selected);
+    drawHandles(g, editor.handles(), c.accent, c.bg);
     if (cave.showSections.profile) {
       for (const sec of band.sections) {
         const st = toScreen(sec.s, sec.z);
@@ -218,6 +244,10 @@
       if (e.timeStamp - lastMiddle < 350) fit();
       lastMiddle = e.timeStamp;
     }
+    if (e.button === 0 && e.pointerType !== 'touch' && !cave.tool) {
+      const r = canvas.getBoundingClientRect();
+      if (editor.press(e.clientX - r.left, e.clientY - r.top)) return;
+    }
     if (e.button === 0 && e.pointerType !== 'touch') {
       const rect = canvas.getBoundingClientRect();
       const grab = sectionAt(e.clientX - rect.left, e.clientY - rect.top);
@@ -236,6 +266,8 @@
   }
 
   function onMove(e: PointerEvent) {
+    const r = canvas.getBoundingClientRect();
+    if (editor.move(e.clientX - r.left, e.clientY - r.top)) return;
     if (dragSection) {
       const s = band?.sections.find((k) => k.id === dragSection!.id);
       if (s) {
@@ -261,6 +293,7 @@
 
   function onUp() {
     panning = null;
+    if (editor.release()) return;
     if (dragSection) {
       const id = dragSection.id;
       dragSection = null;
@@ -277,7 +310,9 @@
     const stroked = live;
     live = null;
     if (stroked.pts.length >= 2 && cave.run) {
-      const result = engine.addSketch(cave.run, cave.tool, stroked.pts, stroked.pressure ? stroked.widths : null, cave.adjusted);
+      // A freehand stroke becomes a smooth curve through a few fit points.
+      const fit = simplify(stroked.pts, stroked.pressure ? stroked.widths : null, 2.5 / scale);
+      const result = engine.addSketch(cave.run, cave.tool, fit.pts, fit.widths, cave.adjusted);
       message = result === 'ok' ? '' : result;
       changed();
     }
@@ -303,6 +338,10 @@
     if (engine.redo('profile')) changed();
   }
   function onKey(e: KeyboardEvent) {
+    if (editor.key(e)) {
+      e.preventDefault();
+      return;
+    }
     if (!(e.metaKey || e.ctrlKey) || e.key.toLowerCase() !== 'z') return;
     e.preventDefault();
     if (e.shiftKey) doRedo();
@@ -338,6 +377,10 @@
     onpointerup={onUp}
     onpointercancel={onUp}
     onwheel={onWheel}
+    ondblclick={(e) => {
+      const r = canvas.getBoundingClientRect();
+      if (!cave.tool) editor.addPoint(e.clientX - r.left, e.clientY - r.top);
+    }}
     onkeydown={onKey}
     oncontextmenu={(e) => e.preventDefault()}
   ></canvas>

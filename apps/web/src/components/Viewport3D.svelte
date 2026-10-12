@@ -85,6 +85,22 @@
   const undoMap = () => engine.undo('map') && changed();
   const redoMap = () => engine.redo('map') && changed();
 
+  // The selected line gets a halo and, on the map, handles; Delete removes a selected map line.
+  $effect(() => {
+    const id = cave.selected;
+    view?.setSelectedLine(id);
+  });
+  function onKey(e: KeyboardEvent) {
+    if ((e.key === 'Delete' || e.key === 'Backspace') && cave.selected && view?.hasMapLine(cave.selected)) {
+      e.preventDefault();
+      engine.deleteLine(cave.selected);
+      cave.selected = '';
+      changed();
+    } else if (e.key === 'Escape' && cave.selected) {
+      cave.selected = '';
+    }
+  }
+
   // The picked drawing tool: drawing on the map goes to its plan, from the Top or Bottom view.
   let drawHint = $state('');
   $effect(() => {
@@ -102,6 +118,7 @@
   // A plain click on a station picks it for the Cross Section panel (a drag orbits, as always).
   let down: { x: number; y: number } | null = null;
   function onDown(e: PointerEvent) {
+    wrap.focus({ preventScroll: true }); // so Delete and Escape reach the map
     down = e.button === 0 ? { x: e.clientX, y: e.clientY } : null;
   }
   function onUp(e: PointerEvent) {
@@ -154,6 +171,12 @@
       const hint = cave.tool && !v.canDrawHere ? 'Snap to the Top view to draw on the map' : '';
       if (hint !== drawHint) drawHint = hint;
     };
+    v.onSelectLine = (id) => (cave.selected = id);
+    v.onLineEdited = (id, points, widths) => {
+      const r = engine.editLine(id, points, widths, cave.adjusted);
+      if (r !== 'ok') engine.log('warn', 'draw', r);
+      changed();
+    };
     v.onLineDrawn = (points, widths) => {
       const r = engine.addMapLine(cave.tool, points, widths, cave.adjusted);
       if (r !== 'ok') engine.log('warn', 'draw', r);
@@ -190,7 +213,8 @@
   });
 </script>
 
-<div class="vp" bind:this={wrap}>
+<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+<div class="vp" role="application" aria-label="Map" bind:this={wrap} tabindex="-1" onkeydown={onKey}>
   <canvas bind:this={gl} onpointerdown={onDown} onpointerup={onUp}></canvas>
   <canvas bind:this={overlay} class="overlay"></canvas>
   <div class="bar">
@@ -242,7 +266,7 @@
 </div>
 
 <style>
-  .vp { position: relative; height: 100%; overflow: hidden; background: var(--panel-2); }
+  .vp { outline: none; position: relative; height: 100%; overflow: hidden; background: var(--panel-2); }
   canvas { position: absolute; inset: 0; display: block; touch-action: none; }
   .overlay { pointer-events: none; }
   .bar { position: absolute; top: 8px; left: 8px; max-width: calc(100% - 160px); flex-wrap: wrap; display: flex; gap: 6px 10px; align-items: center; padding: 6px 8px; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); font-size: 12px; }

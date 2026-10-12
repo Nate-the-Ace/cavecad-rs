@@ -7,7 +7,9 @@
   import { onTheme } from '../lib/theme';
   import { Undo2, Redo2, Maximize, ChevronLeft, ChevronRight } from '@lucide/svelte';
   import { looks } from '../lib/ink';
-  import { drawStrokes } from '../lib/section-glyph';
+  import { drawHandles, drawStrokes } from '../lib/section-glyph';
+  import { LineEditor } from '../lib/line-editor';
+  import { simplify } from '../lib/spline';
   import { cave, changed, filter, wireFilter } from '../lib/cave.svelte';
   import { engine, loadEngine, type SectionStation, type StationSection } from '../lib/engine';
   import { metresPer, niceNumber, unitName } from '../lib/units';
@@ -31,6 +33,29 @@
   let frame = 0;
   let framed = '';
   let live: { pts: [number, number][]; widths: number[]; pressure: boolean } | null = null;
+
+  // Drawn lines can be selected and their fit points moved, added and deleted.
+  const editor = new LineEditor({
+    lines: () => section?.sketches ?? [],
+    toScreen: (p) => toScreen(p[0], p[1]),
+    toWorld: (x, y) => toWorld(x, y),
+    selected: () => cave.selected,
+    select: (id) => (cave.selected = id),
+    commit: (id, pts, widths) => {
+      const r = engine.editLine(id, pts, widths, cave.adjusted);
+      message = r === 'ok' ? '' : r;
+      changed();
+    },
+    remove: (id) => {
+      engine.deleteLine(id);
+      changed();
+    },
+    redraw: () => schedule(),
+  });
+  $effect(() => {
+    void cave.selected;
+    schedule();
+  });
 
   const index = $derived(stations.findIndex((s) => s.id === cave.station));
   const toWorld = (x: number, y: number): [number, number] => [(x - ox) / scale, (oy - y) / scale];
@@ -95,7 +120,7 @@
   const css = () => {
     const c = getComputedStyle(document.documentElement);
     const v = (n: string) => c.getPropertyValue(n).trim();
-    return { text: v('--text'), muted: v('--muted'), line: v('--line'), accent: v('--accent'), accentBg: v('--accent-bg') };
+    return { text: v('--text'), muted: v('--muted'), line: v('--line'), accent: v('--accent'), accentBg: v('--accent-bg'), panel: v('--panel') };
   };
 
   function draw() {
@@ -151,7 +176,8 @@
 
     // what has been sketched
     const look = looks();
-    drawStrokes(g, s.sketches, toScreen, look);
+    drawStrokes(g, editor.display(), toScreen, look, 1, cave.selected);
+    drawHandles(g, editor.handles(), c.accent, c.panel);
     if (live && live.pts.length > 1) drawStrokes(g, [{ kind: cave.tool || 'sketch', points: live.pts, widths: live.pressure ? live.widths : null }], toScreen, look);
 
     // up arrow and what it means
@@ -208,6 +234,10 @@
       if (e.timeStamp - lastMiddle < 350) fit();
       lastMiddle = e.timeStamp;
     }
+    if (e.button === 0 && e.pointerType !== 'touch' && !cave.tool) {
+      const r = canvas.getBoundingClientRect();
+      if (editor.press(e.clientX - r.left, e.clientY - r.top)) return;
+    }
     const draws = !!cave.tool && !middle && e.button === 0 && e.pointerType !== 'touch' && !!section;
     if (draws) {
       live = { pts: [], widths: [], pressure: e.pointerType === 'pen' };
@@ -218,6 +248,8 @@
   }
 
   function onMove(e: PointerEvent) {
+    const r = canvas.getBoundingClientRect();
+    if (editor.move(e.clientX - r.left, e.clientY - r.top)) return;
     if (live) {
       const samples = e.getCoalescedEvents?.() ?? [];
       for (const ev of samples.length > 0 ? samples : [e]) addPoint(ev);
@@ -232,11 +264,14 @@
 
   function onUp() {
     panning = null;
+    if (editor.release()) return;
     if (!live) return;
     const stroked = live;
     live = null;
     if (stroked.pts.length >= 2 && cave.station) {
-      const result = engine.addSectionSketch(cave.station, cave.tool, stroked.pts, stroked.pressure ? stroked.widths : null, cave.adjusted);
+      // A freehand stroke becomes a smooth curve through a few fit points.
+      const fit = simplify(stroked.pts, stroked.pressure ? stroked.widths : null, 2.5 / scale);
+      const result = engine.addSectionSketch(cave.station, cave.tool, fit.pts, fit.widths, cave.adjusted);
       message = result === 'ok' ? '' : result;
       changed();
     }
@@ -262,6 +297,10 @@
     if (engine.redo('section')) changed();
   }
   function onKey(e: KeyboardEvent) {
+    if (editor.key(e)) {
+      e.preventDefault();
+      return;
+    }
     if (!(e.metaKey || e.ctrlKey) || e.key.toLowerCase() !== 'z') return;
     e.preventDefault();
     if (e.shiftKey) doRedo();
@@ -309,6 +348,10 @@
     onpointerup={onUp}
     onpointercancel={onUp}
     onwheel={onWheel}
+    ondblclick={(e) => {
+      const r = canvas.getBoundingClientRect();
+      if (!cave.tool) editor.addPoint(e.clientX - r.left, e.clientY - r.top);
+    }}
     onkeydown={onKey}
     oncontextmenu={(e) => e.preventDefault()}
   ></canvas>
