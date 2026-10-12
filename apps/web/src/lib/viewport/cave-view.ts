@@ -68,6 +68,11 @@ export class CaveView {
   /** Called when a map line's fit points have been moved (plan metres) or a line is picked or put down. */
   onLineEdited: (id: string, points: [number, number][], widths: number[] | null) => void = () => {};
   onSelectLine: (id: string) => void = () => {};
+  /** How a drawn stroke is turned into a curve: the fit tolerance in pixels, and whether pen pressure counts. */
+  private drawOptions = { tolerancePx: 2.5, pressure: true };
+  setDrawOptions(o: { tolerancePx: number; pressure: boolean }) {
+    this.drawOptions = o;
+  }
   /** Called with a plan stroke (east, north metres) when the person lifts the pen. */
   onLineDrawn: (points: [number, number][], widths: number[] | null) => void = () => {};
   /** Offsets being dragged right now, before they are saved. */
@@ -131,7 +136,7 @@ export class CaveView {
           e.stopPropagation();
           this.controls.enabled = false;
           canvas.setPointerCapture(e.pointerId);
-          this.liveLine = { pts: [p], widths: [e.pointerType === 'pen' ? 0.4 + 1.2 * e.pressure : 1], pressure: e.pointerType === 'pen', z: this.controls.target.z };
+          this.liveLine = { pts: [p], widths: [e.pointerType === 'pen' && this.drawOptions.pressure ? 0.4 + 1.2 * e.pressure : 1], pressure: e.pointerType === 'pen' && this.drawOptions.pressure, z: this.controls.target.z };
           this.requestRender();
           return;
         }
@@ -196,7 +201,7 @@ export class CaveView {
         if (line.pts.length >= 2) {
           // A freehand stroke becomes a smooth curve through a few fit points.
           const px = this.pixelsPerMetreAt([line.pts[0][0], line.pts[0][1], line.z]) ?? 1;
-          const fit = simplify(line.pts, line.pressure ? line.widths : null, 2.5 / px);
+          const fit = simplify(line.pts, line.pressure ? line.widths : null, this.drawOptions.tolerancePx / px);
           this.onLineDrawn(fit.pts, fit.widths);
         }
         this.requestRender();

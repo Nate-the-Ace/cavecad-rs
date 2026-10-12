@@ -5,7 +5,8 @@
   import { DEMOS } from '../lib/demos';
   import { engine, loadEngine, type Scene, type TypeStyle } from '../lib/engine';
   import { CaveView, type Projection } from '../lib/viewport/cave-view';
-  import { cave, changed, filter, setShowSections, setShown, wireFilter } from '../lib/cave.svelte';
+  import { cave, changed, filter, option, setShowSections, setShown, wireFilter } from '../lib/cave.svelte';
+  import { tolerancePx } from '../lib/commands';
   import { ViewCube } from '../lib/viewport/view-cube';
   import { forgetFile } from '../lib/files';
   import { onTheme } from '../lib/theme';
@@ -99,6 +100,13 @@
       cave.selected = '';
     }
   }
+
+  // How a stroke drawn on the map becomes a curve follows the running command's settings.
+  $effect(() => {
+    const tol = tolerancePx(option('detail', 5));
+    const pressure = option('pressure', true);
+    view?.setDrawOptions({ tolerancePx: tol, pressure });
+  });
 
   // The picked drawing tool: drawing on the map goes to its plan, from the Top or Bottom view.
   let drawHint = $state('');

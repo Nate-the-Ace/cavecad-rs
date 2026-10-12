@@ -9,9 +9,10 @@
     "check": "svelte-check --tsconfig ./tsconfig.json",
     "test:units": "node --experimental-strip-types tests/units.check.ts",
     "test:spline": "node --experimental-strip-types tests/spline.check.ts",
-    "test": "npm run test:units && npm run test:spline && npm run test:glyph && npm run test:editor",
+    "test": "npm run test:units && npm run test:spline && npm run test:glyph && npm run test:editor && npm run test:commands",
     "test:glyph": "node --experimental-strip-types tests/glyph.check.ts",
-    "test:editor": "node --experimental-strip-types tests/lineeditor.check.ts"
+    "test:editor": "node --experimental-strip-types tests/lineeditor.check.ts",
+    "test:commands": "node --experimental-strip-types tests/commands.check.ts"
   },
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "^7.3.1",

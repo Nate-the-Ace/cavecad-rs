@@ -87,3 +87,7 @@ The View tab's unit setting (metric by default, or imperial) decides what people
 
 A panel that can be drawn on or otherwise edited (Map, Profile, Cross Section, and any future one: Shaped Lines, Callout, sheets, ...) keeps its own history and must never undo another panel's work. In the engine an edit is recorded with `record_edit(scope, ...)` where `scope` is the panel (`Scope` in `apps/web/src/lib/engine.ts`: add the new panel's name there and in `cave-wasm`); in the panel's toolbar put `<PanelUndo scope="..." label="..." />` (`apps/web/src/components/PanelUndo.svelte`) and handle Ctrl/Cmd+Z and Shift+Ctrl/Cmd+Z in its keydown with `engine.undo(scope)` / `engine.redo(scope)`. Never call undo or redo without a scope.
 
+## Settings of a running command go in the contextual ribbon tab (standing rule from Nathan, 2026-10-12)
+
+When a command is running the ribbon shows a tab for it with its common options. Define a command's options in `apps/web/src/lib/commands.ts` (`optionsFor`), read them with `option(id, default)` from `lib/cave.svelte.ts`, and never add per-panel buttons for them. Give the tab a Done path too (the Done button, and Escape).
+

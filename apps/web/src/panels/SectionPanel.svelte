@@ -11,7 +11,8 @@
   import { drawHandles, drawStrokes } from '../lib/section-glyph';
   import { LineEditor } from '../lib/line-editor';
   import { simplify } from '../lib/spline';
-  import { cave, changed, filter, wireFilter } from '../lib/cave.svelte';
+  import { tolerancePx } from '../lib/commands';
+  import { cave, changed, option, filter, wireFilter } from '../lib/cave.svelte';
   import { engine, loadEngine, type SectionStation, type StationSection } from '../lib/engine';
   import { metresPer, niceNumber, unitName } from '../lib/units';
 
@@ -218,7 +219,7 @@
     if (last && Math.hypot(p[0] - last[0], p[1] - last[1]) * scale < 1.5) return;
     live.pts.push(p);
     // Pressure only changes how thick the line is drawn, never where it goes.
-    live.widths.push(e.pointerType === 'pen' ? 0.4 + 1.2 * e.pressure : 1);
+    live.widths.push(live.pressure ? 0.4 + 1.2 * e.pressure : 1);
   }
 
   function onDown(e: PointerEvent) {
@@ -236,7 +237,7 @@
     }
     const draws = !!cave.tool && !middle && e.button === 0 && e.pointerType !== 'touch' && !!section;
     if (draws) {
-      live = { pts: [], widths: [], pressure: e.pointerType === 'pen' };
+      live = { pts: [], widths: [], pressure: e.pointerType === 'pen' && option('pressure', true) };
       addPoint(e);
     } else {
       panning = { x: e.clientX, y: e.clientY };
@@ -266,7 +267,7 @@
     live = null;
     if (stroked.pts.length >= 2 && cave.station) {
       // A freehand stroke becomes a smooth curve through a few fit points.
-      const fit = simplify(stroked.pts, stroked.pressure ? stroked.widths : null, 2.5 / scale);
+      const fit = simplify(stroked.pts, stroked.pressure ? stroked.widths : null, tolerancePx(option('detail', 5)) / scale);
       const result = engine.addSectionSketch(cave.station, cave.tool, fit.pts, fit.widths, cave.adjusted);
       message = result === 'ok' ? '' : result;
       changed();

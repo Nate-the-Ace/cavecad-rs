@@ -4,10 +4,11 @@
   import { Maximize } from '@lucide/svelte';
   import PanelUndo from '../components/PanelUndo.svelte';
   import { looks } from '../lib/ink';
-  import { cave, changed, setShowSections } from '../lib/cave.svelte';
+  import { cave, changed, option, setShowSections } from '../lib/cave.svelte';
   import { defaultBandOffset, drawHandles, drawStrokes, glyphCurves, hits, leaderEnd } from '../lib/section-glyph';
   import { LineEditor } from '../lib/line-editor';
   import { simplify } from '../lib/spline';
+  import { tolerancePx } from '../lib/commands';
   import type { BandSection } from '../lib/engine';
   import { formatLength, inUnits, metresPer, niceNumber, unitName } from '../lib/units';
   import { engine, loadEngine, type ProfileScene, type RunInfo } from '../lib/engine';
@@ -228,7 +229,7 @@
     if (last && Math.hypot(p[0] - last[0], p[1] - last[1]) * scale < 1.5) return;
     live.pts.push(p);
     // Pressure only changes how thick the line is drawn, never where it goes.
-    live.widths.push(e.pointerType === 'pen' ? 0.4 + 1.2 * e.pressure : 1);
+    live.widths.push(live.pressure ? 0.4 + 1.2 * e.pressure : 1);
   }
 
   function onDown(e: PointerEvent) {
@@ -254,7 +255,7 @@
     }
     const draws = !!cave.tool && !middle && e.button === 0 && e.pointerType !== 'touch' && !!band;
     if (draws) {
-      live = { pts: [], widths: [], pressure: e.pointerType === 'pen' };
+      live = { pts: [], widths: [], pressure: e.pointerType === 'pen' && option('pressure', true) };
       addPoint(e);
     } else {
       panning = { x: e.clientX, y: e.clientY };
@@ -307,7 +308,7 @@
     live = null;
     if (stroked.pts.length >= 2 && cave.run) {
       // A freehand stroke becomes a smooth curve through a few fit points.
-      const fit = simplify(stroked.pts, stroked.pressure ? stroked.widths : null, 2.5 / scale);
+      const fit = simplify(stroked.pts, stroked.pressure ? stroked.widths : null, tolerancePx(option('detail', 5)) / scale);
       const result = engine.addSketch(cave.run, cave.tool, fit.pts, fit.widths, cave.adjusted);
       message = result === 'ok' ? '' : result;
       changed();

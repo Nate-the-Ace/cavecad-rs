@@ -13,6 +13,18 @@ function savedUnits(): Units {
   }
 }
 
+const OPTIONS_KEY = 'cavecad.options';
+
+function savedOptions(): Record<string, number | boolean> {
+  try {
+    const raw = JSON.parse(localStorage.getItem(OPTIONS_KEY) ?? 'null');
+    if (raw && typeof raw === 'object') return raw;
+  } catch {
+    // nothing saved
+  }
+  return {};
+}
+
 const SECTIONS_KEY = 'cavecad.sections';
 
 function savedSections(): { map: boolean; profile: boolean; profileSketches: boolean } {
@@ -26,6 +38,8 @@ function savedSections(): { map: boolean; profile: boolean; profileSketches: boo
 }
 
 export const cave = $state({
+  /** Settings of running commands (curve detail, pen pressure, ...), remembered on this machine. */
+  options: savedOptions() as Record<string, number | boolean>,
   /** The drawing tool picked on the Draw tab (a palette type such as `wall`), or empty. While one is
    *  picked, drawing in any view makes linework of that type in that view. */
   tool: '',
@@ -85,6 +99,22 @@ export function setUnits(u: Units) {
   } catch {
     // private window: the choice just lasts until the page closes
   }
+}
+
+/** Changes one option of the running command and remembers it. */
+export function setOption(id: string, value: number | boolean) {
+  cave.options[id] = value;
+  try {
+    localStorage.setItem(OPTIONS_KEY, JSON.stringify($state.snapshot(cave.options)));
+  } catch {
+    // private window
+  }
+}
+
+/** The current value of an option (its default until changed). */
+export function option<T extends number | boolean>(id: string, fallback: T): T {
+  const v = cave.options[id];
+  return (typeof v === typeof fallback ? v : fallback) as T;
 }
 
 /** Picks a drawing tool; picking the one already active puts it down. */

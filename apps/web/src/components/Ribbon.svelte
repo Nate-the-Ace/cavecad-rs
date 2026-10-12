@@ -1,11 +1,13 @@
 <script lang="ts">
-  import { engine } from '../lib/engine';
+  import { engine, loadEngine } from '../lib/engine';
   import { openDxf, saveDxf } from '../lib/files';
   import { cave, setUnits } from '../lib/cave.svelte';
   import DrawTools from './DrawTools.svelte';
   import ThemeGroup from './ThemeGroup.svelte';
+  import ContextOptions from './ContextOptions.svelte';
+  import { onMount } from 'svelte';
   import { PANELS, panelState, resetLayout, togglePanel } from '../lib/workspace.svelte';
-  import { FileInput, FolderOpen, Save, Ruler, Footprints, Route, Waypoints, Pencil, Spline, PaintBucket, Scissors, Map as MapIcon, Terminal, LayoutDashboard, Activity } from '@lucide/svelte';
+  import { Check, FileInput, FolderOpen, Save, Ruler, Footprints, Route, Waypoints, Pencil, Spline, PaintBucket, Scissors, Map as MapIcon, Terminal, LayoutDashboard, Activity } from '@lucide/svelte';
   import type { Component } from 'svelte';
 
   interface Item {
@@ -60,6 +62,28 @@
   };
   let active = $state('Home');
 
+  // A running command gets its own tab, in front, with its settings and a way to finish it.
+  const CONTEXT = '\u0000command';
+  let toolLabels = $state<Record<string, string>>({});
+  onMount(() => {
+    loadEngine().then(() => (toolLabels = Object.fromEntries(engine.drawTools().map((t) => [t.key, t.label]))));
+  });
+  const contextName = $derived(cave.tool ? (toolLabels[cave.tool] ?? cave.tool) : '');
+  const contextGroups: Group[] = [
+    { name: 'Settings', items: [], custom: ContextOptions },
+    { name: 'Command', items: [{ label: 'Done', icon: Check, run: () => (cave.tool = '') }] },
+  ];
+  let before = 'Home';
+  $effect(() => {
+    if (cave.tool) {
+      if (active !== CONTEXT) before = active;
+      active = CONTEXT;
+    } else if (active === CONTEXT) {
+      active = before;
+    }
+  });
+  const shownGroups = $derived(active === CONTEXT ? contextGroups : (tabs[active] ?? []));
+
   function keys(e: KeyboardEvent) {
     if (e.key === 'Escape' && cave.tool) {
       cave.tool = '';
@@ -79,9 +103,12 @@
     {#each Object.keys(tabs) as t}
       <button class:on={t === active} onclick={() => (active = t)}>{t}</button>
     {/each}
+    {#if cave.tool}
+      <button class="ctx" class:on={active === CONTEXT} onclick={() => (active = CONTEXT)}>{contextName}</button>
+    {/if}
   </nav>
   <div class="bar">
-    {#each tabs[active] as g}
+    {#each shownGroups as g}
       <section>
         <div class="btns">
           {#if g.custom}<g.custom />{/if}
@@ -104,6 +131,7 @@
   header { background: var(--panel); }
   .tabs { display: flex; gap: 2px; padding: 6px 10px 0; }
   .tabs button { background: none; border: 0; padding: 6px 14px; color: var(--muted); border-radius: var(--radius) var(--radius) 0 0; cursor: pointer; }
+  .tabs button.ctx { color: var(--accent); margin-left: 10px; box-shadow: inset 0 2px 0 var(--accent); }
   .tabs button.on { color: var(--text); background: var(--accent-bg); font-weight: 500; }
   .bar { display: flex; padding: 8px 10px; border-top: 1px solid var(--line); min-height: 76px; }
   section { display: flex; flex-direction: column; align-items: center; padding: 0 12px; border-right: 1px solid var(--line); }
