@@ -31,7 +31,8 @@ export const PANELS: Record<string, PanelDef> = {
 };
 
 /** Which panels are open right now (drives the View tab's toggles). */
-export const panelState = $state<{ open: Record<string, boolean> }>({ open: {} });
+/** Which panels are open, and which of those can be seen right now (not behind another tab). */
+export const panelState = $state<{ open: Record<string, boolean>; visible: Record<string, boolean> }>({ open: {}, visible: {} });
 
 let api: DockviewApi | null = null;
 
@@ -98,7 +99,11 @@ class GroupActions implements IHeaderActionsRenderer {
 }
 
 function refreshOpen() {
-  for (const id of Object.keys(PANELS)) panelState.open[id] = api?.getPanel(id) !== undefined;
+  for (const id of Object.keys(PANELS)) {
+    const panel = api?.getPanel(id);
+    panelState.open[id] = panel !== undefined;
+    panelState.visible[id] = !!panel?.api.isVisible;
+  }
 }
 
 function defaultLayout(a: DockviewApi) {
@@ -145,12 +150,15 @@ export function initWorkspace(el: HTMLElement): () => void {
       }
     }, 300);
   });
+  // Which tab is in front decides what can be seen, so a change of tab refreshes it too.
+  const activeSub = a.onDidActivePanelChange(() => refreshOpen());
   const offTheme = onTheme((dark) => a.updateOptions({ theme: dark ? themeDark : themeLight }));
 
   return () => {
     clearTimeout(timer);
     layoutSub.dispose();
     offTheme();
+    activeSub.dispose();
     a.dispose();
     api = null;
   };

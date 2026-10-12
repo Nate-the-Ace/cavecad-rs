@@ -9,7 +9,7 @@
   import { ViewCube } from '../lib/viewport/view-cube';
   import { forgetFile } from '../lib/files';
   import { onTheme } from '../lib/theme';
-  import { showPanel } from '../lib/workspace.svelte';
+  import { panelState, showPanel } from '../lib/workspace.svelte';
 
   let wrap: HTMLDivElement;
   let gl: HTMLCanvasElement;
@@ -108,9 +108,9 @@
     drawHint = '';
   });
 
-  // The station the Cross Section panel shows is ringed on the map.
+  // The station the Cross Section panel shows is ringed on the map, while that panel can be seen.
   $effect(() => {
-    const id = cave.station;
+    const id = panelState.visible.section ? cave.station : '';
     view?.setSelected(id);
   });
 
@@ -222,12 +222,12 @@
       {#if demo === FROM_FILE}<option value={FROM_FILE}>{cave.fileName}</option>{/if}
       {#each DEMOS as d}<option value={d.id}>{d.title}</option>{/each}
     </select>
-    <label><input type="checkbox" bind:checked={cave.adjusted} onchange={refresh} /> Adjusted</label>
     <div class="menu">
       <button class:on={showMenu || filter.hiddenTypes.length + filter.hiddenTrips.length > 0} title="Show or hide: walls, passage, sketches, sections, types and trips" aria-expanded={showMenu} onclick={() => (showMenu = !showMenu)}><Eye size={15} /> Show</button>
       {#if showMenu}
         <div class="pop" role="group" aria-label="Show or hide">
           <h4>On the map</h4>
+          <label title="Show the survey with loop errors spread out (least-squares adjusted) instead of as measured"><input type="checkbox" bind:checked={cave.adjusted} onchange={refresh} /> Adjusted</label>
           <label><input type="checkbox" bind:checked={walls} onchange={() => view?.setShowWalls(walls)} /> Walls</label>
           <label><input type="checkbox" bind:checked={passage} onchange={() => view?.setShowPassage(passage)} /> Passage</label>
           <label title="Show the profile sketches along their runs (they fade out from the top or bottom, where they cannot be read)"><input type="checkbox" checked={cave.showSections.profileSketches} onchange={(e) => setShowSections('profileSketches', e.currentTarget.checked)} /> Profile sketches</label>
