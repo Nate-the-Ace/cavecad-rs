@@ -1,5 +1,6 @@
 import { decodeCode, encodeCode } from '../src/lib/p2p-code.ts';
 import { Reassembler, frames } from '../src/lib/p2p-wire.ts';
+import { credentialsUrlOk, emptyRelay, normalizeServers, relayCount, staticServers } from '../src/lib/p2p-ice.ts';
 
 let bad = 0;
 const ok = (c: boolean, m: string) => { if (!c) { bad++; console.log('FAIL', m); } };
@@ -35,6 +36,24 @@ ok(new Reassembler().push('not json') === null && new Reassembler().push(JSON.st
 const dropped = new Reassembler();
 dropped.push(a[0]);
 ok(dropped.push(a[2]) === null, 'a missing frame drops the message, never a guess');
+
+// Relay details: a provider's answer, or typed by hand.
+const metered = [
+  { urls: 'stun:stun.relay.metered.ca:80' },
+  { urls: 'turn:standard.relay.metered.ca:80', username: 'u1', credential: 'p1' },
+  { urls: ['turn:standard.relay.metered.ca:443?transport=tcp', 'turns:standard.relay.metered.ca:443?transport=tcp'], username: 'u1', credential: 'p1' },
+  { urls: 'http://not-a-server', username: 'x', credential: 'y' },
+  { urls: 'turn:no-login.example:3478' },
+  'junk',
+];
+const relayGot = normalizeServers(metered);
+ok(relayGot.length === 3 && relayCount(relayGot) === 3, 'a provider answer keeps the stun and relay servers with a login: ' + relayGot.length);
+ok(normalizeServers({ iceServers: metered }).length === 3 && normalizeServers(null).length === 0 && normalizeServers('x').length === 0, 'also an iceServers wrapper; nothing else gives nothing');
+ok(!JSON.stringify(relayGot).includes('not-a-server') && !JSON.stringify(relayGot).includes('no-login'), 'a bad address and a relay with no login are dropped');
+const hand = staticServers({ ...emptyRelay(), urls: 'turn:a.example:80, turns:a.example:443?transport=tcp\nstun:s.example:19302', username: ' me ', credential: 'pw' });
+ok(hand.length === 1 && (hand[0].urls as string[]).length === 2 && hand[0].username === 'me', 'by hand: relay addresses, trimmed, one entry');
+ok(staticServers({ ...emptyRelay(), urls: 'turn:a.example:80' }).length === 0 && staticServers({ ...emptyRelay(), urls: 'stun:a.example', username: 'u', credential: 'p' }).length === 0, 'by hand: no login, or no relay address, gives nothing');
+ok(credentialsUrlOk('https://app.metered.live/api/v1/turn/credentials?apiKey=abc') && !credentialsUrlOk('http://app.metered.live/x') && !credentialsUrlOk('not a url'), 'the credentials link must be a secure web address');
 
 if (bad) process.exit(1);
 console.log('p2p ok');

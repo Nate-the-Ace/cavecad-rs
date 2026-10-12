@@ -9,6 +9,7 @@
 //
 // The cave's edits merge in any order, so there is no referee: the host is only the hub that forwards.
 // If the host goes, guests keep their copy, and can join the host again later with new codes to merge.
+import { relayServers } from './p2p-relay.svelte';
 import { engine } from './engine';
 import { cave, changed, markSaved } from './cave.svelte';
 import { decodeCode, encodeCode } from './p2p-code';
@@ -76,7 +77,9 @@ let lastHost = '';
 const wanted = new Set<string>();
 
 const rid = () => Math.random().toString(36).slice(2, 14).padEnd(12, 'x');
-const iceServers = (): RTCIceServer[] => (p2p.stun ? [{ urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] }] : []);
+const STUN: RTCIceServer = { urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] };
+/** The public-address lookup plus the person's relay (if any), which only carries data when a direct path fails. */
+const iceServers = async (): Promise<RTCIceServer[]> => (p2p.stun ? [STUN, ...(await relayServers())] : []);
 
 // ---- sending -------------------------------------------------------------------------------------
 
@@ -144,8 +147,8 @@ function gathered(pc: RTCPeerConnection): Promise<void> {
   });
 }
 
-function newPeer(id: string): Peer {
-  const pc = new RTCPeerConnection({ iceServers: iceServers() });
+async function newPeer(id: string): Promise<Peer> {
+  const pc = new RTCPeerConnection({ iceServers: await iceServers() });
   const peer: Peer = { id, pc, ch: null, person: null, name: '', color: '', reasm: new Reassembler(), tail: Promise.resolve(), seq: 0, incoming: null };
   peers.set(id, peer);
   return peer;
@@ -454,7 +457,7 @@ export function startHosting(): boolean {
 export async function makeInvite(): Promise<void> {
   if (p2p.role !== 'host' && !startHosting()) return;
   const id = rid();
-  const peer = newPeer(id);
+  const peer = await newPeer(id);
   const ch = peer.pc.createDataChannel('cave', { ordered: true });
   wire(peer, ch, 'host');
   peer.pc.onconnectionstatechange = () => {
@@ -538,13 +541,13 @@ export async function joinWithCode(text: string): Promise<string | null> {
   p2p.error = '';
   p2p.role = 'guest';
   sessionId = code.sid;
-  const peer = newPeer(code.sid);
+  const peer = await newPeer(code.sid);
   guestPeer = peer;
   peer.pc.ondatachannel = (ev) => wire(peer, ev.channel, 'guest');
   peer.pc.onconnectionstatechange = () => {
     const s = peer.pc.connectionState;
     if (s === 'failed') {
-      p2p.error = 'Could not connect. The two devices could not find a way to each other (a strict network can block this). Try again, or try both devices on the same network.';
+      p2p.error = 'Could not connect. The two devices could not find a way to each other (a strict network can block this). Try again, add a relay under \u201cRelay for strict networks\u201d, or try both devices on the same network.';
       leaveP2p();
     } else if (s === 'disconnected' || s === 'closed') closed(peer, 'guest');
   };

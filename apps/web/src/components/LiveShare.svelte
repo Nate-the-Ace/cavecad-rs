@@ -1,4 +1,5 @@
 <script lang="ts">
+  import RelaySettings from './RelaySettings.svelte';
   // Sharing the open cave live, straight to other devices (no server). The host makes an invite code per
   // person and sends it by any message; the guest sends a reply code back; the host pastes it here. After
   // that everyone sees each other's edits, pointers and (if they follow) where the host is looking.
@@ -87,6 +88,7 @@
 
       <label class="check"><input type="checkbox" bind:checked={p2p.auto} /> Let people in without asking</label>
       <label class="check" title="A public STUN service tells each device its public address so they can find each other across different networks. No cave data goes through it. Turn off to connect only on the same network."><input type="checkbox" bind:checked={p2p.stun} /> Connect across the internet (looks up this device’s public address)</label>
+      <RelaySettings />
       <p class="fine">A code holds this device’s network address: send it only to the person you are inviting. Everything between devices is encrypted.</p>
       {#if p2p.error}<p class="err" role="alert">{p2p.error}</p>{/if}
     </div>

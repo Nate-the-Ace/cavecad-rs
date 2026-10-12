@@ -1,4 +1,5 @@
 <script lang="ts">
+  import RelaySettings from './RelaySettings.svelte';
   // The Cave Shelf: the window CaveCAD opens on. The caves this browser keeps are on the left (with a
   // few samples below); the one picked shows on the right: how big it is, where each trip started and
   // stopped, and the open ends where a new trip could pick up. Open it, add a trip to it, start a new
@@ -178,6 +179,7 @@
           {/if}
           <label class="check"><input type="checkbox" bind:checked={p2p.following} /> Follow what the host is looking at</label>
           <label class="check" title="A public STUN service tells each device its public address so they can find each other across networks. No cave data goes through it."><input type="checkbox" bind:checked={p2p.stun} disabled={p2p.role === 'guest'} /> Connect across the internet</label>
+          <RelaySettings />
           {#if joinProblem}<p class="err" role="alert">{joinProblem}</p>{/if}
           {#if p2p.error}<p class="err" role="alert">{p2p.error}</p>{/if}
           <div class="spacer"></div>
