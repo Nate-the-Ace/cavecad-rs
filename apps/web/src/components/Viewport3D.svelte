@@ -7,7 +7,7 @@
   import { cursorsFor, live as room, reportCursor } from '../lib/sync.svelte';
   import { engine, loadEngine, type Scene, type TypeStyle } from '../lib/engine';
   import { CaveView, type Projection } from '../lib/viewport/cave-view';
-  import { cave, changed, filter, option, setPick, setShowSections, setShown, wireFilter } from '../lib/cave.svelte';
+  import { cave, changed, filter, haloFade, haloReach, option, setPick, setShowSections, setShown, wireFilter } from '../lib/cave.svelte';
   import { tolerancePx } from '../lib/commands';
   import { ViewCube } from '../lib/viewport/view-cube';
   import { onTheme } from '../lib/theme';
@@ -77,8 +77,12 @@
     void scans.paths.length;
     const on = option('showScans', true);
     const opacity = option('scanOpacity', 0.5);
+    const halo = option('halo', true);
+    const haloM = haloReach();
+    const haloF = haloFade();
     untrack(() => {
       if (!view) return;
+      view.setHalo(halo, haloM, haloF);
       const z = (scene?.bounds?.[2] ?? 0) - 0.5;
       const list = on
         ? engine

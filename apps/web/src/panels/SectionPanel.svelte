@@ -3,6 +3,7 @@
   // same ring the 3D tube is built from), with a pen or mouse to sketch the real shape on top.
   // Sections live at stations: pick one here (or click a station on the map). Sketches belong to
   // their station and follow it when the survey is adjusted.
+  import { drawHalo } from '../lib/halo';
   import { onMount, untrack } from 'svelte';
   import { onTheme } from '../lib/theme';
   import { Maximize, ChevronLeft, ChevronRight } from '@lucide/svelte';
@@ -18,7 +19,7 @@
   import { drawCursor } from '../lib/presence-draw';
   import { fitStroke } from '../lib/spline';
   import { tolerancePx } from '../lib/commands';
-  import { cave, changed, option, filter, wireFilter } from '../lib/cave.svelte';
+  import { cave, changed, option, filter, wireFilter, haloFade, haloReach } from '../lib/cave.svelte';
   import { drawScan } from '../lib/scan-draw';
   import { givePoint, have, scanImage, scans, waitingForPoint } from '../lib/scans.svelte';
   import { engine, loadEngine, type ScanPlacement, type SectionStation, type StationSection } from '../lib/engine';
@@ -109,6 +110,9 @@
     void filter.hiddenTrips.length;
     void scans.paths.length; // scans appear when their folder is opened
     void option('showScans', true);
+    void option('halo', true);
+    void haloReach();
+    void haloFade();
     void option('scanOpacity', 0.5);
     void ready;
     untrack(refresh);
@@ -165,6 +169,12 @@
     const c = css();
     const s = section;
     if (!s) return;
+
+    // the rock halo: a soft glow from the measured walls out into the rock, with rock marks fading with it
+    if (option('halo', true) && s.outline.length >= 3) {
+      const pts = s.outline.map((p) => toScreen(p[0], p[1]));
+      drawHalo(g, width, height, [{ pts, closed: true }], { reach: Math.min(Math.max(haloReach() * 0.3 * scale, 14), 300), fade: haloFade(), tint: c.accent, ink: c.muted, toWorld, toScreen });
+    }
 
     // scans placed on this section lie under everything drawn here
     if (option('showScans', true)) {
