@@ -78,3 +78,8 @@ The whole canvas is a 3D view (three.js, `apps/web/src/lib/viewport/`): z is up,
 Xrefs and multi-user co-editing are not built yet but are on the road map; `docs/DESIGN.md` ("Standing considerations") lists the gaps and a per-step checklist. Read it before adding a tool or crate.
 
 Pen input is on the road map too (see "Pen and tablet input" in `docs/DESIGN.md`): strokes keep optional `widths`; pressure never moves a coordinate.
+
+## Units (standing rule from Nathan, 2026-10-12)
+
+The View tab's unit setting (metric by default, or imperial) decides what people read AND what they type. Every length a tool shows goes through `formatLength` and every length a tool asks for uses `apps/web/src/components/LengthField.svelte` (parser: `parseLength` in `lib/units.ts`, which also accepts an explicit unit such as `30 cm` or `5'6"`). Never add a bare number input for a distance. Fields hold metres internally; the stored cave and DXF export stay metric. Check the parser with `npm run test:units` in `apps/web`.
+

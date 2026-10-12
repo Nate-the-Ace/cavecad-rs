@@ -61,3 +61,6 @@ Recorded 2026-10-11 at Nathan's request: these are on the road map and must be w
 
 
 **Display units** (Nathan, 2026-10-12): View tab, Units group: Metric (default) or Imperial. Display only: the cave is always stored and solved in metres, and DXF export is unaffected. The choice is a view setting remembered on this machine (localStorage). Shown in feet today: map scale bar, Profile elevation axis and run lengths (`apps/web/src/lib/units.ts`). Any new length shown to people must go through `formatLength`/`metresPer`. Not built: unit-aware entry fields (feet-and-inches typing) and a per-cave units setting.
+
+**Units apply to entry fields too** (Nathan, 2026-10-12): the unit setting defines what is typed into the fields of every tool, not only what is displayed. `LengthField` is the one entry component for distances: the held value is metres, a bare number means the current unit, an explicit unit wins (`30 cm`, `12 ft`, `5'6"`, `5 ft 6`), bad text is flagged and never stored, and the field re-renders when the setting changes. Survey data being imported keeps its trip's own distance unit (`TripDistanceUnit`); this setting is about what a person types and reads in tools. No tool has length fields yet, so none are converted; the first ones (Draw, Station Table, Cross Section) must use it. Not yet covered: angles and other quantities.
+

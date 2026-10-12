@@ -25,3 +25,41 @@ export function niceNumber(target: number): number {
   const m = target / p;
   return (m >= 5 ? 5 : m >= 2 ? 2 : 1) * p;
 }
+
+const NUM = String.raw`-?\d+(?:\.\d*)?|-?\.\d+`;
+const SINGLE = new RegExp(String.raw`^(${NUM})\s*(mm|cm|m|ft|feet|foot|in|inch|inches|'|")?$`);
+const FEET_INCHES = new RegExp(String.raw`^(${NUM})\s*(?:ft|feet|foot|')\s*(${NUM})\s*(?:in|inch|inches|")?$`);
+
+/**
+ * Reads what a person typed into a length field, as metres. A bare number is in the display
+ * unit (feet when imperial). An explicit unit always wins: "30 cm", "12 ft", `5'6"`, "5 ft 6".
+ * Returns `null` for anything that is not a length.
+ */
+export function parseLength(text: string, u: Units): number | null {
+  const t = text.trim().toLowerCase().replace(/\s+/g, ' ');
+  if (!t) return null;
+  const fi = FEET_INCHES.exec(t);
+  if (fi) {
+    const feet = parseFloat(fi[1]);
+    const inches = parseFloat(fi[2]);
+    const sign = feet < 0 || fi[1].startsWith('-') ? -1 : 1;
+    return sign * (Math.abs(feet) * FOOT + inches * (FOOT / 12));
+  }
+  const m = SINGLE.exec(t);
+  if (!m) return null;
+  const n = parseFloat(m[1]);
+  if (!Number.isFinite(n)) return null;
+  switch (m[2]) {
+    case 'mm': return n / 1000;
+    case 'cm': return n / 100;
+    case 'm': return n;
+    case 'ft': case 'feet': case 'foot': case "'": return n * FOOT;
+    case 'in': case 'inch': case 'inches': case '"': return n * (FOOT / 12);
+    default: return n * metresPer(u);
+  }
+}
+
+/** A length in metres as the text a field shows: just the number, in the display unit. */
+export function lengthText(m: number, u: Units): string {
+  return `${+inUnits(m, u).toFixed(u === 'imperial' ? 2 : 3)}`;
+}
