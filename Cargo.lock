@@ -41,6 +41,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "cave-fill"
+version = "0.0.1"
+dependencies = [
+ "cave-style",
+ "cave-symbols",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "cave-fixture"
 version = "0.0.1"
 dependencies = [
@@ -169,6 +179,7 @@ dependencies = [
  "cave-doc",
  "cave-draw",
  "cave-dxf",
+ "cave-fill",
  "cave-fixture",
  "cave-geom",
  "cave-id",

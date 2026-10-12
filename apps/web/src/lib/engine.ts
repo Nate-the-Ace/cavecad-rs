@@ -1,9 +1,10 @@
 // Loads the Rust engine (WASM) once and re-exports the few calls the UI uses.
-import init, { start, log, console_events, console_clear, engine_version, open_demo, scene, profile_runs, profile_band, add_profile_sketch, undo, redo, edit_state, passage_mesh, shading, palette, open_dxf, save_dxf, section_stations, section_at, add_section_sketch, map_sections, place_section, map_profile_sketches, add_map_line, map_lines, draw_tools, edit_line, delete_line, set_line_closed, set_line_kind, line_info, set_line_flip, set_line_text, ornament, flipped_lines, symbols, sync_outbox, sync_apply, sync_snapshot, sync_load } from '../wasm/cave_wasm.js';
+import init, { start, log, console_events, console_clear, engine_version, open_demo, scene, profile_runs, profile_band, add_profile_sketch, undo, redo, edit_state, passage_mesh, shading, palette, open_dxf, save_dxf, section_stations, section_at, add_section_sketch, map_sections, place_section, map_profile_sketches, add_map_line, map_lines, draw_tools, edit_line, delete_line, set_line_closed, set_line_kind, line_info, set_line_flip, set_line_text, ornament, flipped_lines, symbols, fills, fill_marks, sync_outbox, sync_apply, sync_snapshot, sync_load } from '../wasm/cave_wasm.js';
 
 import { setInkPalette } from './ink';
 import { setOrnamentSource } from './section-glyph';
 import { setSymbolCatalogue, type SymbolDef } from './symbols';
+import { setFillSource, type FillDef, type Marks } from './fills';
 
 /** The panels that keep their own undo history. */
 export type Scope = 'profile' | 'section' | 'map';
@@ -162,6 +163,7 @@ export function loadEngine(): Promise<void> {
     start();
     setInkPalette(JSON.parse(palette()));
     setSymbolCatalogue(JSON.parse(symbols()));
+    setFillSource(engine);
   });
   return ready;
 }
@@ -172,6 +174,10 @@ export const engine = {
   events: (since: number): ConsoleEvent[] => JSON.parse(console_events(BigInt(since))),
   clear: () => console_clear(),
   openDemo: (json: string): string => open_demo(json),
+  /** Every kind of area fill, with what it means. */
+  fills: (): FillDef[] => JSON.parse(fills()),
+  /** The marks that fill an outline (metres), seeded by the stroke's id. */
+  fillMarks: (kind: string, curve: [number, number][], id: string): Marks => JSON.parse(fill_marks(kind, JSON.stringify(curve), id)),
   /** Every point symbol the palette offers, with its drawing. */
   symbols: (): SymbolDef[] => JSON.parse(symbols()),
   /** Local edits since the last call (JSON ops, as a string; `[]` when none). */

@@ -240,3 +240,23 @@ tomorrow's symbols). A text stroke with no words is refused with a hint. The sam
 everything else working (anchoring to the survey, per-panel undo, eraser, live editing). Profile DXF
 export writes text as TEXT entities. Limits: 200 characters; text does not wrap; the Map's
 text is projected like any line.
+
+## 2026-10-12: Area fills (the Fill tool) and the end of the Trace placeholders
+
+The Draw tab's Trace group (Feature, Shaped, Fill placeholders) is gone: Feature tracing is what the
+linework tools already do, Shaped lines are the Ledge, Pit, Flowstone, Rimstone and Slope tools, and Fill is
+now real. Pick a kind of ground in the Area fill group, press Fill, and draw all the way around the area in
+the Map, Profile or Cross Section (a fill is always a loop; too small a loop is refused with a hint).
+- New crate `cave-fill`, a port of the old `CsArea`: 13 fills (blocks, debris, pebbles, sand, clay,
+  bedrock, water, sump, flowstone, moonmilk, guano, ice, bones) with the old densities, sizes and
+  spacing rules. Scatter fills use the old Park-Miller generator and the old rejection sampler, and
+  `tests/golden.rs` checks 30 cases against the old app's own output (count, positions, element, size,
+  angle, in order). Hatch (sump, flowstone), dots (moonmilk), a solid tint (water) and outline-only
+  (bedrock) are new code. The old app drew in feet, so patterns are laid out in feet and converted.
+- Only the outline is stored (a closed spline stroke of type `fill-*`). The marks are derived: the
+  engine makes them from the smooth outline and a seed taken from the stroke's id, so every device and
+  every redraw shows the same marks, and editing the outline refills it. The web app caches marks per
+  outline. A huge outline gets sparser instead of slower (6,000 marks at most).
+- Marks are true size (a pebble pattern is the old app's feet-sized pebbles, in metres), so they look
+  like dots at the scale of a whole cave profile and fill in as you zoom, as on paper at a large scale.
+- The selected fill's tab changes its kind from a list. DXF export of fills is part of the DXF work.

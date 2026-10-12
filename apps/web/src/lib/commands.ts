@@ -87,9 +87,13 @@ export const TEXT_OPTIONS: OptionDef[] = [
   SYMBOL_OPTIONS[0],
 ];
 
+/** The options of an area fill: how closely the outline follows the hand. Always a loop. */
+export const FILL_OPTIONS: OptionDef[] = [DRAW_OPTIONS[0], DRAW_OPTIONS[2]];
+
 /** The options of a running command (`wall`, `ledge`, ...), or none. */
 export function optionsFor(command: string): OptionDef[] {
   if (!command) return [];
   if (command === 'text') return TEXT_OPTIONS;
+  if (command.startsWith('fill-')) return FILL_OPTIONS;
   return command.startsWith('sym-') ? SYMBOL_OPTIONS : DRAW_OPTIONS;
 }

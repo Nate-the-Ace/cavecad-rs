@@ -13,6 +13,7 @@
   import { Touches } from '../lib/touch';
   import { PenGuard, isEraser, widthFor } from '../lib/pen';
   import { isStampKind } from '../lib/symbols';
+  import { isFillKind } from '../lib/fills';
   import { fitStroke } from '../lib/spline';
   import { tolerancePx } from '../lib/commands';
   import { cave, changed, option, filter, wireFilter } from '../lib/cave.svelte';
@@ -406,9 +407,14 @@
     }
     if (stroked.pts.length >= 2 && cave.station) {
       // A freehand stroke becomes a smooth curve through a few fit points.
-      const wantClosed = option('close', false);
+      const wantClosed = option('close', false) || isFillKind(cave.tool); // an area fill is always a loop
       const fit = fitStroke(stroked.pts, stroked.pressure ? stroked.widths : null, tolerancePx(option('detail', 5)) / scale, wantClosed);
       const closed = wantClosed && fit.pts.length >= 3;
+      if (isFillKind(cave.tool) && !closed) {
+        message = 'A fill needs a loop: draw all the way around the area.';
+        schedule();
+        return;
+      }
       // Starting on the end of an open line of the same kind carries that line on instead of starting a new one.
       const start = toScreen(stroked.pts[0][0], stroked.pts[0][1]);
       const pickup = endpointNear(section?.sketches ?? [], cave.tool, (p) => toScreen(p[0], p[1]), start[0], start[1]);

@@ -527,6 +527,26 @@ pub fn symbols() -> String {
     serde_json::to_string(cave_symbols::catalogue()).unwrap_or_else(|_| "[]".to_string())
 }
 
+/// The kinds of area fill, with what each means (JSON array of `{key, label, help}`).
+#[wasm_bindgen]
+pub fn fills() -> String {
+    let list: Vec<serde_json::Value> = cave_fill::FILLS
+        .iter()
+        .map(|f| serde_json::json!({"key": f.key, "label": f.label, "help": f.help}))
+        .collect();
+    serde_json::Value::Array(list).to_string()
+}
+
+/// The marks that fill an outline: `kind` is a fill type, `curve` the outline as `[[x, y], ...]` in
+/// metres, `id` the stroke's id (it seeds the scatter, so every device draws the same marks).
+/// Returns `{lines, circles, tint}` as JSON.
+#[wasm_bindgen]
+pub fn fill_marks(kind: &str, curve: &str, id: &str) -> String {
+    let pts = serde_json::from_str::<Vec<[f64; 2]>>(curve).unwrap_or_default();
+    serde_json::to_string(&cave_fill::marks(kind, &pts, cave_fill::seed_of(id)))
+        .unwrap_or_else(|_| "{}".into())
+}
+
 /// The drawing tools the Draw tab offers (JSON array of palette styles).
 #[wasm_bindgen]
 pub fn draw_tools() -> String {

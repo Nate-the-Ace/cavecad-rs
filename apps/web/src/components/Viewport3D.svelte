@@ -196,6 +196,10 @@
       changed();
     };
     v.onLineDrawn = (points, widths, closed, text = '') => {
+      if (points.length === 0) {
+        engine.log('warn', 'draw', 'A fill needs a loop: draw all the way around the area.');
+        return;
+      }
       if (cave.tool === 'text' && !text.trim()) {
         engine.log('warn', 'draw', 'Type the text in the ribbon first.');
         return;

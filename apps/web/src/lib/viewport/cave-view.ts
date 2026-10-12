@@ -8,6 +8,7 @@ import { LineMaterial } from 'three/addons/lines/LineMaterial.js';
 import type { MapSection, PassageBuffers, ProfileSketch3d, Scene, TypeStyle } from '../engine';
 import { PenGuard, isEraser, widthFor } from '../pen';
 import { drawStamp, hitsStamp, isStampKind, placement } from '../symbols';
+import { drawMarks, isFillKind, marksFor } from '../fills';
 import { defaultMapOffset, drawHandles, drawStrokes, glyphCurves, hits, leaderEnd } from '../section-glyph';
 import { distanceToCurve, fitStroke, nearestPoint, smooth } from '../spline';
 import { PICKUP_REACH, joinFit } from '../line-editor';
@@ -336,8 +337,13 @@ export class CaveView {
             const joined = joinFit(own, fit, pickup.atStart);
             this.onLineEdited(pickup.line.id, joined.pts, joined.widths);
           } else {
-            const fit = fitStroke(line.pts, line.pressure ? line.widths : null, this.drawOptions.tolerancePx / px, this.drawOptions.close);
-            this.onLineDrawn(fit.pts, fit.widths, this.drawOptions.close && fit.pts.length >= 3);
+            const loop = this.drawOptions.close || isFillKind(this.drawTool); // an area fill is always a loop
+            const fit = fitStroke(line.pts, line.pressure ? line.widths : null, this.drawOptions.tolerancePx / px, loop);
+            if (isFillKind(this.drawTool) && fit.pts.length < 3) {
+              this.onLineDrawn([], null, false); // too small to enclose anything
+            } else {
+              this.onLineDrawn(fit.pts, fit.widths, loop && fit.pts.length >= 3);
+            }
           }
         }
         this.requestRender();
@@ -773,6 +779,14 @@ export class CaveView {
           g.stroke();
         }
       };
+      if (isFillKind(k.kind) && whole && k.points.length >= 3) {
+        // An area fill drawn in plan: the marks are made in plan metres and lifted to the outline's height.
+        const z = k.points[0][2];
+        const plan = smooth(k.points.map((p) => [p[0], p[1]] as [number, number]), null, 10, true).pts as [number, number][];
+        g.setLineDash([]);
+        g.lineWidth = Math.max(1, l.weight * 0.7);
+        drawMarks(g, marksFor(k.kind, k.id, plan), (x, y) => this.project([x, y, z]) ?? [-1e5, -1e5], pts as [number, number][]);
+      }
       if (k.id && k.id === this.selectedLine) trace(7, 0.25, []);
       trace(0, l.alpha, l.dash);
     }

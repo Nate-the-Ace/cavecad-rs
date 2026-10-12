@@ -6,6 +6,7 @@
 import type { Look } from './ink';
 import { smooth } from './spline.ts';
 import { drawStamp, isStampKind, placement } from './symbols.ts';
+import { drawMarks, isFillKind, marksFor } from './fills.ts';
 
 /** Where shaped-line ornament comes from (the engine sets this once it has loaded). */
 export interface OrnamentSource {
@@ -108,6 +109,14 @@ export function drawStrokes(
       }
     };
     if (selected && k.id === selected) trace(7, l.color, 0.25, []);
+    if (isFillKind(k.kind) && k.points.length >= 3) {
+      // An area fill: its marks are made from the outline (in metres) and the stroke's id, then drawn under the outline.
+      g.strokeStyle = l.color;
+      g.globalAlpha = l.alpha;
+      g.setLineDash([]);
+      g.lineWidth = Math.max(1, l.weight * scale * 0.7);
+      drawMarks(g, marksFor(k.kind, k.id ?? '', metres), to, curve.pts);
+    }
     if (orn.spine) trace(0, l.color, l.alpha, l.dash);
     if (orn.lines.length) {
       g.strokeStyle = l.color;
