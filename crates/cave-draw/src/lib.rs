@@ -327,6 +327,37 @@ pub fn set_stroke_closed(doc: &Document, id: Id, closed: bool) -> Result<Vec<Act
     }])
 }
 
+/// Actions that put the team's mark on a station: its status, the team's note and who has it. Each is
+/// only written when it changes; blank clears it. Nothing here touches the survey itself.
+pub fn set_station_mark(
+    doc: &Document,
+    station: Id,
+    status: &str,
+    team: &str,
+    who: &str,
+) -> Result<Vec<Action>, DrawError> {
+    let e = doc
+        .entity(station)
+        .filter(|e| e.kind() == Kind::Station)
+        .ok_or(DrawError::NoStations)?;
+    let mut actions = Vec::new();
+    for (field, value) in [
+        (Field::StationStatus, status),
+        (Field::StationTeamNote, team),
+        (Field::StationAssigned, who),
+    ] {
+        let value: String = value.trim().chars().take(MAX_TEXT).collect();
+        if e.text(field) != value {
+            actions.push(Action::Set {
+                id: station,
+                field,
+                value: Value::Text(value),
+            });
+        }
+    }
+    Ok(actions)
+}
+
 /// Adds a text to a new stroke's actions (the stroke's label, or the words of a text stroke), so the
 /// stroke and its words are one edit. Empty text adds nothing.
 pub fn with_text(mut actions: Vec<Action>, id: Id, text: &str) -> Vec<Action> {
@@ -489,6 +520,41 @@ mod tests {
 
     fn stroke() -> Vec<[f64; 2]> {
         vec![[0.0, 0.0], [1.0, 0.5], [2.0, 0.0]]
+    }
+
+    #[test]
+    fn a_stations_team_mark_is_one_edit_that_writes_only_what_changed_and_undoes() {
+        let (mut doc, _, [a, _]) = cave();
+        let actions = set_station_mark(&doc, a, " assigned ", "", "Sam").unwrap();
+        assert_eq!(
+            actions.len(),
+            2,
+            "the empty team note is already empty: nothing to write"
+        );
+        let mut history = History::new();
+        let e = doc.edit(actions).unwrap();
+        history.record(&e);
+        let st = doc.entity(a).unwrap();
+        assert_eq!(
+            (
+                st.text(Field::StationStatus),
+                st.text(Field::StationAssigned)
+            ),
+            ("assigned".to_string(), "Sam".to_string())
+        );
+        assert!(
+            set_station_mark(&doc, a, "assigned", "", "Sam")
+                .unwrap()
+                .is_empty(),
+            "no change, no edit"
+        );
+        history.undo(&mut doc).unwrap();
+        assert_eq!(doc.entity(a).unwrap().text(Field::StationStatus), "");
+        let nobody = SeqIds::new(99).next_id();
+        assert!(
+            set_station_mark(&doc, nobody, "open", "", "").is_err(),
+            "not a station"
+        );
     }
 
     #[test]

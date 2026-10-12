@@ -91,6 +91,15 @@
     });
   });
 
+  // The Stations panel asks the Map to centre on a station.
+  let handledFocus = cave.focus.seq;
+  $effect(() => {
+    const f = cave.focus;
+    if (f.seq === handledFocus) return;
+    handledFocus = f.seq;
+    untrack(() => view?.focusStation(f.id));
+  });
+
   // The selected map line is fitted again at another detail.
   let handledRefit = cave.refit.seq;
   $effect(() => {

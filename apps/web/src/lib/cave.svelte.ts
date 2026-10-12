@@ -64,6 +64,8 @@ export const cave = $state({
   station: '',
   /** The run the Profile panel is showing. */
   run: '',
+  /** A request to bring the Map to a station (from the Stations panel). */
+  focus: { id: '', seq: 0 },
   /** A request to fit the selected line again at another curve detail; the panel that holds the line does it. */
   refit: { id: '', detail: 5, seq: 0 },
 });
@@ -154,6 +156,11 @@ export function unsaved(): boolean {
   } catch {
     return false;
   }
+}
+
+/** Asks the Map to centre on a station. */
+export function focusStation(id: string) {
+  cave.focus = { id, seq: cave.focus.seq + 1 };
 }
 
 /** Asks for a drawn line to be fitted again at another curve detail (1 loose to 10 close). */

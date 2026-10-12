@@ -87,6 +87,16 @@ export class CaveView {
     this.drawOptions = o;
   }
   /** Called with a plan stroke (east, north metres) when the person lifts the pen. */
+  /** Centres the Map on a station (keeping the camera's distance and direction) and rings it. */
+  focusStation(id: string) {
+    const st = this.data?.stations.find((s) => s.id === id);
+    if (!st) return;
+    const offset = this.camera.position.clone().sub(this.controls.target);
+    this.controls.target.set(st.at[0], st.at[1], st.at[2]);
+    this.camera.position.copy(this.controls.target).add(offset);
+    this.controls.update();
+    this.setSelected(id);
+  }
   /** Fits a map line again at another curve detail (1 to 10), as one edit. */
   refitLine(id: string, detail: number): boolean {
     const line = this.mapLines.find((k) => k.id === id);

@@ -536,6 +536,46 @@ pub fn map_lines(adjusted: bool) -> String {
     })
 }
 
+/// The station table (JSON array of rows): one per station, with what kind of place it is, its
+/// notes, elevation (never a position) and the team's mark. `keyword` is the word a note must contain
+/// to be a lead (empty: "lead").
+#[wasm_bindgen]
+pub fn station_rows(adjusted: bool, keyword: &str) -> String {
+    DOC.with(|d| {
+        let rows = d
+            .borrow()
+            .as_ref()
+            .map(|doc| cave_scene::station_rows(doc, adjusted, keyword))
+            .unwrap_or_default();
+        serde_json::to_string(&rows).unwrap_or_else(|_| "[]".into())
+    })
+}
+
+/// Puts the team's mark on a station: its status, the team's note and who has it (one undoable edit
+/// in the Stations panel's own history). Returns `ok` or `error: ...`.
+#[wasm_bindgen]
+pub fn set_station_mark(id: &str, status: &str, team: &str, who: &str) -> String {
+    let Ok(station) = id.parse::<cave_id::Id>() else {
+        return "error: no such station".into();
+    };
+    let result = DOC.with(|d| {
+        let mut slot = d.borrow_mut();
+        let doc = slot.as_mut().ok_or("no cave is open")?;
+        let actions = cave_draw::set_station_mark(doc, station, status, team, who)
+            .map_err(|e| format!("{e:?}"))?;
+        if actions.is_empty() {
+            return Ok::<(), String>(());
+        }
+        let edit = doc.edit(actions).map_err(|e| format!("{e:?}"))?;
+        record_edit("stations", &edit);
+        Ok(())
+    });
+    match result {
+        Ok(()) => "ok".into(),
+        Err(e) => format!("error: {e}"),
+    }
+}
+
 /// Every point symbol the palette offers, with its drawing (JSON array).
 #[wasm_bindgen]
 pub fn symbols() -> String {

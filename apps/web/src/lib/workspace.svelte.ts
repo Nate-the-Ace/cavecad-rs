@@ -11,6 +11,7 @@ import ConsolePanel from '../components/Console.svelte';
 import ProfilePanel from '../panels/ProfilePanel.svelte';
 import SectionPanel from '../panels/SectionPanel.svelte';
 import SymbolsPanel from '../panels/SymbolsPanel.svelte';
+import StationsPanel from '../panels/StationsPanel.svelte';
 
 const LAYOUT_KEY = 'cavecad.layout.v1';
 
@@ -29,6 +30,7 @@ export const PANELS: Record<string, PanelDef> = {
   profile: { title: 'Profile', component: ProfilePanel, width: 460 },
   section: { title: 'Cross Section', component: SectionPanel, width: 460 },
   symbols: { title: 'Symbols', component: SymbolsPanel, width: 300 },
+  stations: { title: 'Stations', component: StationsPanel, height: 260 },
   console: { title: 'Console', component: ConsolePanel, height: 260 },
 };
 
@@ -117,6 +119,7 @@ function defaultLayout(a: DockviewApi) {
   a.addPanel({ id: 'console', component: 'console', title: PANELS.console.title, position: { referencePanel: 'map', direction: 'below' }, initialHeight: PANELS.console.height });
   // The palette is a wide strip: tiles flow across the bottom, beside the console.
   a.addPanel({ id: 'symbols', component: 'symbols', title: PANELS.symbols.title, position: { referencePanel: 'console', direction: 'within' } });
+  a.addPanel({ id: 'stations', component: 'stations', title: PANELS.stations.title, position: { referencePanel: 'console', direction: 'within' } });
 }
 
 function restore(a: DockviewApi): boolean {

@@ -10,6 +10,7 @@ mod mesh;
 mod profile;
 mod section;
 mod solved;
+mod stations;
 mod under;
 
 pub use filter::{TripInfo, ViewFilter};
@@ -22,6 +23,9 @@ pub use profile::{
 pub use section::{
     MapSection, SectionSketch, SectionStation, StationSection, map_sections, placements,
     section_at, section_stations, section_trip, sketches_by_station,
+};
+pub use stations::{
+    KINDS as STATION_KINDS, LoopMark, Note, StationRow, compare_natural, says_closed, station_rows,
 };
 pub use under::Shading;
 

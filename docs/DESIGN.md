@@ -367,3 +367,23 @@ the closed or open shape and the pen weights stay. Symbols and text have no curv
 `refit` is in `lib/spline.ts` (checked in `tests/spline.check.ts`), `refitLine` in the line editor and the
 Map's view (checked in `tests/lineeditor.check.ts`); the request goes through `cave.refit` and whichever
 panel holds the line does it (a panel opened later does not redo an old request).
+
+## 2026-10-12: The Station Table
+
+A new **Stations** panel (a tab beside the Console, also on the View tab): one row per station with what
+kind of place it is (lead, open end, junction, control, loop, noted, flagged), its trips, elevation, the
+notes written there and the team's own status, note and who has it, typed straight into the row. Filter by
+kind (any-of), text and status; double-click a row to centre the Map on it and open its Cross Section;
+download the rows shown as a checklist CSV (elevations only, never positions).
+- Port of the old `CsStationTable` and the parts of `CsFrontier` it uses (`cave-scene/src/stations.rs`),
+  checked against the old app on all four test caves (`tests/stations_golden.rs`): same stations, kinds,
+  trips, degrees, notes, loops and elevations. A lead is not a record: it is a note that says LEAD as a
+  whole word; an open end is a one-leg station that is neither control nor written off with EOS in its
+  note. Nothing derived is stored.
+- The team's mark is three fields on the station (`StationStatus`, `StationTeamNote`, `StationAssigned`),
+  written one undoable edit at a time in the panel's own history, and so shared with everyone editing the
+  cave live (the old app kept it in a shared sidecar file for the same reason). Only what changed is written.
+- No coordinates: a test checks a row never mentions a position. "Flagged" here means a shot arriving at the
+  station could not be used (missing or impossible readings), not the old validator's wider checks; a lead
+  with a later trip beyond it gets a "pushed?" suggestion that only a person can apply.
+Not done: the old trip-planner packet (printable card), and the stations.json sidecar (live editing replaces it).

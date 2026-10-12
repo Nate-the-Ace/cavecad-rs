@@ -13,7 +13,7 @@
   import { fillLabel } from '../lib/fills';
   import { onMount } from 'svelte';
   import { PANELS, panelState, resetLayout, showPanel, togglePanel } from '../lib/workspace.svelte';
-  import { Check, Trash2, FileInput, FolderOpen, Save, Ruler, Footprints, Route, Waypoints, Scissors, Map as MapIcon, Terminal, LayoutDashboard, Activity, Shapes } from '@lucide/svelte';
+  import { Check, Trash2, FileInput, FolderOpen, Save, Ruler, Footprints, Route, Waypoints, Scissors, Map as MapIcon, Terminal, LayoutDashboard, Activity, Shapes, Table2 } from '@lucide/svelte';
   import type { Component } from 'svelte';
 
   interface Item {
@@ -65,7 +65,7 @@
     ],
     Sheets: [],
     View: [
-      { name: 'Panels', items: [panelItem('map', MapIcon), panelItem('profile', Activity), panelItem('section', Scissors), panelItem('symbols', Shapes), panelItem('console', Terminal)] },
+      { name: 'Panels', items: [panelItem('map', MapIcon), panelItem('profile', Activity), panelItem('section', Scissors), panelItem('symbols', Shapes), panelItem('stations', Table2), panelItem('console', Terminal)] },
       { name: 'Units', items: [{ label: 'Metric', icon: Ruler, run: () => setUnits('metric'), pressed: () => cave.units === 'metric' }, { label: 'Imperial', icon: Footprints, run: () => setUnits('imperial'), pressed: () => cave.units === 'imperial' }] },
       { name: 'Theme', items: [], custom: ThemeGroup },
       { name: 'Live editing', items: [], custom: CollaborateGroup },

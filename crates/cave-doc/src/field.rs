@@ -136,6 +136,12 @@ pub enum Field {
     TripTapeMode,
     /// Station label shown to people (not its identity).
     StationLabel,
+    /// The team's mark on a station: `open`, `assigned`, `pushed`, `closed`, ... (empty: none).
+    StationStatus,
+    /// The team's own note on a station (separate from the note written in the survey).
+    StationTeamNote,
+    /// Who has the lead.
+    StationAssigned,
     /// Fixed easting/x in metres, when this station is a fixed point.
     StationFixedX,
     /// Fixed northing/y.
@@ -271,6 +277,7 @@ impl Field {
                 (K::Trip, V::Flag)
             }
             StationLabel => (K::Station, V::Text),
+            StationStatus | StationTeamNote | StationAssigned => (K::Station, V::Text),
             StationFixedX => (K::Station, V::Number),
             StationFixedY => (K::Station, V::Number),
             StationFixedZ => (K::Station, V::Number),
