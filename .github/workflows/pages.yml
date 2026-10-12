@@ -1,0 +1,62 @@
+# Publishes the web app to GitHub Pages and rebuilds it on every push to main:
+#   https://nate-the-ace.github.io/cavecad-rs/
+# It is the same app the desktop shell wraps. Only the synthetic sample caves are in it: real caves and
+# scans stay on each person's own machine (the browser keeps them; peer-to-peer sharing is direct).
+name: pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# A newer push replaces a build still running.
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - uses: swatinem/rust-cache@v2
+
+      - name: Install wasm-pack (the engine is built with it)
+        uses: jetli/wasm-pack-action@v0.4.0
+
+      - name: Build the web app
+        run: |
+          npm ci --prefix apps/web
+          # Relative URLs: the site lives under /cavecad-rs/, not at the root.
+          cd apps/web && npx vite build --base=./
+          rm -rf dist/local
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: apps/web/dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
