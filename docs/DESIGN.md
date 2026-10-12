@@ -519,3 +519,6 @@ Not done: the old trip-planner packet (printable card), and the stations.json si
 
 ## 2026-10-12 — Relay (TURN) fallback for live sessions
 Direct WebRTC fails on symmetric NAT / CGNAT / strict firewalls. Added an optional relay: the person pastes a Metered "credentials link" (or turn addresses + username + password) under "Relay for strict networks" in Share and Join. Stored only in localStorage (`cavecad-relay`), never committed or put in a code. `p2p.svelte.ts` `iceServers()` = STUN + relay servers; ICE still tries direct first, the relay carries only DTLS-encrypted data. "Test relay" gathers with `iceTransportPolicy: 'relay'` to prove the login works. Parsing is in `p2p-ice.ts` (tested in `tests/p2p.check.ts`). Real two-network verification needs real credentials.
+
+## 2026-10-12 — Built-in relay link
+One shared Metered account serves everyone: the credentials link (`https://<app>.metered.live/api/v1/turn/credentials?apiKey=…`) is a repository secret `RELAY_URL`, passed to the Pages and desktop builds as `VITE_RELAY_URL`. Never committed. Trade-off accepted: the link ends up inside the shipped JS, so anyone who looks can read it; worst case is someone burning the free quota, fixed by rotating the key. The per-person Relay settings stay as an override.

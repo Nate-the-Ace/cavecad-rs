@@ -15,6 +15,9 @@ function load(): Relay {
   return emptyRelay();
 }
 
+/** The relay link built into this copy of the app (set when it is built, from a repository secret); people can still use their own. */
+const BUILT_IN: string = (import.meta.env.VITE_RELAY_URL as string | undefined)?.trim() ?? '';
+
 export const relay = $state<Relay & { testing: boolean; result: string }>({ ...load(), testing: false, result: '' });
 
 export function saveRelay() {
@@ -26,19 +29,20 @@ export function saveRelay() {
   }
 }
 
-export const relayConfigured = (): boolean => !!relay.url.trim() || staticServers(relay).length > 0;
+export const relayConfigured = (): boolean => !!BUILT_IN || !!relay.url.trim() || staticServers(relay).length > 0;
 
 /** The relay servers to offer to a new connection. Never throws: a relay that cannot be reached just means direct-only. */
 export async function relayServers(): Promise<RTCIceServer[]> {
   const out = staticServers(relay);
-  const url = relay.url.trim();
-  if (url && credentialsUrlOk(url)) {
+  for (const url of [relay.url.trim(), BUILT_IN]) {
+    if (!url || !credentialsUrlOk(url)) continue;
     try {
       const res = await fetch(url, { signal: AbortSignal.timeout(5000) });
       if (res.ok) out.push(...normalizeServers(await res.json()));
     } catch {
       /* offline or a wrong link: carry on without it */
     }
+    if (relayCount(out)) break; // their own link first; the built-in one only if theirs gave nothing
   }
   return out;
 }

@@ -61,6 +61,7 @@ jobs:
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VITE_RELAY_URL: ${{ secrets.RELAY_URL }}
         with:
           projectPath: apps/desktop
           tagName: desktop-latest
