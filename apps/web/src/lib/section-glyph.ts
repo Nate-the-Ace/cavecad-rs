@@ -5,7 +5,17 @@
 
 import type { Look } from './ink';
 import { smooth } from './spline.ts';
-import { engine } from './engine';
+
+/** Where shaped-line ornament comes from (the engine sets this once it has loaded). */
+export interface OrnamentSource {
+  ornament(kind: string, curve: [number, number][], closed: boolean, flip: boolean): { spine: boolean; lines: [number, number][][] };
+  flippedLines(): string[];
+}
+let source: OrnamentSource | null = null;
+/** Installs the ornament source. */
+export function setOrnamentSource(s: OrnamentSource) {
+  source = s;
+}
 
 
 export type Sketches = { points: [number, number][]; widths: number[] | null; closed?: boolean }[];
@@ -51,7 +61,7 @@ export function drawStrokes(
 ): void {
   g.lineCap = 'round';
   g.lineJoin = 'round';
-  const flipped = new Set(engine.flippedLines()); // shaped lines with ornament on the left of travel
+  const flipped = new Set(source?.flippedLines() ?? []); // shaped lines with ornament on the left of travel
   for (const k of sketches) {
     const l = look(k.kind);
     const curve = smooth(
@@ -62,7 +72,7 @@ export function drawStrokes(
     );
     // Shaped lines: ornament is regenerated from the curve (in metres) every time it is drawn.
     const metres = smooth(k.points, null, 10, !!k.closed).pts;
-    const orn = engine.ornament(k.kind, metres, !!k.closed, !!k.id && flipped.has(k.id));
+    const orn = source?.ornament(k.kind, metres, !!k.closed, !!k.id && flipped.has(k.id)) ?? { spine: true, lines: [] };
     const trace = (extra: number, color: string, alpha: number, dash: number[]) => {
       g.strokeStyle = color;
       g.globalAlpha = alpha;

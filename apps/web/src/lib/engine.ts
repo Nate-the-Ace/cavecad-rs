@@ -2,6 +2,7 @@
 import init, { start, log, console_events, console_clear, engine_version, open_demo, scene, profile_runs, profile_band, add_profile_sketch, undo, redo, edit_state, passage_mesh, shading, palette, open_dxf, save_dxf, section_stations, section_at, add_section_sketch, map_sections, place_section, map_profile_sketches, add_map_line, map_lines, draw_tools, edit_line, delete_line, set_line_closed, set_line_kind, line_info, set_line_flip, ornament, flipped_lines } from '../wasm/cave_wasm.js';
 
 import { setInkPalette } from './ink';
+import { setOrnamentSource } from './section-glyph';
 
 /** The panels that keep their own undo history. */
 export type Scope = 'profile' | 'section' | 'map';
@@ -231,6 +232,8 @@ export async function loadBuildInfo(): Promise<BuildInfo | null> {
     return null;
   }
 }
+
+setOrnamentSource(engine); // shaped-line marks are drawn by the 2D canvases from the engine
 
 // Dev-only handle for tests and debugging in the browser console.
 if (import.meta.env.DEV) (window as unknown as { __engine: typeof engine }).__engine = engine;
