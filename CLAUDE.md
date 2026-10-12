@@ -36,4 +36,7 @@ the index useful; `missing_docs` is a warning for that reason.
     cargo fmt
     python3 tools/make_code_index.py             # regenerate the index (CI uses --check)
 
-Rust toolchain here is Homebrew `rustc`, which has no `wasm32` target; the wasm check runs in CI.
+Toolchain: use rustup's, not Homebrew's `rustc` (no wasm32 target). Put it first on PATH:
+`export PATH=/opt/homebrew/opt/rustup/bin:$PATH`. Local browser-build check:
+
+    cargo build --target wasm32-unknown-unknown -p cave-id -p cave-store -p cave-log

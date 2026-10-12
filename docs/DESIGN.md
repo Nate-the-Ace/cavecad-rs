@@ -6,8 +6,9 @@ Recorded 2026-10-11. Update when a decision changes, with the date.
 - **Chromium-first, local-first.** Caves live on the user's machine (File System Access API, OPFS
   working copy). Cloud providers (Drive, Dropbox, OneDrive, WebDAV) come later behind the same
   `cave-store::Store` trait. Tablets reach files through cloud APIs. Nothing uploads to our server.
-- **UI.** Modern ribbon, web-capable. Toolkit not yet chosen (leading: web front end over a WASM
-  engine). Engine crates are toolkit-independent so this does not block them.
+- **UI.** Modern ribbon on Tauri (decided 2026-10-11): one web front end serves the desktop app and
+  the hosted Chromium app, over the Rust engine (native in Tauri, WASM in the browser). Engine
+  crates stay UI-independent. Frontend framework: undecided.
 - **Console.** Read-only panel fed by `cave-log`; one log per cave file (`<cave>.log`).
 - **Co-editing later, planned now.** Stable ids, operation log, source/derived split, atomic
   strokes, last-writer-wins fields, content-addressed blobs, schema version in the log. Phases:
