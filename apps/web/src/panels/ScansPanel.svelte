@@ -330,6 +330,21 @@
     }
   }
 
+  /** Ends matching: a spot waiting for its station is dropped; the next time (or the Done button) the whole mode ends. */
+  function endAlign() {
+    align.pending = null;
+    align.on = false;
+  }
+
+  // Escape ends matching from anywhere in the app (the stations are clicked in other panels).
+  function escapeAlign(e: KeyboardEvent) {
+    if (e.key !== 'Escape' || !align.on || cave.tool) return;
+    const t = e.target as HTMLElement | null;
+    if (t && (t.tagName === 'INPUT' || t.tagName === 'SELECT' || t.tagName === 'TEXTAREA')) return;
+    if (align.pending) align.pending = null;
+    else align.on = false;
+  }
+
   function onKey(e: KeyboardEvent) {
     if (e.key === 'Escape' && menu) {
       menu = null;
@@ -381,6 +396,8 @@
     <button role="menuitem" onclick={() => fold('', true)}>Collapse all folders</button>
   </div>
 {/if}
+
+<svelte:window onkeydown={escapeAlign} />
 
 <!-- svelte-ignore a11y_no_noninteractive_element_interactions: the panel takes dropped files and Ctrl/Cmd+Z for its own undo -->
 <div class="panel" class:over role="region" aria-label="Scans" tabindex="-1" onkeydown={onKey} ondragover={(e) => { e.preventDefault(); over = true; }} ondragleave={() => (over = false)} ondrop={drop}>
@@ -475,6 +492,7 @@
           </select>
         </label>
       {/if}
+      <button class="done" onclick={endAlign} title="Stop matching and put the tool down (Esc)">Done</button>
       {#if placed}<span class="rms" title="How far, on average, the matched spots land from their stations">off by {formatLength(placed.rms, cave.units, 2)} on average</span>{/if}
     </div>
   {/if}
@@ -540,6 +558,7 @@
   .match { display: inline-flex; align-items: center; gap: 2px; padding: 0 3px 0 8px; border: 1px solid var(--line); border-radius: 999px; background: var(--panel); }
   .match .x { border: none; background: none; padding: 2px; }
   .rms { color: var(--muted); }
+  .done { margin-left: auto; background: var(--accent-bg); border: 1px solid var(--accent); color: var(--text); }
   button.on { background: var(--accent-bg); border-color: var(--accent); }
   .body { flex: 1; min-height: 0; display: flex; }
   .side { flex: none; display: flex; flex-direction: column; gap: 2px; padding: 6px; border-right: 1px solid var(--line); overflow: auto; }
