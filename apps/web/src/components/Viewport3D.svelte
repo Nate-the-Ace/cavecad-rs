@@ -81,6 +81,10 @@
     view?.setSelectedLine(id);
   });
   function onKey(e: KeyboardEvent) {
+    if (e.key === 'Escape' && showMenu) {
+      showMenu = false;
+      return;
+    }
     if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z') {
       e.preventDefault();
       if ((e.shiftKey ? engine.redo('map') : engine.undo('map'))) changed();
@@ -113,6 +117,7 @@
   // A plain click on a station picks it for the Cross Section panel (a drag orbits, as always).
   let down: { x: number; y: number } | null = null;
   function onDown(e: PointerEvent) {
+    showMenu = false; // a press on the map closes the Show menu
     wrap.focus({ preventScroll: true }); // so Delete and Escape reach the map
     down = e.button === 0 ? { x: e.clientX, y: e.clientY } : null;
   }
@@ -218,15 +223,16 @@
       {#each DEMOS as d}<option value={d.id}>{d.title}</option>{/each}
     </select>
     <label><input type="checkbox" bind:checked={cave.adjusted} onchange={refresh} /> Adjusted</label>
-    <label><input type="checkbox" bind:checked={walls} onchange={() => view?.setShowWalls(walls)} /> Walls</label>
-    <label><input type="checkbox" bind:checked={passage} onchange={() => view?.setShowPassage(passage)} /> Passage</label>
-    <label title="Show the profile sketches along their runs (they fade out from the top or bottom, where they cannot be read)"><input type="checkbox" checked={cave.showSections.profileSketches} onchange={(e) => setShowSections('profileSketches', e.currentTarget.checked)} /> Profile sketches</label>
-    <label title="Show the cross sections drawn at stations, next to their stations (drag one to place it)"><input type="checkbox" checked={cave.showSections.map} onchange={(e) => setShowSections('map', e.currentTarget.checked)} /> Sections</label>
-    <label title="Draw a paler section through stations with no measurements"><input type="checkbox" bind:checked={fillGaps} onchange={loadPassage} /> Fill gaps</label>
     <div class="menu">
-      <button class:on={showMenu || filter.hiddenTypes.length + filter.hiddenTrips.length > 0} title="Show or hide by type and trip" aria-expanded={showMenu} onclick={() => (showMenu = !showMenu)}><Eye size={15} /></button>
+      <button class:on={showMenu || filter.hiddenTypes.length + filter.hiddenTrips.length > 0} title="Show or hide: walls, passage, sketches, sections, types and trips" aria-expanded={showMenu} onclick={() => (showMenu = !showMenu)}><Eye size={15} /> Show</button>
       {#if showMenu}
         <div class="pop" role="group" aria-label="Show or hide">
+          <h4>On the map</h4>
+          <label><input type="checkbox" bind:checked={walls} onchange={() => view?.setShowWalls(walls)} /> Walls</label>
+          <label><input type="checkbox" bind:checked={passage} onchange={() => view?.setShowPassage(passage)} /> Passage</label>
+          <label title="Show the profile sketches along their runs (they fade out from the top or bottom, where they cannot be read)"><input type="checkbox" checked={cave.showSections.profileSketches} onchange={(e) => setShowSections('profileSketches', e.currentTarget.checked)} /> Profile sketches</label>
+          <label title="Show the cross sections drawn at stations, next to their stations (drag one to place it)"><input type="checkbox" checked={cave.showSections.map} onchange={(e) => setShowSections('map', e.currentTarget.checked)} /> Sections</label>
+          <label title="Draw a paler section through stations with no measurements"><input type="checkbox" bind:checked={fillGaps} onchange={loadPassage} /> Fill gaps</label>
           <h4>Types</h4>
           {#each listed as t}
             <label><input type="checkbox" checked={!filter.hiddenTypes.includes(t.key)} onchange={(e) => (setShown('types', t.key, e.currentTarget.checked), refresh())} /> {t.label}</label>
@@ -272,6 +278,7 @@
   label { display: flex; gap: 4px; align-items: center; color: var(--muted); white-space: nowrap; }
   .status { color: var(--muted); }
   .menu { position: relative; }
+  .menu > button { gap: 5px; grid-auto-flow: column; }
   .pop { position: absolute; top: calc(100% + 10px); left: 0; z-index: 5; min-width: 200px; max-height: 60vh; overflow: auto; display: flex; flex-direction: column; gap: 4px; padding: 8px 10px; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: 0 6px 20px rgb(0 0 0 / 0.25); }
   .pop h4 { margin: 4px 0 0; font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); }
   .pop label { color: var(--text); }

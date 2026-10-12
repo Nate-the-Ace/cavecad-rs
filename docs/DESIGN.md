@@ -86,3 +86,5 @@ Recorded 2026-10-11 at Nathan's request: these are on the road map and must be w
 
 **Map undo/redo, and the rule for future panels** (Nathan, 2026-10-12): the Map's Undo and Redo sit in its main toolbar (and Ctrl/Cmd+Z, Shift+Ctrl/Cmd+Z while the map has focus) and only undo what was drawn, edited, deleted or placed on the map. All three panels now use one `PanelUndo` component so they behave the same; any future panel that can be edited gets its own scope and its own `PanelUndo` (recorded in CLAUDE.md).
 
+
+**One Show menu on the Map** (Nathan, 2026-10-12): every visibility option of the Map lives in a single "Show" dropdown in its toolbar: Walls, Passage, Profile sketches, Sections and Fill gaps (under "On the map"), then the type and trip filters. Only Adjusted (which changes the numbers, not what is shown), the demo picker, undo/redo and the elevation-colour button stay outside. Escape or a press on the map closes the menu. Any new "show or hide" option for the Map goes in this menu.
