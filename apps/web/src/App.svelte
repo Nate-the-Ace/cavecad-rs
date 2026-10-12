@@ -5,6 +5,7 @@
   import { engine, loadEngine, loadBuildInfo, type BuildInfo } from './lib/engine';
   import { unsaved } from './lib/cave.svelte';
   import { guardUnload } from './lib/files';
+  import { installDiagnostics } from './lib/diagnostics';
 
   let version = $state('loading engine…');
   let info = $state<BuildInfo | null>(null);
@@ -13,6 +14,7 @@
 
   onMount(() => {
     const teardown = initWorkspace(host);
+    installDiagnostics();
     const unguard = guardUnload();
     (async () => {
       try {

@@ -454,3 +454,19 @@ Not done: the old trip-planner packet (printable card), and the stations.json si
 - Deselecting: only a picked station is ringed (Map), ringed (Profile) or highlighted (Stations table); the
   station the Cross Section panel shows no longer stays lit after a click on nothing. A click on empty
   space in the Map or Profile lets go.
+
+## 2026-10-12: User icon, people list, feedback reports
+- The user icon sits at the very top right of the tab bar (your initials in your colour; a count badge when
+  others are in a shared session) and opens one window: People (this device first, then everyone in the live
+  room with what they are doing; join or leave a room), Options (your name, units, compact ribbon, reset
+  layout) and Feedback. It replaces the row of avatars.
+- Feedback: kind (wrong, idea, question), a message, optionally the log, app details and a screenshot, saved
+  as one zip (`feedback.txt`, `log.txt`, `screenshot.png`; a plain store-only zip writer, tested against
+  `unzip -t`). The log is the engine's own (already redacts coordinates) plus errors the page raised; the
+  details are counts, browser and screen size, never the cave, its file name or any position. The
+  screenshot uses the browser's screen capture (it asks first; the window steps aside), or an attached or
+  pasted image where capture is not allowed. Save report, Copy text and Send are offered.
+- Send posts the zip to `/feedback` on the same site. The dev and preview server keep these in a git-ignored
+  `feedback/` folder; the hosted artifact has no such address, so there Send says so and the person saves
+  the report. Where reports should go in production (a server, an email address, an issue tracker) is a
+  decision for Nathan; nothing is sent anywhere without a click.

@@ -11,7 +11,7 @@
   import SheetGroup from './SheetGroup.svelte';
   import { INSPECTORS } from '../lib/inspectors';
   import type { PickKind } from '../lib/cave.svelte';
-  import Avatars from './Avatars.svelte';
+  import UserMenu from './UserMenu.svelte';
   import { symbolDef } from '../lib/symbols';
   import { fillLabel } from '../lib/fills';
   import { onMount } from 'svelte';
@@ -227,7 +227,7 @@
     {#if mode}
       <button class="ctx" class:on={active === CONTEXT} onclick={() => (active = CONTEXT)}>{contextName}</button>
     {/if}
-    <Avatars />
+    <UserMenu />
   </nav>
   <div class="bar" bind:clientWidth={barW}>
     {#each shownGroups as g, i (g.name)}
