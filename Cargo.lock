@@ -36,6 +36,7 @@ dependencies = [
  "cave-fixture",
  "cave-id",
  "cave-scene",
+ "cave-style",
 ]
 
 [[package]]
@@ -118,6 +119,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "cave-style"
+version = "0.0.1"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "cave-survey"
 version = "0.0.1"
 dependencies = [
@@ -147,6 +155,7 @@ dependencies = [
  "cave-id",
  "cave-log",
  "cave-scene",
+ "cave-style",
  "js-sys",
  "serde",
  "serde_json",

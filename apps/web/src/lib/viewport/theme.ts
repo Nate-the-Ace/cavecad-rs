@@ -12,6 +12,11 @@ export interface ViewTheme {
   css: { text: string; muted: string; danger: string; line: string; panel: string };
 }
 
+/** The theme colour for a palette ink. */
+export function inkColor(t: ViewTheme, ink: 'text' | 'muted' | 'accent' | 'warn' | 'danger' | 'station'): THREE.Color {
+  return ink === 'station' ? t.text : t[ink];
+}
+
 export function readTheme(): ViewTheme {
   const style = getComputedStyle(document.documentElement);
   const v = (name: string) => style.getPropertyValue(name).trim();

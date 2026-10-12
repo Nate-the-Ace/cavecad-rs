@@ -552,3 +552,48 @@ fn xdata_text_is_ascii_and_single_line() {
         "{t:?}"
     );
 }
+
+/// The `(colour, linetype)` the LAYER table gives `layer`.
+fn layer_look(text: &str, layer: &str) -> (String, String) {
+    let tags = cave_dxf::parse_tags(text).expect("parses");
+    let at = tags
+        .iter()
+        .position(|t| t.code == 2 && t.value == layer)
+        .and_then(|i| {
+            // The record that names the layer sits in the LAYER table.
+            (0..=i)
+                .rev()
+                .find(|&k| tags[k].code == 0)
+                .filter(|&k| tags[k].value == "LAYER")
+                .map(|_| i)
+        })
+        .unwrap_or_else(|| panic!("layer {layer} is not in the LAYER table"));
+    let value_of = |code: i32| {
+        tags[at..]
+            .iter()
+            .take_while(|t| t.code != 0)
+            .find(|t| t.code == code)
+            .map(|t| t.value.trim().to_string())
+            .unwrap()
+    };
+    (value_of(62), value_of(6))
+}
+
+#[test]
+fn layers_get_their_colour_and_linetype_from_the_type_palette() {
+    let text = export(&load("PitfallCave.json"), &ExportOptions::default());
+    for key in ["wall", "centerline", "splay", "closure", "tie"] {
+        let st = cave_style::style(key);
+        if !text.contains(st.layer) {
+            continue; // this cave has none of that type
+        }
+        let (color, lt) = layer_look(&text, st.layer);
+        assert_eq!(color, cave_style::dxf_color(st.ink).to_string(), "{key}");
+        let want = match st.linetype {
+            cave_style::Linetype::Solid => "Continuous",
+            cave_style::Linetype::Dashed => "DASHED",
+        };
+        assert_eq!(lt, want, "{key}");
+    }
+    assert!(text.contains("CAVE-WALLS"), "Pitfall has walls");
+}

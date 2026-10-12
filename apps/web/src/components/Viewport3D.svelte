@@ -1,10 +1,10 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { Home, Maximize, Box, Square, Palette } from '@lucide/svelte';
+  import { Home, Maximize, Box, Square, Palette, Eye } from '@lucide/svelte';
   import { DEMOS } from '../lib/demos';
-  import { engine, loadEngine, type Scene } from '../lib/engine';
+  import { engine, loadEngine, type Scene, type TypeStyle } from '../lib/engine';
   import { CaveView, type Projection } from '../lib/viewport/cave-view';
-  import { cave, changed } from '../lib/cave.svelte';
+  import { cave, changed, filter, setShown, wireFilter } from '../lib/cave.svelte';
   import { ViewCube } from '../lib/viewport/view-cube';
 
   let wrap: HTMLDivElement;
@@ -20,22 +20,27 @@
   let fillGaps = $state(true);
   let projection = $state<Projection>('perspective');
   let status = $state('');
-  let scene: Scene | null = null;
+  let scene = $state.raw<Scene | null>(null);
+  let palette = $state<TypeStyle[]>([]);
+  let showMenu = $state(false);
+  /** Palette entries the cave has something of, in palette order. */
+  const listed = $derived(palette.filter((p) => scene?.types.includes(p.key)));
 
   function open(id: string) {
     const d = DEMOS.find((x) => x.id === id);
     if (!d || !view) return;
     status = engine.openDemo(d.json);
     cave.run = '';
+    filter.hiddenTrips = []; // trip ids belong to one cave
     changed();
-    scene = engine.scene(cave.adjusted);
+    scene = engine.scene(cave.adjusted, wireFilter());
     view.setScene(scene);
     loadPassage();
   }
 
   /** The passage surface follows the Adjusted and colour settings. */
   function loadPassage() {
-    const buffers = engine.passageMesh(cave.adjusted, depthColor ? 'depth' : 'trip', fillGaps);
+    const buffers = engine.passageMesh(cave.adjusted, depthColor ? 'depth' : 'trip', fillGaps, wireFilter());
     view?.setPassage(buffers);
     if (buffers.filled > 0) {
       engine.log('info', 'passage', `${buffers.filled} unmeasured station${buffers.filled === 1 ? '' : 's'} filled in from the nearest measurements (shown paler)`);
@@ -44,7 +49,8 @@
 
   function refresh() {
     if (!view) return;
-    scene = engine.scene(cave.adjusted);
+    scene = engine.scene(cave.adjusted, wireFilter());
+    view.setShowLabels(!filter.hiddenTypes.includes('label'));
     view.setScene(scene, false);
     loadPassage();
     changed();
@@ -55,7 +61,7 @@
     const cube = new ViewCube(cubeHost, (dir) => v.snapTo(dir), (da, dp) => v.orbitBy(da, dp));
     v.onRender = (camera, target) => cube.sync(camera, target);
     v.onProjection = (p) => (projection = p);
-    v.shadingFor = (dir, persp) => engine.shading(cave.adjusted, dir, persp);
+    v.shadingFor = (dir, persp) => engine.shading(cave.adjusted, dir, persp, wireFilter());
     view = v;
     if (import.meta.env.DEV) (window as unknown as { __view: CaveView }).__view = v; // for tests
 
@@ -64,7 +70,11 @@
     const dark = window.matchMedia('(prefers-color-scheme: dark)');
     const retheme = () => v.applyTheme();
     dark.addEventListener('change', retheme);
-    loadEngine().then(() => open(demo));
+    loadEngine().then(() => {
+      palette = engine.palette();
+      v.setPalette(palette);
+      open(demo);
+    });
 
     return () => {
       ro.disconnect();
@@ -87,6 +97,26 @@
     <label><input type="checkbox" bind:checked={walls} onchange={() => view?.setShowWalls(walls)} /> Walls</label>
     <label><input type="checkbox" bind:checked={passage} onchange={() => view?.setShowPassage(passage)} /> Passage</label>
     <label title="Draw a paler section through stations with no measurements"><input type="checkbox" bind:checked={fillGaps} onchange={loadPassage} /> Fill gaps</label>
+    <div class="menu">
+      <button class:on={showMenu || filter.hiddenTypes.length + filter.hiddenTrips.length > 0} title="Show or hide by type and trip" aria-expanded={showMenu} onclick={() => (showMenu = !showMenu)}><Eye size={15} /></button>
+      {#if showMenu}
+        <div class="pop" role="group" aria-label="Show or hide">
+          <h4>Types</h4>
+          {#each listed as t}
+            <label><input type="checkbox" checked={!filter.hiddenTypes.includes(t.key)} onchange={(e) => (setShown('types', t.key, e.currentTarget.checked), refresh())} /> {t.label}</label>
+          {/each}
+          {#if scene && scene.trips.length > 0}
+            <h4>Trips</h4>
+            {#each scene.trips as trip}
+              <label><input type="checkbox" checked={!filter.hiddenTrips.includes(trip.id)} onchange={(e) => (setShown('trips', trip.id, e.currentTarget.checked), refresh())} /> {trip.name || 'Unnamed trip'}</label>
+            {/each}
+          {/if}
+          {#if filter.hiddenTypes.length + filter.hiddenTrips.length > 0}
+            <button onclick={() => ((filter.hiddenTypes = []), (filter.hiddenTrips = []), refresh())}>Show everything</button>
+          {/if}
+        </div>
+      {/if}
+    </div>
     <button class:on={depthColor} title="Colour by elevation" onclick={() => ((depthColor = !depthColor), view?.setElevationColors(depthColor), loadPassage())}><Palette size={15} /></button>
     {#if status}<span class="status">{status}</span>{/if}
   </div>
@@ -113,4 +143,8 @@
   button.on { background: var(--accent-bg); }
   label { display: flex; gap: 4px; align-items: center; color: var(--muted); }
   .status { color: var(--muted); }
+  .menu { position: relative; }
+  .pop { position: absolute; top: calc(100% + 10px); left: 0; z-index: 5; min-width: 200px; max-height: 60vh; overflow: auto; display: flex; flex-direction: column; gap: 4px; padding: 8px 10px; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: 0 6px 20px rgb(0 0 0 / 0.25); }
+  .pop h4 { margin: 4px 0 0; font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); }
+  .pop label { color: var(--text); }
 </style>

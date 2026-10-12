@@ -5,8 +5,8 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { LineSegments2 } from 'three/addons/lines/LineSegments2.js';
 import { LineSegmentsGeometry } from 'three/addons/lines/LineSegmentsGeometry.js';
 import { LineMaterial } from 'three/addons/lines/LineMaterial.js';
-import type { PassageBuffers, Scene } from '../engine';
-import { elevationColor, readTheme, type ViewTheme } from './theme';
+import type { PassageBuffers, Scene, TypeStyle } from '../engine';
+import { elevationColor, inkColor, readTheme, type ViewTheme } from './theme';
 
 export type Projection = 'perspective' | 'orthographic';
 export type Dir = [number, number, number];
@@ -43,6 +43,9 @@ export class CaveView {
   private extent = 1;
   private elevationColors = false;
   private showWalls = true;
+  private showLabels = true;
+  /** How each type looks; set once from the engine's palette. */
+  private palette = new Map<string, TypeStyle>();
   private passage: THREE.Mesh | null = null;
   private showPassage = true;
   private readonly headlamp = new THREE.DirectionalLight(0xffffff, 2.2);
@@ -233,6 +236,12 @@ export class CaveView {
 
   // ---- content -----------------------------------------------------------------------------
 
+  /** The type palette: the one table that decides colour, weight and linetype. */
+  setPalette(styles: TypeStyle[]) {
+    this.palette = new Map(styles.map((s) => [s.key, s]));
+    this.rebuild();
+  }
+
   setElevationColors(on: boolean) {
     this.elevationColors = on;
     this.rebuild();
@@ -263,6 +272,12 @@ export class CaveView {
   setShowPassage(on: boolean) {
     this.showPassage = on;
     if (this.passage) this.passage.visible = on;
+    this.requestRender();
+  }
+
+  /** Station labels follow the "label" type in the view filter. */
+  setShowLabels(on: boolean) {
+    this.showLabels = on;
     this.requestRender();
   }
 
@@ -323,11 +338,15 @@ export class CaveView {
     const shade = (z: number) => elevationColor((z - zmin) / zspan);
     const t = this.theme;
 
-    const lines = (segs: number[][], color: THREE.Color, width: number, opts: { dashed?: boolean; opacity?: number } = {}) => {
+    // Draws segments in the look the palette gives their type; "under" lines are dim and dashed.
+    const lines = (segs: number[][], type: string, under = false) => {
       if (segs.length === 0) return;
+      const st = this.palette.get(type);
+      if (!st) return;
+      const opacity = under ? st.under_opacity : st.opacity;
       const geo = new LineSegmentsGeometry();
       geo.setPositions(segs.flatMap((p) => p));
-      const mat = new LineMaterial({ color: this.elevationColors ? 0xffffff : color, linewidth: width, dashed: !!opts.dashed, transparent: opts.opacity !== undefined, opacity: opts.opacity ?? 1, vertexColors: this.elevationColors, dashSize: 1, gapSize: 0.6 });
+      const mat = new LineMaterial({ color: this.elevationColors ? 0xffffff : inkColor(t, st.ink), linewidth: st.weight, dashed: under || st.linetype === 'dashed', transparent: opacity < 1, opacity, vertexColors: this.elevationColors, dashSize: 1, gapSize: 0.6 });
       mat.resolution.set(this.width, this.height);
       if (this.elevationColors) geo.setColors(segs.flatMap((p) => [...shade(p[2]).toArray(), ...shade(p[5]).toArray()]));
       const mesh = new LineSegments2(geo, mat);
@@ -340,22 +359,23 @@ export class CaveView {
     // Walls are the drawing; once they are there the surveyed centreline steps back.
     // Lines under another passage are dim and dashed, so overlapping levels read apart.
     const sh = s.shading;
-    lines(sh.splays_over, t.muted, 1, { opacity: 0.45 });
-    lines(sh.splays_under, t.muted, 1, { opacity: 0.2, dashed: true });
-    lines(sh.legs_over, walls ? t.muted : t.text, walls ? 1.4 : 2.2);
-    lines(sh.legs_under, walls ? t.muted : t.text, walls ? 1.2 : 1.8, { opacity: 0.4, dashed: true });
+    const legType = walls ? 'centerline-behind' : 'centerline';
+    lines(sh.splays_over, 'splay');
+    lines(sh.splays_under, 'splay', true);
+    lines(sh.legs_over, legType);
+    lines(sh.legs_under, legType, true);
     if (walls) {
-      lines(sh.walls_over, t.text, 2.4);
-      lines(sh.walls_under, t.text, 2, { opacity: 0.4, dashed: true });
+      lines(sh.walls_over, 'wall');
+      lines(sh.walls_under, 'wall', true);
     }
-    lines(legs('tie'), t.warn, 2, { dashed: true });
-    lines(legs('closure'), t.accent, 2, { dashed: true });
+    lines(legs('tie'), 'tie');
+    lines(legs('closure'), 'closure');
 
     const pos = new Float32Array(s.stations.length * 3);
     const col = new Float32Array(s.stations.length * 3);
     s.stations.forEach((st, i) => {
       pos.set(st.at, i * 3);
-      const c = st.anchor ? t.accent : this.elevationColors ? shade(st.at[2]) : t.text;
+      const c = st.anchor ? t.accent : this.elevationColors ? shade(st.at[2]) : inkColor(t, this.palette.get('station')?.ink ?? 'text');
       col.set(c.toArray(), i * 3);
     });
     const pgeo = new THREE.BufferGeometry();
@@ -409,7 +429,7 @@ export class CaveView {
     g.font = '11px system-ui, sans-serif';
     g.textAlign = 'left';
 
-    if (pxPerM > 3) {
+    if (pxPerM > 3 && this.showLabels) {
       g.fillStyle = css.muted;
       for (const st of s.stations) {
         const p = this.project(st.at);

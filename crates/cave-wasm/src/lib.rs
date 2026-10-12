@@ -118,27 +118,44 @@ pub fn open_demo(json: &str) -> String {
     }
 }
 
+/// The view filter the viewer sends (JSON); anything unreadable hides nothing.
+fn parse_filter(json: &str) -> cave_scene::ViewFilter {
+    serde_json::from_str(json).unwrap_or_default()
+}
+
 /// The open cave as a scene for the map canvas (JSON). Empty scene when nothing is open.
 #[wasm_bindgen]
-pub fn scene(adjusted: bool) -> String {
+pub fn scene(adjusted: bool, filter: &str) -> String {
+    let filter = parse_filter(filter);
     DOC.with(|d| {
         let scene = match d.borrow().as_ref() {
-            Some(doc) => cave_scene::build(doc, adjusted),
+            Some(doc) => cave_scene::build_filtered(doc, adjusted, &filter),
             None => cave_scene::Scene::default(),
         };
         serde_json::to_string(&scene).unwrap_or_else(|_| "{}".to_string())
     })
 }
 
+/// The type palette (colour role, weight, linetype per type) as JSON, for the viewer.
+#[wasm_bindgen]
+pub fn palette() -> String {
+    serde_json::to_string(cave_style::PALETTE).unwrap_or_else(|_| "[]".to_string())
+}
+
 /// The over/under split of the drawn lines for a camera looking from `(x, y, z)` toward the cave
 /// (z up); for a perspective camera `(x, y, z)` is the eye's position instead. Asked again whenever the camera settles, so dashes follow the view.
 #[wasm_bindgen]
-pub fn shading(adjusted: bool, x: f64, y: f64, z: f64, perspective: bool) -> String {
+pub fn shading(adjusted: bool, x: f64, y: f64, z: f64, perspective: bool, filter: &str) -> String {
+    let filter = parse_filter(filter);
     DOC.with(|d| {
         let sh = match d.borrow().as_ref() {
-            Some(doc) => {
-                cave_scene::shading(doc, adjusted, [x, y, z], perspective.then_some([x, y, z]))
-            }
+            Some(doc) => cave_scene::shading(
+                doc,
+                adjusted,
+                [x, y, z],
+                perspective.then_some([x, y, z]),
+                &filter,
+            ),
             None => cave_scene::Shading::default(),
         };
         serde_json::to_string(&sh).unwrap_or_else(|_| "{}".to_string())
@@ -301,7 +318,8 @@ impl PassageMesh {
 /// Builds the open cave's passage mesh. `mode` is `depth` or `trip`; `fill_gaps` draws a paler
 /// inferred section through stations with no measurements.
 #[wasm_bindgen]
-pub fn passage_mesh(adjusted: bool, mode: &str, fill_gaps: bool) -> PassageMesh {
+pub fn passage_mesh(adjusted: bool, mode: &str, fill_gaps: bool, filter: &str) -> PassageMesh {
+    let filter = parse_filter(filter);
     let color = if mode == "depth" {
         cave_scene::ColorMode::Depth
     } else {
@@ -310,7 +328,7 @@ pub fn passage_mesh(adjusted: bool, mode: &str, fill_gaps: bool) -> PassageMesh 
     let mesh = DOC.with(|d| {
         d.borrow()
             .as_ref()
-            .map(|doc| cave_scene::passage_mesh(doc, adjusted, color, fill_gaps))
+            .map(|doc| cave_scene::passage_mesh(doc, adjusted, color, fill_gaps, &filter))
             .unwrap_or_default()
     });
     let f32s = |v: &[f64]| v.iter().map(|x| *x as f32).collect::<Vec<f32>>();

@@ -25,8 +25,10 @@
   const toWorld = (x: number, y: number): [number, number] => [(x - ox) / scale, (oy - y) / scale];
   const toScreen = (s: number, z: number): [number, number] => [ox + s * scale, oy - z * scale];
 
+  let ready = false;
+
   function refresh() {
-    if (!wrap) return;
+    if (!wrap || !ready) return;
     runs = engine.profileRuns(cave.adjusted);
     if (!runs.some((r) => r.key === cave.run)) cave.run = runs[0]?.key ?? '';
     band = cave.run ? engine.profileBand(cave.run, cave.adjusted) : null;
@@ -250,7 +252,10 @@
     ro.observe(wrap);
     const dark = window.matchMedia('(prefers-color-scheme: dark)');
     dark.addEventListener('change', schedule);
-    loadEngine().then(refresh);
+    loadEngine().then(() => {
+      ready = true;
+      refresh();
+    });
     return () => {
       ro.disconnect();
       dark.removeEventListener('change', schedule);

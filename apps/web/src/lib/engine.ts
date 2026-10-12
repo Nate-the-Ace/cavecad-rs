@@ -1,5 +1,5 @@
 // Loads the Rust engine (WASM) once and re-exports the few calls the UI uses.
-import init, { start, log, console_events, console_clear, engine_version, open_demo, scene, profile_runs, profile_band, add_profile_sketch, undo, redo, edit_state, passage_mesh, shading } from '../wasm/cave_wasm.js';
+import init, { start, log, console_events, console_clear, engine_version, open_demo, scene, profile_runs, profile_band, add_profile_sketch, undo, redo, edit_state, passage_mesh, shading, palette } from '../wasm/cave_wasm.js';
 
 export type Level = 'debug' | 'detail' | 'info' | 'warn' | 'error';
 export interface ConsoleEvent {
@@ -11,6 +11,9 @@ export interface ConsoleEvent {
 export type Pt = [number, number, number];
 export interface Scene {
   stations: { label: string; at: Pt; anchor: boolean }[];
+  /** Palette types with something in this cave, and its trips: what the filter can list. */
+  types: string[];
+  trips: { id: string; name: string }[];
   legs: { from: Pt; to: Pt; style: 'new' | 'closure' | 'tie' }[];
   /** [x1, y1, z1, x2, y2, z2] */
   splays: [number, number, number, number, number, number][];
@@ -60,6 +63,17 @@ export interface PassageBuffers {
   /** Unmeasured stations given an inferred (paler) section. */
   filled: number;
 }
+/** How one type looks (colour role, weight, linetype); the one table the viewer and the DXF export share. */
+export interface TypeStyle {
+  key: string;
+  label: string;
+  ink: 'text' | 'muted' | 'accent' | 'warn' | 'danger' | 'station';
+  weight: number;
+  linetype: 'solid' | 'dashed';
+  opacity: number;
+  under_opacity: number;
+  layer: string;
+}
 export interface BuildInfo {
   builtAt: string | null;
   git: string;
@@ -80,15 +94,17 @@ export const engine = {
   events: (since: number): ConsoleEvent[] => JSON.parse(console_events(BigInt(since))),
   clear: () => console_clear(),
   openDemo: (json: string): string => open_demo(json),
-  scene: (adjusted: boolean): Scene => JSON.parse(scene(adjusted)),
+  scene: (adjusted: boolean, filter = '{}'): Scene => JSON.parse(scene(adjusted, filter)),
   /** Which drawn lines run under another passage, for a camera looking from `dir` toward the cave (for perspective, `dir` is the eye's position). */
-  shading: (adjusted: boolean, dir: [number, number, number], perspective: boolean): Scene['shading'] => JSON.parse(shading(adjusted, dir[0], dir[1], dir[2], perspective)),
+  shading: (adjusted: boolean, dir: [number, number, number], perspective: boolean, filter = '{}'): Scene['shading'] => JSON.parse(shading(adjusted, dir[0], dir[1], dir[2], perspective, filter)),
+  /** The type palette. */
+  palette: (): TypeStyle[] => JSON.parse(palette()),
   profileRuns: (adjusted: boolean): RunInfo[] => JSON.parse(profile_runs(adjusted)),
   profileBand: (run: string, adjusted: boolean): ProfileScene | null => JSON.parse(profile_band(run, adjusted)),
   /** Adds a stroke drawn on a run's band; every edit goes through the document's one edit path. */
   addSketch: (run: string, points: [number, number][], widths: number[] | null, adjusted: boolean): string => add_profile_sketch(run, JSON.stringify(points), widths ? JSON.stringify(widths) : '', adjusted),
-  passageMesh: (adjusted: boolean, mode: 'trip' | 'depth', fillGaps: boolean): PassageBuffers => {
-    const m = passage_mesh(adjusted, mode, fillGaps);
+  passageMesh: (adjusted: boolean, mode: 'trip' | 'depth', fillGaps: boolean, filter = '{}'): PassageBuffers => {
+    const m = passage_mesh(adjusted, mode, fillGaps, filter);
     const out = { positions: m.positions, normals: m.normals, colors: m.colors, filled: m.filled };
     m.free();
     return out;

@@ -5,7 +5,8 @@ use crate::{FORMAT_VERSION, MAX_VALUE_LINE};
 use cave_doc::{Document, Field, Kind};
 use cave_id::Id;
 use cave_scene::{LegStyle, Scene};
-use std::collections::BTreeSet;
+use cave_style::{Ink, Linetype, dxf_color, style};
+use std::collections::BTreeMap;
 
 /// How to write the file.
 #[derive(Clone, Copy, Debug)]
@@ -30,14 +31,6 @@ const CHUNKS_PER_RECORD: usize = 100;
 pub(crate) const CHUNKS_PER_CARRIER: usize = 40;
 /// The frozen layer holding the carrier entities.
 pub(crate) const CARRIER_LAYER: &str = "CAVECAD-DATA";
-
-const CL_LEGS: &str = "CAVE-CENTERLINE";
-const CL_STATIONS: &str = "CAVE-STATIONS";
-const CL_LABELS: &str = "CAVE-LABELS";
-const CL_SPLAYS: &str = "CAVE-SPLAYS";
-const CL_WALLS: &str = "CAVE-WALLS";
-const CL_CLOSURES: &str = "CAVE-CLOSURES";
-const CL_PROFILE: &str = "CAVE-PROFILE";
 
 /// ASCII, and escaped so no JSON string can contain a character a code page could damage.
 fn ascii_json(json: &str) -> String {
@@ -65,7 +58,8 @@ pub(crate) const TAG_APP: &str = "CaveSurvey";
 struct Geometry<'a> {
     w: &'a mut Writer,
     owner: String,
-    layers: BTreeSet<String>,
+    /// Layers used, with the colour and linetype of the type that put them there.
+    layers: BTreeMap<String, (i32, Linetype)>,
 }
 
 /// One tag value as the old suite wrote it: backslash and newline escaped so it stays on one line,
@@ -164,10 +158,21 @@ fn shot_tags(doc: &Document, shot: &str) -> Vec<(String, String)> {
 }
 
 impl Geometry<'_> {
+    /// The layer and colour a palette type draws with; records the layer with the type's linetype.
+    fn look(&mut self, key: &str) -> (&'static str, i32) {
+        let st = style(key);
+        let color = dxf_color(st.ink);
+        self.layers
+            .insert(layer_name(st.layer), (color, st.linetype));
+        (st.layer, color)
+    }
+
     fn entity(&mut self, kind: &str, layer: &str, color: Option<i32>, subclass: &str) {
         let h = self.w.handle();
         let layer = layer_name(layer);
-        self.layers.insert(layer.clone());
+        self.layers
+            .entry(layer.clone())
+            .or_insert((color.unwrap_or(7), Linetype::Solid));
         self.w.tag(0, kind);
         self.w.tag(5, h);
         self.w.tag(330, self.owner.clone());
@@ -199,18 +204,24 @@ impl Geometry<'_> {
         }
     }
 
-    fn line(&mut self, layer: &str, color: i32, a: [f64; 3], b: [f64; 3]) {
+    fn line(&mut self, key: &str, a: [f64; 3], b: [f64; 3]) {
+        let (layer, color) = self.look(key);
         self.entity("LINE", layer, Some(color), "AcDbLine");
         self.point3(10, a);
         self.point3(11, b);
     }
 
-    fn point(&mut self, layer: &str, color: i32, p: [f64; 3]) {
+    fn point(&mut self, key: &str, ink: Option<Ink>, p: [f64; 3]) {
+        let (layer, mut color) = self.look(key);
+        if let Some(i) = ink {
+            color = dxf_color(i);
+        }
         self.entity("POINT", layer, Some(color), "AcDbPoint");
         self.point3(10, p);
     }
 
-    fn text(&mut self, layer: &str, color: i32, p: [f64; 3], height: f64, s: &str) {
+    fn text(&mut self, key: &str, p: [f64; 3], height: f64, s: &str) {
+        let (layer, color) = self.look(key);
         self.entity("TEXT", layer, Some(color), "AcDbText");
         self.point3(10, p);
         self.w.num(40, height);
@@ -219,7 +230,8 @@ impl Geometry<'_> {
     }
 
     /// A 3D polyline (walls run through space, so they keep their elevation).
-    fn polyline3d(&mut self, layer: &str, color: i32, pts: &[[f64; 3]]) {
+    fn polyline3d(&mut self, key: &str, pts: &[[f64; 3]]) {
+        let (layer, color) = self.look(key);
         self.entity("POLYLINE", layer, Some(color), "AcDb3dPolyline");
         self.w.tag(66, "1");
         self.point3(10, [0.0, 0.0, 0.0]);
@@ -239,7 +251,8 @@ impl Geometry<'_> {
     }
 
     /// A flat polyline with optional pen weight per vertex, as variable-width segments.
-    fn lwpolyline(&mut self, layer: &str, color: i32, pts: &[[f64; 2]], widths: Option<&[f64]>) {
+    fn lwpolyline(&mut self, key: &str, pts: &[[f64; 2]], widths: Option<&[f64]>) {
+        let (layer, color) = self.look(key);
         self.entity("LWPOLYLINE", layer, Some(color), "AcDbPolyline");
         self.w.tag(90, pts.len().to_string());
         self.w.tag(70, "0");
@@ -257,16 +270,16 @@ impl Geometry<'_> {
 
 fn draw_scene(g: &mut Geometry, doc: &Document, scene: &Scene) {
     for l in &scene.legs {
-        let (layer, color) = match l.style {
-            LegStyle::New => (CL_LEGS, 7),
-            LegStyle::Closure => (CL_CLOSURES, 5),
-            LegStyle::Tie => (CL_CLOSURES, 30),
+        let key = match l.style {
+            LegStyle::New => "centerline",
+            LegStyle::Closure => "closure",
+            LegStyle::Tie => "tie",
         };
-        g.line(layer, color, l.from, l.to);
+        g.line(key, l.from, l.to);
         g.tags(&shot_tags(doc, &l.shot));
     }
     for (n, s) in scene.splays.iter().enumerate() {
-        g.line(CL_SPLAYS, 8, [s[0], s[1], s[2]], [s[3], s[4], s[5]]);
+        g.line("splay", [s[0], s[1], s[2]], [s[3], s[4], s[5]]);
         let mut tags = scene
             .splay_shots
             .get(n)
@@ -277,19 +290,18 @@ fn draw_scene(g: &mut Geometry, doc: &Document, scene: &Scene) {
     }
     for run in &scene.walls {
         if run.len() >= 2 {
-            g.polyline3d(CL_WALLS, 7, run);
+            g.polyline3d("wall", run);
         }
     }
     for (seq, st) in scene.stations.iter().enumerate() {
-        g.point(CL_STATIONS, if st.anchor { 5 } else { 3 }, st.at);
+        g.point("station", st.anchor.then_some(Ink::Accent), st.at);
         g.tags(&[
             ("Station".into(), st.label.clone()),
             ("Seq".into(), seq.to_string()),
         ]);
         if !st.label.is_empty() {
             g.text(
-                CL_LABELS,
-                8,
+                "label",
                 [st.at[0] + 0.4, st.at[1] + 0.4, st.at[2]],
                 1.0,
                 &st.label,
@@ -299,8 +311,7 @@ fn draw_scene(g: &mut Geometry, doc: &Document, scene: &Scene) {
     for c in &scene.closures {
         let pct = c.percent.map_or(String::new(), |p| format!(" {p:.2}%"));
         g.text(
-            CL_CLOSURES,
-            1,
+            "closure-note",
             [c.at[0] + 0.6, c.at[1] - 1.0, c.at[2]],
             1.0,
             &format!("closure {:.2} m{pct}", c.horizontal.hypot(c.vertical)),
@@ -320,8 +331,7 @@ fn draw_profiles(g: &mut Geometry, doc: &Document, adjusted: bool, plan_min: [f6
         let (dx, dy) = (plan_min[0] - b[0], base_y - b[3]);
         let at = |s: f64, z: f64| [s + dx, z + dy];
         g.text(
-            CL_PROFILE,
-            8,
+            "label",
             [at(b[0], b[3])[0], at(b[0], b[3])[1] + 3.0, 0.0],
             2.0,
             &format!(
@@ -330,20 +340,20 @@ fn draw_profiles(g: &mut Geometry, doc: &Document, adjusted: bool, plan_min: [f6
             ),
         );
         for l in &p.legs {
-            g.lwpolyline(CL_PROFILE, 7, &[at(l[0], l[1]), at(l[2], l[3])], None);
+            g.lwpolyline("profile", &[at(l[0], l[1]), at(l[2], l[3])], None);
         }
         for line in p.ceiling.iter().chain(&p.floor) {
             let pts: Vec<[f64; 2]> = line.iter().map(|q| at(q[0], q[1])).collect();
-            g.lwpolyline(CL_PROFILE, 8, &pts, None);
+            g.lwpolyline("profile-wall", &pts, None);
         }
         for st in &p.stations {
             let a = at(st.s, st.z);
-            g.point(CL_PROFILE, 3, [a[0], a[1], 0.0]);
-            g.text(CL_LABELS, 8, [a[0] + 0.4, a[1] + 0.4, 0.0], 1.0, &st.label);
+            g.point("station", None, [a[0], a[1], 0.0]);
+            g.text("label", [a[0] + 0.4, a[1] + 0.4, 0.0], 1.0, &st.label);
         }
         for sk in &p.sketches {
             let pts: Vec<[f64; 2]> = sk.points.iter().map(|q| at(q[0], q[1])).collect();
-            g.lwpolyline("Profile sketch", 5, &pts, sk.widths.as_deref());
+            g.lwpolyline("profile-sketch", &pts, sk.widths.as_deref());
         }
         base_y -= (b[3] - b[1]) + 60.0;
     }
@@ -389,12 +399,12 @@ pub fn export(doc: &Document, opts: &ExportOptions) -> String {
         .collect();
 
     // ---- entities (the derived drawing) ----
-    let layers: BTreeSet<String>;
+    let layers: BTreeMap<String, (i32, Linetype)>;
     {
         let mut g = Geometry {
             w: &mut w,
             owner: model_record.clone(),
-            layers: BTreeSet::new(),
+            layers: BTreeMap::new(),
         };
         draw_scene(&mut g, doc, &scene);
         let plan_min = scene.bounds.map_or([0.0, 0.0], |b| [b[0], b[1]]);
@@ -428,33 +438,48 @@ pub fn export(doc: &Document, opts: &ExportOptions) -> String {
             w.tag(100, sub);
             w.tag(2, name);
         };
-    let lt = table(&mut w, "LTYPE", 3);
-    for name in ["ByBlock", "ByLayer", "Continuous"] {
+    let lt = table(&mut w, "LTYPE", 4);
+    for name in ["ByBlock", "ByLayer", "Continuous", "DASHED"] {
         record(&mut w, "LTYPE", None, &lt, "AcDbLinetypeTableRecord", name);
         w.tag(70, "0");
         w.tag(
             3,
-            if name == "Continuous" {
-                "Solid line"
-            } else {
-                ""
+            match name {
+                "Continuous" => "Solid line",
+                "DASHED" => "Dashed ____ ____ ____",
+                _ => "",
             },
         );
         w.tag(72, "65");
-        w.tag(73, "0");
-        w.tag(40, "0.0");
+        if name == "DASHED" {
+            // Pattern: a 0.5 m dash, then a 0.3 m gap.
+            w.tag(73, "2");
+            w.tag(40, "0.8");
+            w.tag(49, "0.5");
+            w.tag(74, "0");
+            w.tag(49, "-0.3");
+            w.tag(74, "0");
+        } else {
+            w.tag(73, "0");
+            w.tag(40, "0.0");
+        }
     }
     w.tag(0, "ENDTAB");
-    let all_layers: Vec<String> = std::iter::once("0".to_string())
-        .chain(layers.iter().cloned())
-        .collect();
+    let mut all_layers: Vec<(String, i32, Linetype)> = vec![("0".to_string(), 7, Linetype::Solid)];
+    all_layers.extend(layers.iter().map(|(n, (c, lt))| (n.clone(), *c, *lt)));
     let ly = table(&mut w, "LAYER", all_layers.len());
-    for name in &all_layers {
+    for (name, color, linetype) in &all_layers {
         record(&mut w, "LAYER", None, &ly, "AcDbLayerTableRecord", name);
         // The carrier layer is frozen: its points hold data, not drawing.
         w.tag(70, if name == CARRIER_LAYER { "1" } else { "0" });
-        w.tag(62, "7");
-        w.tag(6, "Continuous");
+        w.tag(62, color.to_string());
+        w.tag(
+            6,
+            match linetype {
+                Linetype::Solid => "Continuous",
+                Linetype::Dashed => "DASHED",
+            },
+        );
     }
     w.tag(0, "ENDTAB");
     let st = table(&mut w, "STYLE", 1);

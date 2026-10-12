@@ -11,6 +11,7 @@ workspace = true
 cave-id = { path = "../cave-id" }
 cave-doc = { path = "../cave-doc" }
 cave-scene = { path = "../cave-scene" }
+cave-style = { path = "../cave-style" }
 
 [dev-dependencies]
 cave-draw = { path = "../cave-draw" }
