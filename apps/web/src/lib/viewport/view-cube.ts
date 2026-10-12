@@ -7,6 +7,10 @@ import { readTheme } from './theme';
 const SIZE = 132;
 /** Outer third of a face counts as its edge or corner; the middle third is the face itself. */
 const EDGE = 0.5 / 3;
+/** Pixels a press may move and still count as a click. */
+const DRAG_PIXELS = 4;
+/** Radians the view turns per pixel dragged on the cube. */
+const TURN_PER_PIXEL = 0.012;
 
 const LABELS = ['RIGHT', 'LEFT', 'TOP', 'BOTTOM', 'FRONT', 'BACK'];
 
@@ -48,6 +52,7 @@ export class ViewCube {
   constructor(
     host: HTMLElement,
     private readonly onPick: (dir: Dir) => void,
+    private readonly onDrag: (dAzimuth: number, dPolar: number) => void = () => {},
   ) {
     this.canvas = document.createElement('canvas');
     this.canvas.style.cssText = `width:${SIZE}px;height:${SIZE}px;display:block;cursor:pointer`;
@@ -73,14 +78,43 @@ export class ViewCube {
     this.marker.visible = false;
     this.scene.add(this.marker);
 
-    this.canvas.addEventListener('pointermove', (e) => this.hover(e));
+    // Drag to turn the view; a press that barely moves is a click on a face, edge or corner.
+    let press: { x: number; y: number; dragged: boolean } | null = null;
+    this.canvas.addEventListener('pointerdown', (e) => {
+      press = { x: e.clientX, y: e.clientY, dragged: false };
+      this.canvas.setPointerCapture(e.pointerId);
+    });
+    this.canvas.addEventListener('pointermove', (e) => {
+      if (press) {
+        const dx = e.clientX - press.x;
+        const dy = e.clientY - press.y;
+        if (press.dragged || Math.hypot(dx, dy) > DRAG_PIXELS) {
+          press.dragged = true;
+          this.marker.visible = false;
+          this.canvas.style.cursor = 'grabbing';
+          this.onDrag(dx * TURN_PER_PIXEL, dy * TURN_PER_PIXEL);
+          press.x = e.clientX;
+          press.y = e.clientY;
+        }
+        return;
+      }
+      this.hover(e);
+    });
+    const release = (e: PointerEvent) => {
+      const wasDrag = press?.dragged ?? false;
+      press = null;
+      this.canvas.style.cursor = 'pointer';
+      if (this.canvas.hasPointerCapture(e.pointerId)) this.canvas.releasePointerCapture(e.pointerId);
+      if (!wasDrag && e.type === 'pointerup') {
+        const hit = this.pick(e);
+        if (hit) this.onPick(regionOf(hit));
+      }
+    };
+    this.canvas.addEventListener('pointerup', release);
+    this.canvas.addEventListener('pointercancel', release);
     this.canvas.addEventListener('pointerleave', () => {
       this.marker.visible = false;
       this.draw();
-    });
-    this.canvas.addEventListener('click', (e) => {
-      const hit = this.pick(e);
-      if (hit) this.onPick(regionOf(hit));
     });
   }
 

@@ -179,6 +179,28 @@ export class CaveView {
     this.anim = requestAnimationFrame(step);
   }
 
+  /** Turns the camera around the cave: `dAzimuth` about the vertical axis, `dPolar` toward or away
+   *  from straight down. Radians. Used when the view cube is dragged. */
+  orbitBy(dAzimuth: number, dPolar: number) {
+    cancelAnimationFrame(this.anim);
+    const offset = this.cameraOffset;
+    const dist = offset.length();
+    const azimuth = Math.atan2(offset.y, offset.x) - dAzimuth;
+    const polar = Math.min(Math.PI - 1e-3, Math.max(1e-3, Math.acos(offset.z / dist) - dPolar));
+    offset.set(Math.sin(polar) * Math.cos(azimuth), Math.sin(polar) * Math.sin(azimuth), Math.cos(polar)).multiplyScalar(dist);
+    this.camera.position.copy(this.controls.target).add(offset);
+    this.controls.update();
+    this.requestRender();
+  }
+
+  /** Jumps (no animation) to the home angle and frames the cave. Used when a cave first opens. */
+  resetView() {
+    const dist = Math.max(this.cameraOffset.length(), 1);
+    this.camera.position.copy(this.controls.target).addScaledVector(viewDirection(HOME_DIR), dist);
+    this.controls.update();
+    this.fit();
+  }
+
   home() {
     this.snapTo(HOME_DIR);
   }
@@ -193,7 +215,7 @@ export class CaveView {
   setScene(scene: Scene | null, refit = true) {
     this.data = scene;
     this.rebuild();
-    if (refit) this.fit();
+    if (refit) this.resetView();
   }
 
   applyTheme() {

@@ -35,7 +35,7 @@
 
   onMount(() => {
     const v = new CaveView(gl, overlay);
-    const cube = new ViewCube(cubeHost, (dir) => v.snapTo(dir));
+    const cube = new ViewCube(cubeHost, (dir) => v.snapTo(dir), (da, dp) => v.orbitBy(da, dp));
     v.onRender = (camera, target) => cube.sync(camera, target);
     v.onProjection = (p) => (projection = p);
     view = v;
