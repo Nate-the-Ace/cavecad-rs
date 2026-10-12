@@ -6,7 +6,7 @@
   // Compass cells hold what the compass read (magnetic); the trip's declination turns them into the true
   // bearings the survey keeps. The page is worked out from the survey every time and every cell is a real,
   // undoable edit of it (this panel has its own Undo and Redo).
-  import { untrack } from 'svelte';
+  import { tick, untrack } from 'svelte';
   import { Plus, ScanLine, Trash2 } from '@lucide/svelte';
   import { showPanel } from '../lib/workspace.svelte';
   import PanelUndo from '../components/PanelUndo.svelte';
@@ -36,15 +36,24 @@
       if (!trips.some((t) => t.id === cave.trip)) cave.trip = trips[0]?.id ?? '';
       // Cells are updated in place (not rebuilt) so the focus stays where it is and Tab goes to the next cell.
       page = cave.trip ? engine.notebookPage(cave.trip) : null;
+      if (focusNewShot) {
+        focusNewShot = false;
+        void tick().then(() => {
+          const tapes = document.querySelectorAll<HTMLInputElement>('.panel[aria-label="Survey notebook"] tr.shot input[aria-label=Tape]');
+          tapes[tapes.length - 1]?.focus();
+        });
+      }
     });
   });
 
   // The next shot starts where the page ends and goes to the next station in the sequence, the usual
   // case: both are filled in (and can be changed). A name typed in To is left alone.
   let toTyped = false;
+  /** After a shot is added: put the cursor in its tape cell once the page has redrawn. */
+  let focusNewShot = false;
   $effect(() => {
     const last = [...(page?.rows ?? [])].reverse().find((r) => r.kind === 'station');
-    from = last?.label ?? '';
+    from = last?.label ?? (page ? 'A1' : ''); // a page with nothing on it starts at A1
     toTyped = false;
   });
   $effect(() => {
@@ -117,7 +126,10 @@
   function add(splay: boolean) {
     if (!page) return;
     const target = to.trim();
-    if (run(engine.notebookAddShot(page.trip, from, splay ? '' : target, splay))) toTyped = false;
+    if (run(engine.notebookAddShot(page.trip, from, splay ? '' : target, splay))) {
+      toTyped = false;
+      focusNewShot = true; // the page redraws, then the new shot's tape takes the cursor
+    }
   }
 
   function newTrip() {
@@ -217,14 +229,14 @@
                 </tr>
               {/if}
             {:else}
-              <tr><td colspan="13" class="none">This trip has no shots yet. Add the first one below.</td></tr>
+              <tr><td colspan="13" class="none">This trip has no shots yet. Open your scans, find the first line of the survey, and type its stations below (From and To), then press Enter: the shot appears here with its tape, compass and clino ready to fill in. Tab moves through them in the order the notes are written.</td></tr>
             {/each}
           </tbody>
         {/key}
       </table>
     </div>
     <div class="add">
-      <label>From <input class="st-in" bind:value={from} maxlength="40" aria-label="Shot starts at" /></label>
+      <label>From <input class="st-in" bind:value={from} tabindex="-1" maxlength="40" aria-label="Shot starts at" /></label>
       <label>To <input class="st-in" bind:value={to} oninput={() => (toTyped = true)} maxlength="40" aria-label="Shot ends at" onkeydown={(e) => e.key === 'Enter' && add(false)} /></label>
       <button onclick={() => add(false)} disabled={!from.trim() || !to.trim()}>Add shot</button>
       <button onclick={() => add(true)} disabled={!from.trim()} title="A reading to a wall: no station at the far end">Add splay</button>

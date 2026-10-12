@@ -214,3 +214,28 @@ export function resetLayout() {
   defaultLayout(api);
   refreshOpen();
 }
+
+/**
+ * The arrangement for building a cave from its scans: the scans on the left, the notebook beside them
+ * to type into, the map small underneath (with the profile and cross section behind it). Panels not
+ * in it come back from the View tab.
+ */
+export function workLayout() {
+  if (!api) return;
+  const a = api;
+  a.clear();
+  a.addPanel({ id: 'scans', component: 'scans', title: PANELS.scans.title });
+  a.addPanel({ id: 'notebook', component: 'notebook', title: PANELS.notebook.title, position: { referencePanel: 'scans', direction: 'right' } });
+  a.addPanel({ id: 'map', component: 'map', title: PANELS.map.title, position: { referencePanel: 'notebook', direction: 'below' }, initialHeight: 200 });
+  a.addPanel({ id: 'profile', component: 'profile', title: PANELS.profile.title, position: { referencePanel: 'map', direction: 'within' } });
+  a.addPanel({ id: 'section', component: 'section', title: PANELS.section.title, position: { referencePanel: 'map', direction: 'within' } });
+  a.panels.find((p) => p.id === 'map')?.api.setActive();
+  // Narrower scans, wider notebook: its columns need the room.
+  a.getPanel('scans')?.api.setSize({ width: Math.round(el0Width() * 0.38) });
+  refreshOpen();
+}
+
+/** The width of the workspace, for sizing panels as a share of it. */
+function el0Width(): number {
+  return document.querySelector('.workspace')?.clientWidth ?? window.innerWidth;
+}

@@ -594,3 +594,24 @@ fn layers_get_their_colour_and_linetype_from_the_type_palette() {
     }
     assert!(text.contains("CAVE-WALLS"), "Pitfall has walls");
 }
+
+/// A cave just started (one empty trip, nothing else) saves and opens again.
+#[test]
+fn a_brand_new_cave_round_trips() {
+    use cave_id::SeqIds;
+    let doc = cave_notebook::new_cave(
+        cave_doc::ActorId(1),
+        &mut SeqIds::new(1),
+        "New Cave",
+        "First trip",
+        "m",
+    )
+    .unwrap();
+    let text = cave_dxf::export(&doc, &cave_dxf::ExportOptions::default());
+    let back = cave_dxf::import(&text, cave_doc::ActorId(2))
+        .unwrap()
+        .document
+        .unwrap();
+    assert_eq!(cave_notebook::trips(&back).len(), 1);
+    assert_eq!(cave_notebook::trips(&back)[0].name, "First trip");
+}

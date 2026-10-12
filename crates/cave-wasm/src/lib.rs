@@ -1753,3 +1753,18 @@ pub fn scan_set_trim(trip: &str, view: &str, path: &str, outline: &str, toleranc
         cave_scans::set_trim(doc, trip, view, path, want)
     })
 }
+
+/// Starts a brand new cave: one empty trip called `trip`, written in `unit` (`ft` or `m`), with the
+/// cave's `name`. Replaces the open cave. Returns `ok` or `error: ...`.
+#[wasm_bindgen]
+pub fn new_cave(name: &str, trip: &str, unit: &str) -> String {
+    let _ = console();
+    match cave_notebook::new_cave(ActorId(1), &mut random_ids(), name, trip, unit) {
+        Ok(doc) => {
+            tracing::info!(source = "import", "started a new cave: {name}");
+            install(doc);
+            "ok".into()
+        }
+        Err(e) => format!("error: {e:?}"),
+    }
+}

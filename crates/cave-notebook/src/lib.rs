@@ -14,8 +14,8 @@ mod edit;
 mod page;
 
 pub use edit::{
-    EditError, Reading, TripField, add_shot, new_trip, remove_shot, rename_station, set_notes,
-    set_reading, set_trip_declination, set_trip_field, set_walls,
+    EditError, Reading, TripField, add_shot, new_cave, new_trip, remove_shot, rename_station,
+    set_notes, set_reading, set_trip_declination, set_trip_field, set_walls,
 };
 pub use page::{ClosureRow, Lrud, Page, Row, RowKind, Totals, TripChoice, page, trips};
 

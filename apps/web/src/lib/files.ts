@@ -3,7 +3,7 @@
 // open file is remembered so Save writes back to it; elsewhere Open uses a file input and Save
 // downloads a copy.
 import { engine } from './engine';
-import { cave, changed, markSaved, unsaved } from './cave.svelte';
+import { cave, changed, markSaved, markUnsaved, unsaved } from './cave.svelte';
 import { leave } from './sync.svelte';
 
 /** The subset of the File System Access API this file uses. */
@@ -68,6 +68,27 @@ export function guardUnload() {
 function openSurveyJson(text: string): { ok: boolean; message: string; warnings: string[] } {
   const m = engine.openDemo(text);
   return m.startsWith('error') ? { ok: false, message: m.replace(/^error: /, ''), warnings: [] } : { ok: true, message: m, warnings: [] };
+}
+
+/**
+ * Starts a brand new cave with one empty trip, replacing the one on screen (after asking, if it has
+ * unsaved changes). Returns what to tell the person, or `null` if they declined.
+ */
+export function startCave(name: string, unit: 'ft' | 'm'): { ok: boolean; message: string } | null {
+  if (!confirmDiscard()) return null;
+  const clean = name.trim() || 'New cave';
+  const r = engine.newCave(clean, 'First trip', unit);
+  if (r !== 'ok') return { ok: false, message: r.replace(/^error: /, '') };
+  leave(); // a different cave: stop sharing the old one
+  handle = null;
+  cave.fileName = `${clean.replace(/[\\/:*?"<>|]+/g, ' ').trim()}.dxf`;
+  cave.trip = '';
+  cave.run = '';
+  cave.station = '';
+  cave.opened += 1; // the canvas re-reads and re-frames
+  changed();
+  markUnsaved();
+  return { ok: true, message: `Started ${clean}` };
 }
 
 /** Asks for a DXF and opens it. Returns what to tell the person, or `null` if they cancelled. */

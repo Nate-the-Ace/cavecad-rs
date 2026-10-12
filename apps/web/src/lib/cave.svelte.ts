@@ -102,6 +102,8 @@ export const cave = $state({
   station: '',
   /** The run the Profile panel is showing. */
   run: '',
+  /** The New cave dialog is open. */
+  newDialog: false,
   /** The trip (id) the Notebook and the Scans panel are both on, so a page and its scans stay together. */
   trip: '',
   /** A request to bring the Map to a station (from the Stations panel). */
@@ -186,6 +188,12 @@ export function markSaved() {
     savedRevision = 0; // the engine is not loaded yet
   }
   cave.version += 1; // whatever shows "unsaved" re-reads
+}
+
+/** Says the cave on screen has never been saved (a cave just started): it counts as unsaved from the first moment. */
+export function markUnsaved() {
+  savedRevision = -1;
+  cave.version += 1;
 }
 
 /** True when the cave has changed since it was last opened or saved. Reads `cave.version`, so it is reactive. */

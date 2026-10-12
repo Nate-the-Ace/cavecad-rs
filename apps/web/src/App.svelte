@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import Ribbon from './components/Ribbon.svelte';
+  import NewCave from './components/NewCave.svelte';
   import { initWorkspace } from './lib/workspace.svelte';
   import { engine, loadEngine, loadBuildInfo, type BuildInfo } from './lib/engine';
   import { unsaved } from './lib/cave.svelte';
@@ -43,6 +44,7 @@
 
 <div class="shell">
   <Ribbon />
+  <NewCave />
   {#if info?.error}
     <div class="banner">Rust build failed. The page is showing the last good build.<pre>{info.error}</pre></div>
   {/if}

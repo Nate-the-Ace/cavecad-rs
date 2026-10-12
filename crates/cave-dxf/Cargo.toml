@@ -20,3 +20,4 @@ cave-geom = { path = "../cave-geom" }
 [dev-dependencies]
 cave-draw = { path = "../cave-draw" }
 cave-fixture = { path = "../cave-fixture" }
+cave-notebook = { path = "../cave-notebook" }

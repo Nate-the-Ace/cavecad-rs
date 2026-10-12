@@ -22,3 +22,4 @@ serde = { version = "1", features = ["derive"] }
 [dev-dependencies]
 cave-id = { path = "../cave-id" }
 cave-fixture = { path = "../cave-fixture" }
+cave-notebook = { path = "../cave-notebook" }

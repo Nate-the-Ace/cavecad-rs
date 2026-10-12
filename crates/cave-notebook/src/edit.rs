@@ -365,3 +365,42 @@ pub fn new_trip(
     }
     Ok((id, actions))
 }
+
+/// A brand new cave: a document with one empty trip (named `trip`), in `unit` (`ft` or `m`) and with
+/// the cave's `name` kept on that first trip. Everything else is built up from here, shot by shot.
+pub fn new_cave(
+    actor: cave_doc::ActorId,
+    ids: &mut dyn IdSource,
+    name: &str,
+    trip: &str,
+    unit: &str,
+) -> Result<Document, EditError> {
+    let mut doc = Document::new(actor);
+    let id = ids.next_id();
+    let text = |f, s: &str| Action::Set {
+        id,
+        field: f,
+        value: Value::Text(s.trim().chars().take(200).collect()),
+    };
+    let actions = vec![
+        Action::Create {
+            id,
+            kind: Kind::Trip,
+        },
+        text(Field::TripName, trip),
+        text(Field::TripCaveName, name),
+        text(
+            Field::TripDistanceUnit,
+            if unit == "ft" { "ft" } else { "m" },
+        ),
+        Action::Set {
+            id,
+            field: Field::TripOrder,
+            value: Value::Number(Some(0.0)),
+        },
+    ];
+    doc.edit(actions)
+        .map_err(|_| EditError::Invalid("a new cave could not be started"))?;
+    doc.take_outbox();
+    Ok(doc)
+}
