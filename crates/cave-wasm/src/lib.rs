@@ -665,9 +665,10 @@ pub fn station_detail(id: &str, adjusted: bool) -> String {
     })
 }
 
-/// Runs a station edit as one undoable edit in the Stations scope: `build` makes the actions.
-fn station_edit(
-    build: impl FnOnce(&cave_doc::Document) -> Result<Vec<cave_doc::Action>, cave_draw::DrawError>,
+/// Runs an edit as one undoable edit in the history of `scope`: `build` makes the actions.
+fn scoped_edit<E: std::fmt::Debug>(
+    scope: &str,
+    build: impl FnOnce(&cave_doc::Document) -> Result<Vec<cave_doc::Action>, E>,
 ) -> String {
     let result = DOC.with(|d| {
         let mut slot = d.borrow_mut();
@@ -677,13 +678,20 @@ fn station_edit(
             return Ok::<(), String>(());
         }
         let edit = doc.edit(actions).map_err(|e| format!("{e:?}"))?;
-        record_edit("stations", &edit);
+        record_edit(scope, &edit);
         Ok(())
     });
     match result {
         Ok(()) => "ok".into(),
         Err(e) => format!("error: {e}"),
     }
+}
+
+/// Runs a station edit as one undoable edit in the Stations scope: `build` makes the actions.
+fn station_edit(
+    build: impl FnOnce(&cave_doc::Document) -> Result<Vec<cave_doc::Action>, cave_draw::DrawError>,
+) -> String {
+    scoped_edit("stations", build)
 }
 
 /// Everything the shot tab shows about one shot (an id as text), as JSON, or `null`.
@@ -1303,4 +1311,188 @@ pub fn sync_load(ops: &str) -> String {
     }
     install(doc);
     "ok".into()
+}
+
+// ---- Survey Notebook ------------------------------------------------------------------------
+
+fn parse_id(id: &str) -> Option<cave_id::Id> {
+    id.parse().ok()
+}
+
+/// The trips, for the notebook's page chooser (JSON array).
+#[wasm_bindgen]
+pub fn notebook_trips() -> String {
+    DOC.with(|d| {
+        let v = d
+            .borrow()
+            .as_ref()
+            .map(cave_notebook::trips)
+            .unwrap_or_default();
+        serde_json::to_string(&v).unwrap_or_else(|_| "[]".into())
+    })
+}
+
+/// One trip's notebook page (JSON), or `null` when there is no such trip.
+#[wasm_bindgen]
+pub fn notebook_page(trip: &str) -> String {
+    DOC.with(|d| {
+        let p = parse_id(trip)
+            .zip(d.borrow().as_ref())
+            .and_then(|(t, doc)| cave_notebook::page(doc, t));
+        serde_json::to_string(&p).unwrap_or_else(|_| "null".into())
+    })
+}
+
+/// Sets one reading of a shot. `which` is `distance`, `az_fs`, `az_bs`, `inc_fs` or `inc_bs`;
+/// `value` is metres or degrees (compass cells are magnetic), empty for not measured.
+#[wasm_bindgen]
+pub fn notebook_set_reading(shot: &str, which: &str, value: &str) -> String {
+    use cave_notebook::Reading;
+    let which = match which {
+        "distance" => Reading::Distance,
+        "az_fs" => Reading::AzimuthFs,
+        "az_bs" => Reading::AzimuthBs,
+        "inc_fs" => Reading::InclinationFs,
+        "inc_bs" => Reading::InclinationBs,
+        _ => return "error: unknown reading".into(),
+    };
+    let value = if value.trim().is_empty() {
+        None
+    } else {
+        match value.trim().parse::<f64>() {
+            Ok(v) => Some(v),
+            Err(_) => return "error: not a number".into(),
+        }
+    };
+    let Some(shot) = parse_id(shot) else {
+        return "error: no such shot".into();
+    };
+    scoped_edit("notebook", |doc| {
+        cave_notebook::set_reading(doc, shot, which, value)
+    })
+}
+
+/// Sets the dimensions beside a station line: `target` is the arriving shot or the station;
+/// `walls` is JSON as for `set_station_walls`.
+#[wasm_bindgen]
+pub fn notebook_set_walls(target: &str, walls: &str) -> String {
+    #[derive(serde::Deserialize)]
+    struct W {
+        left: Option<f64>,
+        right: Option<f64>,
+        up: Option<f64>,
+        down: Option<f64>,
+        #[serde(default)]
+        left_open: bool,
+        #[serde(default)]
+        right_open: bool,
+        #[serde(default)]
+        up_open: bool,
+        #[serde(default)]
+        down_open: bool,
+    }
+    let (Some(target), Ok(w)) = (parse_id(target), serde_json::from_str::<W>(walls)) else {
+        return "error: bad target or walls".into();
+    };
+    let walls = cave_draw::Walls {
+        left: w.left,
+        right: w.right,
+        up: w.up,
+        down: w.down,
+        left_open: w.left_open,
+        right_open: w.right_open,
+        up_open: w.up_open,
+        down_open: w.down_open,
+    };
+    scoped_edit("notebook", |doc| {
+        cave_notebook::set_walls(doc, target, walls)
+    })
+}
+
+/// Sets the note on a notebook line (`source` is the id the page gave for it).
+#[wasm_bindgen]
+pub fn notebook_set_note(source: &str, text: &str) -> String {
+    let Some(source) = parse_id(source) else {
+        return "error: no such note".into();
+    };
+    scoped_edit("notebook", |doc| {
+        cave_notebook::set_notes(doc, source, text)
+    })
+}
+
+/// Sets a header field of a trip: `name`, `date`, `team` or `instruments`.
+#[wasm_bindgen]
+pub fn notebook_set_trip_field(trip: &str, field: &str, text: &str) -> String {
+    use cave_notebook::TripField;
+    let field = match field {
+        "name" => TripField::Name,
+        "date" => TripField::Date,
+        "team" => TripField::Team,
+        "instruments" => TripField::Instruments,
+        _ => return "error: unknown field".into(),
+    };
+    let Some(trip) = parse_id(trip) else {
+        return "error: no such trip".into();
+    };
+    scoped_edit("notebook", |doc| {
+        cave_notebook::set_trip_field(doc, trip, field, text)
+    })
+}
+
+/// Changes a trip's declination; every bearing in the trip turns by the difference.
+#[wasm_bindgen]
+pub fn notebook_set_declination(trip: &str, degrees: f64) -> String {
+    let Some(trip) = parse_id(trip) else {
+        return "error: no such trip".into();
+    };
+    scoped_edit("notebook", |doc| {
+        cave_notebook::set_trip_declination(doc, trip, degrees)
+    })
+}
+
+/// Adds a shot at the end of a trip's page; `to` is empty for a splay. Returns `ok` or `error: ...`.
+#[wasm_bindgen]
+pub fn notebook_add_shot(trip: &str, from: &str, to: &str, splay: bool) -> String {
+    let Some(trip) = parse_id(trip) else {
+        return "error: no such trip".into();
+    };
+    scoped_edit("notebook", |doc| {
+        cave_notebook::add_shot(doc, &mut random_ids(), trip, from, to, splay).map(|r| r.1)
+    })
+}
+
+/// Takes a shot off the page.
+#[wasm_bindgen]
+pub fn notebook_remove_shot(shot: &str) -> String {
+    let Some(shot) = parse_id(shot) else {
+        return "error: no such shot".into();
+    };
+    scoped_edit("notebook", |doc| cave_notebook::remove_shot(doc, shot))
+}
+
+/// Renames a station.
+#[wasm_bindgen]
+pub fn notebook_rename_station(station: &str, name: &str) -> String {
+    let Some(station) = parse_id(station) else {
+        return "error: no such station".into();
+    };
+    scoped_edit("notebook", |doc| {
+        cave_notebook::rename_station(doc, station, name)
+    })
+}
+
+/// Starts a new trip. Returns its id, or `error: ...`.
+#[wasm_bindgen]
+pub fn notebook_new_trip(name: &str) -> String {
+    let mut made = None;
+    let r = scoped_edit("notebook", |doc| {
+        cave_notebook::new_trip(doc, &mut random_ids(), name).map(|(id, a)| {
+            made = Some(id);
+            a
+        })
+    });
+    match (r.as_str(), made) {
+        ("ok", Some(id)) => id.to_string(),
+        _ => r,
+    }
 }

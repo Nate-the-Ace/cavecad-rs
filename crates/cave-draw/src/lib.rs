@@ -13,8 +13,8 @@
 mod station_survey;
 
 pub use station_survey::{
-    ShotEdit, Walls, WallsSource, note_sources, set_note, set_shot, set_station_benchmark,
-    set_station_walls, shot_now, walls_at, walls_source,
+    ShotEdit, Walls, WallsSource, factor_of, note_sources, set_note, set_shot,
+    set_station_benchmark, set_station_walls, set_walls_at, shot_now, walls_at, walls_source,
 };
 
 use cave_doc::{Action, AnchorError, Document, Field, Frame, Kind, Value, anchor_stroke};

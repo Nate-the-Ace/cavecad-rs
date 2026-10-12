@@ -73,7 +73,8 @@ fn ordered_shots(doc: &Document) -> Vec<Id> {
     shots.into_iter().map(|s| s.1).collect()
 }
 
-fn factor_of(doc: &Document, trip: Option<Id>) -> f64 {
+/// Metres in one of a trip's distance units (1 for metric or no trip, 0.3048 for feet).
+pub fn factor_of(doc: &Document, trip: Option<Id>) -> f64 {
     match trip
         .and_then(|t| doc.entity(t))
         .map(|t| t.text(Field::TripDistanceUnit))
@@ -166,6 +167,16 @@ pub fn set_station_walls(
     walls: Walls,
 ) -> Result<Vec<Action>, DrawError> {
     let src = walls_source(doc, station).ok_or(DrawError::NoStations)?;
+    set_walls_at(doc, src, walls)
+}
+
+/// Sets the walls held at one source (a shot, or a trip's opening row): the same edit as
+/// [`set_station_walls`], for a caller that already knows which row it means (a notebook line).
+pub fn set_walls_at(
+    doc: &Document,
+    src: WallsSource,
+    walls: Walls,
+) -> Result<Vec<Action>, DrawError> {
     let now = walls_at(doc, src);
     let f = if src.trip { &TRIP } else { &SHOT };
     let wanted = [

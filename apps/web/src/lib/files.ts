@@ -17,7 +17,7 @@ type Picker = {
   showSaveFilePicker?: (o: unknown) => Promise<Handle>;
 };
 const picker = window as unknown as Picker;
-const DXF_TYPES = [{ description: 'DXF drawing', accept: { 'application/dxf': ['.dxf'] } }];
+const DXF_TYPES = [{ description: 'DXF drawing, or a survey imported from an old drawing', accept: { 'application/dxf': ['.dxf'], 'application/json': ['.json'] } }];
 
 let handle: Handle | null = null;
 
@@ -38,7 +38,7 @@ async function chooseFile(): Promise<{ text: string; name: string; handle: Handl
   return new Promise((resolve) => {
     const input = document.createElement('input');
     input.type = 'file';
-    input.accept = '.dxf,application/dxf,image/vnd.dxf';
+    input.accept = '.dxf,.json,application/dxf,image/vnd.dxf,application/json';
     input.onchange = async () => {
       const file = input.files?.[0];
       resolve(file ? { text: await file.text(), name: file.name, handle: null } : null);
@@ -65,16 +65,23 @@ export function guardUnload() {
   return () => window.removeEventListener('beforeunload', onUnload);
 }
 
+function openSurveyJson(text: string): { ok: boolean; message: string; warnings: string[] } {
+  const m = engine.openDemo(text);
+  return m.startsWith('error') ? { ok: false, message: m.replace(/^error: /, ''), warnings: [] } : { ok: true, message: m, warnings: [] };
+}
+
 /** Asks for a DXF and opens it. Returns what to tell the person, or `null` if they cancelled. */
 export async function openDxf(): Promise<{ ok: boolean; message: string } | null> {
   const picked = await chooseFile();
   if (!picked) return null;
   if (!confirmDiscard()) return null;
-  const r = engine.openDxf(picked.text);
+  // A survey written by tools/import_old_dxf.mjs (a one-off importer for old drawings) opens as a demo-style cave.
+  const imported = picked.name.toLowerCase().endsWith('.json');
+  const r = imported ? openSurveyJson(picked.text) : engine.openDxf(picked.text);
   if (!r.ok) return { ok: false, message: r.message };
   leave(); // a different cave: stop sharing the old one
-  handle = picked.handle;
-  cave.fileName = picked.name;
+  handle = imported ? null : picked.handle; // an imported survey has no DXF to save back to
+  cave.fileName = imported ? picked.name.replace(/\.json$/i, '.dxf') : picked.name;
   for (const w of r.warnings) engine.log('warn', 'file', w);
   cave.opened += 1; // the canvas re-reads and re-frames
   changed();

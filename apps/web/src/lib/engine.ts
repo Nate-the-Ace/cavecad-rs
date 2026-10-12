@@ -1,14 +1,15 @@
 // Loads the Rust engine (WASM) once and re-exports the few calls the UI uses.
-import init, { start, log, console_events, console_clear, engine_version, open_demo, scene, profile_runs, profile_band, add_profile_sketch, undo, redo, edit_state, passage_mesh, shading, palette, open_dxf, save_dxf, section_stations, section_at, add_section_sketch, map_sections, place_section, map_profile_sketches, add_map_line, map_lines, draw_tools, edit_line, delete_line, set_line_closed, set_line_kind, line_info, set_line_flip, set_line_text, ornament, callout, sheet_options, sheet_plan, flipped_lines, revision, station_rows, set_station_mark, station_detail, shot_detail, set_shot, set_station_walls, set_station_note, set_station_benchmark, symbols, fills, fill_marks, draw_tool_groups, sync_outbox, sync_apply, sync_snapshot, sync_load } from '../wasm/cave_wasm.js';
+import init, { start, log, console_events, console_clear, engine_version, open_demo, scene, profile_runs, profile_band, add_profile_sketch, undo, redo, edit_state, passage_mesh, shading, palette, open_dxf, save_dxf, section_stations, section_at, add_section_sketch, map_sections, place_section, map_profile_sketches, add_map_line, map_lines, draw_tools, edit_line, delete_line, set_line_closed, set_line_kind, line_info, set_line_flip, set_line_text, ornament, callout, sheet_options, sheet_plan, flipped_lines, revision, station_rows, set_station_mark, station_detail, shot_detail, set_shot, set_station_walls, set_station_note, set_station_benchmark, symbols, fills, fill_marks, draw_tool_groups, sync_outbox, sync_apply, sync_snapshot, sync_load, notebook_trips, notebook_page, notebook_set_reading, notebook_set_walls, notebook_set_note, notebook_set_trip_field, notebook_set_declination, notebook_add_shot, notebook_remove_shot, notebook_rename_station, notebook_new_trip } from '../wasm/cave_wasm.js';
 
 import { setInkPalette } from './ink';
 import { setOrnamentSource } from './section-glyph';
 import { setCalloutSource, setSymbolCatalogue, type SymbolDef } from './symbols';
 import { setFillSource, type FillDef, type Marks } from './fills';
 import type { StationRow } from './station-table';
+import type { Lrud, NotebookPage, TripChoice } from './notebook';
 
 /** The panels that keep their own undo history. */
-export type Scope = 'profile' | 'section' | 'map' | 'stations';
+export type Scope = 'profile' | 'section' | 'map' | 'stations' | 'notebook';
 
 export type Level = 'debug' | 'detail' | 'info' | 'warn' | 'error';
 export interface ConsoleEvent {
@@ -277,6 +278,25 @@ export const engine = {
   /** Marks a station as an agreed benchmark, or not. */
   setStationBenchmark: (id: string, on: boolean): string => set_station_benchmark(id, on),
   setStationMark: (id: string, status: string, team: string, who: string): string => set_station_mark(id, status, team, who),
+  /** The trips, for the notebook's page chooser. */
+  notebookTrips: (): TripChoice[] => JSON.parse(notebook_trips()),
+  /** One trip laid out as a notes page, or null. */
+  notebookPage: (trip: string): NotebookPage | null => JSON.parse(notebook_page(trip)),
+  /** Writes one reading of a shot (tape in metres; compass cells are magnetic degrees); blank clears it. */
+  notebookSetReading: (shot: string, which: 'distance' | 'az_fs' | 'az_bs' | 'inc_fs' | 'inc_bs', value: number | null): string => notebook_set_reading(shot, which, value === null ? '' : String(value)),
+  /** Writes the dimensions beside a station line (`target` is the arriving shot, or the station). */
+  notebookSetWalls: (target: string, w: Lrud): string => notebook_set_walls(target, JSON.stringify(w)),
+  /** Writes the note on a notebook line (`source` from the page). */
+  notebookSetNote: (source: string, text: string): string => notebook_set_note(source, text),
+  notebookSetTripField: (trip: string, field: 'name' | 'date' | 'team' | 'instruments', text: string): string => notebook_set_trip_field(trip, field, text),
+  /** Changes a trip's declination: every bearing in the trip turns by the difference. */
+  notebookSetDeclination: (trip: string, degrees: number): string => notebook_set_declination(trip, degrees),
+  /** Adds a shot at the end of a page (`to` empty for a splay). */
+  notebookAddShot: (trip: string, from: string, to: string, splay: boolean): string => notebook_add_shot(trip, from, to, splay),
+  notebookRemoveShot: (shot: string): string => notebook_remove_shot(shot),
+  notebookRenameStation: (station: string, name: string): string => notebook_rename_station(station, name),
+  /** Starts a new trip; returns its id, or `error: ...`. */
+  notebookNewTrip: (name: string): string => notebook_new_trip(name),
   /** Goes up whenever the open cave really changes; compared with the value at the last save. */
   revision: (): number => revision(),
   /** Local edits since the last call (JSON ops, as a string; `[]` when none). */

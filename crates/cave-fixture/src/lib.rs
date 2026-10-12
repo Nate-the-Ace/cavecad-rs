@@ -55,6 +55,28 @@ pub fn from_shot_list(text: &str, actor: ActorId) -> Result<Document, String> {
                 value: Value::Number(Some(i as f64)),
             },
         ];
+        for (key, field) in [
+            ("date", Field::TripDate),
+            ("team", Field::TripTeam),
+            ("instruments", Field::TripInstruments),
+            ("declinationSource", Field::TripDeclinationSource),
+            ("startNote", Field::TripStartNote),
+        ] {
+            if let Some(text) = t[key].as_str().filter(|s| !s.is_empty()) {
+                actions.push(Action::Set {
+                    id,
+                    field,
+                    value: Value::Text(text.into()),
+                });
+            }
+        }
+        if t["declination"].is_number() {
+            actions.push(Action::Set {
+                id,
+                field: Field::TripDeclination,
+                value: number(&t["declination"]),
+            });
+        }
         let start = &t["startLrud"];
         for (key, field) in [
             ("left", Field::TripStartLeft),
@@ -165,6 +187,20 @@ pub fn from_shot_list(text: &str, actor: ActorId) -> Result<Document, String> {
                     value: number(&s[key]),
                 });
             }
+        }
+        if let Some(note) = s["notes"].as_str().filter(|n| !n.is_empty()) {
+            actions.push(Action::Set {
+                id,
+                field: Field::ShotNote,
+                value: Value::Text(note.into()),
+            });
+        }
+        if s["declination"].is_number() {
+            actions.push(Action::Set {
+                id,
+                field: Field::ShotDeclination,
+                value: number(&s["declination"]),
+            });
         }
         for (key, field) in [
             ("splay", Field::ShotSplay),

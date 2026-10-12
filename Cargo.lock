@@ -99,6 +99,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "cave-notebook"
+version = "0.0.1"
+dependencies = [
+ "cave-doc",
+ "cave-draw",
+ "cave-fixture",
+ "cave-id",
+ "cave-survey",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "cave-profile"
 version = "0.0.1"
 dependencies = [
@@ -199,6 +212,7 @@ dependencies = [
  "cave-geom",
  "cave-id",
  "cave-log",
+ "cave-notebook",
  "cave-scene",
  "cave-shape",
  "cave-sheet",

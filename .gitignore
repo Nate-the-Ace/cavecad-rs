@@ -4,3 +4,4 @@ node_modules
 /apps/web/dist
 /apps/web/src/wasm
 /feedback
+/apps/web/public/local
