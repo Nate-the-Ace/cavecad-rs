@@ -136,7 +136,7 @@ order-independent merge, undo as ordinary edits) and adds only plumbing.
   log only in memory while the server runs. Nothing leaves the machine the server runs on.
 - Web: View tab, "Live editing" group (room name, Join, Leave, who is in). Local edits are sent
   every 80 ms; opening another cave leaves the room. `npm run dev` now listens on the network.
-- To try it: run `npm run dev` on the laptop, open the "Network" address it prints (for example
+- To try it: run `tools/live-test.sh` on the laptop (it prints the address; or `npm run dev` by hand), open the "Network" address it prints (for example
   `http://192.168.1.20:5173`) on both the laptop and the iPad, open View, type the same room name
   on both and press Join. The published artifact link cannot do this (it is a static page with no
   relay behind it).
