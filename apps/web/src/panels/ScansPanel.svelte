@@ -457,7 +457,7 @@
           </select>
           <button onclick={() => (align.pending = null)}>Cancel</button>
         {:else}
-          Click a spot on the scan that you can find in the {align.kind === 'map' ? 'Map (a station mark)' : align.kind === 'profile' ? 'Profile (a station, or any place on it)' : 'Cross Section (the station, or any place on it)'}. {#if !al || al.anchors.length < 2}Two matches place the scan; more fit it better.{/if}
+          Click a spot on the scan that you can find in the {align.kind === 'map' ? 'Map (a station mark)' : align.kind === 'profile' ? 'Profile (a station, or any place on it)' : 'Cross Section (the station, or any place on it)'}. {#if !al || al.anchors.length < 2}Two matches place and scale the scan; more fit it better. One match places it at the average scale of your other scans, north up.{/if}
         {/if}
       </span>
       {#if align.kind === 'section'}

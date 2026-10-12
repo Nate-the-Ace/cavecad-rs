@@ -333,9 +333,18 @@ pub struct Placed {
     pub trim: Option<crate::Outline>,
 }
 
+/// The size of one pixel in metres in a fit (the square root of its area scale).
+fn pixel_size(m: &[f64; 6]) -> f64 {
+    (m[0] * m[4] - m[1] * m[3]).abs().sqrt()
+}
+
 /// Every scan with enough matches in `view`, placed from where its stations are now in that view.
+/// A scan with a single match has no scale of its own, so it is set down north-up at the average
+/// scale of the other scans placed in the same view (and is not placed if there are none).
 pub fn placements(doc: &Document, view: &str, positions: &Positions) -> Vec<Placed> {
     let mut out = Vec::new();
+    // scans with one match, waiting for an average scale: (trip, path, mode, the match)
+    let mut singles: Vec<(Id, String, FitMode, Pair)> = Vec::new();
     for trip in doc.ids_of(Kind::Trip) {
         let Some(e) = doc.entity(trip) else { continue };
         let linked = crate::scans_of(doc, trip);
@@ -360,7 +369,9 @@ pub fn placements(doc: &Document, view: &str, positions: &Positions) -> Vec<Plac
                     Some(((a.px, a.py), at))
                 })
                 .collect();
-            if let Some(f) = fit(&pairs, al.mode) {
+            if pairs.len() == 1 {
+                singles.push((trip, path.to_string(), al.mode, pairs[0]));
+            } else if let Some(f) = fit(&pairs, al.mode) {
                 out.push(Placed {
                     trip,
                     trim: crate::trim(doc, trip, view, path),
@@ -371,6 +382,22 @@ pub fn placements(doc: &Document, view: &str, positions: &Positions) -> Vec<Plac
                     mode: al.mode,
                 });
             }
+        }
+    }
+    let sizes: Vec<f64> = out.iter().map(|p| pixel_size(&p.matrix)).filter(|s| s.is_finite() && *s > 0.0).collect();
+    if !sizes.is_empty() {
+        let size = sizes.iter().sum::<f64>() / sizes.len() as f64;
+        for (trip, path, mode, ((px, py), (x, y))) in singles {
+            out.push(Placed {
+                trim: crate::trim(doc, trip, view, &path),
+                trip,
+                path,
+                // x = size*px + c, y = -size*py + f (pixels go down, the view goes up), through the one match
+                matrix: [size, 0.0, x - size * px, 0.0, -size, y + size * py],
+                used: 1,
+                rms: 0.0,
+                mode,
+            });
         }
     }
     out
@@ -442,6 +469,12 @@ mod tests {
         assert!(f.rms < 1e-9);
         let r = fit(&pairs(want, &pts), FitMode::Rigid).unwrap();
         assert!(r.rms > 0.01, "a rigid fit cannot take out a skew");
+    }
+
+    #[test]
+    fn the_size_of_a_pixel_is_the_square_root_of_the_area_scale() {
+        assert!((pixel_size(&[0.0, 0.01, 5.0, 0.01, 0.0, 7.0]) - 0.01).abs() < 1e-12);
+        assert!((pixel_size(&[0.02, 0.0, 1.0, 0.0, -0.02, 3.0]) - 0.02).abs() < 1e-12);
     }
 
     #[test]
