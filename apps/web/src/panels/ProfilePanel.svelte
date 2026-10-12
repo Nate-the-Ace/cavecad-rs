@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { drawHalo, type HaloLine } from '../lib/halo';
   import { onMount, untrack } from 'svelte';
   import { onTheme } from '../lib/theme';
   import { Maximize } from '@lucide/svelte';
@@ -119,6 +120,7 @@
     void scans.paths.length; // scans appear when their folder is opened
     void filter.hiddenTrips.length;
     void option('showScans', true);
+    void option('halo', true);
     void option('scanOpacity', 0.5);
     void cave.showSections.profile; // sketches beside stations appear and disappear with the toggle
     void cave.units; // axis labels and run lengths redraw in the new units
@@ -209,6 +211,20 @@
       g.lineTo(width, y);
       g.stroke();
       g.fillText(`${+inUnits(z, cave.units).toFixed(2)} ${unitName(cave.units)}`, 6, y - 3);
+    }
+
+    // the rock halo: a soft glow from the passage walls out into the rock, with rock marks fading with it
+    if (option('halo', true)) {
+      const lines: HaloLine[] = [...band.ceiling, ...band.floor].map((l) => ({ pts: l.map((p) => toScreen(p[0], p[1])) }));
+      const inside: [number, number][][] = [];
+      const st = band.stations;
+      for (let i = 1; i < st.length; i++) {
+        const a = st[i - 1];
+        const b = st[i];
+        if (a.up == null || a.down == null || b.up == null || b.down == null) continue;
+        inside.push([toScreen(a.s, a.z + a.up), toScreen(b.s, b.z + b.up), toScreen(b.s, b.z - b.down), toScreen(a.s, a.z - a.down)]);
+      }
+      drawHalo(g, width, height, lines, { reach: Math.min(Math.max(5 * scale, 30), 240), tint: c.accent, ink: c.muted, toWorld, toScreen, inside });
     }
 
     // scans placed on this band lie under everything the survey draws

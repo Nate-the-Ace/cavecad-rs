@@ -5,10 +5,11 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { LineSegments2 } from 'three/addons/lines/LineSegments2.js';
 import { LineSegmentsGeometry } from 'three/addons/lines/LineSegmentsGeometry.js';
 import { LineMaterial } from 'three/addons/lines/LineMaterial.js';
-import type { MapSection, PassageBuffers, ProfileSketch3d, Scene, TypeStyle } from '../engine';
+import type { MapSection, PassageBuffers, Pt, ProfileSketch3d, Scene, TypeStyle } from '../engine';
 import { PenGuard, isEraser, widthFor } from '../pen';
 import { drawStamp, drawStationMarker, hitsStamp, isStampKind, placement } from '../symbols';
 import { drawMarks, isFillKind, marksFor } from '../fills';
+import { drawHalo, type HaloLine } from '../halo';
 import { isKindHidden, ornamentFor, refreshFlipped } from '../section-glyph';
 import { drawCursor } from '../presence-draw';
 import { defaultMapOffset, drawHandles, drawStrokes, glyphCurves, hits, leaderEnd } from '../section-glyph';
@@ -53,6 +54,7 @@ export class CaveView {
   private extent = 1;
   private elevationColors = false;
   private showWalls = true;
+  private halo = true;
   private showLabels = true;
   private selected = '';
   /** Cross-section sketches drawn beside their stations, and whether they are shown. */
@@ -1037,6 +1039,57 @@ export class CaveView {
     this.requestRender();
   }
 
+  /** The rock halo: a soft glow from the walls out into the rock, seen when looking down on the plan. */
+  setHalo(on: boolean) {
+    this.halo = on;
+    this.requestRender();
+  }
+
+  /** The halo in the picture, when looking from above (it is a plan-view picture and fades out as the camera tilts). */
+  private drawHaloPlan(g: CanvasRenderingContext2D, walls: Pt[][]) {
+    const up = Math.abs(this.cameraOffset.clone().normalize().z);
+    const strength = Math.min(1, Math.max(0, (up - 0.8) / 0.15));
+    if (strength <= 0 || walls.length === 0) return;
+    const z = this.controls.target.z;
+    const ray = new THREE.Raycaster();
+    const plane = new THREE.Plane(new THREE.Vector3(0, 0, 1), -z);
+    const hit = new THREE.Vector3();
+    const toWorld = (x: number, y: number): [number, number] => {
+      ray.setFromCamera(new THREE.Vector2((x / this.width) * 2 - 1, -(y / this.height) * 2 + 1), this.camera);
+      return ray.ray.intersectPlane(plane, hit) ? [hit.x, hit.y] : [0, 0];
+    };
+    const toScreen = (x: number, y: number): [number, number] => this.project([x, y, z]) ?? [-1e5, -1e5];
+    const lines: HaloLine[] = [];
+    for (const w of walls) {
+      const pts = w.map((p) => this.project(p));
+      if (pts.some((p) => !p)) continue;
+      lines.push({ pts: pts as [number, number][] });
+    }
+    // the passage surface, so the glow stays out of it (every triangle turned the same way so none cancels another)
+    const inside: [number, number][][] = [];
+    const pos = this.passage?.geometry.getAttribute('position');
+    if (pos) {
+      const v = new THREE.Vector3();
+      const pt = (i: number): [number, number] => {
+        v.fromBufferAttribute(pos, i).project(this.camera);
+        return [(v.x * 0.5 + 0.5) * this.width, (-v.y * 0.5 + 0.5) * this.height];
+      };
+      for (let i = 0; i + 2 < pos.count; i += 3) {
+        const a = pt(i);
+        const b = pt(i + 1);
+        const c = pt(i + 2);
+        const area = (b[0] - a[0]) * (c[1] - a[1]) - (c[0] - a[0]) * (b[1] - a[1]);
+        if (Math.abs(area) < 1e-3) continue;
+        inside.push(area > 0 ? [a, b, c] : [a, c, b]);
+      }
+    }
+    const reach = Math.min(Math.max(6 * (this.height / (2 * this.visibleHalfHeight())), 30), 240);
+    g.save();
+    g.globalAlpha = strength;
+    drawHalo(g, this.width, this.height, lines, { reach, tint: `#${this.theme.accent.getHexString()}`, ink: this.theme.css.muted, toWorld, toScreen, inside });
+    g.restore();
+  }
+
   setShowWalls(on: boolean) {
     this.showWalls = on;
     this.rebuild();
@@ -1180,6 +1233,7 @@ export class CaveView {
     const pxPerM = this.height / (2 * this.visibleHalfHeight());
     g.font = '11px system-ui, sans-serif';
     g.textAlign = 'left';
+    if (this.halo) this.drawHaloPlan(g, s.walls);
 
     const zmin = s.bounds?.[2] ?? 0;
     const zspan = Math.max(1e-6, (s.bounds?.[5] ?? 0) - zmin);

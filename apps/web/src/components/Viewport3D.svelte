@@ -77,8 +77,10 @@
     void scans.paths.length;
     const on = option('showScans', true);
     const opacity = option('scanOpacity', 0.5);
+    const halo = option('halo', true);
     untrack(() => {
       if (!view) return;
+      view.setHalo(halo);
       const z = (scene?.bounds?.[2] ?? 0) - 0.5;
       const list = on
         ? engine
