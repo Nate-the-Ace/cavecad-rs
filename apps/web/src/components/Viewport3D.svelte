@@ -1,11 +1,12 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, untrack } from 'svelte';
   import { Home, Maximize, Box, Square, Palette, Eye } from '@lucide/svelte';
   import { DEMOS } from '../lib/demos';
   import { engine, loadEngine, type Scene, type TypeStyle } from '../lib/engine';
   import { CaveView, type Projection } from '../lib/viewport/cave-view';
   import { cave, changed, filter, setShown, wireFilter } from '../lib/cave.svelte';
   import { ViewCube } from '../lib/viewport/view-cube';
+  import { forgetFile } from '../lib/files';
 
   let wrap: HTMLDivElement;
   let gl: HTMLCanvasElement;
@@ -13,6 +14,8 @@
   let cubeHost: HTMLDivElement;
   let view: CaveView | null = null;
 
+  /** The picker's value while the cave on screen came from a file, not a demo. */
+  const FROM_FILE = '__file';
   let demo = $state(DEMOS[0].id);
   let depthColor = $state(false);
   let walls = $state(true);
@@ -30,13 +33,35 @@
     const d = DEMOS.find((x) => x.id === id);
     if (!d || !view) return;
     status = engine.openDemo(d.json);
+    cave.fileName = `${d.id}.dxf`;
+    forgetFile();
+    show();
+  }
+
+  /** Draws whichever cave the engine has open, framed from the home view. */
+  function show() {
+    if (!view) return;
     cave.run = '';
     filter.hiddenTrips = []; // trip ids belong to one cave
     changed();
     scene = engine.scene(cave.adjusted, wireFilter());
     view.setScene(scene);
+    view.setShowLabels(!filter.hiddenTypes.includes('label'));
     loadPassage();
   }
+
+  // A cave opened from a file replaces the one on screen.
+  let seenOpen = 0;
+  $effect(() => {
+    const n = cave.opened;
+    untrack(() => {
+      if (n === seenOpen) return;
+      seenOpen = n;
+      demo = FROM_FILE;
+      status = '';
+      show();
+    });
+  });
 
   /** The passage surface follows the Adjusted and colour settings. */
   function loadPassage() {
@@ -91,6 +116,7 @@
   <canvas bind:this={overlay} class="overlay"></canvas>
   <div class="bar">
     <select bind:value={demo} onchange={() => open(demo)} aria-label="Demo cave">
+      {#if demo === FROM_FILE}<option value={FROM_FILE}>{cave.fileName}</option>{/if}
       {#each DEMOS as d}<option value={d.id}>{d.title}</option>{/each}
     </select>
     <label><input type="checkbox" bind:checked={cave.adjusted} onchange={refresh} /> Adjusted</label>

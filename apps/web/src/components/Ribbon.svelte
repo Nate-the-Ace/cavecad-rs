@@ -1,7 +1,8 @@
 <script lang="ts">
   import { engine } from '../lib/engine';
+  import { openDxf, saveDxf } from '../lib/files';
   import { PANELS, panelState, resetLayout, togglePanel } from '../lib/workspace.svelte';
-  import { FileInput, Route, Waypoints, Pencil, Spline, PaintBucket, PanelTop, Scissors, Box, Map as MapIcon, Terminal, LayoutDashboard, Activity } from '@lucide/svelte';
+  import { FileInput, FolderOpen, Save, Route, Waypoints, Pencil, Spline, PaintBucket, PanelTop, Scissors, Box, Map as MapIcon, Terminal, LayoutDashboard, Activity } from '@lucide/svelte';
   import type { Component } from 'svelte';
 
   interface Item {
@@ -24,8 +25,20 @@
     pressed: () => !!panelState.open[id],
   });
 
+  /** Says what happened in the console (and as an error when it did not work). */
+  const tell = (r: { ok: boolean; message: string } | string | null) => {
+    if (r === null) return;
+    const ok = typeof r === 'string' || r.ok;
+    engine.log(ok ? 'info' : 'error', 'file', typeof r === 'string' ? r : r.message);
+  };
+  const run = (job: Promise<{ ok: boolean; message: string } | string | null>) => job.then(tell, (e) => engine.log('error', 'file', String(e)));
+  const open = () => run(openDxf());
+  const save = () => run(saveDxf());
+  const saveAs = () => run(saveDxf(true));
+
   const tabs: Record<string, Group[]> = {
     Home: [
+      { name: 'File', items: [{ label: 'Open', icon: FolderOpen, run: open }, { label: 'Save', icon: Save, run: save }, { label: 'Save as', icon: Save, run: saveAs }] },
       { name: 'Survey', items: [stub('Import', FileInput), stub('Draw', Route), stub('Adjust', Waypoints)] },
       { name: 'Trace', items: [stub('Feature', Pencil), stub('Shaped', Spline), stub('Fill', PaintBucket)] },
       { name: 'Views', items: [stub('Profile', PanelTop), stub('Section', Scissors), stub('3D', Box)] },
@@ -38,7 +51,16 @@
     ],
   };
   let active = $state('Home');
+
+  function keys(e: KeyboardEvent) {
+    if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
+    const k = e.key.toLowerCase();
+    if (k === 'o') (e.preventDefault(), open());
+    else if (k === 's') (e.preventDefault(), e.shiftKey ? saveAs() : save());
+  }
 </script>
+
+<svelte:window onkeydown={keys} />
 
 <header>
   <nav class="tabs">

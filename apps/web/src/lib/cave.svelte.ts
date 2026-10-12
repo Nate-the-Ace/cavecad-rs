@@ -6,6 +6,10 @@ export const cave = $state({
   version: 0,
   /** Show least-squares adjusted positions. */
   adjusted: true,
+  /** Bumps when a whole cave is opened from a file, so the canvas re-reads and re-frames. */
+  opened: 0,
+  /** Name of the file the cave came from or will be saved to. */
+  fileName: 'cave.dxf',
   /** The run the Profile panel is showing. */
   run: '',
 });

@@ -118,6 +118,99 @@ pub fn open_demo(json: &str) -> String {
     }
 }
 
+#[derive(Serialize)]
+struct OpenResult {
+    ok: bool,
+    /// One line for the status bar, or the reason nothing was opened.
+    message: String,
+    /// Notes about the file the person should see.
+    warnings: Vec<String>,
+}
+
+/// Opens a cave from the text of a DXF file saved by CaveCAD. Nothing changes unless it opens
+/// completely. Returns JSON `{ok, message, warnings}`.
+#[wasm_bindgen]
+pub fn open_dxf(text: &str) -> String {
+    let _ = console();
+    let result = match cave_dxf::import(text, ActorId(1)) {
+        Ok(imp) => {
+            let warnings: Vec<String> = imp
+                .warnings
+                .iter()
+                .map(|w| match w {
+                    cave_dxf::Warning::NoCaveData => "This drawing has no cave inside it (it was made in another program), so nothing was loaded.".to_string(),
+                    cave_dxf::Warning::SavedElsewhere => "This file was saved by another program. The cave inside was used; changes made to the drawing itself are not applied.".to_string(),
+                })
+                .collect();
+            match imp.document {
+                Some(doc) => {
+                    let scene = cave_scene::build(&doc, true);
+                    let message = format!(
+                        "{} stations, {} legs, {} loop closures",
+                        scene.stations.len(),
+                        scene.legs.len(),
+                        scene.closures.len()
+                    );
+                    tracing::info!(source = "file", "opened a DXF: {message}");
+                    DOC.with(|d| *d.borrow_mut() = Some(doc));
+                    HISTORY.with(|h| *h.borrow_mut() = History::new());
+                    OpenResult {
+                        ok: true,
+                        message,
+                        warnings,
+                    }
+                }
+                None => OpenResult {
+                    ok: false,
+                    message: warnings.first().cloned().unwrap_or_default(),
+                    warnings,
+                },
+            }
+        }
+        Err(e) => {
+            let message = match e {
+                cave_dxf::ImportError::NotDxf => "This file is not a DXF drawing.".to_string(),
+                cave_dxf::ImportError::Binary => {
+                    "This is a binary DXF; only the text kind can be opened.".to_string()
+                }
+                cave_dxf::ImportError::Corrupt(why) => {
+                    format!("The cave inside this file is damaged ({why}); nothing was opened.")
+                }
+                cave_dxf::ImportError::NewerVersion { .. } => {
+                    "This file was saved by a newer version of CaveCAD; refresh the page to get it."
+                        .to_string()
+                }
+            };
+            OpenResult {
+                ok: false,
+                message,
+                warnings: Vec::new(),
+            }
+        }
+    };
+    if !result.ok {
+        tracing::warn!(
+            source = "file",
+            "could not open the DXF: {}",
+            result.message
+        );
+    }
+    serde_json::to_string(&result).unwrap_or_else(|_| "{}".to_string())
+}
+
+/// The open cave as DXF text (the whole cave is inside), or empty when nothing is open.
+#[wasm_bindgen]
+pub fn save_dxf(adjusted: bool) -> String {
+    DOC.with(|d| match d.borrow().as_ref() {
+        Some(doc) => {
+            let text = cave_dxf::export(doc, &cave_dxf::ExportOptions { adjusted });
+            tracing::info!(source = "file", "saved a DXF ({} KB)", text.len() / 1024);
+            text
+        }
+        None => String::new(),
+    })
+}
+
 /// The view filter the viewer sends (JSON); anything unreadable hides nothing.
 fn parse_filter(json: &str) -> cave_scene::ViewFilter {
     serde_json::from_str(json).unwrap_or_default()
@@ -337,5 +430,46 @@ pub fn passage_mesh(adjusted: bool, mode: &str, fill_gaps: bool, filter: &str) -
         normals: f32s(&mesh.normals),
         colors: f32s(&mesh.colors),
         filled: mesh.filled,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const CAVE: &str = r#"{"unit":"m","name":"t","shots":[
+        {"from":"A","to":"B","distance":10,"azimuth":0,"inclination":0,"left":1,"right":1},
+        {"from":"B","to":"C","distance":8,"azimuth":90,"inclination":-5}]}"#;
+
+    fn open_result(text: &str) -> serde_json::Value {
+        serde_json::from_str(&open_dxf(text)).unwrap()
+    }
+
+    #[test]
+    fn a_saved_dxf_opens_as_the_same_cave() {
+        assert!(!open_demo(CAVE).starts_with("error"));
+        let before = scene(false, "{}");
+        let file = save_dxf(true);
+        assert!(file.contains("SECTION"), "it is a DXF");
+        assert!(open_demo(r#"{"unit":"m","name":"other","shots":[]}"#).contains("0 stations"));
+        let r = open_result(&file);
+        assert_eq!(r["ok"], true, "{r}");
+        assert_eq!(scene(false, "{}"), before);
+    }
+
+    #[test]
+    fn a_bad_file_changes_nothing() {
+        open_demo(CAVE);
+        let before = scene(false, "{}");
+        for junk in [
+            "",
+            "not a dxf at all",
+            "0\nSECTION\n2\nENTITIES\n0\nENDSEC\n0\nEOF\n",
+        ] {
+            let r = open_result(junk);
+            assert_eq!(r["ok"], false, "{junk:?}");
+            assert!(!r["message"].as_str().unwrap().is_empty());
+        }
+        assert_eq!(scene(false, "{}"), before, "the open cave is untouched");
     }
 }

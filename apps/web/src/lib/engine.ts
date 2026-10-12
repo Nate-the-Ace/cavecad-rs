@@ -1,5 +1,5 @@
 // Loads the Rust engine (WASM) once and re-exports the few calls the UI uses.
-import init, { start, log, console_events, console_clear, engine_version, open_demo, scene, profile_runs, profile_band, add_profile_sketch, undo, redo, edit_state, passage_mesh, shading, palette } from '../wasm/cave_wasm.js';
+import init, { start, log, console_events, console_clear, engine_version, open_demo, scene, profile_runs, profile_band, add_profile_sketch, undo, redo, edit_state, passage_mesh, shading, palette, open_dxf, save_dxf } from '../wasm/cave_wasm.js';
 
 export type Level = 'debug' | 'detail' | 'info' | 'warn' | 'error';
 export interface ConsoleEvent {
@@ -97,6 +97,10 @@ export const engine = {
   scene: (adjusted: boolean, filter = '{}'): Scene => JSON.parse(scene(adjusted, filter)),
   /** Which drawn lines run under another passage, for a camera looking from `dir` toward the cave (for perspective, `dir` is the eye's position). */
   shading: (adjusted: boolean, dir: [number, number, number], perspective: boolean, filter = '{}'): Scene['shading'] => JSON.parse(shading(adjusted, dir[0], dir[1], dir[2], perspective, filter)),
+  /** Opens a cave from DXF text; nothing changes unless it opens completely. */
+  openDxf: (text: string): { ok: boolean; message: string; warnings: string[] } => JSON.parse(open_dxf(text)),
+  /** The open cave as DXF text (the whole cave is inside the file). */
+  saveDxf: (adjusted: boolean): string => save_dxf(adjusted),
   /** The type palette. */
   palette: (): TypeStyle[] => JSON.parse(palette()),
   profileRuns: (adjusted: boolean): RunInfo[] => JSON.parse(profile_runs(adjusted)),
