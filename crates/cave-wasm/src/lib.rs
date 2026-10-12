@@ -1815,6 +1815,16 @@ pub fn shelf_summarize(dxf: &str) -> String {
         .unwrap_or_else(|_| "null".into())
 }
 
+/// What the shelf shows about a cave kept in CaveCAD's own format (its ops as JSON), without opening it.
+#[wasm_bindgen]
+pub fn shelf_summarize_native(ops: &str) -> String {
+    let doc = serde_json::from_str::<Vec<cave_doc::Op>>(ops).ok().and_then(|ops| {
+        let mut doc = Document::new(ActorId(1));
+        ops.iter().all(|op| doc.apply(op).is_ok()).then_some(doc)
+    });
+    serde_json::to_string(&doc.as_ref().map(cave_shelf::summarize)).unwrap_or_else(|_| "null".into())
+}
+
 /// What the shelf shows about a sample cave given as shot-list JSON, without opening it.
 #[wasm_bindgen]
 pub fn shelf_summarize_demo(json: &str) -> String {

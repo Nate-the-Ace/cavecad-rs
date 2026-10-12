@@ -11,7 +11,7 @@
   import { cave } from '../lib/cave.svelte';
   import { DEMOS } from '../lib/demos';
   import { engine, loadEngine, type CaveSummary } from '../lib/engine';
-  import { openDxf } from '../lib/files';
+  import { openCave } from '../lib/files';
   import { openAtTrip, newTripOn, newTripOnSample, openKept, openSample } from '../lib/caves';
   import { dxfOf, forgetCave, loadShelf, setFavorite, setStartup, shelf, summaryOf, type ShelfRecord } from '../lib/shelf.svelte';
   import { formatLength } from '../lib/units';
@@ -119,7 +119,7 @@
   const atTrip = (index: number) => record && run(openAtTrip(record.id, index));
 
   async function importFile() {
-    const r = await openDxf();
+    const r = await openCave();
     if (r && r.ok) shelf.open = false;
     else if (r) message = r.message;
   }

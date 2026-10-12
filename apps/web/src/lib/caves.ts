@@ -4,7 +4,8 @@ import { engine } from './engine';
 import { cave, changed, filter, markSaved } from './cave.svelte';
 import { DEMOS } from './demos';
 import { confirmDiscard, forgetFile } from './files';
-import { dxfOf, flush, shelf, storeOpenCave } from './shelf.svelte';
+import { dxfOf, flush, isNative, shelf, storeOpenCave } from './shelf.svelte';
+import { EXT } from './cavefile';
 import { leave } from './sync.svelte';
 import { workLayout } from './workspace.svelte';
 
@@ -12,7 +13,7 @@ import { workLayout } from './workspace.svelte';
 function landed(name: string) {
   leave(); // stop sharing the old cave
   forgetFile();
-  cave.fileName = `${name}.dxf`;
+  cave.fileName = `${name}${EXT}`;
   cave.name = name;
   cave.hasCave = true;
   cave.trip = '';
@@ -31,8 +32,13 @@ export async function openKept(id: string): Promise<string | null> {
   if (!confirmDiscard()) return null;
   const text = await dxfOf(id);
   if (!text) return 'That cave is not on this shelf any more.';
-  const r = engine.openDxf(text);
-  if (!r.ok) return r.message;
+  if (isNative(text)) {
+    const r = engine.syncLoad(text);
+    if (r !== 'ok') return r.replace(/^error: /, '');
+  } else {
+    const r = engine.openDxf(text); // a cave kept by an older version
+    if (!r.ok) return r.message;
+  }
   const rec = shelf.records.find((x) => x.id === id);
   shelf.currentId = id;
   landed(rec?.name ?? engine.shelfSummary()?.name ?? 'Cave');

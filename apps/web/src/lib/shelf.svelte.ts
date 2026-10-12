@@ -99,6 +99,9 @@ async function put(rec: ShelfRecord, dxf: string | null) {
 }
 
 /** The DXF text of a kept cave. */
+/** True for a cave kept in CaveCAD's own format (JSON ops); older records are DXF text. */
+export const isNative = (text: string): boolean => text.trimStart().startsWith('[');
+
 export async function dxfOf(id: string): Promise<string | null> {
   try {
     const d = await db();
@@ -131,7 +134,7 @@ export async function storeOpenCave(source = ''): Promise<boolean> {
     summary,
   };
   try {
-    await put(rec, engine.saveDxf(cave.adjusted));
+    await put(rec, engine.saveNative()); // the cave in its own format: nothing lost on the way in or out
   } catch {
     shelf.problem = 'This browser would not keep the cave (storage is full or blocked). Save a file to be safe.';
     return false;
@@ -176,7 +179,7 @@ export async function setFavorite(id: string, on: boolean) {
 export async function summaryOf(rec: ShelfRecord): Promise<CaveSummary | null> {
   if (rec.summary) return rec.summary;
   const text = await dxfOf(rec.id);
-  const summary = text ? engine.shelfSummarize(text) : null;
+  const summary = text ? (isNative(text) ? engine.shelfSummarizeNative(text) : engine.shelfSummarize(text)) : null;
   if (summary) {
     const next = { ...rec, summary };
     try {
