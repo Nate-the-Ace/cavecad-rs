@@ -40,3 +40,14 @@ Toolchain: use rustup's, not Homebrew's `rustc` (no wasm32 target). Put it first
 `export PATH=/opt/homebrew/opt/rustup/bin:$PATH`. Local browser-build check:
 
     cargo build --target wasm32-unknown-unknown -p cave-id -p cave-store -p cave-log
+
+## Web app (apps/web)
+
+    cd apps/web && npm install && npm run dev      # http://localhost:5173
+
+Refresh-is-enough rule: dev and preview send `Cache-Control: no-store`, no service worker is kept
+in dev, and the Vite plugin (`apps/web/scripts/vite-plugin-cave-wasm.mjs`) rebuilds the WASM when
+any `crates/**/*.rs` changes, holds requests while it builds, then reloads the page. The footer
+shows the git hash and build time of what the page runs. Production: hashed assets are immutable,
+`index.html` and `build-info.json` are never cached (`public/_headers`). Never add a service worker
+that serves files cache-first.
