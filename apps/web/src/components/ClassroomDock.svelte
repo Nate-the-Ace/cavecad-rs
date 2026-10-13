@@ -8,6 +8,7 @@
   import { callOn, classroom, downloadLog, endClass, handIsUp, leaveClass, raiseHand, say, studentLink } from '../lib/classroom.svelte';
   import { clock, waiting } from '../lib/classroom-log';
   import { live } from '../lib/sync.svelte';
+  import { p2p } from '../lib/p2p.svelte';
 
   let text = $state('');
   let list: HTMLDivElement | undefined = $state();
@@ -75,11 +76,16 @@
           <Hand size={16} /> {up ? 'Lower my hand' : 'Raise my hand'}
         </button>
       {:else}
-        <div class="link">
-          <input readonly value={link || 'Making the link…'} aria-label="Link for students" onfocus={(e) => e.currentTarget.select()} />
-          <button class="small" onclick={copy} disabled={!link}><Copy size={13} /> {copied ? 'Copied' : 'Copy'}</button>
-        </div>
-        <p class="note">Send students this link. They watch your screen and can raise a hand.</p>
+        {#if classroom.transport === 'relay'}
+          <div class="link">
+            <input readonly value={link || 'Making the link…'} aria-label="Link for students" onfocus={(e) => e.currentTarget.select()} />
+            <button class="small" onclick={copy} disabled={!link}><Copy size={13} /> {copied ? 'Copied' : 'Copy'}</button>
+          </div>
+          <p class="note">Send students this link. They watch your screen and can raise a hand.</p>
+        {:else}
+          <button class="small" onclick={() => (p2p.dialog = true)}>Invite a student…</button>
+          <p class="note">Each student needs an invite code from you and sends a reply code back. They are let in at once and can only watch.</p>
+        {/if}
         <div class="people" aria-label="Students">
           <span class="lead">{students.length} {students.length === 1 ? 'student' : 'students'}</span>
           {#each students as p (p.id)}

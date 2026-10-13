@@ -15,7 +15,8 @@ import { cave, changed, markSaved } from './cave.svelte';
 import { decodeCode, encodeCode } from './p2p-code';
 import { Reassembler, frames } from './p2p-wire';
 import { addRemoteFile, fileOf, have, scans, select } from './scans.svelte';
-import { fadeCursors, live, me, myPersonId, setPeerHooks, type Person } from './sync.svelte';
+import { fadeCursors, live, me, myPersonId, roomEvents, setPeerHooks, type Person } from './sync.svelte';
+import { CLASS_MESSAGES, classLeft, classMessage, classWelcome, newClass, type ClassState, type RoomIo } from './classroom-room.mjs';
 import { flush as keepShelf, shelf } from './shelf.svelte';
 
 /** A person the host has made an invite for. */
@@ -72,6 +73,8 @@ interface Peer {
 }
 
 const peers = new Map<string, Peer>();
+/** The class this page is teaching, when it hosts one: students are the guests, who only watch (see `classroom.svelte.ts`). */
+let cls: ClassState | null = null;
 let guestPeer: Peer | null = null;
 let timer: ReturnType<typeof setInterval> | undefined;
 let sessionId = '';
@@ -206,6 +209,7 @@ function closed(peer: Peer, role: 'host' | 'guest') {
     const inv = p2p.invites.find((i) => i.id === peer.id);
     if (inv) inv.state = 'closed';
     if (peer.person) {
+      if (cls) classLeft(cls, peer.person.id, classIo(peer));
       announce();
       engine.log('info', 'share', `${peer.name || 'Someone'} left the session`);
     }
@@ -218,12 +222,13 @@ function closed(peer: Peer, role: 'host' | 'guest') {
     p2p.role = 'none';
     p2p.reply = '';
     p2p.waiting = '';
+    roomEvents.left(); // a class with no teacher any more: this device may look around on its own
     p2p.error = 'The host’s connection ended. Your copy of the cave is kept here; join again with new codes and the two copies merge.';
   }
 }
 
 function announce() {
-  const list: Person[] = [{ id: myPersonId, name: me.name.trim() || 'Host', color: me.color }, ...admitted().map((p) => p.person!)];
+  const list: Person[] = [{ id: myPersonId, name: me.name.trim() || 'Host', color: me.color, ...(cls ? { role: 'teacher' as const } : {}) }, ...admitted().map((p) => (cls ? { ...p.person!, role: 'student' as const } : p.person!))];
   live.people = list;
   toAll({ t: 'peers', people: list, owner: myPersonId });
 }
@@ -306,11 +311,11 @@ function hostHears(peer: Peer, m: Msg) {
     const admit = () => {
       peer.person = { id: String(m.id ?? peer.id).slice(0, 40), name: peer.name, color: peer.color };
       if (inv) inv.state = 'connected';
-      if (rejoin) {
+      if (rejoin && !cls) {
         engine.syncApply(JSON.stringify(rejoin)); // what that guest made while away
         changed();
       }
-      send(peer, { t: 'welcome', merge: !!rejoin, log: JSON.parse(engine.syncSnapshot()), caveName: cave.name, host: { id: myPersonId, name: me.name, color: me.color } });
+      send(peer, { t: 'welcome', merge: !!rejoin, log: JSON.parse(engine.syncSnapshot()), caveName: cave.name, host: { id: myPersonId, name: me.name, color: me.color }, ...(cls ? { class: classWelcome(cls, 'student') } : {}) });
       announce();
       sendView(peer);
       engine.log('info', 'share', `${peer.name} joined the session`);
@@ -322,6 +327,13 @@ function hostHears(peer: Peer, m: Msg) {
     }
   } else if (!peer.person) {
     return; // nothing is taken from someone who has not been let in
+  } else if (cls && m.t === 'ops') {
+    send(peer, { t: 'denied', what: 'edit', message: 'Only the teacher can change the cave in a class.' }); // students only watch
+  } else if (cls && CLASS_MESSAGES.includes(m.t)) {
+    classMessage(cls, { id: peer.person.id, name: peer.person.name, role: 'student' }, m as { t: string }, classIo(peer));
+  } else if (cls && m.t === 'presence') {
+    // What a student does is for the teacher to see, not for the other students.
+    live.cursors[peer.person.id] = { id: peer.person.id, view: String(m.view ?? ''), ctx: String(m.ctx ?? ''), x: Number(m.x), y: Number(m.y), tool: String(m.tool ?? ''), seen: Date.now() };
   } else if (m.t === 'ops' && Array.isArray(m.ops)) {
     engine.syncApply(JSON.stringify(m.ops));
     changed();
@@ -335,7 +347,12 @@ function hostHears(peer: Peer, m: Msg) {
 
 function guestHears(peer: Peer, m: Msg) {
   if (m.t === 'welcome') {
-    if (m.merge) {
+    // A class the host is teaching: this device only watches (the class refuses a welcome it does not want).
+    if (roomEvents.welcome(m as unknown as Record<string, unknown>) === false) {
+      leaveP2p();
+      return;
+    }
+    if (m.merge && !(m as { class?: unknown }).class) {
       engine.syncApply(JSON.stringify(m.log ?? []));
     } else {
       const r = engine.syncLoad(JSON.stringify(m.log ?? []));
@@ -377,6 +394,8 @@ function guestHears(peer: Peer, m: Msg) {
     changed();
   } else if (m.t === 'presence' && m.id && m.id !== myPersonId) {
     live.cursors[m.id] = { id: m.id, view: String(m.view ?? ''), ctx: String(m.ctx ?? ''), x: Number(m.x), y: Number(m.y), tool: String(m.tool ?? ''), seen: Date.now() };
+  } else if (m.t === 'chat' || m.t === 'hands' || m.t === 'mirror' || m.t === 'ended' || m.t === 'denied' || m.t === 'log') {
+    roomEvents.message(m as unknown as Record<string, unknown>);
   } else if (m.t === 'view') {
     followHost(m);
   } else if (m.t === 'refused') {
@@ -518,6 +537,58 @@ export function startHosting(): boolean {
   engine.syncOutbox(); // everything already made is in the snapshot a guest gets
   startTimer();
   return true;
+}
+
+/** How a class's rules reach the people in this session. `from` is the guest a message came from, or null for the teacher's own page. */
+function classIo(from: Peer | null): RoomIo {
+  return {
+    members: () => [{ id: myPersonId, name: me.name.trim() || 'Teacher', role: 'teacher' }, ...admitted().map((p) => ({ id: p.person!.id, name: p.person!.name, role: 'student' }))],
+    send: (id, msg) => {
+      if (id === myPersonId) roomEvents.message(msg as Record<string, unknown>);
+      else {
+        const p = admitted().find((q) => q.person!.id === id);
+        if (p) send(p, msg);
+      }
+    },
+    all: (msg) => {
+      toAll(msg);
+      roomEvents.message(msg as Record<string, unknown>);
+    },
+    others: (msg) => {
+      toAll(msg, from ?? undefined);
+      if (from) roomEvents.message(msg as Record<string, unknown>);
+    },
+  };
+}
+
+/**
+ * Starts sharing the open cave as a class: this page is the teacher, and everyone let in is a student who only
+ * watches (their edits are refused here). Students join like any guest, with invite and reply codes, and are let in
+ * without asking. Returns false (and says why in `p2p.error`) when it cannot start.
+ */
+export function startClassHosting(name: string): boolean {
+  if (p2p.role !== 'none') {
+    p2p.error = 'Stop sharing first: a class starts a session of its own.';
+    return false;
+  }
+  if (!startHosting()) return false;
+  cls = newClass(name);
+  p2p.auto = true;
+  announce();
+  return roomEvents.welcome({ class: classWelcome(cls, 'teacher'), owner: true }) !== false;
+}
+
+/** Sends a class message: the teacher's page applies it (and passes it on); a student's goes to the teacher. */
+export function sendClass(msg: { t: string } & Record<string, unknown>): boolean {
+  if (p2p.role === 'host' && cls) {
+    classMessage(cls, { id: myPersonId, name: me.name.trim() || 'Teacher', role: 'teacher' }, msg, classIo(null));
+    return true;
+  }
+  if (p2p.role === 'guest' && guestPeer && live.status === 'live') {
+    send(guestPeer, msg);
+    return true;
+  }
+  return false;
 }
 
 /** Makes an invite: the text to send to one person. */
@@ -665,6 +736,9 @@ export function leaveP2p() {
   wantedAt.clear();
   relayTo.clear();
   guestPeer = null;
+  const hadClass = cls !== null || live.people.some((p) => p.role);
+  cls = null;
+  if (hadClass) roomEvents.left();
   if (p2p.role !== 'none') {
     live.status = 'off';
     live.people = [];

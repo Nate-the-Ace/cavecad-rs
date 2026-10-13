@@ -154,6 +154,13 @@ export function setRoomHooks(h: { welcome: (m: Record<string, unknown>) => boole
   roomHooks.left = h.left;
 }
 
+/** The same events for a class that runs on a peer-to-peer session (`p2p.svelte.ts`) instead of the relay. */
+export const roomEvents = {
+  welcome: (m: Record<string, unknown>): boolean | void => roomHooks.welcome?.(m),
+  message: (m: Record<string, unknown>) => roomHooks.message?.(m),
+  left: () => roomHooks.left?.(),
+};
+
 /** Sends a message to the room's relay (a class's chat, hand, view). False when not connected. */
 export function sendRoom(msg: object): boolean {
   if (!socket || socket.readyState !== WebSocket.OPEN || live.status !== 'live') return false;

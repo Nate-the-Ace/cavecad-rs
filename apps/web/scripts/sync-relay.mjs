@@ -4,7 +4,7 @@
 // converge in any order. Nothing is stored on disk and nothing leaves the machine the server runs on.
 import { randomBytes } from 'node:crypto';
 import { WebSocketServer } from 'ws';
-import { classLeft, classMessage, classWelcome, newClass } from './classroom-relay.mjs';
+import { CLASS_MESSAGES, classLeft, classMessage, classWelcome, newClass } from './classroom-relay.mjs';
 
 const MAX_ROOM = 64;
 const MAX_MESSAGE = 64 * 1024 * 1024;
@@ -39,7 +39,6 @@ export function createRelay(options = {}) {
     return i;
   };
   const clean = (v, max) => String(v ?? '').slice(0, max);
-  const everyone = (room) => (msg) => room.peers.forEach((p) => send(p, msg));
 
   function onConnection(ws) {
     let room = null;
@@ -102,8 +101,8 @@ export function createRelay(options = {}) {
         room.locked = !!msg.on;
         send(ws, { t: 'invites', invites: invitesOf(room) });
         announce(room);
-      } else if (room?.class && ['say', 'hand', 'mirror', 'end', 'getlog'].includes(msg.t) && ws.person) {
-        classMessage(room, ws, msg, { send, toAll: everyone(room) });
+      } else if (room?.class && CLASS_MESSAGES.includes(msg.t) && ws.person) {
+        classMessage(room, ws, msg, { send });
       } else if (msg.t === 'presence' && room && ws.person) {
         // Where a person is and what they are doing: passed on to the others, never stored, and
         // stamped with the sender's id here so nobody can speak for someone else.
@@ -122,7 +121,7 @@ export function createRelay(options = {}) {
     ws.on('close', () => {
       if (!room) return;
       room.peers.delete(ws);
-      classLeft(room, ws, { toAll: everyone(room) });
+      classLeft(room, ws, { send });
       if (room.seeder === ws) room.seeder = null; // a seeder that left without sending hands the job on
       announce(room);
     });

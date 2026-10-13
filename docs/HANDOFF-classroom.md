@@ -34,9 +34,17 @@ windows, and fix what you see.
 5. Also try: a second teacher starting a class with the same name (refused, and their own cave must not
    be replaced); a student opening the link before the teacher started (refused).
 
+## And the same class direct, with no server
+
+Start a Classroom, choose **Direct**: the Share dialog opens, make an invite, paste it into a second
+window's Cave Shelf > Join, send the reply code back, Connect (students are let in at once). Everything in
+the list above should behave the same: observer-only, the teacher's view followed, pointers, hands, chat,
+log download (no file on disk in this mode). Also check that a student's edits are refused (try dragging in
+the student window, and `__p2p` is in the console), and that closing the teacher's tab frees the student.
+
 ## Where things are
 
-- Relay: `apps/web/scripts/classroom-relay.mjs` (new) and the hooks in `sync-relay.mjs`; the dev server
+- The rules, shared: `apps/web/src/lib/classroom-room.mjs` (with `.d.mts`). Relay: `apps/web/scripts/classroom-relay.mjs` (new, thin) and the hooks in `sync-relay.mjs`; p2p: `startClassHosting`, `sendClass`, `classIo` in `p2p.svelte.ts`; the dev server
   passes the log folder in `vite-plugin-cave-sync.mjs`.
 - Client: `apps/web/src/lib/classroom.svelte.ts` (state, start/join, hands, chat, the teacher's beat,
   the student's input blocker), `classroom-mirror.ts` (the registry), `classroom-log.ts` (transcript,

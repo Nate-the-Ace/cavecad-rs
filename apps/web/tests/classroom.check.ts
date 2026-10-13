@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { READS, WRITES, guardEngine, readOnly } from '../src/lib/readonly.ts';
 import { applyMirror, captureMirror, fitRect, forgetMirror, frontPanels, layoutShape, registerMirror, roundRect, visibleRect } from '../src/lib/classroom-mirror.ts';
+import { CLASS_MESSAGES, classLeft, classMessage, classWelcome, newClass } from '../src/lib/classroom-room.mjs';
 import { classLink, clock, mergeEntries, readClassLink, transcript, transcriptName, waiting, type ChatEntry } from '../src/lib/classroom-log.ts';
 
 let bad = 0;
@@ -83,6 +84,62 @@ const layoutMoved = JSON.parse(JSON.stringify(layoutA).replace('["map","profile"
 ok(layoutShape(layoutA) === layoutShape(layoutSized), 'resizing a splitter or changing tab is not a new arrangement');
 ok(layoutShape(layoutA) !== layoutShape(layoutMoved), 'moving a panel is');
 ok(frontPanels(layoutA).join() === 'map,stations' && frontPanels(layoutSized).join() === 'profile,stations', 'the panel in front of each group');
+
+
+// ---- the rules of a class, with no network (the same code runs on the relay and in a peer session) ----
+{
+  const sent: { to: string; m: Record<string, any> }[] = [];
+  const people = [
+    { id: 't', name: 'Dr. Lee', role: 'teacher' },
+    { id: 's1', name: 'Sam', role: 'student' },
+    { id: 's2', name: 'Kim', role: 'student' },
+  ];
+  const ioFor = (from: string) => ({
+    members: () => people,
+    send: (id: string, m: object) => sent.push({ to: id, m: m as Record<string, any> }),
+    all: (m: object) => people.forEach((p) => sent.push({ to: p.id, m: m as Record<string, any> })),
+    others: (m: object) => people.filter((p) => p.id !== from).forEach((p) => sent.push({ to: p.id, m: m as Record<string, any> })),
+  });
+  const recorded: object[] = [];
+  const cls = newClass('Caving 101', (e) => recorded.push(e));
+  const [t, s1, s2] = people;
+  const to = (id: string, kind: string) => sent.filter((x) => x.to === id && x.m.t === kind);
+  ok(CLASS_MESSAGES.join() === 'say,hand,mirror,end,getlog', 'the messages that belong to a class');
+
+  classMessage(cls, s1, { t: 'say', text: '  Why is   it\n off?  ' }, ioFor('s1'));
+  ok(to('t', 'chat')[0].m.entry.text === 'Why is it off?' && to('s1', 'chat').length === 1 && recorded.length === 1, 'a line is tidied, goes to everyone (the sender too) and is recorded');
+  sent.length = 0;
+  classMessage(cls, s1, { t: 'say', text: 'again' }, ioFor('s1'));
+  ok(to('s1', 'denied').length === 1 && to('t', 'chat').length === 0, 'a student cannot say two things at once');
+  classMessage(cls, s1, { t: 'mirror', state: { tab: 'Draw' } }, ioFor('s1'));
+  ok(to('s1', 'denied')[1].m.what === 'view' && cls.mirror === '', 'a student cannot steer the view');
+  sent.length = 0;
+  classMessage(cls, t, { t: 'mirror', state: { tab: 'Draw' } }, ioFor('t'));
+  ok(to('s1', 'mirror').length === 1 && to('t', 'mirror').length === 0 && cls.mirror === '{"tab":"Draw"}', 'the view of the teacher goes to the students, kept for latecomers');
+  ok(classWelcome(cls, 'student').mirror === '{"tab":"Draw"}' && classWelcome(cls, 'student').chat.length === 1, 'a latecomer is given the view and the chat');
+
+  sent.length = 0;
+  classMessage(cls, s1, { t: 'hand', up: true }, ioFor('s1'));
+  classMessage(cls, s2, { t: 'hand', up: false, who: 's1' }, ioFor('s2'));
+  ok([...cls.hands.keys()].join() === 's1', 'a student can only change their own hand (a who is ignored)');
+  classMessage(cls, s2, { t: 'hand', up: true, who: 's1' }, ioFor('s2'));
+  ok([...cls.hands.keys()].sort().join() === 's1,s2', 'so asking for another student puts up their own');
+  ok(to('t', 'hands').at(-1)!.m.hands.length === 2, 'and the teacher is told');
+  classMessage(cls, t, { t: 'hand', up: false, who: 's1' }, ioFor('t'));
+  ok([...cls.hands.keys()].join() === 's2' && cls.chat.at(-1)?.text === 'was called on', 'the teacher calls on a student');
+  classLeft(cls, 's2', ioFor('s2'));
+  ok(cls.hands.size === 0, 'a student who leaves puts their hand down');
+  sent.length = 0;
+  classMessage(cls, s1, { t: 'getlog' }, ioFor('s1'));
+  ok(sent.length === 0, 'students cannot ask for the log');
+  classMessage(cls, t, { t: 'getlog' }, ioFor('t'));
+  ok(to('t', 'log')[0].m.entries.length === cls.chat.length && cls.chat.every((e, i) => e.n === i + 1), 'the teacher can, in order');
+  classMessage(cls, t, { t: 'end' }, ioFor('t'));
+  sent.length = 0;
+  classMessage(cls, s1, { t: 'say', text: 'hello?' }, ioFor('s1'));
+  ok(to('s1', 'denied')[0].m.message === 'The class has ended.', 'nothing is said after the end');
+  ok(recorded.length === cls.chat.length, 'every line of the record was handed to the recorder');
+}
 
 forgetMirror();
 let a = '', b = '';

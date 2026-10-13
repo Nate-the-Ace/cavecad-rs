@@ -17,6 +17,7 @@ import { applyMirror, captureMirror, forgetMirror, registerMirror } from './clas
 import { classLink, mergeEntries, readClassLink, transcript, transcriptName, type ChatEntry, type Hand } from './classroom-log';
 import { readOnly } from './readonly';
 import { shelf } from './shelf.svelte';
+import { p2p, sendClass, startClassHosting } from './p2p.svelte';
 import { createInvite, join, leave, live, rename, sendRoom, setRoomHooks } from './sync.svelte';
 
 export const classroom = $state({
@@ -46,6 +47,8 @@ export const classroom = $state({
   error: '',
   /** Connecting now (the Join or Start button was pressed). */
   busy: false,
+  /** How this class is carried: on the room relay (a server and a link) or straight between devices (codes). */
+  transport: 'relay' as 'relay' | 'p2p',
 });
 
 /** Whether this device's hand is up. */
@@ -53,7 +56,7 @@ export const handIsUp = (): boolean => classroom.hands.some((h) => h.id === live
 
 /** The link students open, once the teacher has an invite. Empty until then. */
 export function studentLink(): string {
-  return live.made && classroom.name ? classLink(location.href, classroom.name, live.made) : '';
+  return classroom.transport === 'relay' && live.made && classroom.name ? classLink(location.href, classroom.name, live.made) : '';
 }
 
 /** Reads a class link the page was opened with (and tidies the address bar). */
@@ -65,6 +68,11 @@ export function readClassLinkFromUrl() {
 }
 
 let intent: 'teacher' | 'student' | '' = '';
+
+/** Sends a message to the class, whichever way it is carried. False when there is nobody to send it to. */
+function transmit(msg: { t: string } & Record<string, unknown>): boolean {
+  return classroom.transport === 'p2p' ? sendClass(msg) : sendRoom(msg);
+}
 let noticeTimer: ReturnType<typeof setTimeout> | undefined;
 let beat: ReturnType<typeof setInterval> | undefined;
 let lastSent = '';
@@ -73,14 +81,28 @@ let unblock: (() => void) | null = null;
 // ---- starting and joining ------------------------------------------------------------------------
 
 /** The teacher starts a class from the open cave. */
-export function startClass(className: string, teacherName: string) {
+export function startClass(className: string, teacherName: string, via: 'relay' | 'p2p' = 'relay') {
   const name = className.trim();
   if (!name) return void (classroom.error = 'Give the class a name.');
   if (!cave.hasCave) return void (classroom.error = 'Open or start a cave first: there is nothing to teach from yet.');
   classroom.error = '';
   if (teacherName.trim()) rename(teacherName.trim());
+  if (via === 'p2p') {
+    // Straight between devices: this page is the teacher and the hub; students come in with invite and reply codes.
+    leave();
+    classroom.transport = 'p2p';
+    intent = 'teacher';
+    if (!startClassHosting(name)) {
+      intent = '';
+      classroom.error = p2p.error || 'Could not start the class.';
+      return;
+    }
+    p2p.dialog = true; // where the invite codes are made
+    return;
+  }
   live.made = ''; // the link of an earlier class is not this one's
   join(name, '', { mode: 'class' }); // (joining first leaves any room this device was in, which clears the class state)
+  classroom.transport = 'relay';
   intent = 'teacher';
   classroom.busy = true;
 }
@@ -121,6 +143,7 @@ setRoomHooks({
     if (intent === 'teacher' && (!c || c.role !== 'teacher')) return fail(`There is already a room called “${live.room}” on this server. Pick another name for the class.`);
     if (intent === 'student' && (!c || c.role !== 'student')) return fail('That link is not to a class.');
     if (!c) return;
+    if (intent === '') classroom.transport = p2p.role !== 'none' ? 'p2p' : 'relay'; // a class joined with codes, not a link
     classroom.role = c.role;
     classroom.name = c.name;
     classroom.started = c.started;
@@ -149,7 +172,7 @@ setRoomHooks({
       if (state) setTimeout(() => applyMirror(state), 300); // after the cave has arrived
     } else {
       // The teacher: make the link students will open, and start sharing the view.
-      setTimeout(() => createInvite(c.name, 12, 0), 0);
+      if (classroom.transport === 'relay') setTimeout(() => createInvite(c.name, 12, 0), 0);
       startMirroring();
     }
   },
@@ -200,28 +223,28 @@ const teacherName = (): string => live.people.find((p) => p.role === 'teacher')?
 /** Says a line to the class (a question, an answer). */
 export function say(text: string): boolean {
   const t = text.trim();
-  return t ? sendRoom({ t: 'say', text: t }) : false;
+  return t ? transmit({ t: 'say', text: t }) : false;
 }
 
 /** A student raises or lowers their hand. */
 export function raiseHand(up: boolean) {
-  sendRoom({ t: 'hand', up });
+  transmit({ t: 'hand', up });
 }
 
 /** The teacher calls on a student: their hand goes down. */
 export function callOn(id: string) {
-  sendRoom({ t: 'hand', up: false, who: id });
+  transmit({ t: 'hand', up: false, who: id });
 }
 
 /** The teacher ends the class: nothing more is said, and the record is complete. */
 export function endClass() {
-  sendRoom({ t: 'end' });
+  transmit({ t: 'end' });
   stopMirroring();
 }
 
 /** The teacher asks for the transcript, which is then saved as a text file. */
 export function downloadLog() {
-  sendRoom({ t: 'getlog' });
+  transmit({ t: 'getlog' });
 }
 
 /** Leaves the class (a student stops watching; a teacher closes the room on this device). The cave stays as it is. */
@@ -283,7 +306,7 @@ function startMirroring() {
     const state = captureMirror();
     const key = JSON.stringify(state);
     if (key === lastSent) return;
-    if (sendRoom({ t: 'mirror', state })) lastSent = key;
+    if (transmit({ t: 'mirror', state })) lastSent = key;
   }, 150);
 }
 
