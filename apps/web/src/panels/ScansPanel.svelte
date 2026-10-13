@@ -92,6 +92,8 @@
     void cave.version;
     void cave.opened;
     void align.view; // what the panel shows is read again for the new view
+    void scans.selected; // and for the page on show: its own matches, placement and outline
+    void cave.trip;
     void ready;
     untrack(() => {
       if (!ready) return;
