@@ -5,6 +5,8 @@
   import { onMount } from 'svelte';
   import { Users, LogOut, Camera, Trash2, Copy, Download, Send, ImagePlus, Link, Lock } from '@lucide/svelte';
   import { cave, setCompactRibbon } from '../lib/cave.svelte';
+  import { leaveP2p, p2p } from '../lib/p2p.svelte';
+  import { shelf } from '../lib/shelf.svelte';
   import { activityOf, createInvite, inviteLink, join, leave, live, me, rename, revokeInvite, setLocked } from '../lib/sync.svelte';
   import { setUnits } from '../lib/cave.svelte';
   import { resetLayout } from '../lib/workspace.svelte';
@@ -137,7 +139,28 @@
 
       {#if tab === 'people'}
         <div class="pane">
-          {#if shared || live.status === 'connecting'}
+          {#if p2p.role !== 'none'}
+            <ul class="list" aria-label="People in this session">
+              {#each people as p (p.id)}
+                <li>
+                  <span class="face" style="--c:{p.color}">{initials(p.name)}</span>
+                  <span class="pn">{p.name}{p.id === live.me ? ' (you)' : ''}{p.id === live.ownerId ? ' · host' : ''}</span>
+                  <span class="act">{p.id === live.me ? '' : (activityOf(p.id) ?? '')}</span>
+                </li>
+              {/each}
+            </ul>
+            <div class="status" role="status">{live.status === 'connecting' ? p2p.waiting || 'Connecting…' : `${live.people.length} ${live.people.length === 1 ? 'person' : 'people'} in this session`}</div>
+            {#if p2p.role === 'host'}
+              <button class="btn primary" onclick={() => { p2p.dialog = true; open = false; }}><Link size={15} /> Invite someone</button>
+            {/if}
+            <button class="btn" onclick={() => { leaveP2p(); leave(); }}><LogOut size={15} /> {p2p.role === 'host' ? 'Stop sharing' : 'Leave this session'}</button>
+          {:else if !shared && live.status === 'off' && !live.pending}
+            <p class="hint">Work on this cave together, live. Devices connect straight to each other: there is no server to set up.</p>
+            <div class="row">
+              <button class="btn primary" disabled={!cave.hasCave} title={cave.hasCave ? '' : 'Open a cave first'} onclick={() => { p2p.dialog = true; open = false; }}><Users size={15} /> Share this cave live</button>
+              <button class="btn" onclick={() => { shelf.join = true; shelf.open = true; open = false; }}>Join a live session</button>
+            </div>
+          {:else if shared || live.status === 'connecting'}
             <ul class="list" aria-label="People in this session">
               {#each people as p (p.id)}
                 <li>
