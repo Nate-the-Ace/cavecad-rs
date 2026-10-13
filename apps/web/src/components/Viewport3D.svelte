@@ -23,7 +23,7 @@
 
   let depthColor = $state(false);
   let walls = $state(true);
-  let passage = $state(true);
+  let passage = $state(false); // the passage surface starts hidden; the Show menu turns it on
   let fillGaps = $state(true);
   let projection = $state<Projection>('perspective');
   let status = $state('');

@@ -133,7 +133,7 @@ export class CaveView {
   /** How each type looks; set once from the engine's palette. */
   private palette = new Map<string, TypeStyle>();
   private passage: THREE.Mesh | null = null;
-  private showPassage = true;
+  private showPassage = false;
   private readonly headlamp = new THREE.DirectionalLight(0xffffff, 2.2);
   /** Called after every render so the view cube can follow the camera. */
   onRender: (camera: THREE.Camera, target: THREE.Vector3) => void = () => {};

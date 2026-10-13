@@ -76,6 +76,8 @@ let guestPeer: Peer | null = null;
 let timer: ReturnType<typeof setInterval> | undefined;
 let sessionId = '';
 let lastHost = '';
+/** How long a joiner waits for the host to use its reply code before it gives up. */
+const JOIN_PATIENCE_MS = 5 * 60_000;
 const wanted = new Set<string>();
 /** When each page was asked for, so a request that went nowhere is asked again. */
 const wantedAt = new Map<string, number>();
@@ -609,12 +611,26 @@ export async function joinWithCode(text: string): Promise<string | null> {
   const peer = await newPeer(code.sid);
   guestPeer = peer;
   peer.pc.ondatachannel = (ev) => wire(peer, ev.channel, 'guest');
+  // Until the host pastes the reply there is nobody to answer this device's connection checks, so the
+  // browser may report a failure straight away. That is not an answer yet: wait for the host (up to
+  // JOIN_PATIENCE_MS), and only a failure after that, or after having connected, ends the attempt.
+  let connectedOnce = false;
+  let patience: ReturnType<typeof setTimeout> | undefined;
+  const giveUp = () => {
+    p2p.error = 'Could not connect. The two devices could not find a way to each other (a strict network can block this). Try again, add a relay under \u201cRelay for strict networks\u201d, or try both devices on the same network.';
+    leaveP2p();
+  };
   peer.pc.onconnectionstatechange = () => {
     const s = peer.pc.connectionState;
-    if (s === 'failed') {
-      p2p.error = 'Could not connect. The two devices could not find a way to each other (a strict network can block this). Try again, add a relay under \u201cRelay for strict networks\u201d, or try both devices on the same network.';
-      leaveP2p();
-    } else if (s === 'disconnected' || s === 'closed') closed(peer, 'guest');
+    if (s === 'connected') {
+      connectedOnce = true;
+      clearTimeout(patience);
+    } else if (s === 'failed') {
+      if (connectedOnce) giveUp();
+      else if (!patience) patience = setTimeout(() => (guestPeer === peer && !connectedOnce ? (p2p.error = 'The host did not use your reply code in time. Send it again, or start over with a new invite.', leaveP2p()) : undefined), JOIN_PATIENCE_MS);
+    } else if (s === 'disconnected') {
+      if (connectedOnce) closed(peer, 'guest');
+    } else if (s === 'closed') closed(peer, 'guest');
   };
   try {
     await peer.pc.setRemoteDescription({ type: 'offer', sdp: code.sdp });
