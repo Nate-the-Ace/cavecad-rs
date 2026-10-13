@@ -789,7 +789,7 @@ export class CaveView {
     const y = e.clientY - rect.top;
     for (const k of [...this.mapLines].reverse()) {
       if (isKindHidden(k.kind)) continue;
-      const pts = k.points.map((p) => this.project(p)).filter((p): p is [number, number] => !!p);
+      const pts = this.screenPoints(k).filter((p): p is [number, number] => !!p);
       if (pts.length === k.points.length && (isStampKind(k.kind) ? hitsStamp(k.kind, k.text, pts[0], pts[1], x, y) : distanceToCurve(pts, x, y, k.closed) <= 7)) {
         this.mapLines = this.mapLines.filter((m) => m.id !== k.id);
         this.onLineErased(k.id);
@@ -804,10 +804,10 @@ export class CaveView {
     const rect = this.canvas.getBoundingClientRect();
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
-    const screen = (k: ProfileSketch3d) => k.points.map((p) => this.project(p)).filter((p): p is [number, number] => !!p);
+    const screen = (k: ProfileSketch3d) => this.screenPoints(k).filter((p): p is [number, number] => !!p);
     const sel = this.displayMapLines().find((k) => k.id === this.selectedLine);
     if (sel) {
-      const i = nearestPoint(sel.points.map((p) => this.project(p) ?? [-1e9, -1e9]), x, y, 10);
+      const i = nearestPoint(this.screenPoints(sel).map((p) => p ?? [-1e9, -1e9]), x, y, 10);
       if (i >= 0) {
         e.stopImmediatePropagation();
         e.stopPropagation();
@@ -875,6 +875,28 @@ export class CaveView {
     return a && b ? Math.hypot(a[0] - b[0], a[1] - b[1]) : null;
   }
 
+  /**
+   * Where a map line's points are on the screen. A symbol is two points (where it sits, and which way is
+   * up and how big): its second point is laid out as if the map were seen from straight above (size from
+   * the metres between the points, turn from the direction relative to the view's turn), so tilting the
+   * view never squashes, shrinks or spins a symbol. Turning the view still turns it with the map.
+   */
+  private screenPoints(k: { kind: string; points: [number, number, number][] }): ([number, number] | null)[] {
+    if (!isStampKind(k.kind) || k.points.length < 2) return k.points.map((p) => this.project(p));
+    const a = this.project(k.points[0]);
+    const px = this.pixelsPerMetreAt(k.points[0]);
+    const right = new THREE.Vector3().setFromMatrixColumn(this.camera.matrixWorld, 0);
+    right.z = 0;
+    if (!a || !px || right.lengthSq() < 1e-9) return [a, this.project(k.points[1])];
+    right.normalize();
+    const forward = { x: -right.y, y: right.x }; // up the screen when seen from above
+    const vx = k.points[1][0] - k.points[0][0];
+    const vy = k.points[1][1] - k.points[0][1];
+    const sx = (vx * right.x + vy * right.y) * px;
+    const sy = (vx * forward.x + vy * forward.y) * px;
+    return [a, [a[0] + sx, a[1] - sy]];
+  }
+
   private sectionAnchor(s: MapSection): { at: [number, number] | null; px: number | null } {
     const o = this.offsetOf(s);
     const world: [number, number, number] = [s.at[0] + o[0], s.at[1] + o[1], s.at[2] + o[2]];
@@ -922,7 +944,7 @@ export class CaveView {
       g.strokeStyle = l.color;
       g.globalAlpha = base * l.alpha;
       g.setLineDash(l.dash);
-      const projected = k.points.map((p) => this.project(p));
+      const projected = this.screenPoints(k);
       if (isStampKind(k.kind)) {
         // A placed symbol: first point where it sits, second says which way is up and how big.
         const [a, b] = projected;
@@ -1323,7 +1345,7 @@ export class CaveView {
     }
     const editing = this.displayMapLines().find((k) => k.id === this.selectedLine);
     if (editing) {
-      const hs = editing.points.map((p) => this.project(p)).filter((p): p is [number, number] => !!p);
+      const hs = this.screenPoints(editing).filter((p): p is [number, number] => !!p);
       drawHandles(g, hs, `#${this.theme.accent.getHexString()}`, `#${this.theme.bg.getHexString()}`);
     }
     if (this.pickupAt && this.drawTool && !this.liveLine) {
