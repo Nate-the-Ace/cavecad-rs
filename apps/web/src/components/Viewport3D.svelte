@@ -7,7 +7,7 @@
   import { cursorsFor, live as room, reportCursor } from '../lib/sync.svelte';
   import { engine, loadEngine, type Scene, type TypeStyle } from '../lib/engine';
   import { CaveView, type Projection } from '../lib/viewport/cave-view';
-  import { fitPlane } from '../lib/plane';
+  import { fitPlane, heightSurface } from '../lib/plane';
   import { cave, changed, filter, haloFade, haloReach, option, setPick, setShowSections, setShown, wireFilter } from '../lib/cave.svelte';
   import { tolerancePx } from '../lib/commands';
   import { ViewCube } from '../lib/viewport/view-cube';
@@ -91,11 +91,16 @@
         const pts = (ids ?? []).map((id) => all.find((st) => st.id === id)?.at).filter((v): v is [number, number, number] => !!v);
         return fitPlane(pts, surveyZ);
       };
+      // ...and rises and falls with them: the picture is carried over a surface through those stations
+      const heightFor = (ids: string[] | undefined) => {
+        const pts = (ids ?? []).map((id) => all.find((st) => st.id === id)?.at).filter((v): v is [number, number, number] => !!v);
+        return pts.length >= 3 ? heightSurface(pts, surveyZ) : null;
+      };
       const list = on
         ? engine
             .scanPlacements('map', cave.adjusted)
             .filter((p) => !filter.hiddenTrips.includes(p.trip) && have(p.path))
-            .map((p) => ({ key: `${p.trip}/${p.path}`, url: mapUrl(p.path)!, matrix: p.matrix, z: surveyZ, plane: planeFor(p.stations), opacity, trim: p.trim, warp: p.warp }))
+            .map((p) => ({ key: `${p.trip}/${p.path}`, url: mapUrl(p.path)!, matrix: p.matrix, z: surveyZ, plane: planeFor(p.stations), height: heightFor(p.stations), opacity, trim: p.trim, warp: p.warp }))
         : [];
       view.setScans(list);
     });

@@ -9,7 +9,7 @@ import type { MapSection, PassageBuffers, Pt, ProfileSketch3d, Scene, TypeStyle 
 import { PenGuard, isEraser, widthFor } from '../pen';
 import { drawStamp, drawStationMarker, hitsStamp, isStampKind, placement } from '../symbols';
 import { drawMarks, isFillKind, marksFor } from '../fills';
-import { warpGrid, type Warp } from '../scan-warp';
+import { affineWarp, warpGrid, type Warp } from '../scan-warp';
 import { drawHalo, type HaloLine } from '../halo';
 import { isKindHidden, ornamentFor, refreshFlipped } from '../section-glyph';
 import { drawCursor } from '../presence-draw';
@@ -571,7 +571,7 @@ export class CaveView {
    * at height `z`. Drawn before the lines and without depth, so the passage never hides it and the
    * survey is drawn over it.
    */
-  setScans(list: { key: string; url: string; matrix: number[]; z: number; opacity: number; trim?: [number, number][] | null; warp?: Warp | null; plane?: [number, number, number] | null }[]) {
+  setScans(list: { key: string; url: string; matrix: number[]; z: number; opacity: number; trim?: [number, number][] | null; warp?: Warp | null; plane?: [number, number, number] | null; height?: ((x: number, y: number) => number) | null }[]) {
     const keep = new Set(list.map((l) => l.key));
     for (const [key, s] of this.scans) {
       if (!keep.has(key)) this.removeScan(key, s);
@@ -640,19 +640,19 @@ export class CaveView {
     this.requestRender();
   }
 
-  private placeScan(mesh: THREE.Mesh, item: { matrix: number[]; z: number; opacity: number; warp?: Warp | null; plane?: [number, number, number] | null }) {
+  private placeScan(mesh: THREE.Mesh, item: { matrix: number[]; z: number; opacity: number; warp?: Warp | null; plane?: [number, number, number] | null; height?: ((x: number, y: number) => number) | null }) {
     const m = item.matrix;
     const flat = mesh.userData.flat as THREE.BufferGeometry;
     // The scan lies in the plane z = a + b x + c y through its stations (flat at `z` when it has no plane).
     const [pa, pb, pc] = item.plane ?? [item.z, 0, 0];
-    if (item.warp) {
-      // A rubber sheet: a grid over the picture, each node where the warp puts it, so the matrix is only the height.
+    if (item.warp || item.height) {
+      // A rubber sheet, or a scan laid over ground that rises and falls: a grid over the picture, each node where the warp puts it, so the matrix is only the height.
       const box = mesh.userData.box as { x0: number; y0: number; w: number; h: number };
-      const grid = warpGrid(item.warp, box);
+      const grid = item.warp ? warpGrid(item.warp, box) : warpGrid(affineWarp(m), box);
       const pos = new Float32Array(grid.dst.length * 3);
       const uv = new Float32Array(grid.dst.length * 2);
       grid.dst.forEach((d, i) => {
-        pos.set([d[0], d[1], pa + pb * d[0] + pc * d[1]], i * 3);
+        pos.set([d[0], d[1], item.height ? item.height(d[0], d[1]) : pa + pb * d[0] + pc * d[1]], i * 3);
         uv.set([(grid.src[i][0] - box.x0) / box.w, 1 - (grid.src[i][1] - box.y0) / box.h], i * 2);
       });
       const index: number[] = [];

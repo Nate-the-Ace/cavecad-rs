@@ -100,3 +100,9 @@ export function drawWarped(g: CanvasRenderingContext2D, img: CanvasImageSource, 
     }
   }
 }
+
+/** A plain placement (the six numbers of a fit) written as a warp, so the same grid carries it. */
+export function affineWarp(m: number[]): Warp {
+  // x = m0 px + m1 py + m2, y = m3 px + m4 py + m5, with the working frame taken as pixels (origin 0, scale 1).
+  return { origin: [0, 0], scale: 1, centers: [], wx: [], wy: [], ax: [m[2], m[0], m[1]], ay: [m[5], m[3], m[4]] };
+}

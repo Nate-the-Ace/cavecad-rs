@@ -1,4 +1,4 @@
-import { fitPlane } from '../src/lib/plane.ts';
+import { fitPlane, heightSurface } from '../src/lib/plane.ts';
 
 let bad = 0;
 const ok = (c: boolean, m: string) => { if (!c) { bad++; console.log('FAIL', m); } };
@@ -22,6 +22,19 @@ ok(near(at(diag, 20, 20), 10) && near(at(diag, 10, 10), 5) && near(at(diag, 10, 
 
 const shaft = fitPlane([[0, 0, 0], [1, 0, -50], [2, 0, -100]], 0);
 ok(Math.hypot(shaft[1], shaft[2]) <= 1 + 1e-9, 'a shaft cannot stand the scan on its edge');
+
+// the height surface: exact at every station, smooth between, never beyond a little past their range
+const rolling: [number, number, number][] = [[0, 0, 0], [20, 0, 4], [40, 5, 1], [60, -3, 8], [30, 20, 3], [10, 25, 6]];
+const h = heightSurface(rolling, 0);
+ok(rolling.every((q) => Math.abs(h(q[0], q[1]) - q[2]) < 1e-3), 'the surface passes through every station');
+const mid = h(30, 3);
+ok(mid > -2 && mid < 10, 'and between stations it stays among their heights: ' + mid);
+const far = h(5000, 5000);
+ok(far <= 8 + 1.6 + 1e-9 && far >= 0 - 1.6 - 1e-9, 'far away it is held near their range: ' + far);
+const same = heightSurface([[0, 0, 0], [0, 0, 10], [10, 0, 2], [0, 10, 4]], 0);
+ok(Number.isFinite(same(3, 3)) && near(same(0, 0), 5), 'stations on top of each other are averaged');
+const two = heightSurface([[0, 0, 0], [10, 0, 5]], 0);
+ok(near(two(5, 0), 2.5), 'two stations: a slope between them');
 
 if (bad) process.exit(1);
 console.log('plane ok');

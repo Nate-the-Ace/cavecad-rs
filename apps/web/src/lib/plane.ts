@@ -49,3 +49,70 @@ export function fitPlane(pts: [number, number, number][], fallbackZ: number): [n
   }
   return [mz - b * mx - c * my, b, c];
 }
+
+/**
+ * The height of the ground a scan is laid on, as a function of where on the map: a thin-plate surface
+ * through the stations the scan is matched to (exact at each station, smooth between), held within
+ * a little more than their range so it can never fly off beyond them. Stations on top of each other
+ * are averaged; with fewer than three spread-out stations (or a fit that cannot be solved) it is
+ * the flat or sloping plane of `fitPlane`.
+ */
+export function heightSurface(pts: [number, number, number][], fallbackZ: number): (x: number, y: number) => number {
+  const plane = fitPlane(pts, fallbackZ);
+  const flat = (x: number, y: number) => plane[0] + plane[1] * x + plane[2] * y;
+  if (pts.length < 3) return flat;
+  // average stations that share a spot
+  const key = (p: [number, number, number]) => `${p[0].toFixed(3)},${p[1].toFixed(3)}`;
+  const byXY = new Map<string, { x: number; y: number; zs: number[] }>();
+  for (const p of pts) {
+    const k = key(p);
+    const e = byXY.get(k) ?? { x: p[0], y: p[1], zs: [] };
+    e.zs.push(p[2]);
+    byXY.set(k, e);
+  }
+  const c = [...byXY.values()].map((e) => ({ x: e.x, y: e.y, z: e.zs.reduce((a, b) => a + b, 0) / e.zs.length }));
+  const n = c.length;
+  if (n < 3) return flat;
+  const mx = c.reduce((t, p) => t + p.x, 0) / n;
+  const my = c.reduce((t, p) => t + p.y, 0) / n;
+  const scale = Math.max(1e-6, ...c.map((p) => Math.hypot(p.x - mx, p.y - my)));
+  const u = c.map((p) => [(p.x - mx) / scale, (p.y - my) / scale]);
+  const k = (r2: number) => (r2 < 1e-18 ? 0 : 0.5 * r2 * Math.log(r2));
+  const m = n + 3;
+  const a: number[][] = Array.from({ length: m }, () => new Array(m + 1).fill(0));
+  for (let i = 0; i < n; i++) {
+    for (let j = 0; j < n; j++) a[i][j] = k((u[i][0] - u[j][0]) ** 2 + (u[i][1] - u[j][1]) ** 2);
+    a[i][i] += 1e-9; // a touch of stiffness: no wild swings between close stations
+    a[i][n] = 1;
+    a[i][n + 1] = u[i][0];
+    a[i][n + 2] = u[i][1];
+    a[n][i] = 1;
+    a[n + 1][i] = u[i][0];
+    a[n + 2][i] = u[i][1];
+    a[i][m] = c[i].z;
+  }
+  for (let col = 0; col < m; col++) {
+    let piv = col;
+    for (let r = col + 1; r < m; r++) if (Math.abs(a[r][col]) > Math.abs(a[piv][col])) piv = r;
+    if (Math.abs(a[piv][col]) < 1e-12) return flat;
+    [a[col], a[piv]] = [a[piv], a[col]];
+    for (let r = 0; r < m; r++) {
+      if (r === col) continue;
+      const f = a[r][col] / a[col][col];
+      if (f !== 0) for (let cc = col; cc <= m; cc++) a[r][cc] -= f * a[col][cc];
+    }
+  }
+  const sol = a.map((row, i) => row[m] / row[i]);
+  if (sol.some((v) => !Number.isFinite(v))) return flat;
+  const zs = c.map((p) => p.z);
+  const lo = Math.min(...zs);
+  const hi = Math.max(...zs);
+  const margin = Math.max(0.5, (hi - lo) * 0.2);
+  return (x, y) => {
+    const px = (x - mx) / scale;
+    const py = (y - my) / scale;
+    let z = sol[n] + sol[n + 1] * px + sol[n + 2] * py;
+    for (let i = 0; i < n; i++) z += sol[i] * k((px - u[i][0]) ** 2 + (py - u[i][1]) ** 2);
+    return Math.min(hi + margin, Math.max(lo - margin, z));
+  };
+}
