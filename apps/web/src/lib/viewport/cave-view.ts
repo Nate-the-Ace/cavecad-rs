@@ -571,7 +571,7 @@ export class CaveView {
    * at height `z`. Drawn before the lines and without depth, so the passage never hides it and the
    * survey is drawn over it.
    */
-  setScans(list: { key: string; url: string; matrix: number[]; z: number; opacity: number; trim?: [number, number][] | null; warp?: Warp | null }[]) {
+  setScans(list: { key: string; url: string; matrix: number[]; z: number; opacity: number; trim?: [number, number][] | null; warp?: Warp | null; plane?: [number, number, number] | null }[]) {
     const keep = new Set(list.map((l) => l.key));
     for (const [key, s] of this.scans) {
       if (!keep.has(key)) this.removeScan(key, s);
@@ -640,9 +640,11 @@ export class CaveView {
     this.requestRender();
   }
 
-  private placeScan(mesh: THREE.Mesh, item: { matrix: number[]; z: number; opacity: number; warp?: Warp | null }) {
+  private placeScan(mesh: THREE.Mesh, item: { matrix: number[]; z: number; opacity: number; warp?: Warp | null; plane?: [number, number, number] | null }) {
     const m = item.matrix;
     const flat = mesh.userData.flat as THREE.BufferGeometry;
+    // The scan lies in the plane z = a + b x + c y through its stations (flat at `z` when it has no plane).
+    const [pa, pb, pc] = item.plane ?? [item.z, 0, 0];
     if (item.warp) {
       // A rubber sheet: a grid over the picture, each node where the warp puts it, so the matrix is only the height.
       const box = mesh.userData.box as { x0: number; y0: number; w: number; h: number };
@@ -650,7 +652,7 @@ export class CaveView {
       const pos = new Float32Array(grid.dst.length * 3);
       const uv = new Float32Array(grid.dst.length * 2);
       grid.dst.forEach((d, i) => {
-        pos.set([d[0], d[1], 0], i * 3);
+        pos.set([d[0], d[1], pa + pb * d[0] + pc * d[1]], i * 3);
         uv.set([(grid.src[i][0] - box.x0) / box.w, 1 - (grid.src[i][1] - box.y0) / box.h], i * 2);
       });
       const index: number[] = [];
@@ -666,13 +668,13 @@ export class CaveView {
       g.setIndex(index);
       if (mesh.geometry !== flat) mesh.geometry.dispose();
       mesh.geometry = g;
-      mesh.matrix.set(1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, item.z, 0, 0, 0, 1);
+      mesh.matrix.identity();
     } else {
       if (mesh.geometry !== flat) {
         mesh.geometry.dispose();
         mesh.geometry = flat;
       }
-      mesh.matrix.set(m[0], m[1], 0, m[2], m[3], m[4], 0, m[5], 0, 0, 1, item.z, 0, 0, 0, 1);
+      mesh.matrix.set(m[0], m[1], 0, m[2], m[3], m[4], 0, m[5], pb * m[0] + pc * m[3], pb * m[1] + pc * m[4], 0, pa + pb * m[2] + pc * m[5], 0, 0, 0, 1);
     }
     mesh.matrixWorldNeedsUpdate = true;
     (mesh.material as THREE.MeshBasicMaterial).opacity = item.opacity;

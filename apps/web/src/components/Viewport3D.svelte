@@ -7,6 +7,7 @@
   import { cursorsFor, live as room, reportCursor } from '../lib/sync.svelte';
   import { engine, loadEngine, type Scene, type TypeStyle } from '../lib/engine';
   import { CaveView, type Projection } from '../lib/viewport/cave-view';
+  import { fitPlane } from '../lib/plane';
   import { cave, changed, filter, haloFade, haloReach, option, setPick, setShowSections, setShown, wireFilter } from '../lib/cave.svelte';
   import { tolerancePx } from '../lib/commands';
   import { ViewCube } from '../lib/viewport/view-cube';
@@ -83,19 +84,18 @@
     untrack(() => {
       if (!view) return;
       view.setHalo(halo, haloM, haloF);
-      // A scan lies like a carpet at the height of the stations it is matched to (the whole survey's average when it has none), just under them.
+      // A scan lies in the plane of the stations it is matched to, so it touches them (and lies level when it has none, at the survey's average height).
       const all = scene?.stations ?? [];
-      const mean = (zs: number[]) => (zs.length ? zs.reduce((a, b) => a + b, 0) / zs.length : (scene?.bounds?.[2] ?? 0) + 0.5);
-      const surveyZ = mean(all.map((st) => st.at[2]));
-      const zFor = (ids: string[] | undefined) => {
-        const own = (ids ?? []).map((id) => all.find((st) => st.id === id)?.at[2]).filter((v): v is number => v !== undefined);
-        return (own.length ? mean(own) : surveyZ) - 0.3;
+      const surveyZ = all.length ? all.reduce((t, st) => t + st.at[2], 0) / all.length : (scene?.bounds?.[2] ?? 0);
+      const planeFor = (ids: string[] | undefined): [number, number, number] => {
+        const pts = (ids ?? []).map((id) => all.find((st) => st.id === id)?.at).filter((v): v is [number, number, number] => !!v);
+        return fitPlane(pts, surveyZ);
       };
       const list = on
         ? engine
             .scanPlacements('map', cave.adjusted)
             .filter((p) => !filter.hiddenTrips.includes(p.trip) && have(p.path))
-            .map((p) => ({ key: `${p.trip}/${p.path}`, url: mapUrl(p.path)!, matrix: p.matrix, z: zFor(p.stations), opacity, trim: p.trim, warp: p.warp }))
+            .map((p) => ({ key: `${p.trip}/${p.path}`, url: mapUrl(p.path)!, matrix: p.matrix, z: surveyZ, plane: planeFor(p.stations), opacity, trim: p.trim, warp: p.warp }))
         : [];
       view.setScans(list);
     });
