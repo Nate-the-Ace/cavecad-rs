@@ -4,6 +4,8 @@
   import { shelf } from '../lib/shelf.svelte';
   import { leaveP2p, p2p } from '../lib/p2p.svelte';
   import { leave, live } from '../lib/sync.svelte';
+  import { classroom } from '../lib/classroom.svelte';
+  import { registerMirror } from '../lib/classroom-mirror';
   import { cave, clearPick, setCompactRibbon, setPick, setUnits, option, setOption } from '../lib/cave.svelte';
   import DrawTools from './DrawTools.svelte';
   import ThemeGroup from './ThemeGroup.svelte';
@@ -19,7 +21,7 @@
   import { fillLabel } from '../lib/fills';
   import { onMount } from 'svelte';
   import { PANELS, panelState, resetLayout, showPanel, togglePanel } from '../lib/workspace.svelte';
-  import { Check, Trash2, LogIn, LogOut, Users, Library, FilePlus, FileInput, FolderOpen, Save, Ruler, Footprints, Route, Waypoints, Scissors, Map as MapIcon, Terminal, LayoutDashboard, Activity, Shapes, Table2, BookOpen, ScanLine, FileText, ChevronDown, PanelTop, FileOutput, Package, Mountain, SlidersHorizontal } from '@lucide/svelte';
+  import { GraduationCap, Check, Trash2, LogIn, LogOut, Users, Library, FilePlus, FileInput, FolderOpen, Save, Ruler, Footprints, Route, Waypoints, Scissors, Map as MapIcon, Terminal, LayoutDashboard, Activity, Shapes, Table2, BookOpen, ScanLine, FileText, ChevronDown, PanelTop, FileOutput, Package, Mountain, SlidersHorizontal } from '@lucide/svelte';
   import type { Component } from 'svelte';
 
   interface Item {
@@ -67,6 +69,7 @@
         items: [
           { label: 'Share', icon: Users, run: () => (p2p.dialog = true), pressed: () => live.status === 'live' && p2p.role === 'host' },
           { label: 'Join', icon: LogIn, run: () => { shelf.join = true; shelf.open = true; }, pressed: () => live.status === 'live' && p2p.role === 'guest' },
+          { label: 'Classroom', icon: GraduationCap, run: () => (classroom.dialog = true), pressed: () => classroom.role === 'teacher' },
           { label: 'Leave', icon: LogOut, run: () => { leaveP2p(); leave(); } },
         ],
       },
@@ -98,6 +101,15 @@
 
   // A running command gets its own tab, in front, with its settings and a way to finish it.
   const CONTEXT = '\u0000command';
+  // In a class the teacher's tab is mirrored (a contextual tab is each person's own, from the tool they have).
+  $effect(() =>
+    registerMirror('ribbon', {
+      read: () => (active === CONTEXT ? undefined : active),
+      write: (tab) => {
+        if (typeof tab === 'string' && tab in tabs) active = tab;
+      },
+    })
+  );
   let toolLabels = $state<Record<string, string>>({});
   onMount(() => {
     loadEngine().then(() => (toolLabels = Object.fromEntries(engine.drawTools().map((t) => [t.key, t.label]))));

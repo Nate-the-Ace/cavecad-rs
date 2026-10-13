@@ -4,9 +4,10 @@
   import PanelUndo from './PanelUndo.svelte';
   import { shelf } from '../lib/shelf.svelte';
   import { isSymbolKind, needsWords, symbolDef } from '../lib/symbols';
+  import { registerMirror } from '../lib/classroom-mirror';
   import { cursorsFor, live as room, reportCursor } from '../lib/sync.svelte';
   import { engine, loadEngine, type Scene, type TypeStyle } from '../lib/engine';
-  import { CaveView, type Projection } from '../lib/viewport/cave-view';
+  import { CaveView, type CameraState, type Projection } from '../lib/viewport/cave-view';
   import { fitPlane, heightSurface } from '../lib/plane';
   import { cave, changed, filter, haloFade, haloReach, option, setPick, setShowSections, setShown, wireFilter } from '../lib/cave.svelte';
   import { tolerancePx } from '../lib/commands';
@@ -307,6 +308,7 @@
     };
     v.shadingFor = (dir, persp) => engine.shading(cave.adjusted, dir, persp, wireFilter());
     view = v;
+    const unmirror = registerMirror('map', { read: () => v.getCamera(), write: (c) => v.setCamera(c as CameraState) });
     if (import.meta.env.DEV) (window as unknown as { __view: CaveView }).__view = v; // for tests
     setActiveView(v);
 
@@ -321,6 +323,7 @@
     });
 
     return () => {
+      unmirror();
       ro.disconnect();
       offTheme();
       cube.dispose();

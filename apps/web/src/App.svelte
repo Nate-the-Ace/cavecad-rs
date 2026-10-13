@@ -10,6 +10,9 @@
   import { live, readInviteFromUrl } from './lib/sync.svelte';
   import CaveShelf from './components/CaveShelf.svelte';
   import LiveShare from './components/LiveShare.svelte';
+  import ClassroomDock from './components/ClassroomDock.svelte';
+  import ClassroomDialogs from './components/ClassroomDialogs.svelte';
+  import { classroom, keepsCave, readClassLinkFromUrl } from './lib/classroom.svelte';
   import { viewChanged } from './lib/p2p.svelte';
   import { scans } from './lib/scans.svelte';
   import { autosaveSoon, flush, loadShelf, shelf } from './lib/shelf.svelte';
@@ -24,6 +27,7 @@
     const teardown = initWorkspace(host);
     installDiagnostics();
     readInviteFromUrl();
+    readClassLinkFromUrl();
     void checkRemembered(); // the scans kept from last time come back before any panel is opened
     const unguard = guardUnload();
     document.addEventListener('visibilitychange', keepNow);
@@ -34,7 +38,7 @@
         version = engine.version();
         await loadShelf();
         // A clean slate: the shelf opens first, unless someone sent an invite to a room.
-        if (!cave.hasCave && shelf.startup && !live.pending) shelf.open = true;
+        if (!cave.hasCave && shelf.startup && !live.pending && !classroom.pending) shelf.open = true;
       } catch (e) {
         failed = String(e);
       }
@@ -51,7 +55,7 @@
   // Edits are kept on the shelf a moment after they are made.
   $effect(() => {
     void cave.version;
-    autosaveSoon();
+    if (keepsCave()) autosaveSoon(); // what a student is shown is the teacher's cave: not kept here
   });
   // The host tells guests where it is looking.
   $effect(() => {
@@ -61,7 +65,7 @@
     void scans.selected;
     viewChanged();
   });
-  const keepNow = () => void flush();
+  const keepNow = () => keepsCave() && void flush();
 
   const dirty = $derived(unsaved());
   $effect(() => {
@@ -76,11 +80,15 @@
   <NewCave />
   <CaveShelf />
   <LiveShare />
+  <ClassroomDialogs />
   {#if info?.error}
     <div class="banner">Rust build failed. The page is showing the last good build.<pre>{info.error}</pre></div>
   {/if}
   {#if failed}<p class="err">Engine failed to load: {failed}</p>{/if}
-  <div class="workspace" bind:this={host}></div>
+  <div class="body">
+    <div class="workspace" bind:this={host}></div>
+    <ClassroomDock />
+  </div>
   <footer>
     <span>{version}</span>
     {#if dirty}<span class="unsaved" title="Changes since the cave was opened or last saved. Save with Ctrl/Cmd+S.">Unsaved changes</span>{/if}
@@ -90,7 +98,8 @@
 
 <style>
   .shell { display: flex; flex-direction: column; height: 100%; }
-  .workspace { flex: 1; min-height: 0; border-top: 1px solid var(--line); }
+  .body { flex: 1; min-height: 0; display: flex; border-top: 1px solid var(--line); }
+  .workspace { flex: 1; min-width: 0; min-height: 0; }
   .err, .banner { color: var(--danger); margin: 0; }
   .banner { background: var(--accent-bg); padding: 8px 12px; }
   .banner pre { margin: 4px 0 0; font-family: var(--mono); font-size: 12px; white-space: pre-wrap; }

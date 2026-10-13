@@ -4,6 +4,7 @@
 // converge in any order. Nothing is stored on disk and nothing leaves the machine the server runs on.
 import { randomBytes } from 'node:crypto';
 import { WebSocketServer } from 'ws';
+import { classLeft, classMessage, classWelcome, newClass } from './classroom-relay.mjs';
 
 const MAX_ROOM = 64;
 const MAX_MESSAGE = 64 * 1024 * 1024;
@@ -13,18 +14,20 @@ const MAX_HOURS = 24 * 30;
 const secret = () => randomBytes(16).toString('hex');
 
 /** Room state is plain data so the tests can look at it. */
-export function createRelay() {
+export function createRelay(options = {}) {
   /**
    * A room also has an owner (the first device in; it holds `ownerKey` and can reclaim the room with it),
    * invites it has made (secret tokens with an expiry and a number of uses), whether it is `locked` to
    * people with an invite, and who was admitted already (so a reconnect does not use up an invite).
-   * @type {Map<string, { log: unknown[]; peers: Set<import('ws').WebSocket>; seeder: import('ws').WebSocket | null; ownerKey: string; locked: boolean; invites: Map<string, { label: string; expires: number; uses: number; used: number }>; admitted: Set<string> }>}
+   * A room started as a class also has `class` (see classroom-relay.mjs): its owner is the teacher and everyone
+   * else only watches. `options.logDir` is where class transcripts are appended, if the server keeps any.
+   * @type {Map<string, { class?: ReturnType<typeof newClass>; log: unknown[]; peers: Set<import('ws').WebSocket>; seeder: import('ws').WebSocket | null; ownerKey: string; locked: boolean; invites: Map<string, { label: string; expires: number; uses: number; used: number }>; admitted: Set<string> }>}
    */
   const rooms = new Map();
 
   const send = (ws, msg) => ws.readyState === ws.OPEN && ws.send(JSON.stringify(msg));
   const announce = (room) => {
-    const people = [...room.peers].map((p) => p.person);
+    const people = [...room.peers].map((p) => (room.class ? { ...p.person, role: p.role } : p.person));
     const owner = [...room.peers].find((p) => p.isOwner)?.person.id ?? '';
     room.peers.forEach((p) => send(p, { t: 'peers', n: room.peers.size, people, owner, locked: room.locked }));
   };
@@ -36,6 +39,7 @@ export function createRelay() {
     return i;
   };
   const clean = (v, max) => String(v ?? '').slice(0, max);
+  const everyone = (room) => (msg) => room.peers.forEach((p) => send(p, msg));
 
   function onConnection(ws) {
     let room = null;
@@ -51,8 +55,11 @@ export function createRelay() {
         name = String(msg.room ?? '').trim().slice(0, 60);
         if (!name) return send(ws, { t: 'error', message: 'A room needs a name.' });
         const fresh = !rooms.has(name);
+        // A student's link must never start a room (and so make them its owner): the class has to be there.
+        if (fresh && msg.joinOnly === true) return send(ws, { t: 'error', message: 'That class has not started yet. Ask your teacher to start it, then open the link again.' });
         if (fresh) rooms.set(name, { log: [], peers: new Set(), seeder: null, ownerKey: secret(), locked: false, invites: new Map(), admitted: new Set() });
         room = rooms.get(name);
+        if (fresh && msg.mode === 'class') room.class = newClass(name, options.logDir);
         // Who may come in: the owner (by its key), anyone while the room is open, else only with a live invite.
         const id = clean(msg.id, 40);
         const isOwner = fresh || (typeof msg.ownerKey === 'string' && msg.ownerKey === room.ownerKey);
@@ -67,14 +74,16 @@ export function createRelay() {
         if (room.peers.size >= MAX_ROOM) return send(ws, { t: 'error', message: 'That room is full.' }), (room = null);
         if (invite) invite.used += 1;
         if (id) room.admitted.add(id);
+        if (room.class && !isOwner && room.log.length === 0) return send(ws, { t: 'error', message: 'The teacher has not shared a cave yet. Try again in a moment.' }), void (room = null);
         ws.isOwner = isOwner;
+        ws.role = room.class ? (isOwner ? 'teacher' : 'student') : '';
         // The first device into an empty room supplies the cave; everyone else receives it.
         const seed = room.log.length === 0 && room.seeder === null;
         if (seed) room.seeder = ws;
         // Who this is, shown as an avatar to the others. Taken as text only.
         ws.person = { id: clean(msg.id, 40), name: clean(msg.name, 40) || 'Guest', color: /^#[0-9a-f]{6}$/i.test(msg.color) ? msg.color : '#888888' };
         room.peers.add(ws);
-        send(ws, { t: 'welcome', log: room.log, seed, owner: isOwner, ...(fresh ? { ownerKey: room.ownerKey } : {}), ...(isOwner ? { invites: invitesOf(room) } : {}) });
+        send(ws, { t: 'welcome', log: room.log, seed, owner: isOwner, ...(room.class ? { class: classWelcome(room.class, ws.role) } : {}), ...(fresh ? { ownerKey: room.ownerKey } : {}), ...(isOwner ? { invites: invitesOf(room) } : {}) });
         announce(room);
       } else if (msg.t === 'invite' && room && ws.isOwner) {
         // The owner makes an invite: a secret link token that works for a while and for some people.
@@ -93,13 +102,18 @@ export function createRelay() {
         room.locked = !!msg.on;
         send(ws, { t: 'invites', invites: invitesOf(room) });
         announce(room);
+      } else if (room?.class && ['say', 'hand', 'mirror', 'end', 'getlog'].includes(msg.t) && ws.person) {
+        classMessage(room, ws, msg, { send, toAll: everyone(room) });
       } else if (msg.t === 'presence' && room && ws.person) {
         // Where a person is and what they are doing: passed on to the others, never stored, and
         // stamped with the sender's id here so nobody can speak for someone else.
         const { t: _t, ...rest } = msg;
         const note = JSON.stringify({ ...rest, t: 'presence', id: ws.person.id });
-        if (note.length <= 2000) for (const p of room.peers) if (p !== ws && p.readyState === p.OPEN) p.send(note);
+        // In a class what students do is for the teacher to see, not for the other students.
+        const onlyTeacher = room.class && ws.role === 'student';
+        if (note.length <= 2000) for (const p of room.peers) if (p !== ws && p.readyState === p.OPEN && (!onlyTeacher || p.role === 'teacher')) p.send(note);
       } else if (msg.t === 'ops' && room && Array.isArray(msg.ops) && msg.ops.length) {
+        if (room.class && ws.role !== 'teacher') return send(ws, { t: 'denied', what: 'edit', message: 'Only the teacher can change the cave in a class.' });
         room.log.push(...msg.ops);
         if (room.seeder === ws) room.seeder = null;
         for (const p of room.peers) if (p !== ws) send(p, { t: 'ops', ops: msg.ops });
@@ -108,6 +122,7 @@ export function createRelay() {
     ws.on('close', () => {
       if (!room) return;
       room.peers.delete(ws);
+      classLeft(room, ws, { toAll: everyone(room) });
       if (room.seeder === ws) room.seeder = null; // a seeder that left without sending hands the job on
       announce(room);
     });

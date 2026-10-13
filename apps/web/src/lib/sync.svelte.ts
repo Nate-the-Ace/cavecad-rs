@@ -10,6 +10,8 @@ export interface Person {
   id: string;
   name: string;
   color: string;
+  /** In a classroom: who teaches and who watches. Empty in an ordinary room. */
+  role?: 'teacher' | 'student' | '';
 }
 
 const NAME_KEY = 'cavecad.name';
@@ -140,6 +142,25 @@ export function setLocked(on: boolean) {
   ask({ t: 'lock', on });
 }
 
+/**
+ * What a classroom (see `classroom.svelte.ts`) listens for: the welcome that says what role this device has,
+ * every message that is only meaningful in a class (chat, hands, the teacher's view, the end), and the
+ * moment the room is left.
+ */
+const roomHooks: { welcome: ((m: Record<string, unknown>) => boolean | void) | null; message: ((m: Record<string, unknown>) => void) | null; left: (() => void) | null } = { welcome: null, message: null, left: null };
+export function setRoomHooks(h: { welcome: (m: Record<string, unknown>) => boolean | void; message: (m: Record<string, unknown>) => void; left: () => void }) {
+  roomHooks.welcome = h.welcome;
+  roomHooks.message = h.message;
+  roomHooks.left = h.left;
+}
+
+/** Sends a message to the room's relay (a class's chat, hand, view). False when not connected. */
+export function sendRoom(msg: object): boolean {
+  if (!socket || socket.readyState !== WebSocket.OPEN || live.status !== 'live') return false;
+  socket.send(JSON.stringify(msg));
+  return true;
+}
+
 const FLUSH_MS = 80;
 const PRESENCE_MS = 70;
 /** A pointer not heard from for this long is not shown. */
@@ -153,6 +174,8 @@ let attempts = 0;
 let wanted = false;
 let roomName = '';
 let inviteToken = '';
+/** How this device joins: as the teacher starting a class (`mode: 'class'`), or as a student whose link must not start a room. */
+let joinOptions: { mode?: 'class'; joinOnly?: boolean } = {};
 let lastPresence = 0;
 
 function flush() {
@@ -220,6 +243,7 @@ function stopTimers() {
 /** Leaves the room. The cave stays open on this device exactly as it is. */
 export function leave() {
   hooks.leave?.(); // a peer-to-peer session ends with it
+  roomHooks.left?.();
   wanted = false;
   stopTimers();
   const s = socket;
@@ -235,9 +259,10 @@ export function leave() {
 }
 
 /** Joins (or starts) a room. */
-export function join(room: string, invite = '') {
+export function join(room: string, invite = '', options: { mode?: 'class'; joinOnly?: boolean } = {}) {
   leave();
   inviteToken = invite;
+  joinOptions = options;
   live.pending = null;
   const name = room.trim();
   if (!name) {
@@ -268,7 +293,7 @@ function connect(rejoin: boolean) {
     return;
   }
   socket = ws;
-  ws.onopen = () => ws.send(JSON.stringify({ t: 'join', room: roomName, id: myId, name: me.name.trim() || deviceName(), color: me.color, invite: inviteToken, ownerKey: ownerKeyOf(roomName) }));
+  ws.onopen = () => ws.send(JSON.stringify({ t: 'join', room: roomName, id: myId, name: me.name.trim() || deviceName(), color: me.color, invite: inviteToken, ownerKey: ownerKeyOf(roomName), ...joinOptions }));
   ws.onerror = () => {
     if (socket === ws && live.status === 'connecting') live.error = 'Could not reach the sync server. Live editing needs the dev server (npm run dev) on one of the devices.';
   };
@@ -290,7 +315,7 @@ function connect(rejoin: boolean) {
     retry = setTimeout(() => wanted && connect(true), wait);
   };
   ws.onmessage = (ev) => {
-    let m: { t: string; log?: unknown[]; seed?: boolean; ops?: unknown[]; people?: Person[]; message?: string; owner?: boolean | string; ownerKey?: string; locked?: boolean; invites?: Invite[]; made?: string } & Partial<Cursor>;
+    let m: { t: string; class?: unknown; log?: unknown[]; seed?: boolean; ops?: unknown[]; people?: Person[]; message?: string; owner?: boolean | string; ownerKey?: string; locked?: boolean; invites?: Invite[]; made?: string } & Partial<Cursor>;
     try {
       m = JSON.parse(String(ev.data));
     } catch {
@@ -298,6 +323,7 @@ function connect(rejoin: boolean) {
     }
     if (m.t === 'welcome') {
       live.owner = m.owner === true;
+      if (roomHooks.welcome?.(m as Record<string, unknown>) === false) return; // a class that does not want this room
       if (m.ownerKey) keepOwnerKey(roomName, m.ownerKey);
       live.invites = m.invites ?? [];
       if (m.seed) {
@@ -339,6 +365,8 @@ function connect(rejoin: boolean) {
       if (m.made) live.made = m.made;
     } else if (m.t === 'error') {
       giveUp(m.message ?? 'The room refused this device.');
+    } else {
+      roomHooks.message?.(m as Record<string, unknown>); // chat, hands, the teacher's view, the end of a class
     }
   };
 }

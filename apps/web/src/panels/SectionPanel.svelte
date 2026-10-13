@@ -5,6 +5,8 @@
   // their station and follow it when the survey is adjusted.
   import { drawHalo, type HaloLine } from '../lib/halo';
   import { onMount, untrack } from 'svelte';
+  import { fitRect, registerMirror, roundRect, visibleRect, type Rect } from '../lib/classroom-mirror';
+  import { classroom } from '../lib/classroom.svelte';
   import { onTheme } from '../lib/theme';
   import { Maximize, ChevronLeft, ChevronRight } from '@lucide/svelte';
   import PanelUndo from '../components/PanelUndo.svelte';
@@ -40,6 +42,19 @@
   let ox = 0;
   let oy = 0;
   let frame = 0;
+  // In a class the teacher's view is mirrored: what is on show is the part of the section in the window, so a window of
+  // another size shows the same part.
+  $effect(() =>
+    registerMirror('section', {
+      read: () => (width > 0 && scale > 0 ? { rect: roundRect(visibleRect(scale, ox, oy, width, height)) } : undefined),
+      write: (state) => {
+        const rect = (state as { rect?: Rect }).rect;
+        if (!rect || width === 0) return;
+        ({ scale, ox, oy } = fitRect(rect, width, height));
+        schedule();
+      },
+    })
+  );
   let framed = '';
   let live: { pts: [number, number][]; widths: number[]; pressure: boolean } | null = null;
 
@@ -136,6 +151,7 @@
   }
 
   function fit() {
+    if (classroom.role === 'student') return; // a student's view is the teacher's
     const s = section;
     if (!s || width === 0) return;
     const all = [...s.outline, ...s.measured, ...s.sketches.flatMap((k) => k.points)];

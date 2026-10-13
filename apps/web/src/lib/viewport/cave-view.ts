@@ -23,6 +23,15 @@ import { metresPer, niceNumber, unitName, type Units } from '../units';
 export type Projection = 'perspective' | 'orthographic';
 export type Dir = [number, number, number];
 
+/** Where the camera is: what it looks at, from which direction, half the height it shows (metres) and the window's shape. */
+export interface CameraState {
+  target: [number, number, number];
+  dir: [number, number, number];
+  half: number;
+  aspect: number;
+  ortho: boolean;
+}
+
 const FOV = 45;
 /** Default "home" view: straight down (plan), north up. Every cave opens here. */
 export const HOME_DIR: Dir = [0, 0, 1];
@@ -552,6 +561,41 @@ export class CaveView {
 
   home() {
     this.snapTo(HOME_DIR);
+  }
+
+  /** Where the camera is, as plain rounded data (what it looks at, from which way, and how much it shows),
+   *  so another window can be put in the same place. */
+  getCamera(): CameraState {
+    const target = this.controls.target;
+    const dir = this.camera.position.clone().sub(target).normalize();
+    const r = (v: number, k = 1000) => Math.round(v * k) / k;
+    return {
+      target: [r(target.x), r(target.y), r(target.z)],
+      dir: [r(dir.x, 10000), r(dir.y, 10000), r(dir.z, 10000)],
+      half: r(this.visibleHalfHeight()),
+      aspect: r(this.width / this.height, 100),
+      ortho: this.camera === this.ortho,
+    };
+  }
+
+  /** Puts the camera where `getCamera` found another window's. Shows at least what that window showed, even in a
+   *  window of another shape. */
+  setCamera(c: CameraState) {
+    cancelAnimationFrame(this.anim);
+    this.setProjection(c.ortho ? 'orthographic' : 'perspective');
+    const target = new THREE.Vector3(...c.target);
+    const dir = new THREE.Vector3(...c.dir).normalize();
+    const half = Math.max(c.half, (c.half * c.aspect) / (this.width / this.height));
+    this.controls.target.copy(target);
+    if (c.ortho) {
+      this.setOrthoHeight(half);
+      this.ortho.position.copy(target).addScaledVector(dir, Math.max(half * 4, this.extent));
+    } else {
+      this.persp.position.copy(target).addScaledVector(dir, half / Math.tan((FOV * Math.PI) / 360));
+    }
+    this.controls.update();
+    this.updateDashes();
+    this.requestRender();
   }
 
   // ---- content -----------------------------------------------------------------------------

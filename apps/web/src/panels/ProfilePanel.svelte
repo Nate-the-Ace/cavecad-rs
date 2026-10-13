@@ -1,6 +1,8 @@
 <script lang="ts">
   import { drawHalo, type HaloLine } from '../lib/halo';
   import { onMount, untrack } from 'svelte';
+  import { fitRect, registerMirror, roundRect, visibleRect, type Rect } from '../lib/classroom-mirror';
+  import { classroom } from '../lib/classroom.svelte';
   import { onTheme } from '../lib/theme';
   import { Maximize } from '@lucide/svelte';
   import PanelUndo from '../components/PanelUndo.svelte';
@@ -41,6 +43,19 @@
   let ox = 0;
   let oy = 0;
   let frame = 0;
+  // In a class the teacher's view is mirrored: what is on show is the part of the profile in the window, so a window of
+  // another size shows the same part.
+  $effect(() =>
+    registerMirror('profile', {
+      read: () => (width > 0 && scale > 0 ? { rect: roundRect(visibleRect(scale, ox, oy, width, height)) } : undefined),
+      write: (state) => {
+        const rect = (state as { rect?: Rect }).rect;
+        if (!rect || width === 0) return;
+        ({ scale, ox, oy } = fitRect(rect, width, height));
+        schedule();
+      },
+    })
+  );
   // Drawn lines can be selected and their fit points moved, added and deleted.
   const editor = new LineEditor({
     lines: () => band?.sketches ?? [],
@@ -143,6 +158,7 @@
   });
 
   function fit() {
+    if (classroom.role === 'student') return; // a student's view is the teacher's
     if (!band?.bounds || width === 0) return;
     const [s0, z0, s1, z1] = band.bounds;
     const w = Math.max(s1 - s0, 1);

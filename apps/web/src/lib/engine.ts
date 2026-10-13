@@ -6,6 +6,7 @@ import { setOrnamentSource } from './section-glyph';
 import { setCalloutSource, setSymbolCatalogue, type SymbolDef } from './symbols';
 import type { Warp } from './scan-warp';
 import { setFillSource, type FillDef, type Marks } from './fills';
+import { guardEngine } from './readonly';
 import type { StationRow } from './station-table';
 import type { Lrud, NotebookPage, TripChoice } from './notebook';
 
@@ -300,7 +301,7 @@ export function loadEngine(): Promise<void> {
   return ready;
 }
 
-export const engine = {
+const rawEngine = {
   version: () => engine_version(),
   log: (level: Level, source: string, message: string) => log(level, source, message),
   events: (since: number): ConsoleEvent[] => JSON.parse(console_events(BigInt(since))),
@@ -454,6 +455,9 @@ export const engine = {
   redo: (scope: Scope): boolean => redo(scope),
   editState: (scope: Scope): { undo: boolean; redo: boolean } => JSON.parse(edit_state(scope)),
 };
+
+/** The engine, which refuses every write while this person is only watching a class (see `readonly.ts`). */
+export const engine = guardEngine(rawEngine);
 
 /** What build is this page running? Always fetched fresh. */
 export async function loadBuildInfo(): Promise<BuildInfo | null> {

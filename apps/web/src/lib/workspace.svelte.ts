@@ -6,6 +6,8 @@ import { createDockview, themeDark, themeLight } from 'dockview-core/dist/dockvi
 import type { DockviewApi, DockviewGroupPanel, IContentRenderer, IHeaderActionsRenderer } from 'dockview-core';
 import { mount, unmount, type Component } from 'svelte';
 import { isDark, onTheme } from './theme';
+import { frontPanels, layoutShape, registerMirror } from './classroom-mirror';
+import { classroom } from './classroom.svelte';
 import MapPanel from '../panels/MapPanel.svelte';
 import ConsolePanel from '../components/Console.svelte';
 import ProfilePanel from '../panels/ProfilePanel.svelte';
@@ -160,6 +162,7 @@ export function initWorkspace(el: HTMLElement): () => void {
     refreshOpen();
     clearTimeout(timer);
     timer = setTimeout(() => {
+      if (classroom.role === 'student') return; // the teacher's arrangement is not this person's own
       try {
         localStorage.setItem(LAYOUT_KEY, JSON.stringify(a.toJSON()));
       } catch {
@@ -170,8 +173,28 @@ export function initWorkspace(el: HTMLElement): () => void {
   // Which tab is in front decides what can be seen, so a change of tab refreshes it too.
   const activeSub = a.onDidActivePanelChange(() => refreshOpen());
   const offTheme = onTheme((dark) => a.updateOptions({ theme: dark ? themeDark : themeLight }));
+  // In a class the teacher's arrangement of panels is mirrored: a different arrangement rebuilds the workspace,
+  // sizes and the tab in front are matched without rebuilding (so the views keep their place).
+  const offMirror = registerMirror('layout', {
+    read: () => ({ layout: a.toJSON() }),
+    write: (state) => {
+      const layout = (state as { layout?: unknown }).layout;
+      if (!layout) return;
+      if (layoutShape(layout) !== layoutShape(a.toJSON())) {
+        try {
+          a.fromJSON(layout as Parameters<DockviewApi['fromJSON']>[0]);
+        } catch {
+          return; // a layout this build cannot read: keep the one on screen
+        }
+        refreshOpen();
+        return;
+      }
+      for (const id of frontPanels(layout)) a.getPanel(id)?.api.setActive();
+    },
+  });
 
   return () => {
+    offMirror();
     clearTimeout(timer);
     layoutSub.dispose();
     offTheme();
