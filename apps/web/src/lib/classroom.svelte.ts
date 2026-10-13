@@ -171,7 +171,14 @@ setRoomHooks({
     // Refusing here stops the cave of some other room replacing this one.
     if (intent === 'teacher' && (!c || c.role !== 'teacher')) return fail(`There is already a room called “${live.room}” on this server. Pick another name for the class.`);
     if (intent === 'student' && (!c || c.role !== 'student')) return fail('That link is not to a class.');
-    if (!c) return;
+    if (!c) {
+      // A link to an ordinary shared session (not a class): connected, so the join page is done.
+      if (classroom.pending?.live) {
+        classroom.pending = null;
+        classroom.busy = false;
+      }
+      return;
+    }
     if (intent === '') classroom.transport = p2p.role !== 'none' ? 'p2p' : 'relay'; // a class joined with codes, not a link
     classroom.role = c.role;
     classroom.name = c.name;

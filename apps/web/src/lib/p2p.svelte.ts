@@ -17,7 +17,8 @@ import { Reassembler, frames } from './p2p-wire';
 import { addRemoteFile, fileOf, have, scans, select } from './scans.svelte';
 import { fadeCursors, live, me, myPersonId, roomEvents, setPeerHooks, type Person } from './sync.svelte';
 import { hostLoop, joinLoop } from './signal-handshake';
-import type { Mailbox } from './signal';
+import { configuredMailbox, mailboxConfig, type Mailbox } from './signal';
+import { liveLink } from './classroom-log';
 import { CLASS_MESSAGES, classLeft, classMessage, classWelcome, newClass, type ClassState, type RoomIo } from './classroom-room.mjs';
 import { flush as keepShelf, shelf } from './shelf.svelte';
 
@@ -38,6 +39,8 @@ export const p2p = $state({
   /** The host lets people in without asking. */
   auto: false,
   invites: [] as PeerInvite[],
+  /** The one link anyone can open to join this session (made with the class mailbox), or empty. */
+  link: '',
   /** Why the last step failed, in plain words. */
   error: '',
   /** The guest's reply code, to send back to the host. */
@@ -626,7 +629,7 @@ let stopSignal: (() => void) | null = null;
  * their own, through the mailbox, and their reply comes back the same way. Needs a class already started
  * (`startClassHosting`). The link is stopped when sharing stops.
  */
-export function openClassLink(session: string, box: Mailbox) {
+export function openSessionLink(session: string, box: Mailbox) {
   stopSignal?.();
   stopSignal = hostLoop(box, session, {
     offer: async () => {
@@ -637,6 +640,30 @@ export function openClassLink(session: string, box: Mailbox) {
     reply: (id, code) => takeReply(id, code),
     trouble: (message) => (p2p.error = message),
   });
+}
+
+/** Another name for the same thing, kept for the classroom's own code. */
+export const openClassLink = openSessionLink;
+
+/**
+ * Makes one link for the session this page hosts (starting to host first when it is not): anyone who opens it
+ * is introduced to this page through the class mailbox, then connects directly. Whether they are let in at
+ * once or asked about first is the same `auto` choice as for codes; whether they edit or only watch is the
+ * session's (a class makes them watch). Returns the link, or null with the reason in `p2p.error`.
+ */
+export function startLinkSharing(): string | null {
+  const box = configuredMailbox();
+  if (!box) {
+    p2p.error = 'This copy of CaveCAD has no class mailbox, so it cannot make a link. Enter the mailbox below, or invite with codes.';
+    return null;
+  }
+  if (p2p.role !== 'host' && !startHosting()) return null;
+  const session = crypto.randomUUID().replace(/-/g, '').slice(0, 20);
+  openSessionLink(session, box);
+  const config = mailboxConfig();
+  p2p.link = liveLink(location.href, session, config?.source === 'local' ? config : undefined);
+  p2p.error = '';
+  return p2p.link;
 }
 
 /** A student's page joins the class a link named, through the mailbox. Gives back a sentence when it cannot. */
@@ -756,6 +783,7 @@ export async function joinWithCode(text: string): Promise<string | null> {
 export function leaveP2p() {
   stopSignal?.();
   stopSignal = null;
+  p2p.link = '';
   clearTimeout(viewTimer);
   stopTimer();
   for (const p of peers.values()) {

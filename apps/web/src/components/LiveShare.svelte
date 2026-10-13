@@ -1,11 +1,12 @@
 <script lang="ts">
   import RelaySettings from './RelaySettings.svelte';
+  import MailboxSettings from './MailboxSettings.svelte';
   // Sharing the open cave live, straight to other devices (no server). The host makes an invite code per
   // person and sends it by any message; the guest sends a reply code back; the host pastes it here. After
   // that everyone sees each other's edits, pointers and (if they follow) where the host is looking.
   import { Copy, X } from '@lucide/svelte';
   import { cave } from '../lib/cave.svelte';
-  import { leaveP2p, letIn, makeInvite, p2p, remove, startHosting, takeReply, turnAway } from '../lib/p2p.svelte';
+  import { leaveP2p, letIn, makeInvite, p2p, remove, startHosting, startLinkSharing, takeReply, turnAway } from '../lib/p2p.svelte';
   import { live, me, rename } from '../lib/sync.svelte';
 
   let replies = $state<Record<string, string>>({});
@@ -29,6 +30,16 @@
   }
 
   const close = () => (p2p.dialog = false);
+  let linkCopied = $state(false);
+  async function copyLink() {
+    try {
+      await navigator.clipboard.writeText(p2p.link);
+      linkCopied = true;
+      setTimeout(() => (linkCopied = false), 1500);
+    } catch {
+      /* the link is selectable: copy it by hand */
+    }
+  }
   const states: Record<string, string> = { waiting: 'Waiting for their reply', connecting: 'Connecting…', asking: 'Wants to join', connected: 'In the session', closed: 'Left' };
 </script>
 
@@ -79,8 +90,22 @@
             {/if}
           </div>
         {/each}
+        <div class="invite">
+          <div class="top"><b>Invite by link</b> <span class="state">one link for everyone</span></div>
+          {#if p2p.link}
+            <div class="code">
+              <textarea readonly rows="2" value={p2p.link} aria-label="Invite link" onfocus={(e) => e.currentTarget.select()}></textarea>
+              <button class="small" onclick={copyLink}><Copy size={13} /> {linkCopied ? 'Copied' : 'Copy'}</button>
+            </div>
+            <p class="step">Anyone who opens it joins this session. They show up above as &ldquo;Wants to join&rdquo; unless you let people in without asking (below).</p>
+          {:else}
+            <p class="step">No codes to swap: you send one link, and each person who opens it is connected to you. It needs the class mailbox.</p>
+            <div class="row"><button class="small go" onclick={startLinkSharing}>Make a link</button></div>
+            <MailboxSettings />
+          {/if}
+        </div>
         <div class="row">
-          <button onclick={makeInvite}>Invite {p2p.invites.length ? 'another person' : 'someone'}</button>
+          <button onclick={makeInvite}>Invite {p2p.invites.length ? 'another person' : 'someone'} with codes</button>
           <span class="grow"></span>
           <button onclick={() => { leaveP2p(); close(); }}>Stop sharing</button>
         </div>

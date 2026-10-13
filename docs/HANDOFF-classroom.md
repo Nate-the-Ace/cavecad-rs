@@ -52,6 +52,13 @@ to ten seconds, then it is a student of the class (same checks as the other two 
 Console and the teacher's Share dialog (Home > Live > Share) show the invites being made. Run
 `node --test 'tools/signal-mailbox/test/*.test.js'` and `npm run test:signal` for the logic.
 
+## The same link for an ordinary shared session
+
+Share live (Home > Live > Share) > Start sharing > **Make a link** (same mailbox as above). Open the link in a
+second window: the join page says "Join the session"; after the name, the host sees "Wants to join" in the
+Share dialog (unless "Let people in without asking" is on), lets them in, and the guest is an editor, not an
+observer. This is the check that the link is not only for classes.
+
 ## Where things are
 
 - The rules, shared: `apps/web/src/lib/classroom-room.mjs` (with `.d.mts`). Relay: `apps/web/scripts/classroom-relay.mjs` (new, thin) and the hooks in `sync-relay.mjs`; p2p: `startClassHosting`, `sendClass`, `classIo` in `p2p.svelte.ts`; the dev server
