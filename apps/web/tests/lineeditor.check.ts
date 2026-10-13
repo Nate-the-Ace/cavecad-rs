@@ -60,4 +60,21 @@ const k = joinFit(open[0], { pts: [[-5, 3], [-30, 10], [-60, 0]] as [number, num
 ok(k.pts[0][0] === -60 && k.pts[k.pts.length - 1][0] === 100 && k.pts.length === 5, 'drawn away from the start goes in front, in line order');
 const w = joinFit({ ...open[0], widths: [1, 1, 1] }, { pts: [[110, 30], [140, 60]], widths: [2, 2] }, false);
 ok(w.widths!.length === w.pts.length, 'pen weights stay one per point');
+// a symbol: its insertion point carries the whole symbol; its other handle sets the size and turn
+{
+  const sy: EditableLine = { id: 'pit1', kind: 'sym-pit', points: [[200, 200], [200, 230]], widths: null };
+  lines.push(sy);
+  saved.length = 0;
+  selected = 'pit1';
+  ok(ed.press(200, 200) === true, 'the insertion point of a symbol is picked up');
+  ed.move(260, 210);
+  ok(ed.release() === true && saved[0].pts[0][0] === 260 && saved[0].pts[0][1] === 210 && saved[0].pts[1][0] === 260 && saved[0].pts[1][1] === 240, 'moving the insertion point moves the whole symbol: size and turn are unchanged');
+  sy.points = [[200, 200], [200, 230]];
+  saved.length = 0;
+  ok(ed.press(200, 230) === true, 'the size and turn handle is picked up');
+  ed.move(240, 200);
+  ed.release();
+  ok(saved[0].pts[0][0] === 200 && saved[0].pts[0][1] === 200 && saved[0].pts[1][0] === 240, 'moving the other handle changes only the size and turn');
+  lines.pop();
+}
 console.log(bad ? 'FAILED' : 'line editor checks ok'); process.exit(bad ? 1 : 0);

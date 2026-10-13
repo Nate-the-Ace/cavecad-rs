@@ -75,7 +75,7 @@ export class CaveView {
   /** The line selected for editing (a feature id), shown with a halo and, for a map line, handles. */
   private selectedLine = '';
   /** A fit point of a map line being moved: which line, which point, and the line's points now. */
-  private lineEdit: { id: string; index: number; pts: [number, number, number][] } | null = null;
+  private lineEdit: { id: string; index: number; pts: [number, number, number][]; stamp: boolean } | null = null;
   /** Called when a map line's fit points have been moved (plan metres) or a line is picked or put down. */
   onLineEdited: (id: string, points: [number, number][], widths: number[] | null) => void = () => {};
   onSelectLine: (id: string) => void = () => {};
@@ -301,7 +301,12 @@ export class CaveView {
       const edit = this.lineEdit;
       if (edit) {
         const p = this.planPoint(e.clientX, e.clientY);
-        if (p) edit.pts[edit.index] = [p[0], p[1], edit.pts[edit.index][2]];
+        if (p && edit.stamp && edit.index === 0) {
+          // A symbol's insertion point carries the whole symbol, its size and turn handle with it.
+          const dx = p[0] - edit.pts[0][0];
+          const dy = p[1] - edit.pts[0][1];
+          edit.pts = edit.pts.map((q) => [q[0] + dx, q[1] + dy, q[2]] as [number, number, number]);
+        } else if (p) edit.pts[edit.index] = [p[0], p[1], edit.pts[edit.index][2]];
         this.requestRender();
         return;
       }
@@ -808,7 +813,7 @@ export class CaveView {
         e.stopPropagation();
         this.controls.enabled = false;
         this.canvas.setPointerCapture(e.pointerId);
-        this.lineEdit = { id: sel.id, index: i, pts: sel.points.map((p) => [...p] as [number, number, number]) };
+        this.lineEdit = { id: sel.id, index: i, pts: sel.points.map((p) => [...p] as [number, number, number]), stamp: isStampKind(sel.kind) };
         return;
       }
     }

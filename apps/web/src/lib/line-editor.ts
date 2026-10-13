@@ -46,7 +46,7 @@ const HANDLE_REACH = 10;
 
 export class LineEditor<T extends EditableLine = EditableLine> {
   /** A fit point being moved: the line, which point, and the line's points as they are right now. */
-  private drag: { id: string; index: number; points: Pt[]; widths: number[] | null } | null = null;
+  private drag: { id: string; index: number; points: Pt[]; widths: number[] | null; stamp: boolean } | null = null;
 
   private readonly h: Hooks<T>;
 
@@ -82,7 +82,7 @@ export class LineEditor<T extends EditableLine = EditableLine> {
     if (sel) {
       const i = nearestPoint(sel.points.map(this.h.toScreen), x, y, HANDLE_REACH);
       if (i >= 0) {
-        this.drag = { id: sel.id, index: i, points: sel.points.map((p) => [...p] as Pt), widths: sel.widths ? [...sel.widths] : null };
+        this.drag = { id: sel.id, index: i, points: sel.points.map((p) => [...p] as Pt), widths: sel.widths ? [...sel.widths] : null, stamp: isStampKind(sel.kind) };
         return true;
       }
     }
@@ -132,7 +132,13 @@ export class LineEditor<T extends EditableLine = EditableLine> {
   /** Moves the picked-up fit point; returns true while one is being moved. */
   move(x: number, y: number): boolean {
     if (!this.drag) return false;
-    this.drag.points[this.drag.index] = this.h.toWorld(x, y);
+    const to = this.h.toWorld(x, y);
+    if (this.drag.stamp && this.drag.index === 0) {
+      // A symbol's insertion point carries the whole symbol, its size and turn handle with it.
+      const dx = to[0] - this.drag.points[0][0];
+      const dy = to[1] - this.drag.points[0][1];
+      this.drag.points = this.drag.points.map((q) => [q[0] + dx, q[1] + dy] as Pt);
+    } else this.drag.points[this.drag.index] = to;
     this.h.redraw();
     return true;
   }
