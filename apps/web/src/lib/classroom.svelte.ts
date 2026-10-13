@@ -14,10 +14,11 @@
 // server's /sync), so it needs that server; the serverless peer sessions are for working together.
 import { cave, changed, filter } from './cave.svelte';
 import { applyMirror, captureMirror, forgetMirror, registerMirror } from './classroom-mirror';
-import { classLink, mergeEntries, readClassLink, transcript, transcriptName, type ChatEntry, type Hand } from './classroom-log';
+import { classLink, liveLink, mergeEntries, readClassLink, readLiveLink, transcript, transcriptName, type ChatEntry, type Hand } from './classroom-log';
 import { readOnly } from './readonly';
 import { shelf } from './shelf.svelte';
-import { p2p, sendClass, startClassHosting } from './p2p.svelte';
+import { joinViaLink, openClassLink, p2p, sendClass, startClassHosting } from './p2p.svelte';
+import { configuredMailbox, httpMailbox, mailboxConfig, type Mailbox } from './signal';
 import { createInvite, join, leave, live, rename, sendRoom, setRoomHooks } from './sync.svelte';
 
 export const classroom = $state({
@@ -40,15 +41,18 @@ export const classroom = $state({
   /** A short notice from the relay ("Slow down a little."), shown for a moment. */
   notice: '',
   /** A class link this page was opened with, waiting for the student to give a name and join. */
-  pending: null as { room: string; invite: string } | null,
+  pending: null as { room: string; invite: string; live?: { session: string; mailbox: { endpoint: string; key: string } | null } } | null,
   /** The Start a Classroom dialog is open. */
   dialog: false,
   /** Why starting or joining failed, in words. */
   error: '',
   /** Connecting now (the Join or Start button was pressed). */
   busy: false,
-  /** How this class is carried: on the room relay (a server and a link) or straight between devices (codes). */
+  /** How this class is carried: on the room relay (a server and a link) or straight between devices (a link through the
+   *  mailbox, or codes). */
   transport: 'relay' as 'relay' | 'p2p',
+  /** The link students open, for a direct class made with a link (a relay class gets its link from the relay's invite). */
+  link: '',
 });
 
 /** Whether this device's hand is up. */
@@ -56,12 +60,14 @@ export const handIsUp = (): boolean => classroom.hands.some((h) => h.id === live
 
 /** The link students open, once the teacher has an invite. Empty until then. */
 export function studentLink(): string {
-  return classroom.transport === 'relay' && live.made && classroom.name ? classLink(location.href, classroom.name, live.made) : '';
+  if (classroom.transport === 'p2p') return classroom.link;
+  return live.made && classroom.name ? classLink(location.href, classroom.name, live.made) : '';
 }
 
 /** Reads a class link the page was opened with (and tidies the address bar). */
 export function readClassLinkFromUrl() {
-  const found = readClassLink(location.search);
+  const live = readLiveLink(location.search);
+  const found = live ? { room: '', invite: '', live: { session: live.session, mailbox: live.mailbox } } : readClassLink(location.search);
   if (!found) return;
   classroom.pending = found;
   history.replaceState(null, '', location.pathname + location.hash);
@@ -81,23 +87,32 @@ let unblock: (() => void) | null = null;
 // ---- starting and joining ------------------------------------------------------------------------
 
 /** The teacher starts a class from the open cave. */
-export function startClass(className: string, teacherName: string, via: 'relay' | 'p2p' = 'relay') {
+export function startClass(className: string, teacherName: string, via: 'relay' | 'link' | 'codes' = 'relay') {
   const name = className.trim();
   if (!name) return void (classroom.error = 'Give the class a name.');
   if (!cave.hasCave) return void (classroom.error = 'Open or start a cave first: there is nothing to teach from yet.');
   classroom.error = '';
   if (teacherName.trim()) rename(teacherName.trim());
-  if (via === 'p2p') {
-    // Straight between devices: this page is the teacher and the hub; students come in with invite and reply codes.
+  if (via === 'link' || via === 'codes') {
+    // Straight between devices: this page is the teacher and the hub. Students come in through a link (the mailbox passes
+    // the first notes, then the devices connect directly) or with invite and reply codes.
+    const box = via === 'link' ? configuredMailbox() : null;
+    if (via === 'link' && !box) return void (classroom.error = 'This copy of CaveCAD has no class mailbox. Set one below, or choose another way for students to join.');
     leave();
     classroom.transport = 'p2p';
+    classroom.link = '';
     intent = 'teacher';
     if (!startClassHosting(name)) {
       intent = '';
       classroom.error = p2p.error || 'Could not start the class.';
       return;
     }
-    p2p.dialog = true; // where the invite codes are made
+    if (box) {
+      const session = crypto.randomUUID().replace(/-/g, '').slice(0, 20);
+      const config = mailboxConfig();
+      openClassLink(session, box);
+      classroom.link = liveLink(location.href, session, config?.source === 'local' ? config : undefined);
+    } else p2p.dialog = true; // where the invite codes are made
     return;
   }
   live.made = ''; // the link of an earlier class is not this one's
@@ -114,6 +129,20 @@ export function joinClass(studentName: string) {
   if (!studentName.trim()) return void (classroom.error = 'Type your name so the teacher knows who you are.');
   classroom.error = '';
   rename(studentName.trim());
+  if (p.live) {
+    // A direct class: the mailbox passes the first notes, then this device connects to the teacher's page itself.
+    const box: Mailbox | null = p.live.mailbox ? httpMailbox(p.live.mailbox.endpoint, p.live.mailbox.key) : configuredMailbox();
+    if (!box) return void (classroom.error = 'This copy of CaveCAD has no class mailbox, so it cannot follow this link. Ask your teacher for a link made from this site.');
+    classroom.busy = true;
+    void joinViaLink(p.live.session, box).then((problem) => {
+      if (problem) {
+        classroom.busy = false;
+        classroom.error = problem;
+        leave();
+      }
+    });
+    return;
+  }
   join(p.room, p.invite, { joinOnly: true });
   intent = 'student';
   classroom.busy = true;
@@ -207,6 +236,7 @@ setRoomHooks({
     classroom.hands = [];
     classroom.unread = 0;
     classroom.busy = false;
+    classroom.link = '';
   },
 });
 

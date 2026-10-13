@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { READS, WRITES, guardEngine, readOnly } from '../src/lib/readonly.ts';
 import { applyMirror, captureMirror, fitRect, forgetMirror, frontPanels, layoutShape, registerMirror, roundRect, visibleRect } from '../src/lib/classroom-mirror.ts';
 import { CLASS_MESSAGES, classLeft, classMessage, classWelcome, newClass } from '../src/lib/classroom-room.mjs';
-import { classLink, clock, mergeEntries, readClassLink, transcript, transcriptName, waiting, type ChatEntry } from '../src/lib/classroom-log.ts';
+import { classLink, liveLink, readLiveLink, clock, mergeEntries, readClassLink, transcript, transcriptName, waiting, type ChatEntry } from '../src/lib/classroom-log.ts';
 
 let bad = 0;
 const ok = (c: boolean, m: string) => { if (!c) { bad++; console.log('FAIL', m); } };
@@ -66,6 +66,18 @@ ok(link === 'http://10.0.0.5:8080/app/?class=Caving%20101&invite=abc123', link);
 const back = readClassLink(new URL(link).search);
 ok(back?.room === 'Caving 101' && back.invite === 'abc123', 'a link reads back');
 ok(readClassLink('?join=room&invite=x') === null && readClassLink('') === null, 'other links are not class links');
+
+// ---- the direct class link ---------------------------------------------------------------------
+{
+  const plain = liveLink('http://10.0.0.5:8080/app/?x=1#top', 'sess123abc');
+  ok(plain === 'http://10.0.0.5:8080/app/?live=sess123abc', plain);
+  const r = readLiveLink(new URL(plain).search);
+  ok(r?.session === 'sess123abc' && r.mailbox === null, 'a link reads back, with no mailbox of its own');
+  const own = liveLink('https://x.example/app/', 'sess123abc', { endpoint: 'https://script.google.com/macros/s/ID/exec', key: 'k&1' });
+  const r2 = readLiveLink(new URL(own).search);
+  ok(r2?.mailbox?.endpoint === 'https://script.google.com/macros/s/ID/exec' && r2.mailbox.key === 'k&1', 'a mailbox set on the teacher machine travels with the link');
+  ok(readLiveLink('?class=a&invite=b') === null && readLiveLink('') === null, 'other links are not direct class links');
+}
 
 // ---- the teacher's view --------------------------------------------------------------------------
 const rect = { x0: -10, y0: -5, x1: 30, y1: 15 };

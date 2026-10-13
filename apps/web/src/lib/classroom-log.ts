@@ -73,6 +73,24 @@ export function classLink(base: string, room: string, token: string): string {
   return `${u.origin}${u.pathname}?class=${encodeURIComponent(room)}&invite=${encodeURIComponent(token)}`;
 }
 
+/** The link for a direct class: only the session id, so one link serves every student. A mailbox set on this machine (not
+ *  built into every copy) travels with the link, so a student's copy can use it too. */
+export function liveLink(base: string, session: string, mailbox?: { endpoint: string; key: string }): string {
+  const u = new URL(base);
+  const extra = mailbox ? `&mb=${encodeURIComponent(mailbox.endpoint)}&mk=${encodeURIComponent(mailbox.key)}` : '';
+  return `${u.origin}${u.pathname}?live=${encodeURIComponent(session)}${extra}`;
+}
+
+/** Reads a direct class link's query: the session and the mailbox it names, if any; null when it is not one. */
+export function readLiveLink(search: string): { session: string; mailbox: { endpoint: string; key: string } | null } | null {
+  const q = new URLSearchParams(search);
+  const session = q.get('live');
+  if (!session) return null;
+  const endpoint = q.get('mb');
+  const key = q.get('mk');
+  return { session, mailbox: endpoint && key ? { endpoint, key } : null };
+}
+
 /** Reads a class link's query: the class and the invite, or null when it is not one. */
 export function readClassLink(search: string): { room: string; invite: string } | null {
   const q = new URLSearchParams(search);

@@ -42,6 +42,16 @@ the list above should behave the same: observer-only, the teacher's view followe
 log download (no file on disk in this mode). Also check that a student's edits are refused (try dragging in
 the student window, and `__p2p` is in the console), and that closing the teacher's tab frees the student.
 
+## The direct class by link (needs the mailbox deployed)
+
+Deploy `tools/signal-mailbox` first (its README: a new Apps Script project under cavecad.app@gmail.com,
+script property `KEY`, deploy as a web app for Anyone, copy the `/exec` URL). Then Start a Classroom >
+**A link, then direct**, paste the address and key into the two boxes (kept on that machine), Start. The
+drawer shows one link; open it in two private windows: each asks for a name, then "Joining..." for about five
+to ten seconds, then it is a student of the class (same checks as the other two ways). If it stalls, the
+Console and the teacher's Share dialog (Home > Live > Share) show the invites being made. Run
+`node --test 'tools/signal-mailbox/test/*.test.js'` and `npm run test:signal` for the logic.
+
 ## Where things are
 
 - The rules, shared: `apps/web/src/lib/classroom-room.mjs` (with `.d.mts`). Relay: `apps/web/scripts/classroom-relay.mjs` (new, thin) and the hooks in `sync-relay.mjs`; p2p: `startClassHosting`, `sendClass`, `classIo` in `p2p.svelte.ts`; the dev server

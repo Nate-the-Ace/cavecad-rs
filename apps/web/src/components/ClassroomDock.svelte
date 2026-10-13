@@ -76,7 +76,7 @@
           <Hand size={16} /> {up ? 'Lower my hand' : 'Raise my hand'}
         </button>
       {:else}
-        {#if classroom.transport === 'relay'}
+        {#if classroom.transport === 'relay' || link}
           <div class="link">
             <input readonly value={link || 'Making the link…'} aria-label="Link for students" onfocus={(e) => e.currentTarget.select()} />
             <button class="small" onclick={copy} disabled={!link}><Copy size={13} /> {copied ? 'Copied' : 'Copy'}</button>

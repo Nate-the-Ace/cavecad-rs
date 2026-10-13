@@ -16,6 +16,8 @@ import { decodeCode, encodeCode } from './p2p-code';
 import { Reassembler, frames } from './p2p-wire';
 import { addRemoteFile, fileOf, have, scans, select } from './scans.svelte';
 import { fadeCursors, live, me, myPersonId, roomEvents, setPeerHooks, type Person } from './sync.svelte';
+import { hostLoop, joinLoop } from './signal-handshake';
+import type { Mailbox } from './signal';
 import { CLASS_MESSAGES, classLeft, classMessage, classWelcome, newClass, type ClassState, type RoomIo } from './classroom-room.mjs';
 import { flush as keepShelf, shelf } from './shelf.svelte';
 
@@ -592,8 +594,8 @@ export function sendClass(msg: { t: string } & Record<string, unknown>): boolean
 }
 
 /** Makes an invite: the text to send to one person. */
-export async function makeInvite(): Promise<void> {
-  if (p2p.role !== 'host' && !startHosting()) return;
+export async function makeInvite(): Promise<string | null> {
+  if (p2p.role !== 'host' && !startHosting()) return null;
   const id = rid();
   const peer = await newPeer(id);
   const ch = peer.pc.createDataChannel('cave', { ordered: true });
@@ -612,7 +614,39 @@ export async function makeInvite(): Promise<void> {
     p2p.invites = p2p.invites.filter((i) => i.id !== id);
     peers.delete(id);
     p2p.error = 'Could not make an invite code.';
+    return null;
   }
+  return id;
+}
+
+let stopSignal: (() => void) | null = null;
+
+/**
+ * The teacher's page starts letting students in through a class link: anyone who opens the link is given an invite of
+ * their own, through the mailbox, and their reply comes back the same way. Needs a class already started
+ * (`startClassHosting`). The link is stopped when sharing stops.
+ */
+export function openClassLink(session: string, box: Mailbox) {
+  stopSignal?.();
+  stopSignal = hostLoop(box, session, {
+    offer: async () => {
+      const id = await makeInvite();
+      const code = id ? p2p.invites.find((i) => i.id === id)?.code : '';
+      return id && code ? { id, code } : null;
+    },
+    reply: (id, code) => takeReply(id, code),
+    trouble: (message) => (p2p.error = message),
+  });
+}
+
+/** A student's page joins the class a link named, through the mailbox. Gives back a sentence when it cannot. */
+export async function joinViaLink(session: string, box: Mailbox): Promise<string | null> {
+  return joinLoop(box, session, {
+    answer: async (offer) => {
+      const problem = await joinWithCode(offer);
+      return problem ? { error: problem } : { code: p2p.reply };
+    },
+  });
 }
 
 /** The host pastes a guest's reply code to finish connecting them. */
@@ -720,6 +754,8 @@ export async function joinWithCode(text: string): Promise<string | null> {
 
 /** Leaves the session (the cave stays open here as it is). */
 export function leaveP2p() {
+  stopSignal?.();
+  stopSignal = null;
   clearTimeout(viewTimer);
   stopTimer();
   for (const p of peers.values()) {
