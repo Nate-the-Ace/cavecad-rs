@@ -16,8 +16,8 @@ export interface PenEvent {
 
 /** After the pen lifts, touches stay ignored this long: a resting hand lands as the pen leaves. */
 export const PALM_HOLD_MS = 600;
-/** A touch bigger than this (CSS pixels) across is a palm or a fist, not a fingertip. */
-export const PALM_SIZE = 32;
+/** A touch bigger than this (CSS pixels) across is a palm or a fist, not a fingertip. Some tablets report a fingertip as quite large, so this is generous: a palm is far bigger. */
+export const PALM_SIZE = 80;
 
 /** Line weight for a pen pressure: light touch thin, hard press thick, 1 at about half pressure. */
 export function widthFor(pressure: number): number {
@@ -39,6 +39,8 @@ export class PenGuard {
   private penDown = false;
   private lastPen = -Infinity;
   private rejected = new Set<number>();
+  /** Why the last touch was ignored, in words (so a device that wrongly ignores fingers can be told apart). */
+  lastRejected = '';
 
   /** Call for every pen event (down, move, up, hover). */
   pen(e: { type: string; timeStamp: number; buttons: number }): void {
@@ -72,8 +74,10 @@ export class PenGuard {
 
   /** Should this touch be treated as a finger? False means ignore it completely. */
   allowTouch(e: Pick<PenEvent, 'timeStamp' | 'width' | 'height'>): boolean {
-    if (this.penDown) return false;
-    if (e.timeStamp - this.lastPen < PALM_HOLD_MS) return false;
-    return Math.max(e.width ?? 0, e.height ?? 0) <= PALM_SIZE;
+    if (this.penDown) return (this.lastRejected = 'a pen is touching the screen'), false;
+    if (e.timeStamp - this.lastPen < PALM_HOLD_MS) return (this.lastRejected = 'just after a pen was lifted'), false;
+    const size = Math.max(e.width ?? 0, e.height ?? 0);
+    if (size > PALM_SIZE) return (this.lastRejected = `the contact is ${Math.round(size)} px across, too big for a fingertip`), false;
+    return true;
   }
 }

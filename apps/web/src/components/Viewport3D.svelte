@@ -287,6 +287,12 @@
       if (r !== 'ok') engine.log('warn', 'draw', r);
       changed();
     };
+    let palmLogged = 0;
+    v.onPalm = (why) => {
+      if (Date.now() - palmLogged < 10_000) return;
+      palmLogged = Date.now();
+      engine.log('warn', 'touch', `A touch was ignored: ${why}.`);
+    };
     v.onProjection = (p) => (projection = p);
     v.setUnits(cave.units);
     v.onSectionPlaced = (id, offset) => {

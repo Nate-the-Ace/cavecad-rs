@@ -29,7 +29,7 @@ eq(g.allowTouch(touch(1300 + PALM_HOLD_MS - 1)), false, 'ignored just after the 
 eq(g.allowTouch(touch(1300 + PALM_HOLD_MS + 1)), true, 'fingers work again after a pause');
 g.pen({ type: 'pointermove', timeStamp: 5000, buttons: 0 }); // the pen hovers near the screen
 eq(g.allowTouch(touch(5100)), false, 'ignored while the pen hovers');
-eq(g.allowTouch(touch(6000, 60)), false, 'a palm-sized contact is never a finger');
+eq(g.allowTouch(touch(6000, 100)), false, 'a palm-sized contact is never a finger');
 eq(g.allowTouch(touch(6000, 12)), true, 'a fingertip is');
 eq(g.drawing, false, 'hovering is not drawing');
 

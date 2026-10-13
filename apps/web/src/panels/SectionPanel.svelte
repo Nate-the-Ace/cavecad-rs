@@ -318,7 +318,10 @@
         return;
       }
     }
-    if (e.pointerType === 'touch' && !guard.touchDown(e)) return; // a palm or a fist: ignore it completely
+    if (e.pointerType === 'touch' && !guard.touchDown(e)) {
+      engine.log('warn', 'touch', `A touch was ignored: ${guard.lastRejected}.`);
+      return; // a palm or a fist: ignore it completely
+    }
     if (e.pointerType === 'touch' && touches.down(e) >= 2) {
       // A second finger: this was the start of a gesture, not a line.
       gesturing = true;

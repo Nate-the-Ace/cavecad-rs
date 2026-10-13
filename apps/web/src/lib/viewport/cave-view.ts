@@ -122,6 +122,8 @@ export class CaveView {
   /** The eraser end of a pen passed over a line: delete it. */
   onLineErased: (id: string) => void = () => {};
   private guard = new PenGuard();
+  /** Told why a touch was ignored (a palm), so it can be shown. */
+  onPalm: (why: string) => void = () => {};
   private erasing = false;
   onLineDrawn: (points: [number, number][], widths: number[] | null, closed: boolean, text?: string) => void = () => {};
   /** Offsets being dragged right now, before they are saved. */
@@ -195,6 +197,7 @@ export class CaveView {
         }
         if (e.pointerType !== 'touch') return;
         if (!this.guard.touchDown(e)) {
+          this.onPalm(this.guard.lastRejected);
           // A palm or a fist: keep it from the orbit controls too.
           e.stopImmediatePropagation();
           e.stopPropagation();
