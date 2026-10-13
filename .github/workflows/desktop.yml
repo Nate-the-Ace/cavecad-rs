@@ -62,6 +62,8 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VITE_RELAY_URL: ${{ secrets.RELAY_URL }}
+          VITE_FEEDBACK_ENDPOINT: ${{ secrets.FEEDBACK_ENDPOINT }}
+          VITE_FEEDBACK_KEY: ${{ secrets.FEEDBACK_KEY }}
         with:
           projectPath: apps/desktop
           tagName: desktop-latest

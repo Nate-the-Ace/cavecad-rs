@@ -75,7 +75,13 @@ export async function buildReport(d: Draft): Promise<{ name: string; zip: Uint8A
   const when = new Date();
   const facts = d.includeDetails ? await details() : null;
   const text = [`${KIND_LABEL[d.kind]}`, `Sent ${when.toISOString()}`, '', d.message.trim() || '(no message)', ...(facts ? ['', 'About the app:', JSON.stringify(facts, null, 2)] : [])].join('\n');
-  const files = [{ name: 'feedback.txt', data: enc.encode(text) }];
+  // report.json is what the feedback receiver reads: an id, the kind, a one-line summary and where it came from.
+  const id = Array.from(crypto.getRandomValues(new Uint8Array(3)), (b) => b.toString(16).padStart(2, '0')).join('');
+  const first = d.message.trim().split('\n')[0].slice(0, 80);
+  const info = await loadBuildInfo().catch(() => null);
+  const attachments = ['feedback.txt', ...(d.includeLog ? ['log.txt'] : []), ...(d.screenshot ? ['screenshot.png'] : [])];
+  const report = { id, type: d.kind, summary: first || KIND_LABEL[d.kind], email: '', os: navigator.platform || '', cavecad: { version: `web ${info ? info.git + (info.dirty ? '+' : '') : 'unknown'}` }, attachments };
+  const files = [{ name: 'report.json', data: enc.encode(JSON.stringify(report)) }, { name: 'feedback.txt', data: enc.encode(text) }];
   if (d.includeLog) files.push({ name: 'log.txt', data: enc.encode(logText()) });
   if (d.screenshot) files.push({ name: 'screenshot.png', data: new Uint8Array(await d.screenshot.arrayBuffer()) });
   const stamp = when.toISOString().replace(/[:T]/g, '-').slice(0, 19);
@@ -92,13 +98,38 @@ export function download(name: string, bytes: Uint8Array, type = 'application/zi
   setTimeout(() => URL.revokeObjectURL(url), 5000);
 }
 
-/** Sends the report to this site's feedback address, when it has one. Returns what happened in words. */
+const ENDPOINT = (import.meta.env.VITE_FEEDBACK_ENDPOINT as string | undefined)?.trim() ?? '';
+const KEY = (import.meta.env.VITE_FEEDBACK_KEY as string | undefined)?.trim() ?? '';
+
+/** Standard base64 of some bytes (in pieces, so a big screenshot does not overflow the call stack). */
+function base64(bytes: Uint8Array): string {
+  let out = '';
+  for (let i = 0; i < bytes.length; i += 0x8000) out += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  return btoa(out);
+}
+
+const WHY: Record<string, string> = {
+  key: 'The feedback address did not accept this copy of CaveCAD.',
+  'too-big': 'The report is too big to send. Leave the screenshot out, or save the report instead.',
+  busy: 'Too many reports were sent this hour. Try again later, or save the report instead.',
+  'bad-zip': 'The report could not be read.',
+  'no-report': 'The report could not be read.',
+};
+
+/** Sends the report to CaveCAD's feedback address, when this copy has one. Returns what happened in words. */
 export async function send(name: string, bytes: Uint8Array): Promise<{ ok: boolean; message: string }> {
   try {
+    if (ENDPOINT && KEY) {
+      // Plain text, so the browser sends it without asking permission first; the receiver unpacks it.
+      const r = await fetch(`${ENDPOINT}?k=${encodeURIComponent(KEY)}`, { method: 'POST', headers: { 'content-type': 'text/plain;charset=utf-8' }, body: base64(bytes) });
+      const out = (await r.json().catch(() => null)) as { ok?: boolean; error?: string } | null;
+      if (out?.ok) return { ok: true, message: 'Sent. Thank you.' };
+      return { ok: false, message: `${WHY[out?.error ?? ''] ?? `Not sent (${out?.error ?? r.status}).`} Save the report instead.` };
+    }
     const r = await fetch(`/feedback?name=${encodeURIComponent(name)}`, { method: 'POST', headers: { 'content-type': 'application/zip' }, body: bytes as BodyInit });
     if (r.status === 404 || r.status === 405) return { ok: false, message: 'This copy of CaveCAD has no place to send reports. Save the report and pass it on.' };
     return r.ok ? { ok: true, message: 'Sent. Thank you.' } : { ok: false, message: `Not sent (${r.status}). Save the report instead.` };
   } catch {
-    return { ok: false, message: 'Could not reach the server. Save the report instead.' };
+    return { ok: false, message: 'Could not reach the feedback address. Save the report instead.' };
   }
 }

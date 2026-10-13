@@ -41,6 +41,8 @@ jobs:
       - name: Build the web app
         env:
           VITE_RELAY_URL: ${{ secrets.RELAY_URL }}
+          VITE_FEEDBACK_ENDPOINT: ${{ secrets.FEEDBACK_ENDPOINT }}
+          VITE_FEEDBACK_KEY: ${{ secrets.FEEDBACK_KEY }}
         run: |
           npm ci --prefix apps/web
           # Relative URLs: the site lives under /cavecad-rs/, not at the root.
