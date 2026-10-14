@@ -8,7 +8,7 @@
   import PanelUndo from '../components/PanelUndo.svelte';
   import { looks } from '../lib/ink';
   import { markViewUsed, registerSelectAll } from '../lib/select-all';
-  import { copyGhost, copyOp, copyPress, endCopy, registerClipView, snapToSelection } from '../lib/view-clip.svelte';
+  import { copyGhost, copyOp, copyPress, endCopy, endPaste, pasteGhost, pasteOp, pastePlace, registerClipView, snapToSelection } from '../lib/view-clip.svelte';
   import { paintCopy } from '../lib/copy-ghost';
   import type { Drawn } from '../lib/clip';
   import { openNewText, openTextEdit } from '../lib/text-edit.svelte';
@@ -298,6 +298,9 @@
     const look = looks();
     drawStrokes(g, editor.display(), toScreen, look, 1, new Set(selectedIds()), (band?.stations ?? []).map((s) => [s.s, s.z] as [number, number]));
     drawHandles(g, editor.handles(), c.accent, c.bg);
+    if (pasteOp.on && pasteOp.view === 'profile' && cursorW) {
+      paintCopy(g, null, toScreen(cursorW[0], cursorW[1]), pasteGhost('profile', cursorW), (tg, lines) => drawStrokes(tg, lines.map((l) => ({ ...l, points: l.points as [number, number][] })), toScreen, look, 1, '', (band?.stations ?? []).map((s) => [s.s, s.z] as [number, number])), true);
+    }
     if (copyOp.on && copyOp.view === 'profile' && cursorW) {
       const ghost = copyGhost('profile', cursorW);
       paintCopy(g, copyOp.base ? toScreen(copyOp.base[0], copyOp.base[1]) : null, toScreen(cursorW[0], cursorW[1]), ghost?.lines ?? null, (tg, lines) => drawStrokes(tg, lines.map((l) => ({ ...l, points: l.points as [number, number][] })), toScreen, look, 1, '', (band?.stations ?? []).map((s) => [s.s, s.z] as [number, number])));
@@ -430,6 +433,13 @@
       if (e.timeStamp - lastMiddle < 350) fit();
       lastMiddle = e.timeStamp;
     }
+    if (e.button === 0 && !cave.tool && pasteOp.on && pasteOp.view === 'profile') {
+      // a paste waits: the press says where it goes
+      const r = canvas.getBoundingClientRect();
+      pastePlace('profile', toWorld(e.clientX - r.left, e.clientY - r.top));
+      schedule();
+      return;
+    }
     if (e.button === 0 && !cave.tool && copyOp.on && copyOp.view === 'profile') {
       // the Copy command: the first press is the base point, each after drops a copy
       const r = canvas.getBoundingClientRect();
@@ -490,7 +500,7 @@
       const rr = canvas.getBoundingClientRect();
       const w = toWorld(e.clientX - rr.left, e.clientY - rr.top);
       cursorW = w;
-      if (copyOp.on) schedule();
+      if (copyOp.on || pasteOp.on) schedule();
       reportCursor('profile', cave.run, w[0], w[1], cave.tool);
     }
     if (e.pointerType === 'pen') {
@@ -758,6 +768,10 @@
     onkeydown={onKey}
     oncontextmenu={(e) => {
       e.preventDefault();
+      if (pasteOp.on) {
+        endPaste(); // a right click drops a waiting paste
+        return;
+      }
       if (copyOp.on) {
         endCopy(); // a right click ends the Copy command
         return;

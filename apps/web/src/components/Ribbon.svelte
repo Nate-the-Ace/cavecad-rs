@@ -12,7 +12,7 @@
   import ContextOptions from './ContextOptions.svelte';
   import SelectionTools from './SelectionTools.svelte';
   import CopyIcon from './CopyIcon.svelte';
-  import { copyOp, endCopy, startCopy } from '../lib/view-clip.svelte';
+  import { copyOp, endCopy, endPaste, pasteOp, startCopy } from '../lib/view-clip.svelte';
   import CollaborateGroup from './CollaborateGroup.svelte';
   import FillTools from './FillTools.svelte';
   import SheetGroup from './SheetGroup.svelte';
@@ -262,6 +262,10 @@
   }
 
   function keys(e: KeyboardEvent) {
+    if (e.key === 'Escape' && pasteOp.on) {
+      endPaste(); // Escape drops a waiting paste
+      return;
+    }
     if (e.key === 'Escape' && copyOp.on) {
       endCopy(); // Escape finishes the Copy command first; the selection stays
       return;

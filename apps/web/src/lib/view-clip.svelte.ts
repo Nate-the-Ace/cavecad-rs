@@ -88,15 +88,42 @@ function drop(name: string, lines: ClipLine[], keep = false): boolean {
   return true;
 }
 
-/** Pastes a copy into the view last pressed in (else the one it came from): at the pointer, or the middle of the view. */
+/** Pasting: a copy waits in the view it will go into, shown faded under the pointer, until a press says where. */
+export const pasteOp = $state({ on: false, view: '', clip: null as Clip | null });
+
+/** Starts a paste of a copy into the view last pressed in (else the one it came from). False when there is no view to put it in. */
 export function pasteClip(clip: Clip): boolean {
   const name = views.has(lastView()) ? lastView() : views.has(clip.view) ? clip.view : (views.keys().next().value ?? '');
-  const v = views.get(name);
-  if (!v) return false;
-  const at = v.cursor() ?? v.centre();
-  if (!at) return false;
+  if (!views.has(name)) return false;
+  endCopy();
+  pasteOp.clip = clip;
+  pasteOp.view = name;
+  pasteOp.on = true;
+  return true;
+}
+
+/** Ends a paste without placing anything. */
+export function endPaste() {
+  pasteOp.on = false;
+  pasteOp.view = '';
+  pasteOp.clip = null;
+}
+
+/** A press at `p` (the view's own space) while a paste waits in `name`: the copy goes there, its middle at the press. */
+export function pastePlace(name: string, p: [number, number]) {
+  const clip = pasteOp.clip;
+  if (!pasteOp.on || pasteOp.view !== name || !clip) return;
   const c = centreOf(clip);
-  return drop(name, moved(clip.lines, at[0] - c[0], at[1] - c[1]));
+  endPaste();
+  drop(name, moved(clip.lines, p[0] - c[0], p[1] - c[1]));
+}
+
+/** What the waiting paste would put down if the pointer were pressed at `cursor`: what to draw faded under it. */
+export function pasteGhost(name: string, cursor: [number, number] | null): ClipLine[] | null {
+  const clip = pasteOp.clip;
+  if (!pasteOp.on || pasteOp.view !== name || !clip || !cursor) return null;
+  const c = centreOf(clip);
+  return moved(clip.lines, cursor[0] - c[0], cursor[1] - c[1]);
 }
 
 /** A paste event: reads our copy off the system clipboard text. */

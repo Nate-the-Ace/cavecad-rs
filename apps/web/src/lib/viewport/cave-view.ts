@@ -115,6 +115,11 @@ export class CaveView {
   copyLines: (cursor: [number, number]) => ClipLine[] | null = () => null;
   onCopyPress: (p: [number, number]) => void = () => {};
   onEndCopy: () => void = () => {};
+  /** A paste waiting for a press: running, what it would drop at a pointer spot, and the calls for a press and an end. */
+  private pasteOn = false;
+  pasteLines: (cursor: [number, number]) => ClipLine[] | null = () => null;
+  onPastePress: (p: [number, number]) => void = () => {};
+  onEndPaste: () => void = () => {};
   /** Called to edit a stamp's words in place: its id, words, kind, and where (page pixels) and how tall they are. */
   onEditText: (id: string, text: string, kind: string, x: number, y: number, size: number, angle: number) => void = () => {};
   /** Where the next stroke would carry an open line on from, on screen, while a tool waits. */
@@ -281,6 +286,10 @@ export class CaveView {
       if (e.button !== 2 || !d) return;
       this.rightDown = null;
       if (Math.hypot(e.clientX - d.x, e.clientY - d.y) >= 5) return;
+      if (this.pasteOn) {
+        this.onEndPaste();
+        return;
+      }
       if (this.copyOn) {
         this.onEndCopy();
         return;
@@ -296,7 +305,7 @@ export class CaveView {
     canvas.addEventListener('contextmenu', (e) => e.preventDefault());
     // A double click on a symbol, a text or a leader edits its words in place.
     canvas.addEventListener('dblclick', (e) => {
-      if (this.drawTool || this.copyOn || e.button !== 0) return;
+      if (this.drawTool || this.copyOn || this.pasteOn || e.button !== 0) return;
       const rect = canvas.getBoundingClientRect();
       const k = this.lineAt(e.clientX - rect.left, e.clientY - rect.top);
       if (k && isStampKind(k.kind)) this.editWordsOf(k);
@@ -344,7 +353,7 @@ export class CaveView {
         const cp = this.planPoint(e.clientX, e.clientY);
         this.lastPlan = cp;
         if (cp) this.onCursor(cp[0], cp[1]);
-        if (this.copyOn) this.requestRender();
+        if (this.copyOn || this.pasteOn) this.requestRender();
       }
       if (e.pointerType === 'pen') {
         this.guard.pen(e);
@@ -914,6 +923,12 @@ export class CaveView {
     this.requestRender();
   }
 
+  /** Starts or ends a paste waiting for a press. */
+  setPaste(on: boolean) {
+    this.pasteOn = on;
+    this.requestRender();
+  }
+
   /** Every selected line, for the halos. */
   setSelectedLines(ids: string[]) {
     this.selectedSet = new Set(ids);
@@ -984,6 +999,14 @@ export class CaveView {
     const rect = this.canvas.getBoundingClientRect();
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
+    if (this.pasteOn) {
+      // a paste waits: the press says where it goes
+      const p = this.canDrawHere ? this.planPoint(e.clientX, e.clientY) : null;
+      e.stopImmediatePropagation();
+      e.stopPropagation();
+      if (p) this.onPastePress(p);
+      return;
+    }
     if (this.copyOn) {
       // the Copy command: the first press is the base point (snapping to a point of what is being copied), each after drops a copy
       const p = this.canDrawHere ? this.planPoint(e.clientX, e.clientY) : null;
@@ -1162,17 +1185,23 @@ export class CaveView {
   /** Strokes 3D lines (projected to the screen) in the look of their kind. */
   /** The Copy command's overlay: the cross to pick a base point with, then the copies faded under the pointer. */
   private drawCopy(g: CanvasRenderingContext2D) {
-    if (!this.copyOn || !this.lastPlan) return;
+    if ((!this.copyOn && !this.pasteOn) || !this.lastPlan) return;
     const z = this.controls.target.z;
     const cur = this.project([this.lastPlan[0], this.lastPlan[1], z]);
     if (!cur) return;
-    const base = this.copyBase ? this.project([this.copyBase[0], this.copyBase[1], z]) : null;
-    const lines = this.copyBase ? this.copyLines(this.lastPlan) : null;
-    paintCopy(g, base, cur, lines, (tg, ls) =>
-      this.strokeLines(
-        tg,
-        ls.map((l, i) => ({ id: `copy-${i}`, closed: l.closed, kind: l.kind, run: '', text: l.text, style: l.style, widths: l.widths, points: l.points.map((p) => [p[0], p[1], z] as [number, number, number]) })),
-      ),
+    const base = this.copyBase && !this.pasteOn ? this.project([this.copyBase[0], this.copyBase[1], z]) : null;
+    const lines = this.pasteOn ? this.pasteLines(this.lastPlan) : this.copyBase ? this.copyLines(this.lastPlan) : null;
+    paintCopy(
+      g,
+      base,
+      cur,
+      lines,
+      (tg, ls) =>
+        this.strokeLines(
+          tg,
+          ls.map((l, i) => ({ id: `copy-${i}`, closed: l.closed, kind: l.kind, run: '', text: l.text, style: l.style, widths: l.widths, points: l.points.map((p) => [p[0], p[1], z] as [number, number, number]) })),
+        ),
+      this.pasteOn,
     );
   }
 
@@ -1270,6 +1299,17 @@ export class CaveView {
       if (k.id && this.selectedSet.has(k.id)) {
         g.strokeStyle = `#${this.theme.accent.getHexString()}`;
         trace(9, 0.6, []);
+        if (isFillKind(k.kind) && whole && pts.length >= 3) {
+          // a selected area is tinted all through, not only round its edge
+          g.save();
+          g.globalAlpha = 0.16;
+          g.fillStyle = `#${this.theme.accent.getHexString()}`;
+          g.beginPath();
+          pts.forEach((q, i) => q && (i === 0 ? g.moveTo(q[0], q[1]) : g.lineTo(q[0], q[1])));
+          g.closePath();
+          g.fill();
+          g.restore();
+        }
         g.strokeStyle = l.color;
       }
       if (spine && l.custom && whole && pts.length >= 2) {

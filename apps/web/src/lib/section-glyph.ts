@@ -172,7 +172,20 @@ export function drawStrokes(
         g.stroke();
       }
     };
-    if (isChosen(selected, k.id)) trace(9, highlightColor(), 0.6, []);
+    if (isChosen(selected, k.id)) {
+      trace(9, highlightColor(), 0.6, []);
+      if (isFillKind(k.kind) && curve.pts.length >= 3) {
+        // a selected area is tinted all through, not only round its edge
+        g.save();
+        g.globalAlpha = 0.16;
+        g.fillStyle = highlightColor();
+        g.beginPath();
+        curve.pts.forEach((q, i) => (i === 0 ? g.moveTo(q[0], q[1]) : g.lineTo(q[0], q[1])));
+        g.closePath();
+        g.fill();
+        g.restore();
+      }
+    }
     if (isFillKind(k.kind) && k.points.length >= 3) {
       // An area fill: its marks are made from the outline (in metres) and the stroke's id, then drawn under the outline.
       g.strokeStyle = l.color;

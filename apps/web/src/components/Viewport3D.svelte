@@ -11,7 +11,7 @@
   import { CaveView, type CameraState, type Projection } from '../lib/viewport/cave-view';
   import { fitPlane, heightSurface } from '../lib/plane';
   import { markViewUsed, registerSelectAll } from '../lib/select-all';
-  import { copyGhost, copyOp, copyPress, endCopy, registerClipView } from '../lib/view-clip.svelte';
+  import { copyGhost, copyOp, copyPress, endCopy, endPaste, pasteGhost, pasteOp, pastePlace, registerClipView } from '../lib/view-clip.svelte';
   import { openNewText, openTextEdit } from '../lib/text-edit.svelte';
   import { openLineMenu } from '../lib/line-menu.svelte';
   import { cave, changed, filter, haloFade, haloReach, option, selectedIds, selectIds, toggleSelected, setPick, setShowSections, setShown, wireFilter, toolStyle } from '../lib/cave.svelte';
@@ -156,6 +156,10 @@
     const on = copyOp.on && copyOp.view === 'map';
     const base = copyOp.base ? ([copyOp.base[0], copyOp.base[1]] as [number, number]) : null;
     view?.setCopy(on, base);
+  });
+  $effect(() => {
+    const pasting = pasteOp.on && pasteOp.view === 'map';
+    view?.setPaste(pasting);
   });
 
   // The selected line gets a halo and, on the map, handles; Delete removes a selected map line.
@@ -313,6 +317,9 @@
     v.copyLines = (cursor) => copyGhost('map', cursor)?.lines ?? null;
     v.onCopyPress = (p) => copyPress('map', p);
     v.onEndCopy = () => endCopy();
+    v.pasteLines = (cursor) => pasteGhost('map', cursor);
+    v.onPastePress = (p) => pastePlace('map', p);
+    v.onEndPaste = () => endPaste();
     v.arrowOp = () => cave.arrowOp;
     v.onArrowDone = () => (cave.arrowOp = { id: '', op: '' });
     v.onEndCommand = () => (cave.tool = '');

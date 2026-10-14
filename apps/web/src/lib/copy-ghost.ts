@@ -22,12 +22,26 @@ function faded(g: CanvasRenderingContext2D, draw: (tg: CanvasRenderingContext2D)
 }
 
 /** The Copy command's overlay: `base` and `cursor` are screen points. `base` null means it is still to be picked. */
-export function paintCopy(g: CanvasRenderingContext2D, base: [number, number] | null, cursor: [number, number] | null, lines: ClipLine[] | null, drawLines: (tg: CanvasRenderingContext2D, lines: ClipLine[]) => void) {
+export function paintCopy(g: CanvasRenderingContext2D, base: [number, number] | null, cursor: [number, number] | null, lines: ClipLine[] | null, drawLines: (tg: CanvasRenderingContext2D, lines: ClipLine[]) => void, pasting = false) {
   if (!cursor) return;
   g.save();
   g.lineWidth = 1.5;
   g.strokeStyle = INK;
   g.fillStyle = INK;
+  if (pasting) {
+    // a paste: the copies faded where a press would put them, and the way to place them
+    if (lines) faded(g, (tg) => drawLines(tg, lines));
+    g.beginPath();
+    g.moveTo(cursor[0] - 7, cursor[1]);
+    g.lineTo(cursor[0] + 7, cursor[1]);
+    g.moveTo(cursor[0], cursor[1] - 7);
+    g.lineTo(cursor[0], cursor[1] + 7);
+    g.stroke();
+    g.font = '12px system-ui, sans-serif';
+    g.fillText('Click to place', cursor[0] + 12, cursor[1] - 10);
+    g.restore();
+    return;
+  }
   if (!base) {
     g.beginPath();
     g.moveTo(cursor[0] - 9, cursor[1]);

@@ -23,7 +23,7 @@
   import { drawing, liveStyle } from '../lib/line-style.svelte';
   import { tolerancePx } from '../lib/commands';
   import { markViewUsed, registerSelectAll } from '../lib/select-all';
-  import { copyGhost, copyOp, copyPress, endCopy, registerClipView, snapToSelection } from '../lib/view-clip.svelte';
+  import { copyGhost, copyOp, copyPress, endCopy, endPaste, pasteGhost, pasteOp, pastePlace, registerClipView, snapToSelection } from '../lib/view-clip.svelte';
   import { paintCopy } from '../lib/copy-ghost';
   import type { Drawn } from '../lib/clip';
   import { openNewText, openTextEdit } from '../lib/text-edit.svelte';
@@ -269,6 +269,9 @@
     const look = looks();
     drawStrokes(g, editor.display(), toScreen, look, 1, new Set(selectedIds()), [[0, 0]]);
     drawHandles(g, editor.handles(), c.accent, c.panel);
+    if (pasteOp.on && pasteOp.view === 'section' && cursorW) {
+      paintCopy(g, null, toScreen(cursorW[0], cursorW[1]), pasteGhost('section', cursorW), (tg, lines) => drawStrokes(tg, lines.map((l) => ({ ...l, points: l.points as [number, number][] })), toScreen, look, 1, '', [[0, 0]]), true);
+    }
     if (copyOp.on && copyOp.view === 'section' && cursorW) {
       const ghost = copyGhost('section', cursorW);
       paintCopy(g, copyOp.base ? toScreen(copyOp.base[0], copyOp.base[1]) : null, toScreen(cursorW[0], cursorW[1]), ghost?.lines ?? null, (tg, lines) => drawStrokes(tg, lines.map((l) => ({ ...l, points: l.points as [number, number][] })), toScreen, look, 1, '', [[0, 0]]));
@@ -384,6 +387,13 @@
       if (e.timeStamp - lastMiddle < 350) fit();
       lastMiddle = e.timeStamp;
     }
+    if (e.button === 0 && !cave.tool && pasteOp.on && pasteOp.view === 'section') {
+      // a paste waits: the press says where it goes
+      const r = canvas.getBoundingClientRect();
+      pastePlace('section', toWorld(e.clientX - r.left, e.clientY - r.top));
+      schedule();
+      return;
+    }
     if (e.button === 0 && !cave.tool && copyOp.on && copyOp.view === 'section') {
       // the Copy command: the first press is the base point, each after drops a copy
       const r = canvas.getBoundingClientRect();
@@ -436,7 +446,7 @@
       const rr = canvas.getBoundingClientRect();
       const w = toWorld(e.clientX - rr.left, e.clientY - rr.top);
       cursorW = w;
-      if (copyOp.on) schedule();
+      if (copyOp.on || pasteOp.on) schedule();
       reportCursor('section', cave.station, w[0], w[1], cave.tool);
     }
     if (e.pointerType === 'pen') {
@@ -667,6 +677,10 @@
     onkeydown={onKey}
     oncontextmenu={(e) => {
       e.preventDefault();
+      if (pasteOp.on) {
+        endPaste(); // a right click drops a waiting paste
+        return;
+      }
       if (copyOp.on) {
         endCopy(); // a right click ends the Copy command
         return;
