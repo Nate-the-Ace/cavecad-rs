@@ -14,7 +14,7 @@
 
 <div class="collab">
   <div class="row">
-    <button class="tool" title="Share this cave live with other devices: no server, just two short codes swapped by message" onclick={() => (p2p.dialog = true)}>
+    <button class="tool" title="Share this cave live with other devices: one link, no server in between" onclick={() => (p2p.dialog = true)}>
       <Users size={20} strokeWidth={1.6} />
       <span>{p2p.role === 'host' ? 'Sharing' : 'Share live…'}</span>
     </button>

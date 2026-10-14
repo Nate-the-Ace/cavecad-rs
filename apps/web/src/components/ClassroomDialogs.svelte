@@ -12,12 +12,10 @@
   let className = $state('');
   let teacherName = $state('');
   let studentName = $state('');
-  // The hosted copy has no server to run a class on; anywhere else the server (a link to hand out) is the easy way.
-  let via = $state<'relay' | 'link' | 'codes'>(location.hostname.endsWith('github.io') ? 'link' : 'relay');
-  const start = () => startClass(className, teacherName, via);
+  const start = () => startClass(className, teacherName, 'link');
   // The class mailbox (CaveCAD's Apps Script): built into this copy, or typed in and kept on this machine.
   let hasMailbox = $state(!!mailboxConfig());
-  const needMailbox = $derived(via === 'link' && !hasMailbox);
+  const needMailbox = $derived(!hasMailbox);
   $effect(() => {
     if (classroom.dialog && !teacherName) teacherName = me.name;
   });
@@ -35,13 +33,8 @@
       <p class="note">You teach from “{cave.name || 'the open cave'}”. Students open a link and watch your screen: they see what you see, as you do it, and cannot change anything. Their pointers show to you. A raised hand and a chat let them ask questions, and every question is kept in the class&rsquo;s record.</p>
       <label>Name of the class <input bind:value={className} placeholder="Caving 101, Truitt survey day…" maxlength="60" onkeydown={(e) => e.key === 'Enter' && start()} /></label>
       <label>Your name <input bind:value={teacherName} maxlength="40" /></label>
-      <fieldset class="via">
-        <legend>How students join</legend>
-        <label class="opt"><input type="radio" bind:group={via} value="relay" /> <span><b>A link, through this server.</b> One link for everyone; the class&rsquo;s traffic goes through the server. Students need to reach it.</span></label>
-        <label class="opt"><input type="radio" bind:group={via} value="link" /> <span><b>A link, then direct.</b> One link for everyone; the class&rsquo;s mailbox only passes the first hello, then each student&rsquo;s device connects straight to yours. No server carries the class.</span></label>
-        <label class="opt"><input type="radio" bind:group={via} value="codes" /> <span><b>Direct, with codes.</b> No mailbox at all: you swap two short codes with each student, once.</span></label>
-      </fieldset>
-      {#if via === 'link'}<MailboxSettings onsave={() => (hasMailbox = !!mailboxConfig())} />{/if}
+      <p class="note">Students open one link. A small mailbox only passes their first hello; then each student's device connects straight to yours, so no server carries the class.</p>
+      <MailboxSettings onsave={() => (hasMailbox = !!mailboxConfig())} />
       {#if !cave.hasCave}<p class="err">Open or start a cave first: there is nothing to teach from yet.</p>{/if}
       {#if why}<p class="err" role="alert">{why}</p>{/if}
       <p class="fine">What you type in the chat is kept in the class&rsquo;s record on the server and in the file you can download, so do not put a cave&rsquo;s entrance location in it.</p>
@@ -82,10 +75,6 @@
   .fine { font-size: 11px; }
   label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); }
   input { font: inherit; font-size: 14px; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--field); color: var(--text); }
-  .via { border: 1px solid var(--line); border-radius: 8px; margin: 0; padding: 6px 10px; display: flex; flex-direction: column; gap: 4px; }
-  .via legend { font-size: 12px; color: var(--muted); padding: 0 4px; }
-  .opt { flex-direction: row; align-items: flex-start; gap: 6px; font-size: 12px; color: var(--text); }
-  .opt input { margin-top: 2px; }
   .err { margin: 0; color: var(--danger); font-size: 12px; }
   .row { display: flex; justify-content: flex-end; gap: 8px; }
   button { font: inherit; font-size: 13px; padding: 6px 14px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel-2); color: var(--text); cursor: pointer; }

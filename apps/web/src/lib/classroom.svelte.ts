@@ -14,7 +14,7 @@
 // server's /sync), so it needs that server; the serverless peer sessions are for working together.
 import { cave, changed, filter } from './cave.svelte';
 import { applyMirror, captureMirror, forgetMirror, registerMirror } from './classroom-mirror';
-import { classLink, liveLink, mergeEntries, readClassLink, readLiveLink, transcript, transcriptName, type ChatEntry, type Hand } from './classroom-log';
+import { classLink, liveLink, mergeEntries, readClassLink, readJoinLink, readLiveLink, transcript, transcriptName, type ChatEntry, type Hand } from './classroom-log';
 import { readOnly } from './readonly';
 import { shelf } from './shelf.svelte';
 import { joinViaLink, openClassLink, p2p, sendClass, startClassHosting } from './p2p.svelte';
@@ -73,6 +73,18 @@ export function readClassLinkFromUrl() {
   history.replaceState(null, '', location.pathname + location.hash);
 }
 
+/**
+ * Someone pasted a join link (into the Cave Shelf, or any other copy of CaveCAD that cannot open an address): the
+ * same page opens as when a link is opened in the browser. Gives back a sentence when it is not a join link.
+ */
+export function openLinkText(text: string): string | null {
+  const found = readJoinLink(text);
+  if (!found) return 'That is not a CaveCAD join link. Paste the whole link the host sent you.';
+  classroom.error = '';
+  classroom.pending = { room: '', invite: '', live: found };
+  return null;
+}
+
 let intent: 'teacher' | 'student' | '' = '';
 
 /** Sends a message to the class, whichever way it is carried. False when there is nobody to send it to. */
@@ -87,17 +99,17 @@ let unblock: (() => void) | null = null;
 // ---- starting and joining ------------------------------------------------------------------------
 
 /** The teacher starts a class from the open cave. */
-export function startClass(className: string, teacherName: string, via: 'relay' | 'link' | 'codes' = 'relay') {
+export function startClass(className: string, teacherName: string, via: 'relay' | 'link' = 'link') {
   const name = className.trim();
   if (!name) return void (classroom.error = 'Give the class a name.');
   if (!cave.hasCave) return void (classroom.error = 'Open or start a cave first: there is nothing to teach from yet.');
   classroom.error = '';
   if (teacherName.trim()) rename(teacherName.trim());
-  if (via === 'link' || via === 'codes') {
+  if (via === 'link') {
     // Straight between devices: this page is the teacher and the hub. Students come in through a link (the mailbox passes
     // the first notes, then the devices connect directly) or with invite and reply codes.
-    const box = via === 'link' ? configuredMailbox() : null;
-    if (via === 'link' && !box) return void (classroom.error = 'This copy of CaveCAD has no class mailbox. Set one below, or choose another way for students to join.');
+    const box = configuredMailbox();
+    if (!box) return void (classroom.error = 'This copy of CaveCAD has no class mailbox. Enter it below.');
     leave();
     classroom.transport = 'p2p';
     classroom.link = '';
@@ -107,12 +119,10 @@ export function startClass(className: string, teacherName: string, via: 'relay' 
       classroom.error = p2p.error || 'Could not start the class.';
       return;
     }
-    if (box) {
-      const session = crypto.randomUUID().replace(/-/g, '').slice(0, 20);
-      const config = mailboxConfig();
-      openClassLink(session, box);
-      classroom.link = liveLink(location.href, session, config?.source === 'local' ? config : undefined);
-    } else p2p.dialog = true; // where the invite codes are made
+    const session = crypto.randomUUID().replace(/-/g, '').slice(0, 20);
+    const config = mailboxConfig();
+    openClassLink(session, box);
+    classroom.link = liveLink(location.href, session, config?.source === 'local' ? config : undefined);
     return;
   }
   live.made = ''; // the link of an earlier class is not this one's

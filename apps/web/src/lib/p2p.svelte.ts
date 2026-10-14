@@ -228,7 +228,7 @@ function closed(peer: Peer, role: 'host' | 'guest') {
     p2p.reply = '';
     p2p.waiting = '';
     roomEvents.left(); // a class with no teacher any more: this device may look around on its own
-    p2p.error = 'The host’s connection ended. Your copy of the cave is kept here; join again with new codes and the two copies merge.';
+    p2p.error = 'The host’s connection ended. Your copy of the cave is kept here; open the host’s link again to join and the two copies merge.';
   }
 }
 
@@ -654,7 +654,7 @@ export const openClassLink = openSessionLink;
 export function startLinkSharing(): string | null {
   const box = configuredMailbox();
   if (!box) {
-    p2p.error = 'This copy of CaveCAD has no class mailbox, so it cannot make a link. Enter the mailbox below, or invite with codes.';
+    p2p.error = 'This copy of CaveCAD has no class mailbox, so it cannot make a link. Enter the mailbox below to make one.';
     return null;
   }
   if (p2p.role !== 'host' && !startHosting()) return null;

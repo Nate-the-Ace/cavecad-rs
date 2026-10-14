@@ -1,3 +1,4 @@
+import { readJoinLink } from '../src/lib/classroom-log.ts';
 import { createRequire } from 'node:module';
 import { httpMailbox, memoryMailbox, type Mailbox } from '../src/lib/signal.ts';
 import { hostLoop, joinLoop } from '../src/lib/signal-handshake.ts';
@@ -113,6 +114,18 @@ await handshake(httpMailbox('https://script.example/exec', 'K', appsScript('K'))
   const before = tries;
   await wait(60);
   ok(tries === before, 'a stopped loop makes no more offers');
+}
+
+// a pasted join link: a whole address, the part after the ?, or just the session code
+{
+  const sess = 'cc805973baf84c7baebf';
+  const a = readJoinLink(`https://nate-the-ace.github.io/cavecad-rs/?live=${sess}`);
+  ok(a?.session === sess && a.mailbox === null, 'a whole address gives its session');
+  const b = readJoinLink(`http://localhost:5174/?live=${sess}&mb=${encodeURIComponent('https://x.example/exec')}&mk=KEY`);
+  ok(b?.session === sess && b.mailbox?.endpoint === 'https://x.example/exec' && b.mailbox.key === 'KEY', 'a link that carries its mailbox gives that too');
+  ok(readJoinLink(`  ?live=${sess} `)?.session === sess, 'just the part after the question mark works, spaces and all');
+  ok(readJoinLink(sess)?.session === sess, 'the bare session code works');
+  ok(readJoinLink('hello there') === null && readJoinLink('') === null && readJoinLink('https://example.com/') === null, 'anything else is not a join link');
 }
 
 if (bad) process.exit(1);

@@ -97,3 +97,18 @@ export function readClassLink(search: string): { room: string; invite: string } 
   const room = q.get('class');
   return room ? { room, invite: q.get('invite') ?? '' } : null;
 }
+
+/** Reads what someone pasted as a join link: a whole address, just the part after the `?`, or only the session code.
+ *  Null when it is none of those. */
+export function readJoinLink(text: string): { session: string; mailbox: { endpoint: string; key: string } | null } | null {
+  const t = text.trim();
+  if (!t) return null;
+  try {
+    const found = readLiveLink(new URL(t).search);
+    if (found) return found;
+  } catch {
+    /* not an address */
+  }
+  if (t.includes('live=')) return readLiveLink(t.slice(t.indexOf('?') >= 0 ? t.indexOf('?') : 0).replace(/^(?!\?)/, '?'));
+  return /^[A-Za-z0-9]{12,40}$/.test(t) ? { session: t, mailbox: null } : null;
+}

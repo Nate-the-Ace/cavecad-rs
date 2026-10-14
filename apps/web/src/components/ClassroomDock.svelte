@@ -83,8 +83,8 @@
           </div>
           <p class="note">Send students this link. They watch your screen and can raise a hand.</p>
         {:else}
-          <button class="small" onclick={() => (p2p.dialog = true)}>Invite a student…</button>
-          <p class="note">Each student needs an invite code from you and sends a reply code back. They are let in at once and can only watch.</p>
+          <button class="small" onclick={() => (p2p.dialog = true)}>Make a link…</button>
+          <p class="note">Make one link, send it to your students, and they join and watch.</p>
         {/if}
         <div class="people" aria-label="Students">
           <span class="lead">{students.length} {students.length === 1 ? 'student' : 'students'}</span>
