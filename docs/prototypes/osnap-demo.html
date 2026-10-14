@@ -502,6 +502,19 @@ function draw() {
     } else if (realOv()) {
       ctx.font = '12px sans-serif'; ctx.fillStyle = '#ff8a65'; ctx.fillText('No ' + LABEL[r.ov] + ' here', mx + 16, my + 22);
     }
+    // Mid Between 2 Points: ghost of where the pick will land, following the cursor
+    const gh = m2pGhost(r);
+    if (gh) {
+      const a = toS(st.m2p), q = toS(gh.q), m = toS(gh.mid);
+      ctx.save(); ctx.strokeStyle = 'rgba(79,209,122,.8)'; ctx.lineWidth = 1; ctx.setLineDash([4, 4]); ctx.beginPath(); ctx.moveTo(a[0], a[1]); ctx.lineTo(q[0], q[1]); ctx.stroke(); ctx.restore();
+      ctx.save(); ctx.globalAlpha = .6; glyph(ctx, 'mid', m[0], m[1], 7, '#4fd17a'); ctx.restore();
+      if (S.tooltip) {
+        const t = 'Mid Between 2 Points', w = ctx.measureText(t).width + 12; ctx.font = '12px sans-serif';
+        const tx = Math.min(m[0] + 14, V.w - w - 6), ty = m[1] + 18;
+        ctx.fillStyle = '#e8fff0'; ctx.strokeStyle = '#555'; ctx.beginPath(); ctx.rect(tx, ty, ctx.measureText(t).width + 12, 20); ctx.fill(); ctx.stroke();
+        ctx.fillStyle = '#222'; ctx.fillText(t, tx + 6, ty + 14);
+      }
+    }
     // crosshair + aperture
     ctx.strokeStyle = '#e0e6ec'; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(cx - 14, cy); ctx.lineTo(cx + 14, cy); ctx.moveTo(cx, cy - 14); ctx.lineTo(cx, cy + 14); ctx.stroke();
     if (S.snapOn || st.override) { ctx.strokeStyle = 'rgba(224,230,236,.55)'; ctx.strokeRect(cx - S.aperture, cy - S.aperture, 2 * S.aperture, 2 * S.aperture); }
@@ -519,7 +532,13 @@ function draw() {
   $('hint').textContent = hints.join(' · ');
   const w = toW(mx, my); $('rd').textContent = w[0].toFixed(2) + ', ' + w[1].toFixed(2) + ' m';
 }
+function m2pGhost(r) {
+  if (st.override !== 'm2p' || !st.m2p) return null;
+  const q = r.best ? r.best.p : r.cw;
+  return { q, mid: mul(add(st.m2p, q), .5) };
+}
 function tipPoint(r) {
+  const gh = m2pGhost(r); if (gh) return gh.mid;
   if (r.best) return r.best.p;
   return r.cw;
 }
