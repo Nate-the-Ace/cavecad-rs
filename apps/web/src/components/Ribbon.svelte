@@ -1,3 +1,24 @@
+<script module lang="ts">
+  import type { Component } from 'svelte';
+
+  /** One button of a ribbon group. */
+  export interface Item {
+    label: string;
+    icon: Component<any>;
+    run: () => void;
+    pressed?: () => boolean;
+  }
+  /** One group of a ribbon tab. */
+  export interface Group {
+    name: string;
+    items: Item[];
+    /** A group that draws itself instead of a row of buttons. */
+    custom?: Component<any>;
+    /** What the custom component is given. */
+    props?: Record<string, unknown>;
+  }
+</script>
+
 <script lang="ts">
   import { engine, loadEngine } from '../lib/engine';
   import { exportDxf, exportProject, openCave, saveCave } from '../lib/files';
@@ -17,25 +38,16 @@
   import UserMenu from './UserMenu.svelte';
   import { symbolDef } from '../lib/symbols';
   import { fillLabel } from '../lib/fills';
-  import { onMount } from 'svelte';
+  import { onMount, untrack } from 'svelte';
   import { PANELS, panelState, resetLayout, showPanel, surveyLayout, togglePanel } from '../lib/workspace.svelte';
   import { Check, Trash2, LogIn, LogOut, Users, Library, FilePlus, FileInput, FolderOpen, Save, Ruler, Footprints, Route, Waypoints, Scissors, Map as MapIcon, Terminal, LayoutDashboard, Activity, Shapes, Table2, BookOpen, ScanLine, FileText, ChevronDown, PanelTop, FileOutput, Package, Mountain, SlidersHorizontal, Crosshair, Tent } from '@lucide/svelte';
-  import type { Component } from 'svelte';
 
-  interface Item {
-    label: string;
-    icon: Component<any>;
-    run: () => void;
-    pressed?: () => boolean;
-  }
-  interface Group {
-    name: string;
-    items: Item[];
-    /** A group that draws itself instead of a row of buttons. */
-    custom?: Component<any>;
-    /** What the custom component is given. */
-    props?: Record<string, unknown>;
-  }
+  /**
+   * The app shows the ribbon as it is. A host that is only a part of the app (the survey harness) can give its own
+   * tabs, built from the same groups (`DrawTools`, `ContextOptions`, ...): the running tool's options tab, the
+   * selected line's Edit tab and Escape work the same.
+   */
+  let { tabs: given }: { tabs?: Record<string, Group[]> } = $props();
 
   const press = (label: string) => engine.log('info', 'ribbon', `${label}: not built yet`);
   const stub = (label: string, icon: Component<any>): Item => ({ label, icon, run: () => press(label) });
@@ -57,7 +69,7 @@
   const save = () => run(saveCave());
   const saveAs = () => run(saveCave(true));
 
-  const tabs: Record<string, Group[]> = {
+  const own: Record<string, Group[]> = {
     Home: [
       { name: 'File', items: [{ label: 'Caves', icon: Library, run: () => (shelf.open = true) }, { label: 'New', icon: FilePlus, run: () => (cave.newDialog = true) }, { label: 'Open', icon: FolderOpen, run: open }, { label: 'Save', icon: Save, run: save }, { label: 'Save as', icon: Save, run: saveAs }, { label: 'Scans in file', icon: ScanLine, run: () => setOption('saveScans', !option('saveScans', true)), pressed: () => option('saveScans', true) }] },
       { name: 'Export', items: [{ label: 'DXF', icon: FileOutput, run: () => run(exportDxf()) }, { label: 'Project', icon: Package, run: () => run(exportProject()) }] },
@@ -94,7 +106,10 @@
       { name: 'Ribbon settings', items: [{ label: 'Compact layout', icon: PanelTop, run: () => setCompactRibbon(!cave.compactRibbon), pressed: () => cave.compactRibbon }] },
     ],
   };
-  let active = $state('Home');
+  const tabs = $derived(given ?? own);
+  /** The tab shown first: the first of the host's own, else Home. */
+  const firstTab = untrack(() => (given ? Object.keys(given)[0] : 'Home'));
+  let active = $state(firstTab);
 
   // A running command gets its own tab, in front, with its settings and a way to finish it.
   const CONTEXT = '\u0000command';
@@ -148,7 +163,7 @@
   ];
   // what a picked thing's tab holds comes from the inspector registered for its kind
   const pickGroups = $derived<Group[]>(cave.pick.kind ? INSPECTORS[cave.pick.kind as Exclude<PickKind, ''>].groups.map((g) => ({ name: g.name, items: [], custom: INSPECTORS[cave.pick.kind as Exclude<PickKind, ''>].component, props: { part: g.part, kind: cave.pick.kind } })) : []);
-  let before = 'Home';
+  let before = firstTab;
   $effect(() => {
     if (mode) {
       if (active !== CONTEXT) before = active;

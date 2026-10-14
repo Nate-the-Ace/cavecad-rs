@@ -4,7 +4,7 @@
   import { Download, Printer, FileImage } from '@lucide/svelte';
   import { cave } from '../lib/cave.svelte';
   import { engine, loadEngine, type SheetOptions } from '../lib/engine';
-  import { sheet, setSheet } from '../lib/sheet.svelte';
+  import { orderedScales, sheet, setSheet } from '../lib/sheet.svelte';
   import { downloadSheet, printSheet } from '../lib/sheet-export';
   import { showPanel } from '../lib/workspace.svelte';
 
@@ -17,7 +17,7 @@
     });
   });
   // metric scales first when the cave is shown in metric
-  const scales = $derived(opts ? [...opts.scales].sort((a, b) => (cave.units === 'metric' ? Number(b.metric) - Number(a.metric) : Number(a.metric) - Number(b.metric))) : []);
+  const scales = $derived(opts ? orderedScales(opts.scales, cave.units) : []);
   const tell = (m: string) => engine.log('info', 'sheet', m);
 </script>
 

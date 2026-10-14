@@ -10,7 +10,6 @@ import SurveyPanel from '../src/panels/SurveyPanel.svelte';
 import SketchPlanPanel from '../src/panels/SketchPlanPanel.svelte';
 import SketchProfilePanel from '../src/panels/SketchProfilePanel.svelte';
 import SketchSectionPanel from '../src/panels/SketchSectionPanel.svelte';
-import SketchToolsPanel from '../src/panels/SketchToolsPanel.svelte';
 import MockNotebook from './MockNotebook.svelte';
 
 const LAYOUT_KEY = 'cavecad.harness.layout.v1';
@@ -25,7 +24,6 @@ interface PanelDef {
 export const PANELS: Record<string, PanelDef> = {
   survey: { title: 'Survey', component: SurveyPanel, width: 400 },
   notebook: { title: 'Notebook', component: MockNotebook },
-  tools: { title: 'Sketch tools', component: SketchToolsPanel, height: 118 },
   plan: { title: 'Plan', component: SketchPlanPanel },
   profile: { title: 'Profile', component: SketchProfilePanel, width: 430 },
   section: { title: 'Cross section', component: SketchSectionPanel, height: 330 },
@@ -54,7 +52,6 @@ function defaultLayout(a: DockviewApi) {
   add('survey');
   add('notebook', { referencePanel: 'survey', direction: 'within' });
   add('plan', { referencePanel: 'survey', direction: 'right' });
-  add('tools', { referencePanel: 'plan', direction: 'above' }, { initialHeight: PANELS.tools.height });
   add('profile', { referencePanel: 'plan', direction: 'right' }, { initialWidth: profileW });
   add('section', { referencePanel: 'profile', direction: 'below' }, { initialHeight: sectionH });
   a.getPanel('survey')?.api.setActive();

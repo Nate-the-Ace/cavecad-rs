@@ -282,18 +282,18 @@ export function sectionView(l: Layout, dims: DimsByStation, station: string): Se
 
 // ---- strokes that stay attached ----
 
-/** A stroke as stored: its points relative to the nearest station of the view it was drawn in. */
+/** A stroke as stored: its fit points relative to the nearest station of the view it was drawn in. */
 export interface Anchored {
   anchor: string;
   /** Offsets from the station, in the view's metres. */
   pts: Pt[];
   /** Pen weight per point (relative, 1 is normal), when there was a pen. */
-  w?: number[];
+  widths: number[] | null;
   kind: string;
 }
 
 /** Anchors a stroke drawn at world points `pts` (view metres) to the nearest of `stations`. `null` when there are none. */
-export function anchorStroke(stations: { label: string; p: Pt }[], pts: Pt[], kind: string, w?: number[]): Anchored | null {
+export function anchorStroke(stations: { label: string; p: Pt }[], pts: Pt[], kind: string, widths: number[] | null = null): Anchored | null {
   if (stations.length === 0 || pts.length === 0) return null;
   const mid = pts[Math.floor(pts.length / 2)];
   let best = stations[0];
@@ -305,7 +305,7 @@ export function anchorStroke(stations: { label: string; p: Pt }[], pts: Pt[], ki
       best = s;
     }
   }
-  return { anchor: best.label, pts: pts.map((p) => [p[0] - best.p[0], p[1] - best.p[1]] as Pt), w, kind };
+  return { anchor: best.label, pts: pts.map((p) => [p[0] - best.p[0], p[1] - best.p[1]] as Pt), widths, kind };
 }
 
 /** Where a stored stroke is now, or `null` when its station is gone. */

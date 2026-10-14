@@ -2,7 +2,8 @@
 // pieces to show). Kept on this machine, like the other view settings: the sheet is a way of printing
 // the cave, not part of the cave.
 
-import type { SheetSetup } from './engine';
+import type { SheetOptions, SheetSetup } from './engine';
+import type { Units } from './units';
 
 const KEY = 'cavecad.sheet';
 
@@ -16,6 +17,11 @@ function saved(): SheetSetup {
     // nothing saved
   }
   return { ...DEFAULT };
+}
+
+/** The plot scales in the order people want them: metric ones first when the cave is shown in metric, imperial first otherwise. Used by every scale dropdown. */
+export function orderedScales(scales: SheetOptions['scales'], units: Units): SheetOptions['scales'] {
+  return [...scales].sort((a, b) => (units === 'metric' ? Number(b.metric) - Number(a.metric) : Number(a.metric) - Number(b.metric)));
 }
 
 /** The sheet's settings (A3 by default, the cave's name in the title block). */

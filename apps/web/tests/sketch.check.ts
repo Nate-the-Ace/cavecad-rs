@@ -88,6 +88,7 @@ ok(JSON.stringify(placeStroke(stations, a)) === JSON.stringify(drawn), 'and come
 const moved = placeStroke([{ label: 'A1', p: [0, 0] }, { label: 'A2', p: [12, 3] }], a)!;
 ok(near(moved[1][0], 12) && near(moved[1][1], 4.5), 'when the station moves, the stroke moves with it');
 ok(placeStroke([{ label: 'A1', p: [0, 0] }], a) === null, 'a stroke whose station is gone is not placed');
+ok(a.widths === null && anchorStroke(stations, drawn, 'wall', [1, 1.4, 1])?.widths?.[1] === 1.4, 'pen weights ride along');
 ok(anchorStroke([], drawn, 'wall') === null && anchorStroke(stations, [], 'wall') === null, 'nothing to hang on, or nothing drawn');
 
 // Fitting.

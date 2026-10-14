@@ -1,9 +1,13 @@
 <script lang="ts">
-  // The page around the dock: a thin bar (panel toggles, units, resets), the dock itself (panels the person
-  // arranges as they like, remembered on this device), and the feed that keeps the sketchpad in step with
-  // the mock notebook. The Survey panel is the real one; the notebook is a mock.
+  // The page around the dock, built the way the app is: the real ribbon on top (here with a Draw tab and a View
+  // tab), the dock below with panels the person arranges as they like (remembered on this device), and the feed
+  // that keeps the sketchpad in step with the mock notebook. The ribbon, Draw tab, options tab and Edit tab are
+  // the app's own components; the Survey panel and the sketchpad panes are the real ones; the notebook is a mock.
   import { onMount, untrack } from 'svelte';
-  import { cave, setUnits } from '../src/lib/cave.svelte';
+  import { Activity, BookOpen, Crosshair, Footprints, LayoutDashboard, Map as MapIcon, Ruler, Scissors, Trash2 } from '@lucide/svelte';
+  import Ribbon, { type Group } from '../src/components/Ribbon.svelte';
+  import DrawTools from '../src/components/DrawTools.svelte';
+  import { cave, option, setOption, setUnits } from '../src/lib/cave.svelte';
   import { loadEngine } from '../src/lib/engine';
   import { survey } from '../src/lib/survey.svelte';
   import { standing } from '../src/lib/survey';
@@ -17,10 +21,41 @@
 
   let host: HTMLDivElement;
   onMount(() => {
+    // The harness opens in feet (1" = 20' is the working scale); the View tab's Units group changes it, and that is remembered.
+    try {
+      if (!localStorage.getItem('cavecad.harness.units')) {
+        localStorage.setItem('cavecad.harness.units', 'set');
+        setUnits('imperial');
+      }
+    } catch {
+      /* storage unavailable: the app's default stays */
+    }
     sketch.open('harness');
     return initDock(host);
   });
   loadEngine();
+
+  function resetNotebook() {
+    const book = bookOf();
+    if (book) {
+      book.shots.length = 0;
+      for (const k of Object.keys(book.walls)) delete book.walls[k];
+    }
+    location.reload();
+  }
+
+  const icons = { survey: Crosshair, notebook: BookOpen, plan: MapIcon, profile: Activity, section: Scissors } as const;
+
+  /** The ribbon: the app's Draw groups as they are, and a View tab of the same kind as the app's. */
+  const tabs: Record<string, Group[]> = {
+    Draw: ['Linework', 'Passage lines', 'Geology and relief'].map((name) => ({ name, items: [], custom: DrawTools, props: { group: name } })),
+    View: [
+      { name: 'Panels', items: Object.entries(PANELS).map(([id, def]) => ({ label: def.title, icon: icons[id as keyof typeof icons], run: () => togglePanel(id), pressed: () => !!panelState.open[id] })) },
+      { name: 'Sketch', items: [{ label: 'Follow survey', icon: Crosshair, run: () => setOption('followSurvey', !option('followSurvey', true)), pressed: () => option('followSurvey', true) }] },
+      { name: 'Units', items: [{ label: 'Metric', icon: Ruler, run: () => setUnits('metric'), pressed: () => cave.units === 'metric' }, { label: 'Imperial', icon: Footprints, run: () => setUnits('imperial'), pressed: () => cave.units === 'imperial' }] },
+      { name: 'Layout', items: [{ label: 'Reset', icon: LayoutDashboard, run: resetDock }, { label: 'New notebook', icon: Trash2, run: resetNotebook }] },
+    ],
+  };
 
   // The sketchpad draws what the mock notebook holds (the real app would read the notebook page the same way).
   $effect(() => {
@@ -34,44 +69,14 @@
       sketch.setSource(shots, structuredClone($state.snapshot(book?.walls ?? {})) as DimsByStation, here);
     });
   });
-
-  function resetNotebook() {
-    const book = bookOf();
-    if (book) {
-      book.shots.length = 0;
-      for (const k of Object.keys(book.walls)) delete book.walls[k];
-    }
-    location.reload();
-  }
 </script>
 
 <div class="page">
-  <header>
-    <b>CaveCAD Survey harness</b>
-    <span class="note">The real Survey panel and sketchpad on a mock notebook. Drag tabs, resize, float or close any panel; the layout is remembered. The real Map needs the real engine; Bluetooth needs a real X1: use the Simulator.</span>
-    <span class="sp"></span>
-    <span class="toggles" role="group" aria-label="Panels">
-      {#each Object.entries(PANELS) as [id, def]}
-        <button class:on={panelState.open[id]} aria-pressed={!!panelState.open[id]} onclick={() => togglePanel(id)}>{def.title}</button>
-      {/each}
-    </span>
-    <label>Units
-      <select onchange={(e) => setUnits(e.currentTarget.value === 'imperial' ? 'imperial' : 'metric')}><option>metric</option><option>imperial</option></select>
-    </label>
-    <button onclick={resetDock}>Reset layout</button>
-    <button onclick={resetNotebook}>Reset notebook</button>
-  </header>
+  <Ribbon {tabs} />
   <div class="dock" bind:this={host}></div>
 </div>
 
 <style>
   .page { display: flex; flex-direction: column; height: 100vh; background: var(--bg, #111); color: var(--text); font-size: 13px; }
-  header { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 6px 10px; border-bottom: 1px solid var(--line); }
-  .note { color: var(--muted); font-size: 12px; max-width: 46em; }
-  .sp { flex: 1; }
-  .toggles { display: inline-flex; gap: 4px; }
   .dock { flex: 1; min-height: 0; }
-  select, button { font: inherit; padding: 4px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel-2); color: var(--text); cursor: pointer; }
-  button.on { border-color: var(--accent); color: var(--accent); }
-  label { display: inline-flex; gap: 6px; align-items: center; color: var(--muted); }
 </style>

@@ -1,28 +1,86 @@
-<script module lang="ts">
-  // A pen in use makes any finger a palm, whichever pane it lands on: shared by every pane.
-  let penUntil = 0;
-</script>
-
 <script lang="ts">
-  // One view of the sketchpad (plan, profile or cross section) as a dockable panel. Graph-paper grid at a
-  // paper scale (1" = 20' to start with, a dropdown of the usual ones), pen to draw, fingers to pan and pinch,
-  // wheel to zoom, strokes hanging on stations. The three panes share one store (lib/sketch.svelte.ts), so
-  // they can be placed, tabbed, floated and resized like any other panel.
-  import { untrack } from 'svelte';
-  import { ChevronLeft, ChevronRight, Maximize, Redo2, Undo2 } from '@lucide/svelte';
-  import { anchorStroke, fitView, placeStroke, toScreen, toWorld, type Anchored, type Pt, type Transform } from '../lib/sketch-geometry';
-  import { SCALES, describeScale, gridFor, gridLines, matchScale, stepText } from '../lib/sketch-scale';
-  import { PANE_TITLE, sketch, type Pane } from '../lib/sketch.svelte';
+  // One view of the sketchpad (plan, profile or cross section) as a dockable panel. It is the app's own way of
+  // drawing, pointed at the survey: the ribbon's Draw tab picks the tool (`cave.tool`), its options tab sets curve
+  // detail, close, finger and pressure (`option()`), its Edit tab changes a selected line, `PanelUndo` is the
+  // pane's own undo; strokes are fitted with `fitStroke`, drawn with `drawStrokes`, edited with `LineEditor`,
+  // and fingers and the pen are told apart by `Touches` and `PenGuard`, exactly as in the Cross Section panel.
+  // What is new here is only the grid at a paper scale and the survey's flat views (lib/sketch-grid.ts,
+  // lib/sketch-geometry.ts).
+  import { onMount, untrack } from 'svelte';
+  import { ChevronLeft, ChevronRight, Maximize } from '@lucide/svelte';
+  import PanelUndo from '../components/PanelUndo.svelte';
+  import { looks } from '../lib/ink';
+  import { drawHandles, drawStrokes } from '../lib/section-glyph';
+  import { LineEditor, endpointNear, joinFit, type EditableLine } from '../lib/line-editor';
+  import { Touches } from '../lib/touch';
+  import { PenGuard, isEraser, widthFor } from '../lib/pen';
+  import { fitStroke } from '../lib/spline';
+  import { tolerancePx } from '../lib/commands';
+  import { isStampKind } from '../lib/symbols';
+  import { cave, changed, filter, option, setOption } from '../lib/cave.svelte';
+  import { orderedScales } from '../lib/sheet.svelte';
+  import { engine, loadEngine, type SheetOptions } from '../lib/engine';
+  import { formatLength } from '../lib/units';
+  import { anchorStroke, fitView, placeStroke, toScreen as project, toWorld as unproject, type Pt, type Transform } from '../lib/sketch-geometry';
+  import { GRID, describeScale, drawGrid, gridCaption, matchScale, pxPerMetre, visibleGrid } from '../lib/sketch-grid';
+  import { PANE_SCOPE, PANE_TITLE, sketch, type Pane } from '../lib/sketch.svelte';
 
   let { pane }: { pane: Pane } = $props();
 
   const view = $derived(sketch.views[pane]);
-  let canvas = $state<HTMLCanvasElement | null>(null);
-  let live = $state<{ pts: Pt[]; w: number[]; kind: string } | null>(null);
+  const stations = $derived(sketch.stationsOf(pane));
+  let canvas: HTMLCanvasElement;
+  let wrap: HTMLDivElement;
+  let scales = $state<SheetOptions['scales']>([]);
+  let message = $state('');
+  let live: { pts: Pt[]; widths: number[]; pressure: boolean } | null = null;
+  let frame = 0;
+  onMount(() => {
+    loadEngine().then(() => (scales = orderedScales(engine.sheetOptions().scales, cave.units)));
+  });
 
-  const stations = $derived(pane === 'plan' ? sketch.plan.stations : pane === 'profile' ? sketch.profile.stations : sketch.selected ? [{ label: sketch.selected, p: [0, 0] as Pt }] : []);
+  /** The pane's lines as the line editor wants them: points in the pane's metres. */
+  type Line = EditableLine & { kind: string; closed: boolean; text: string; flip: boolean };
+  const lines = $derived.by<Line[]>(() => {
+    const out: Line[] = [];
+    for (const s of sketch.paneStrokes(pane)) {
+      const points = placeStroke(stations, s);
+      if (points) out.push({ id: s.id, points, widths: s.widths, closed: s.closed, kind: s.kind, text: s.text, flip: s.flip });
+    }
+    return out;
+  });
 
-  /** Everything the pane should show when fitted. */
+  const tf = (): Transform => sketch.views[pane].tf;
+  const toScreen = (p: Pt): Pt => project(tf(), p);
+  const toWorld = (x: number, y: number): Pt => unproject(tf(), [x, y]);
+
+  // Drawn lines can be selected and their fit points moved, added and deleted (the app's one implementation).
+  const editor = new LineEditor<Line>({
+    lines: () => lines,
+    toScreen,
+    toWorld,
+    selected: () => cave.selected,
+    select: (id) => (cave.selected = id),
+    commit: (id, pts, widths) => sketch.setPoints(id, pts, widths),
+    remove: (id) => sketch.remove(id),
+    redraw: () => schedule(),
+    hidden: (kind) => !!kind && filter.hiddenTypes.includes(kind),
+  });
+  $effect(() => {
+    void cave.selected;
+    schedule();
+  });
+  // the selected line is fitted again at another detail (the Edit tab's slider)
+  let handledRefit = cave.refit.seq; // a panel opened later does not redo old requests
+  $effect(() => {
+    const r = cave.refit;
+    if (r.seq === handledRefit) return;
+    handledRefit = r.seq;
+    untrack(() => editor.refitLine(r.id, r.detail));
+  });
+
+  // ---- framing: at a paper scale, on the survey, until the person moves the pane ----
+
   function fitPoints(): Pt[] {
     if (pane === 'plan') return [...sketch.plan.stations.map((s) => s.p), ...sketch.plan.splays.map((s) => s[1]), ...sketch.plan.walls.flat()];
     if (pane === 'profile') return [...sketch.profile.stations.map((s) => s.p), ...sketch.profile.walls.flat()];
@@ -30,7 +88,7 @@
     return s ? [[0, 0], ...(s.outline ?? []), ...s.splays] : [];
   }
 
-  /** The point to keep in the middle of the pane at a fixed scale: the station stood at (or picked); for a section, the middle of the passage. */
+  /** The point kept in the middle at a fixed scale: the station stood at; for a section, the middle of the passage. */
   function centre(): Pt {
     if (pane === 'section') {
       const o = sketch.section?.outline;
@@ -41,9 +99,6 @@
     return s ? s.p : [0, 0];
   }
 
-  const presetOf = (id: string) => SCALES.find((s) => s.id === id);
-
-  // Frame itself on the survey until the person moves the pane.
   $effect(() => {
     void sketch.L;
     void sketch.plan;
@@ -52,189 +107,123 @@
     void sketch.standing;
     void sketch.selected;
     const { w, h } = view.size;
-    const id = view.scaleId;
+    const scale = view.scale;
     if (view.frame !== 'auto' || w === 0) return;
     untrack(() => {
-      const preset = presetOf(id);
-      if (!preset) {
+      if (scale === 'fit') {
         sketch.views[pane].tf = fitView(fitPoints(), w, h, 30, pane === 'section' ? 140 : 90);
         return;
       }
+      const k = pxPerMetre(scale);
       const c = centre();
-      sketch.views[pane].tf = { scale: preset.pxPerM, tx: w / 2 - c[0] * preset.pxPerM, ty: h / 2 + c[1] * preset.pxPerM };
+      sketch.views[pane].tf = { scale: k, tx: w / 2 - c[0] * k, ty: h / 2 + c[1] * k };
     });
   });
 
-  // ---- the scale control ----
-  const selectValue = $derived(view.frame === 'auto' ? view.scaleId : (matchScale(view.tf.scale)?.id ?? 'custom'));
-  function chooseScale(id: string) {
-    if (id === 'custom') return;
-    sketch.views[pane].scaleId = id;
+  const selectValue = $derived(view.frame === 'auto' ? String(view.scale) : String(matchScale(view.tf.scale, scales)?.feet_per_inch ?? 'custom'));
+  function chooseScale(v: string) {
+    if (v === 'custom') return;
+    sketch.views[pane].scale = v === 'fit' ? 'fit' : Number(v);
     sketch.views[pane].frame = 'auto';
     sketch.save();
   }
-  function reframe() {
-    sketch.views[pane].frame = 'auto';
-  }
-  function fitAll() {
-    sketch.views[pane].scaleId = 'fit';
-    sketch.views[pane].frame = 'auto';
-    sketch.save();
-  }
+  const fitAll = () => chooseScale('fit');
+  const reframe = () => (sketch.views[pane].frame = 'auto');
   const free = () => (sketch.views[pane].frame = 'free');
 
   // ---- drawing ----
-  let raf = 0;
-  function redraw() {
-    cancelAnimationFrame(raf);
-    raf = requestAnimationFrame(draw);
+
+  function schedule() {
+    if (!frame) frame = requestAnimationFrame(() => ((frame = 0), draw()));
   }
   $effect(() => {
     void sketch.L; void sketch.plan; void sketch.profile; void sketch.section;
-    void sketch.strokes; void sketch.standing; void sketch.selected; void sketch.tool;
-    void view.tf; void view.size; void live; void canvas;
-    redraw();
+    void sketch.strokes; void sketch.standing; void sketch.selected;
+    void view.tf; void view.size; void lines; void scales;
+    schedule();
   });
 
-  const css = (el: HTMLElement, name: string, fallback: string) => getComputedStyle(el).getPropertyValue(name).trim() || fallback;
+  const css = () => {
+    const c = getComputedStyle(document.documentElement);
+    const v = (n: string) => c.getPropertyValue(n).trim();
+    return { text: v('--text'), muted: v('--muted'), line: v('--line'), accent: v('--accent'), accentBg: v('--accent-bg'), panel: v('--panel'), warn: v('--warn') };
+  };
 
-  function poly(ctx: CanvasRenderingContext2D, t: Transform, pts: Pt[], close = false) {
-    ctx.beginPath();
+  function poly(g: CanvasRenderingContext2D, pts: Pt[], close = false) {
+    g.beginPath();
     pts.forEach((p, i) => {
-      const [x, y] = toScreen(t, p);
-      if (i === 0) ctx.moveTo(x, y);
-      else ctx.lineTo(x, y);
+      const [x, y] = toScreen(p);
+      if (i === 0) g.moveTo(x, y);
+      else g.lineTo(x, y);
     });
-    if (close) ctx.closePath();
-  }
-
-  /** A stroke as a smooth curve through its points (midpoint quadratics), width scaled by pen weight. */
-  function ink(ctx: CanvasRenderingContext2D, t: Transform, pts: Pt[], w: number[] | undefined, kind: string, colors: { text: string; accent: string }) {
-    if (pts.length === 0) return;
-    const s = pts.map((p) => toScreen(t, p));
-    ctx.save();
-    ctx.lineCap = 'round';
-    ctx.lineJoin = 'round';
-    ctx.strokeStyle = kind === 'note' ? colors.accent : colors.text;
-    ctx.setLineDash(kind === 'ledge' ? [7, 5] : []);
-    const base = kind === 'note' ? 1.6 : 2.2;
-    if (s.length === 1) {
-      ctx.beginPath();
-      ctx.arc(s[0][0], s[0][1], base, 0, Math.PI * 2);
-      ctx.fillStyle = ctx.strokeStyle;
-      ctx.fill();
-    } else if (!w || w.every((x) => Math.abs(x - w[0]) < 0.05)) {
-      ctx.lineWidth = base * (w?.[0] ?? 1);
-      ctx.beginPath();
-      ctx.moveTo(s[0][0], s[0][1]);
-      for (let i = 1; i < s.length - 1; i++) ctx.quadraticCurveTo(s[i][0], s[i][1], (s[i][0] + s[i + 1][0]) / 2, (s[i][1] + s[i + 1][1]) / 2);
-      ctx.lineTo(s[s.length - 1][0], s[s.length - 1][1]);
-      ctx.stroke();
-    } else {
-      // Pressure changes the weight of the line, never where it is.
-      for (let i = 1; i < s.length; i++) {
-        ctx.lineWidth = base * ((w[i] + w[i - 1]) / 2);
-        ctx.beginPath();
-        ctx.moveTo(s[i - 1][0], s[i - 1][1]);
-        ctx.lineTo(s[i][0], s[i][1]);
-        ctx.stroke();
-      }
-    }
-    ctx.restore();
-  }
-
-  function drawGrid(ctx: CanvasRenderingContext2D, t: Transform, w: number, h: number, c: { text: string; muted: string }) {
-    const { minorM, majorM } = gridFor(t.scale, 7.5, describeScale(t.scale).startsWith('1"'));
-    const [x0, y1] = toWorld(t, [0, 0]);
-    const [x1, y0] = toWorld(t, [w, h]);
-    const minorPx = minorM * t.scale;
-    ctx.save();
-    ctx.lineWidth = 1;
-    ctx.strokeStyle = c.text;
-    const paint = (heavy: boolean) => {
-      ctx.globalAlpha = heavy ? 0.2 : 0.075;
-      ctx.beginPath();
-      for (const l of gridLines(x0, x1, minorPx < 4 ? majorM : minorM, majorM)) {
-        if (l.heavy !== heavy) continue;
-        const x = Math.round(t.tx + l.at * t.scale) + 0.5;
-        ctx.moveTo(x, 0);
-        ctx.lineTo(x, h);
-      }
-      for (const l of gridLines(y0, y1, minorPx < 4 ? majorM : minorM, majorM)) {
-        if (l.heavy !== heavy) continue;
-        const y = Math.round(t.ty - l.at * t.scale) + 0.5;
-        ctx.moveTo(0, y);
-        ctx.lineTo(w, y);
-      }
-      ctx.stroke();
-    };
-    paint(false);
-    paint(true);
-    ctx.restore();
+    if (close) g.closePath();
   }
 
   function draw() {
-    const cv = canvas;
     const { w, h } = view.size;
-    if (!cv || w === 0) return;
-    const ctx = cv.getContext('2d');
-    if (!ctx) return;
+    if (!canvas || w === 0) return;
     const dpr = window.devicePixelRatio || 1;
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.clearRect(0, 0, w, h);
-    const c = { text: css(cv, '--text', '#ddd'), muted: css(cv, '--muted', '#888'), accent: css(cv, '--accent', '#4af'), warn: css(cv, '--warn', '#fb3'), line: css(cv, '--line', '#444') };
-    const t = view.tf;
-    ctx.font = '11px system-ui, sans-serif';
-    drawGrid(ctx, t, w, h, c);
+    canvas.width = Math.round(w * dpr);
+    canvas.height = Math.round(h * dpr);
+    const g = canvas.getContext('2d')!;
+    g.setTransform(dpr, 0, 0, dpr, 0, 0);
+    g.clearRect(0, 0, w, h);
+    const c = css();
+    const t = tf();
+    g.font = '11px system-ui, sans-serif';
+    drawGrid(g, t, w, h, c.text);
 
-    const dot = (p: Pt, label: string, r = 3.5) => {
-      const [x, y] = toScreen(t, p);
-      ctx.fillStyle = c.text;
-      ctx.beginPath();
-      ctx.arc(x, y, r, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.fillStyle = c.muted;
-      ctx.fillText(label, x + 6, y - 6);
+    const dot = (p: Pt, label: string) => {
+      const [x, y] = toScreen(p);
+      g.fillStyle = c.text;
+      g.beginPath();
+      g.arc(x, y, 3.5, 0, Math.PI * 2);
+      g.fill();
+      g.fillStyle = c.muted;
+      g.fillText(label, x + 6, y - 6);
     };
     const ring = (p: Pt, color: string, r: number) => {
-      const [x, y] = toScreen(t, p);
-      ctx.strokeStyle = color;
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.arc(x, y, r, 0, Math.PI * 2);
-      ctx.stroke();
+      const [x, y] = toScreen(p);
+      g.strokeStyle = color;
+      g.lineWidth = 2;
+      g.beginPath();
+      g.arc(x, y, r, 0, Math.PI * 2);
+      g.stroke();
+    };
+    const wash = (shapes: Pt[][]) => {
+      g.save();
+      g.globalAlpha = 0.4;
+      g.fillStyle = c.accentBg;
+      for (const s of shapes) {
+        poly(g, s, true);
+        g.fill();
+      }
+      g.restore();
     };
 
     if (pane === 'plan' || pane === 'profile') {
       const v = pane === 'plan' ? sketch.plan : sketch.profile;
-      ctx.save();
-      ctx.globalAlpha = 0.16;
-      ctx.fillStyle = c.muted;
-      for (const poly_ of v.passage) {
-        poly(ctx, t, poly_, true);
-        ctx.fill();
-      }
-      ctx.restore();
-      ctx.strokeStyle = c.text;
-      ctx.lineWidth = 1.4;
-      ctx.setLineDash([]);
+      wash(v.passage);
+      g.strokeStyle = c.muted;
+      g.lineWidth = 1.5;
+      g.setLineDash([6, 4]); // measured walls: a guide to trace against, never the passage itself
       for (const wall of v.walls) {
-        poly(ctx, t, wall);
-        ctx.stroke();
+        poly(g, wall);
+        g.stroke();
       }
+      g.setLineDash([]);
       if (pane === 'plan') {
-        ctx.strokeStyle = c.muted;
-        ctx.lineWidth = 1;
+        g.lineWidth = 1;
         for (const [a, b] of sketch.plan.splays) {
-          poly(ctx, t, [a, b]);
-          ctx.stroke();
+          poly(g, [a, b]);
+          g.stroke();
         }
       }
-      ctx.strokeStyle = c.accent;
-      ctx.lineWidth = 2;
+      g.strokeStyle = c.accent;
+      g.lineWidth = 2;
       for (const [a, b] of v.legs) {
-        poly(ctx, t, [a, b]);
-        ctx.stroke();
+        poly(g, [a, b]);
+        g.stroke();
       }
       for (const s of v.stations) dot(s.p, s.label);
       const here = v.stations.find((s) => s.label === sketch.standing);
@@ -242,333 +231,397 @@
       const sel = v.stations.find((s) => s.label === sketch.selected);
       if (sel && sketch.selected !== sketch.standing) ring(sel.p, c.accent, 8);
       if (pane === 'plan') {
-        ctx.fillStyle = c.muted;
-        ctx.fillText('N', w - 22, 18);
-        ctx.strokeStyle = c.muted;
-        ctx.lineWidth = 1;
-        ctx.beginPath();
-        ctx.moveTo(w - 18, 40);
-        ctx.lineTo(w - 18, 24);
-        ctx.lineTo(w - 22, 30);
-        ctx.moveTo(w - 18, 24);
-        ctx.lineTo(w - 14, 30);
-        ctx.stroke();
+        g.fillStyle = c.muted;
+        g.strokeStyle = c.muted;
+        g.lineWidth = 1.5;
+        g.fillText('N', w - 22, 18);
+        g.beginPath();
+        g.moveTo(w - 18, 40);
+        g.lineTo(w - 18, 24);
+        g.lineTo(w - 22, 30);
+        g.moveTo(w - 18, 24);
+        g.lineTo(w - 14, 30);
+        g.stroke();
       }
     } else if (sketch.section) {
-      const section = sketch.section;
-      const [ox, oy] = toScreen(t, [0, 0]);
-      ctx.strokeStyle = c.line;
-      ctx.lineWidth = 1;
-      ctx.beginPath();
-      ctx.moveTo(ox - 12, oy);
-      ctx.lineTo(ox + 12, oy);
-      ctx.moveTo(ox, oy - 12);
-      ctx.lineTo(ox, oy + 12);
-      ctx.stroke();
-      if (section.outline) {
-        ctx.save();
-        ctx.globalAlpha = 0.16;
-        ctx.fillStyle = c.muted;
-        poly(ctx, t, section.outline, true);
-        ctx.fill();
-        ctx.restore();
-        ctx.strokeStyle = c.text;
-        ctx.lineWidth = 1.4;
-        poly(ctx, t, section.outline, true);
-        ctx.stroke();
-        // The dimensions in one line, where they cannot pile up on a small section.
-        const [l, u, r, d] = section.outline;
-        const val = (n: number) => `${+Math.abs(n).toFixed(2)}`;
-        ctx.fillStyle = c.text;
-        ctx.fillText(`L ${val(l[0])}   R ${val(r[0])}   U ${val(u[1])}   D ${val(d[1])} m`, 12, 34);
+      const s = sketch.section;
+      const [cx, cy] = toScreen([0, 0]);
+      g.strokeStyle = c.text;
+      g.lineWidth = 1.6;
+      g.beginPath();
+      g.moveTo(cx - 9, cy + 7);
+      g.lineTo(cx + 9, cy + 7);
+      g.lineTo(cx, cy - 8);
+      g.closePath();
+      g.stroke();
+      if (s.outline) {
+        wash([s.outline]);
+        g.setLineDash([6, 4]);
+        g.strokeStyle = c.muted;
+        g.lineWidth = 1.5;
+        g.lineJoin = 'round';
+        poly(g, s.outline, true);
+        g.stroke();
+        g.setLineDash([]);
+        const [l, u, r, d] = s.outline;
+        g.fillStyle = c.text;
+        g.fillText(`L ${formatLength(Math.abs(l[0]), 'imperial', 1)}   R ${formatLength(r[0], 'imperial', 1)}   U ${formatLength(u[1], 'imperial', 1)}   D ${formatLength(Math.abs(d[1]), 'imperial', 1)}`, 12, 34);
       }
-      ctx.fillStyle = c.accent;
-      for (const p of section.splays) {
-        const [x, y] = toScreen(t, p);
-        ctx.beginPath();
-        ctx.arc(x, y, 3, 0, Math.PI * 2);
-        ctx.fill();
+      g.fillStyle = c.muted;
+      for (const p of s.splays) {
+        const [x, y] = toScreen(p);
+        g.beginPath();
+        g.arc(x, y, 3.2, 0, Math.PI * 2);
+        g.fill();
       }
-      ctx.fillStyle = c.muted;
-      ctx.fillText(`looking along the passage at ${section.station}`, 12, 18);
+      g.fillText(`${s.station}: looking along the passage`, 12, 18);
     } else {
-      ctx.fillStyle = c.muted;
-      ctx.fillText('No station yet.', 12, 18);
+      g.fillStyle = c.muted;
+      g.fillText('No station yet.', 12, 18);
     }
 
-    // sketch strokes, then the one being drawn
-    for (const a of sketch.strokesOf(pane)) {
-      const pts = placeStroke(stations, a);
-      if (pts) ink(ctx, t, pts, a.w, a.kind, c);
+    // what has been sketched: the app's own stroke drawing, with selection halo and handles
+    const look = looks();
+    const to = (u: number, v: number): [number, number] => toScreen([u, v]);
+    drawStrokes(g, editor.display(), to, look, 1, cave.selected, stations.map((s) => s.p));
+    drawHandles(g, editor.handles(), c.accent, c.panel);
+    if (pickupAt && cave.tool && !live) {
+      g.strokeStyle = c.accent; // the end of an open line the next stroke would carry on from
+      g.lineWidth = 2;
+      g.beginPath();
+      g.arc(pickupAt[0], pickupAt[1], 9, 0, Math.PI * 2);
+      g.stroke();
     }
-    if (live) ink(ctx, t, live.pts, live.w, live.kind, c);
+    if (live && live.pts.length > 1) drawStrokes(g, [{ kind: cave.tool || 'sketch', points: live.pts, widths: live.pressure ? live.widths : null, closed: false }], to, look);
 
-    // scale: a bar the length of one heavy grid square, and what the grid is
-    const imperial = describeScale(t.scale).startsWith('1"');
-    const g = gridFor(t.scale, 7.5, imperial);
-    const barPx = g.majorM * t.scale;
-    ctx.strokeStyle = c.muted;
-    ctx.fillStyle = c.muted;
-    ctx.lineWidth = 2;
-    if (barPx < w - 30) {
-      ctx.beginPath();
-      ctx.moveTo(12, h - 14);
-      ctx.lineTo(12 + barPx, h - 14);
-      ctx.moveTo(12, h - 18);
-      ctx.lineTo(12, h - 10);
-      ctx.moveTo(12 + barPx, h - 18);
-      ctx.lineTo(12 + barPx, h - 10);
-      ctx.stroke();
+    // what the scale is, and the grid: a bar one heavy square long
+    const bar = GRID.majorM * t.scale;
+    g.strokeStyle = c.text;
+    g.fillStyle = c.muted;
+    g.lineWidth = 2;
+    if (bar < w - 30 && visibleGrid(t.scale).major) {
+      g.beginPath();
+      g.moveTo(16, h - 14);
+      g.lineTo(16 + bar, h - 14);
+      g.stroke();
     }
-    ctx.fillText(`${describeScale(t.scale)}  ·  grid ${stepText(g.minorM, imperial)} / ${stepText(g.majorM, imperial)}`, 12, h - 22);
+    const fine = visibleGrid(t.scale).minor ? '' : ' (fine lines hidden: zoom in)';
+    g.fillText(`${describeScale(t.scale, scales)}  ·  grid ${gridCaption()}${fine}`, 16, h - 22);
+    if (message) {
+      g.fillStyle = c.warn;
+      g.fillText(message, 12, 50);
+    }
   }
 
   // ---- the canvas's size ----
-  function measure(node: HTMLCanvasElement) {
-    canvas = node;
+  onMount(() => {
     const apply = () => {
-      const r = node.parentElement!.getBoundingClientRect();
-      const dpr = window.devicePixelRatio || 1;
-      const w = Math.max(0, Math.floor(r.width));
-      const h = Math.max(0, Math.floor(r.height));
-      node.width = Math.max(1, Math.floor(w * dpr));
-      node.height = Math.max(1, Math.floor(h * dpr));
-      node.style.width = `${w}px`;
-      node.style.height = `${h}px`;
-      sketch.views[pane].size = { w, h };
+      const r = wrap.getBoundingClientRect();
+      sketch.views[pane].size = { w: Math.floor(r.width), h: Math.floor(r.height) };
     };
     const ro = new ResizeObserver(apply);
-    ro.observe(node.parentElement!);
+    ro.observe(wrap);
     apply();
-    return { destroy: () => ro.disconnect() };
+    return () => ro.disconnect();
+  });
+
+  // ---- input: pen and mouse draw, fingers and the middle button pan, the wheel zooms (the app's rules) ----
+  const touches = new Touches();
+  const guard = new PenGuard();
+  let erasing = false;
+  let gesturing = false;
+  let panning: { x: number; y: number } | null = null;
+  let lastMiddle = 0;
+  let moved = 0;
+  let pressedAt: Pt | null = null;
+
+  function addPoint(e: PointerEvent) {
+    if (!live) return;
+    const rect = canvas.getBoundingClientRect();
+    const p = toWorld(e.clientX - rect.left, e.clientY - rect.top);
+    const last = live.pts[live.pts.length - 1];
+    if (last && Math.hypot(p[0] - last[0], p[1] - last[1]) * tf().scale < 1.5) return;
+    live.pts.push(p);
+    // Pressure only changes how thick the line is drawn, never where it goes.
+    live.widths.push(live.pressure ? widthFor(e.pressure) : 1);
   }
 
-  // ---- pointer input ----
-  const touches = new Map<number, { x: number; y: number }>();
-  let drawing: { id: number; before: string; erase: boolean; moved: number } | null = null;
-  let panning: { id: number; x: number; y: number } | null = null;
-
-  const local = (e: { clientX: number; clientY: number }): Pt => {
-    const r = canvas!.getBoundingClientRect();
-    return [e.clientX - r.left, e.clientY - r.top];
-  };
-  const weight = (e: PointerEvent) => (e.pointerType === 'pen' ? Math.min(1.8, 0.45 + e.pressure * 1.2) : 1);
-  const setTf = (t: Transform) => (sketch.views[pane].tf = t);
-
-  function down(e: PointerEvent) {
+  function onDown(e: PointerEvent) {
     try {
-      canvas!.setPointerCapture(e.pointerId);
+      canvas.setPointerCapture(e.pointerId);
     } catch {
       /* the pointer is already gone: carry on without capture */
     }
-    const p = local(e);
-    if (e.pointerType === 'touch') {
-      // Fingers move the view. A pen stroke in progress (or just finished) means this is a palm.
-      if (drawing || performance.now() < penUntil) return;
-      touches.set(e.pointerId, { x: p[0], y: p[1] });
-      free();
-      return;
-    }
-    if (e.pointerType === 'pen') penUntil = performance.now() + 700;
-    const eraserEnd = e.pointerType === 'pen' && (e.buttons & 32) !== 0;
-    if (e.button === 1 || (sketch.tool === 'pan' && !eraserEnd)) {
-      panning = { id: e.pointerId, x: p[0], y: p[1] };
-      free();
-      return;
-    }
-    if (e.button !== 0 && e.pointerType === 'mouse') return;
-    const erase = sketch.tool === 'erase' || eraserEnd;
-    drawing = { id: e.pointerId, before: sketch.snapshot(pane), erase, moved: 0 };
-    if (!erase) live = { pts: [toWorld(view.tf, p)], w: [weight(e)], kind: sketch.tool === 'note' ? 'note' : sketch.tool === 'ledge' ? 'ledge' : 'wall' };
-    else eraseAt(p);
-  }
-
-  function move(e: PointerEvent) {
-    const p = local(e);
-    const t = view.tf;
-    if (e.pointerType === 'touch') {
-      const prev = touches.get(e.pointerId);
-      if (!prev) return;
-      const others = [...touches.entries()].filter(([id]) => id !== e.pointerId).map(([, v]) => v);
-      if (others.length === 0) {
-        setTf({ ...t, tx: t.tx + (p[0] - prev.x), ty: t.ty + (p[1] - prev.y) });
-      } else {
-        // Two fingers: zoom about their midpoint, and follow it.
-        const o = others[0];
-        const d0 = Math.hypot(prev.x - o.x, prev.y - o.y) || 1;
-        const d1 = Math.hypot(p[0] - o.x, p[1] - o.y) || 1;
-        const mid0: Pt = [(prev.x + o.x) / 2, (prev.y + o.y) / 2];
-        const mid1: Pt = [(p[0] + o.x) / 2, (p[1] + o.y) / 2];
-        const k = Math.min(Math.max(d1 / d0, 0.5), 2);
-        const scale = Math.min(2000, Math.max(0.5, t.scale * k));
-        const f = scale / t.scale;
-        setTf({ scale, tx: mid1[0] - (mid0[0] - t.tx) * f, ty: mid1[1] - (mid0[1] - t.ty) * f });
+    canvas.focus();
+    if (e.pointerType === 'pen') {
+      guard.pen(e);
+      // A pen landing means anything a resting hand started was never a gesture.
+      if (touches.count) {
+        touches.clear();
+        gesturing = false;
+        live = null;
+        panning = null;
+        editor.cancel();
       }
-      touches.set(e.pointerId, { x: p[0], y: p[1] });
-      return;
-    }
-    if (panning && panning.id === e.pointerId) {
-      setTf({ ...t, tx: t.tx + (p[0] - panning.x), ty: t.ty + (p[1] - panning.y) });
-      panning.x = p[0];
-      panning.y = p[1];
-      return;
-    }
-    if (!drawing || drawing.id !== e.pointerId) return;
-    if (e.pointerType === 'pen') penUntil = performance.now() + 700;
-    const events = e.getCoalescedEvents?.() ?? [];
-    for (const ev of events.length ? events : [e]) {
-      const q = local(ev);
-      if (drawing.erase) {
-        eraseAt(q);
-        continue;
+      if (isEraser(e)) {
+        erasing = true;
+        eraseAt(e);
+        return;
       }
-      if (!live) continue;
-      const last = toScreen(view.tf, live.pts[live.pts.length - 1]);
-      const gap = Math.hypot(q[0] - last[0], q[1] - last[1]);
-      if (gap < 1.5) continue;
-      drawing.moved += gap;
-      live.pts.push(toWorld(view.tf, q));
-      live.w.push(weight(ev));
+    }
+    if (e.pointerType === 'touch' && !guard.touchDown(e)) {
+      engine.log('warn', 'touch', `A touch was ignored: ${guard.lastRejected}.`);
+      return; // a palm or a fist: ignore it completely
+    }
+    if (e.pointerType === 'touch' && touches.down(e) >= 2) {
+      // A second finger: this was the start of a gesture, not a line.
+      gesturing = true;
+      live = null;
+      panning = null;
+      editor.cancel();
+      schedule();
+      return;
+    }
+    const middle = e.button === 1;
+    if (middle) {
+      e.preventDefault();
+      if (e.timeStamp - lastMiddle < 350) fitAll();
+      lastMiddle = e.timeStamp;
+    }
+    const r = canvas.getBoundingClientRect();
+    moved = 0;
+    pressedAt = [e.clientX - r.left, e.clientY - r.top];
+    if (e.button === 0 && !cave.tool) {
+      if (editor.press(e.clientX - r.left, e.clientY - r.top)) return;
+    }
+    // Symbols and text are placed by the real panels; the sketchpad draws lines.
+    const draws = !!cave.tool && !isStampKind(cave.tool) && !middle && e.button === 0 && (e.pointerType !== 'touch' || option('finger', true));
+    if (draws) {
+      live = { pts: [], widths: [], pressure: e.pointerType === 'pen' && option('pressure', true) };
+      addPoint(e);
+    } else {
+      panning = { x: e.clientX, y: e.clientY };
+      free();
     }
   }
 
-  function up(e: PointerEvent) {
-    touches.delete(e.pointerId);
-    if (panning?.id === e.pointerId) panning = null;
-    if (!drawing || drawing.id !== e.pointerId) return;
-    const d = drawing;
-    drawing = null;
-    if (e.pointerType === 'pen') penUntil = performance.now() + 700;
-    if (d.erase) {
-      if (sketch.snapshot(pane) !== d.before) sketch.remember(pane, d.before);
+  // Where the next stroke would pick an open line up: shown while a drawing tool waits.
+  let pickupAt: Pt | null = null;
+  function showPickup(x: number, y: number) {
+    const hit = cave.tool && !isStampKind(cave.tool) ? endpointNear(lines, cave.tool, toScreen, x, y) : null;
+    const at = hit ? toScreen(hit.at) : null;
+    if ((at?.[0] ?? -1) !== (pickupAt?.[0] ?? -1) || (at?.[1] ?? -1) !== (pickupAt?.[1] ?? -1)) {
+      pickupAt = at;
+      schedule();
+    }
+  }
+
+  function eraseAt(e: PointerEvent) {
+    const r = canvas.getBoundingClientRect();
+    if (editor.eraseAt(e.clientX - r.left, e.clientY - r.top)) schedule();
+  }
+
+  function onMove(e: PointerEvent) {
+    if (e.pointerType === 'pen') {
+      guard.pen(e);
+      if (erasing) {
+        eraseAt(e);
+        return;
+      }
+    }
+    if (e.pointerType === 'touch' && guard.ignored(e)) return;
+    if (e.pointerType === 'touch') {
+      const g = touches.move(e);
+      if (g) {
+        // Two fingers: pan with the middle of them, zoom with how far apart they are.
+        const r0 = canvas.getBoundingClientRect();
+        const mx = g.cx - r0.left;
+        const my = g.cy - r0.top;
+        const t = tf();
+        sketch.views[pane].tf = { scale: t.scale * g.scale, tx: mx - (mx - t.tx) * g.scale + g.dx, ty: my - (my - t.ty) * g.scale + g.dy };
+        free();
+        schedule();
+        return;
+      }
+      if (gesturing) return; // one finger left after a gesture: wait until all are lifted
+    }
+    const r = canvas.getBoundingClientRect();
+    if (pressedAt) moved = Math.max(moved, Math.hypot(e.clientX - r.left - pressedAt[0], e.clientY - r.top - pressedAt[1]));
+    if (editor.move(e.clientX - r.left, e.clientY - r.top)) return;
+    if (!live && !panning && cave.tool) showPickup(e.clientX - r.left, e.clientY - r.top);
+    if (live) {
+      const samples = e.getCoalescedEvents?.() ?? [];
+      for (const ev of samples.length > 0 ? samples : [e]) addPoint(ev);
+      schedule();
+    } else if (panning) {
+      const t = tf();
+      sketch.views[pane].tf = { ...t, tx: t.tx + (e.clientX - panning.x), ty: t.ty + (e.clientY - panning.y) };
+      panning = { x: e.clientX, y: e.clientY };
+      schedule();
+    }
+  }
+
+  function onUp(e?: PointerEvent) {
+    if (e?.pointerType === 'pen') {
+      guard.pen(e);
+      if (erasing) {
+        erasing = false;
+        return;
+      }
+    }
+    if (e?.pointerType === 'touch' && guard.ignored(e)) {
+      guard.touchUp(e);
       return;
     }
-    const stroke = live;
+    if (e?.pointerType === 'touch') {
+      const left = touches.up(e);
+      if (gesturing) {
+        // A gesture never commits a stroke; it ends when every finger is up.
+        if (left === 0) gesturing = false;
+        panning = null;
+        return;
+      }
+      if (e.type === 'pointercancel') {
+        // The system took the touch (a palm, a system gesture): drop the stroke.
+        live = null;
+        panning = null;
+        editor.cancel();
+        schedule();
+        return;
+      }
+    }
+    const wasPanning = !!panning;
+    panning = null;
+    if (editor.release()) return;
+    if (wasPanning && !cave.tool && moved < 4 && pressedAt) pickStation(pressedAt); // a tap on a station, with no tool: the cross section goes there
+    if (!live) return;
+    const stroked = live;
     live = null;
-    if (!stroke) return;
-    if (d.moved < 3) {
-      pickAt(local(e)); // a tap: pick the station under it instead of leaving a dot
-      return;
+    if (stroked.pts.length >= 2) {
+      // A freehand stroke becomes a smooth curve through a few fit points.
+      const wantClosed = option('close', false);
+      const fit = fitStroke(stroked.pts, stroked.pressure ? stroked.widths : null, tolerancePx(option('detail', 5)) / tf().scale, wantClosed);
+      const closed = wantClosed && fit.pts.length >= 3;
+      // Starting on the end of an open line of the same kind carries that line on instead of starting a new one.
+      const start = toScreen(stroked.pts[0]);
+      const pickup = endpointNear(lines, cave.tool, toScreen, start[0], start[1]);
+      if (pickup) {
+        const joined = joinFit(pickup.line, fit, pickup.atStart);
+        sketch.setPoints(pickup.line.id, joined.pts, joined.widths);
+        cave.selected = '';
+      } else {
+        const hung = anchorStroke(stations, fit.pts, cave.tool, fit.widths);
+        if (hung) {
+          message = '';
+          sketch.add(pane, hung, closed);
+        } else message = 'There is no station to hang the line on yet.';
+      }
+      changed();
     }
-    const a = anchorStroke(stations, stroke.pts, stroke.kind, stroke.w.some((x) => x !== 1) ? stroke.w : undefined);
-    if (!a) return;
-    if (pane === 'section') {
-      const at = sketch.selected;
-      if (!at) return;
-      sketch.strokes.section = { ...sketch.strokes.section, [at]: [...(sketch.strokes.section[at] ?? []), a] };
-    } else sketch.strokes[pane] = [...sketch.strokes[pane], a];
-    sketch.remember(pane, d.before);
+    schedule();
   }
 
-  /** Taps near a station pick it (the cross section then shows it, and the pad stops following the survey). */
-  function pickAt(p: Pt) {
+  /** A tap near a station in the plan or profile puts the cross section there (and stops it following the survey). */
+  function pickStation(p: Pt) {
     if (pane === 'section') return;
     let best: string | null = null;
     let bd = 22;
     for (const s of stations) {
-      const [x, y] = toScreen(view.tf, s.p);
-      const dd = Math.hypot(x - p[0], y - p[1]);
-      if (dd < bd) {
-        bd = dd;
+      const [x, y] = toScreen(s.p);
+      const d = Math.hypot(x - p[0], y - p[1]);
+      if (d < bd) {
+        bd = d;
         best = s.label;
       }
     }
     if (best) {
-      sketch.picked = best;
-      sketch.followSurvey = false;
+      setOption('followSurvey', false);
+      cave.station = best;
     }
   }
 
-  function eraseAt(p: Pt) {
-    const hit = (a: Anchored) => {
-      const pts = placeStroke(stations, a);
-      if (!pts) return false;
-      const s = pts.map((q) => toScreen(view.tf, q));
-      for (let i = 0; i < s.length; i++) {
-        const [x0, y0] = s[i];
-        const [x1, y1] = s[Math.min(i + 1, s.length - 1)];
-        const dx = x1 - x0;
-        const dy = y1 - y0;
-        const len2 = dx * dx + dy * dy;
-        const k = len2 === 0 ? 0 : Math.max(0, Math.min(1, ((p[0] - x0) * dx + (p[1] - y0) * dy) / len2));
-        if (Math.hypot(p[0] - (x0 + k * dx), p[1] - (y0 + k * dy)) < 9) return true;
-      }
-      return false;
-    };
-    if (pane === 'section') {
-      const at = sketch.selected;
-      if (!at) return;
-      const list = sketch.strokes.section[at] ?? [];
-      const kept = list.filter((a) => !hit(a));
-      if (kept.length !== list.length) sketch.strokes.section = { ...sketch.strokes.section, [at]: kept };
-    } else {
-      const kept = sketch.strokes[pane].filter((a) => !hit(a));
-      if (kept.length !== sketch.strokes[pane].length) sketch.strokes[pane] = kept;
-    }
+  function stepStation(by: number) {
+    const to = sketch.neighbour(by);
+    if (!to) return;
+    setOption('followSurvey', false);
+    cave.station = to;
   }
 
-  function wheel(e: WheelEvent) {
+  function onWheel(e: WheelEvent) {
     e.preventDefault();
-    const p = local(e);
-    const t = view.tf;
-    const scale = Math.min(2000, Math.max(0.5, t.scale * Math.exp(-e.deltaY * 0.0015)));
-    const f = scale / t.scale;
-    setTf({ scale, tx: p[0] - (p[0] - t.tx) * f, ty: p[1] - (p[1] - t.ty) * f });
+    const rect = canvas.getBoundingClientRect();
+    const mx = e.clientX - rect.left;
+    const my = e.clientY - rect.top;
+    const f = Math.exp(-e.deltaY * 0.0015);
+    const t = tf();
+    sketch.views[pane].tf = { scale: t.scale * f, tx: mx - (mx - t.tx) * f, ty: my - (my - t.ty) * f };
     free();
+    schedule();
   }
 
   function onKey(e: KeyboardEvent) {
-    if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z') {
+    if (editor.key(e)) {
       e.preventDefault();
-      sketch.restore(pane, e.shiftKey ? 'redo' : 'undo');
+      return;
     }
+    if (!(e.metaKey || e.ctrlKey) || e.key.toLowerCase() !== 'z') return;
+    e.preventDefault();
+    if (e.shiftKey ? engine.redo(PANE_SCOPE[pane]) : engine.undo(PANE_SCOPE[pane])) changed();
   }
 </script>
 
-<!-- svelte-ignore a11y_no_noninteractive_element_interactions: the pane takes Ctrl/Cmd+Z for its own undo -->
-<section class="pane" aria-label={PANE_TITLE[pane]} tabindex="-1" onkeydown={onKey}>
+<section class="pane" aria-label={PANE_TITLE[pane]}>
   <header>
+    <PanelUndo scope={PANE_SCOPE[pane]} label="in the {PANE_TITLE[pane]}" />
     {#if pane === 'section'}
-      <button class="ic" title="Previous station" aria-label="Previous station" onclick={() => sketch.step(-1)}><ChevronLeft size={15} /></button>
+      <button class="ic" title="Previous station" aria-label="Previous station" onclick={() => stepStation(-1)}><ChevronLeft size={15} /></button>
       <span class="st">{sketch.selected ?? 'no station'}</span>
-      <button class="ic" title="Next station" aria-label="Next station" onclick={() => sketch.step(1)}><ChevronRight size={15} /></button>
+      <button class="ic" title="Next station" aria-label="Next station" onclick={() => stepStation(1)}><ChevronRight size={15} /></button>
     {:else}
       <span class="hint">tap a station to see its section</span>
     {/if}
     <span class="sp"></span>
-    <select value={selectValue} aria-label="{PANE_TITLE[pane]} scale" title="Drawing scale: inches of paper to feet of ground" onchange={(e) => chooseScale(e.currentTarget.value)}>
+    <select value={selectValue} aria-label="{PANE_TITLE[pane]} scale" title="Drawing scale: inches of paper to feet of ground (the same list as the Sheets tab)" onchange={(e) => chooseScale(e.currentTarget.value)}>
       <option value="fit">Fit survey</option>
-      {#each SCALES as s}<option value={s.id}>{s.label}</option>{/each}
-      {#if selectValue === 'custom'}<option value="custom" disabled>{describeScale(view.tf.scale)}</option>{/if}
+      {#each scales as s}<option value={String(s.feet_per_inch)}>{s.label}</option>{/each}
+      {#if selectValue === 'custom'}<option value="custom" disabled>{describeScale(view.tf.scale, scales)}</option>{/if}
     </select>
-    <button class="ic" title="Undo in {PANE_TITLE[pane]}" aria-label="Undo in {PANE_TITLE[pane]}" disabled={!sketch.can(pane, 'undo')} onclick={() => sketch.restore(pane, 'undo')}><Undo2 size={15} /></button>
-    <button class="ic" title="Redo in {PANE_TITLE[pane]}" aria-label="Redo in {PANE_TITLE[pane]}" disabled={!sketch.can(pane, 'redo')} onclick={() => sketch.restore(pane, 'redo')}><Redo2 size={15} /></button>
-    <button class="ic" class:on={view.frame === 'auto' && view.scaleId === 'fit'} title="Fit the whole survey" aria-label="Fit {PANE_TITLE[pane]} to the survey" onclick={fitAll}><Maximize size={15} /></button>
+    <button class="ic" class:on={view.frame === 'auto' && view.scale === 'fit'} title="Fit the whole survey" aria-label="Fit {PANE_TITLE[pane]} to the survey" onclick={fitAll}><Maximize size={15} /></button>
   </header>
-  <div class="canvas">
+  <div class="canvas" bind:this={wrap}>
     <canvas
-      use:measure
+      bind:this={canvas}
+      tabindex="0"
       aria-label="{PANE_TITLE[pane]} drawing surface"
-      onpointerdown={down}
-      onpointermove={move}
-      onpointerup={up}
-      onpointercancel={up}
-      onwheel={wheel}
-      ondblclick={reframe}
+      style="cursor:{cave.tool ? 'crosshair' : 'grab'}"
+      onpointerdown={onDown}
+      onpointermove={onMove}
+      onpointerup={onUp}
+      onpointercancel={onUp}
+      onwheel={onWheel}
+      ondblclick={(e) => {
+        if (cave.tool) return;
+        const r = canvas.getBoundingClientRect();
+        if (!editor.addPoint(e.clientX - r.left, e.clientY - r.top)) reframe();
+      }}
+      oncontextmenu={(e) => {
+        e.preventDefault();
+        if (cave.tool) cave.tool = ''; // a right click ends the command
+      }}
+      onkeydown={onKey}
     ></canvas>
   </div>
 </section>
 
 <style>
-  .pane { display: flex; flex-direction: column; height: 100%; min-height: 0; min-width: 0; background: var(--panel); color: var(--text); font-size: 12px; outline: none; }
+  .pane { display: flex; flex-direction: column; height: 100%; min-height: 0; min-width: 0; background: var(--panel); color: var(--text); font-size: 12px; }
   header { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 4px 6px; border-bottom: 1px solid var(--line); min-height: 34px; }
   header .hint { color: var(--muted); font-size: 11px; }
   header .st { min-width: 3.5em; text-align: center; font-weight: 600; }
   .sp { flex: 1; }
-  select { font: inherit; font-size: 12px; padding: 4px 6px; min-height: 30px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel-2); color: var(--text); }
-  button.ic { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 30px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel-2); color: var(--text); cursor: pointer; padding: 0; touch-action: manipulation; }
-  button.ic:disabled { opacity: 0.4; cursor: default; }
+  select { font: inherit; font-size: 12px; padding: 4px 6px; min-height: 30px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel-2); color: var(--text); }
+  button.ic { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 30px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel-2); color: var(--text); cursor: pointer; padding: 0; touch-action: manipulation; }
   button.ic.on { border-color: var(--accent); color: var(--accent); }
   .canvas { flex: 1; min-height: 0; position: relative; }
-  canvas { position: absolute; inset: 0; display: block; touch-action: none; cursor: crosshair; }
+  canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; outline: none; }
 </style>

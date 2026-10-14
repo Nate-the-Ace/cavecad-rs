@@ -2,6 +2,8 @@
 // the way the real calls do (`ok` or `error: ...`, the same JSON shapes). It is not the engine: it checks
 // less, and lays a splay out under its station as the real page does.
 
+import { sketch, VIEW_NAME } from '../src/lib/sketch.svelte';
+
 export const book = { n: 0, rev: 0, shots: [], walls: {}, edits: [] };
 globalThis.__book = book;
 
@@ -37,14 +39,36 @@ const bump = (what) => {
 
 export const impl = {
   start: () => {},
-  palette: () => '[]',
   symbols: () => '[]',
   log: () => {},
   console_events: () => '[]',
   revision: () => book.rev,
-  edit_state: () => JSON.stringify({ undo: false, redo: false }),
-  undo: () => false,
-  redo: () => false,
+  // Undo and redo are per panel, as in the app. The Plan, Profile and Cross section panes keep their own history
+  // in the sketch store; the Survey panel's notebook scope has none in the mock.
+  edit_state: (scope) => {
+    const pane = sketch.paneOf(scope);
+    return JSON.stringify(pane ? sketch.can(pane) : { undo: false, redo: false });
+  },
+  undo: (scope) => {
+    const pane = sketch.paneOf(scope);
+    return pane ? sketch.step(pane, 'undo') : false;
+  },
+  redo: (scope) => {
+    const pane = sketch.paneOf(scope);
+    return pane ? sketch.step(pane, 'redo') : false;
+  },
+  // The ribbon's Edit tab reads and changes the selected line through these; here the lines are the sketchpad's.
+  line_info: (id) => {
+    const k = sketch.find(id);
+    return JSON.stringify(k ? { kind: k.kind, view: VIEW_NAME[k.view], closed: k.closed, flip: k.flip, text: k.text } : null);
+  },
+  set_line_kind: (id, kind) => (sketch.patch(id, { kind }), 'ok'),
+  set_line_closed: (id, closed) => (sketch.patch(id, { closed }), 'ok'),
+  set_line_flip: (id, flip) => (sketch.patch(id, { flip }), 'ok'),
+  set_line_text: (id, text) => (sketch.patch(id, { text }), 'ok'),
+  delete_line: (id) => (sketch.remove(id), 'ok'),
+  // Shaped lines (ledge hachures, pit ticks) are laid out by cave-shape in Rust; the mock draws just the line.
+  ornament: () => JSON.stringify({ spine: true, lines: [] }),
   notebook_trips: () => JSON.stringify([{ id: 't1', index: 0, name: 'Harness trip', date: '', shots: book.shots.length }]),
   notebook_page: (trip) => JSON.stringify(page(trip)),
   scan_view_stations: () => JSON.stringify([...new Set(book.shots.flatMap((s) => [s.from, s.to].filter(Boolean)))].map((label) => ({ id: label, label }))),
