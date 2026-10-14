@@ -146,8 +146,10 @@
       {/if}
     </section>
 
-    {#if survey.message}<p class="problem" role="alert">{survey.message}</p>{/if}
-    {#each survey.warnings as w}<p class="caution" role="status">{w}</p>{/each}
+    <div class="notes">
+      {#if survey.message}<p class="problem" role="alert">{survey.message}</p>{/if}
+      {#each survey.warnings as w}<p class="caution" role="status">{w}</p>{/each}
+    </div>
 
     {#if held}
       <section class="hold" aria-label="Reading waiting">
@@ -172,6 +174,9 @@
         </div>
       {/if}
       <label class="chk"><input type="checkbox" checked={survey.state.backsights} onchange={(e) => live.setBacksights(e.currentTarget.checked)} /> Backsights</label>
+      {#if live.simulating() && linked}
+        <label class="chk" title="The simulator gives each new station random passage dimensions and its splays measure them: a passage to look at"><input type="checkbox" bind:checked={survey.randomPassage} /> Random passage</label>
+      {/if}
       <label class="chk" title="Off: each reading waits for Accept before it is written"><input type="checkbox" bind:checked={survey.auto} /> Write at once</label>
       <div class="names">
         <label>From <input class="name" bind:value={survey.state.from} maxlength="40" aria-label="Station you are at" onkeydown={enter} disabled={survey.state.awaiting !== null} /></label>
@@ -181,21 +186,8 @@
       <p class="next" role="status">{nextStep(survey.state)}</p>
       {#if survey.groupsLegs && survey.waiting > 0}
         <p class="wait" role="status">{survey.waiting} close shot{survey.waiting === 1 ? '' : 's'} so far: {survey.waiting === 1 ? 'two more make' : 'one more makes'} a leg. A pause of a few seconds makes {survey.waiting === 1 ? 'it a splay' : 'them splays'}. <button class="link" onclick={live.settleNow}>Splays now</button></p>
-      {/if}
-    </section>
-
-    <section class="actions" aria-label="Actions">
-      {#if survey.canTakeShot}
-        <button class="shoot" onclick={live.takeShot}><Crosshair size={22} /> Take shot</button>
-      {/if}
-      {#if survey.state.awaiting}
-        <button onclick={live.skipBacksight}><SkipForward size={18} /> No backsight</button>
-      {:else if survey.state.mode === 'leg'}
-        <button onclick={live.nextStation} title="Move on to the next station without a shot">Next station</button>
-      {/if}
-      <button onclick={live.undoLast} disabled={survey.log.length === 0}><Undo2 size={18} /> Undo last shot</button>
-      {#if live.simulating() && linked}
-        <button onclick={toggleRun}>{#if running}<Square size={16} /> Stop{:else}<Play size={16} /> Run on its own{/if}</button>
+      {:else}
+        <p class="wait" aria-hidden="true">&nbsp;</p>
       {/if}
     </section>
 
@@ -238,6 +230,19 @@
       <pre aria-label="Frames received">{survey.frames.join('\n') || 'No frames yet.'}</pre>
     </details>
   </div>
+
+  <footer class="dock" aria-label="Actions">
+    <button class="shoot" onclick={live.takeShot} disabled={!survey.canTakeShot}><Crosshair size={22} /> Take shot</button>
+    <div class="slots">
+      <button onclick={live.undoLast} disabled={survey.log.length === 0}><Undo2 size={18} /> Undo last shot</button>
+      {#if survey.state.awaiting}
+        <button onclick={live.skipBacksight}><SkipForward size={18} /> No backsight</button>
+      {:else}
+        <button onclick={live.nextStation} disabled={survey.state.mode === 'splay'} title="Move on to the next station without a shot">Next station</button>
+      {/if}
+      <button onclick={toggleRun} disabled={!(live.simulating() && linked)} title="The simulator fires a shot every second or so">{#if running}<Square size={16} /> Stop{:else}<Play size={16} /> Run on its own{/if}</button>
+    </div>
+  </footer>
 </div>
 
 <style>
@@ -254,13 +259,17 @@
   button.small { min-height: 34px; padding: 4px 10px; font-size: 13px; }
   button.primary, button.go, button.shoot { background: var(--accent); border-color: var(--accent); color: var(--on-accent, #fff); }
   button.no { color: var(--danger); }
-  button.shoot { font-size: 17px; font-weight: 600; min-height: 56px; flex: 1 1 100%; }
+  button.shoot { font-size: 17px; font-weight: 600; min-height: 56px; width: 100%; }
   .banner { margin: 0; padding: 8px 10px; border: 1px solid var(--warn); border-radius: var(--radius); font-size: 13px; }
-  .reading { display: flex; gap: 8px; }
+  .reading { display: flex; gap: 8px; min-height: 88px; align-items: stretch; }
+  .notes { min-height: 3.4em; }
+  .dock { border-top: 1px solid var(--line); padding: 8px 10px; display: flex; flex-direction: column; gap: 8px; background: var(--panel); }
+  .slots { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+  .slots button { padding: 8px 6px; font-size: 13px; }
   .big { flex: 1; text-align: center; padding: 10px 4px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel-2); }
   .big b { display: block; font-size: 26px; font-variant-numeric: tabular-nums; }
   .big small { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; }
-  .idle { color: var(--muted); margin: 6px 0; }
+  .idle { color: var(--muted); margin: 6px 0; align-self: center; }
   .problem { margin: 0; color: var(--danger); }
   .caution { margin: 0; color: var(--warn); font-size: 13px; }
   .hold { padding: 10px; border: 1px solid var(--accent); border-radius: var(--radius); }
@@ -280,10 +289,9 @@
   input.name { width: 6.5em; font: inherit; font-size: 18px; font-weight: 600; padding: 6px 8px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel-2); color: var(--text); }
   input.name:disabled { opacity: 0.5; }
   button.link { min-height: 0; padding: 2px 8px; font-size: 12px; margin-left: 6px; }
-  .wait { margin: 0; flex: 1 1 100%; font-size: 13px; color: var(--accent); }
+  .wait { margin: 0; flex: 1 1 100%; font-size: 13px; color: var(--accent); min-height: 2.6em; }
   .auto { margin: 0; font-size: 13px; color: var(--muted); flex: 1 1 60%; }
-  .next { margin: 0; flex: 1 1 100%; font-size: 15px; font-weight: 600; }
-  .actions { display: flex; flex-wrap: wrap; gap: 8px; }
+  .next { margin: 0; flex: 1 1 100%; font-size: 15px; font-weight: 600; min-height: 2.6em; }
   h4 { margin: 0 0 6px; font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; font-weight: 600; }
   .lrud { display: flex; flex-wrap: wrap; gap: 10px; }
   .lr { display: inline-flex; align-items: center; gap: 6px; }

@@ -62,3 +62,7 @@ CaveBLE turned out to be wrong for the X1; see `docs/CAVWAY-X1.md`. The decoder,
 simulator and the X1 transport are built and tested (`test:cavway`, `test:legs`, `test:x1session`). Two numbers are
 guesses to settle on the unit: how close shots must be to count as one leg (`isClose` in `legs.ts`), and the 8 second
 pause after which one or two waiting shots become splays (`IDLE_FLUSH_MS` in `survey.svelte.ts`).
+
+## Update 2026-10-14 (evening): the sketchpad
+
+`panels/SketchPad.svelte` is a standalone prototype fed from plain shot and dimension lists, shown in the harness as a Sketch tab beside the Notebook tab. It is NOT wired into the real workspace: the real Map, Profile and Cross Section panels already draw and anchor strokes in the engine. Decide whether the pad replaces them for in-cave use (then it needs a data source from `cave-scene` and strokes saved through `cave-draw`, Rust on the laptop) or stays a look-and-feel study. Its strokes live in `localStorage` only. Not exercised on a real iPad: pen pressure and palm rejection are written from the pointer events and checked with synthetic events only.

@@ -23,6 +23,9 @@ export interface Entry {
   before: SessionState;
   /** The instrument's group, for a leg that may still gain shots. */
   group?: number;
+  /** For a leg: the stations it joins. */
+  from?: string;
+  to?: string;
 }
 
 /** Something to write: a single reading (the surveyor says what it is) or an event from the X1's grouping. */
@@ -58,7 +61,7 @@ export function run(port: NotebookPort, trip: string, state: SessionState, incom
   const done = write(port, trip, decision.plan, base);
   if (!done.ok) return { ok: false, error: done.error, state };
   const group = incoming.kind === 'leg' ? incoming.group : undefined;
-  const entry: Entry = { n: 0, kind: decision.plan.kind, label: done.label, reading: decision.plan.reading, shot: done.shot, warnings: decision.warnings, before: state, group };
+  const entry: Entry = { n: 0, kind: decision.plan.kind, label: done.label, reading: decision.plan.reading, shot: done.shot, warnings: decision.warnings, before: state, group, ...(decision.plan.kind === 'leg' ? { from: decision.plan.from, to: decision.plan.to } : {}) };
   return { ok: true, state: applied(base, decision.plan, done.shot, names()), entry, warnings: decision.warnings };
 }
 

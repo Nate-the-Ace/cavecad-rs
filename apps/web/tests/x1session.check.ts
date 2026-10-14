@@ -122,5 +122,36 @@ for (const policy of ['all', 'third', 'none'] as FlagPolicy[]) {
   ok(out.ok && out.warnings.some((w) => /accuracy error/.test(w)) && out.warnings.some((w) => /differ by/.test(w)) && nb.rows.length === 1, 'an accuracy error and a loose leg are both written, and both said');
 }
 
+// The simulated passage: each leg carries the dimensions at the station it reaches, the splays that follow
+// measure them, and the simulator hands them out as the legs are shot.
+{
+  const steps = traverse({ seed: 21, legs: 12, backsights: false, splays: 4 });
+  let legWalls = steps[0].walls!;
+  let good = true;
+  for (const st of steps) {
+    if (st.kind === 'leg') legWalls = st.walls!;
+    else {
+      // splay order is left, right, up, down for each leg
+      const k = steps.filter((x) => x.kind === 'splay').indexOf(st) % 4;
+      const want = [legWalls.left, legWalls.right, legWalls.up, legWalls.down][k];
+      if (Math.abs(st.distance - want) > 0.04) good = false;
+    }
+  }
+  ok(good, 'splays measure the passage they are taken in');
+  const all = steps.filter((x) => x.kind === 'leg').map((x) => x.walls!);
+  ok(all.every((w) => w.left >= 0.4 && w.left <= 3.5 && w.right >= 0.4 && w.right <= 3.5 && w.up >= 0.6 && w.up <= 4.5 && w.down >= 0.2 && w.down <= 1.6), 'passage dimensions stay believable');
+  ok(new Set(all.map((w) => w.left)).size > 6, 'and they vary from station to station');
+  ok(JSON.stringify(steps) === JSON.stringify(traverse({ seed: 21, legs: 12, backsights: false, splays: 4 })), 'the same seed is the same passage');
+  const events: LinkEvents = { status() {}, frame() {}, reading() {} };
+  const sim = new X1SimulatedInstrument(events, { steps, policy: 'third' });
+  await sim.connect();
+  ok(sim.passage() === null, 'no passage before the first shot');
+  sim.takeShot();
+  const first = sim.passage();
+  ok(first !== null && first.at.left === steps[0].walls!.left && first.behind.left === steps[0].walls!.left, 'the first leg: the same passage at both ends');
+  for (let i = 0; i < 7; i++) sim.takeShot(); // the rest of leg one, its four splays, the first shot of leg two
+  ok(sim.passage()!.at.left === steps.filter((x) => x.kind === 'leg')[1].walls!.left && sim.passage()!.behind.left === steps[0].walls!.left, 'the second leg: its own passage, with the first behind it');
+}
+
 if (bad) process.exit(1);
 console.log('x1session ok');

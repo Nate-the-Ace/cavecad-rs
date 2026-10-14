@@ -7,12 +7,22 @@ import { encodeLeg, type Leg } from './caveble.ts';
 import { LegLink } from './link.ts';
 import type { Instrument, LinkEvents } from './types.ts';
 
+/** The passage around a station, metres: what a surveyor would write as L R U D. */
+export interface Walls {
+  left: number;
+  right: number;
+  up: number;
+  down: number;
+}
+
 /** What a surveyor does at one point of a traverse. */
 export interface Step {
   kind: 'leg' | 'back' | 'splay';
   distance: number;
   azimuth: number;
   inclination: number;
+  /** On a leg: the passage at the station it arrives at (the splays that follow measure exactly this). */
+  walls?: Walls;
 }
 
 /** A small, repeatable random stream (mulberry32). */
@@ -40,11 +50,15 @@ export function traverse(opts: { seed: number; legs: number; backsights?: boolea
   const next = rng(opts.seed);
   const out: Step[] = [];
   let heading = next() * 360;
+  // A passage that changes slowly: each station is a little wider or narrower, higher or lower than the last.
+  const wander = (v: number, lo: number, hi: number, step: number) => round(Math.min(hi, Math.max(lo, v + (next() - 0.5) * step)), 2);
+  let walls: Walls = { left: round(0.7 + next() * 1.6, 2), right: round(0.7 + next() * 1.6, 2), up: round(1 + next() * 2.5, 2), down: round(0.3 + next() * 0.9, 2) };
   for (let i = 0; i < opts.legs; i++) {
+    walls = { left: wander(walls.left, 0.4, 3.5, 1.2), right: wander(walls.right, 0.4, 3.5, 1.2), up: wander(walls.up, 0.6, 4.5, 1.5), down: wander(walls.down, 0.2, 1.6, 0.6) };
     heading = mod360(heading + (next() - 0.5) * 70);
     const distance = round(2 + next() * 7, 2);
     const inclination = round((next() - 0.5) * 24, 1);
-    out.push({ kind: 'leg', distance, azimuth: round(heading, 1), inclination });
+    out.push({ kind: 'leg', distance, azimuth: round(heading, 1), inclination, walls });
     if (opts.backsights) {
       out.push({
         kind: 'back',
@@ -53,10 +67,11 @@ export function traverse(opts: { seed: number; legs: number; backsights?: boolea
         inclination: round(-inclination + (next() - 0.5) * 1.2, 1),
       });
     }
-    const splayAims: [number, number][] = [[-90, 0], [90, 0], [0, 90], [0, -90]];
+    // Splays aim left, right, up and down and measure the passage, give or take a few centimetres.
+    const splayAims: [number, number, number][] = [[-90, 0, walls.left], [90, 0, walls.right], [0, 90, walls.up], [0, -90, walls.down]];
     for (let s = 0; s < (opts.splays ?? 0); s++) {
-      const [turn, up] = splayAims[s % 4];
-      out.push({ kind: 'splay', distance: round(0.4 + next() * 2.2, 2), azimuth: round(mod360(heading + turn), 1), inclination: up });
+      const [turn, up, wall] = splayAims[s % 4];
+      out.push({ kind: 'splay', distance: round(Math.max(0.1, wall + (next() - 0.5) * 0.06), 2), azimuth: round(mod360(heading + turn), 1), inclination: up });
     }
   }
   return out;

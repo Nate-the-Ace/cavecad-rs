@@ -8,7 +8,7 @@
 
 import { encodePacket, type X1Mark } from './cavway.ts';
 import { X1Link } from './link.ts';
-import { rng, traverse, type Step } from './simulator.ts';
+import { rng, traverse, type Step, type Walls } from './simulator.ts';
 import type { Instrument, LinkEvents } from './types.ts';
 
 /** `all`: every shot of a leg is flagged; `third`: only the third is; `none`: the flag is never set. */
@@ -20,6 +20,8 @@ export interface ShotSpec {
   inclination: number;
   leg: boolean;
   mark: X1Mark;
+  /** The passage at the station a leg arrives at (carried on the first shot of a foresight leg). */
+  walls?: Walls;
 }
 
 const round = (v: number, d: number) => Math.round(v * 10 ** d) / 10 ** d;
@@ -41,6 +43,7 @@ export function shotsFor(steps: Step[], policy: FlagPolicy, seed = 1): ShotSpec[
         inclination: round(s.inclination + (next() - 0.5) * 0.4, 2),
         leg: policy === 'all' || (policy === 'third' && i === 2),
         mark: s.kind === 'back' ? 'backsight' : 'none',
+        walls: i === 0 && s.kind === 'leg' ? s.walls : undefined,
       });
     }
   }
@@ -67,6 +70,8 @@ export class X1SimulatedInstrument implements Instrument {
   private readonly opts: X1SimOptions;
   private readonly events: LinkEvents;
   private index = 0;
+  private hint: { at: Walls; behind: Walls } | null = null;
+  private behind: Walls | null = null;
   private clock = 1_700_000_000;
   private timer: ReturnType<typeof setInterval> | null = null;
   private connected = false;
@@ -90,6 +95,11 @@ export class X1SimulatedInstrument implements Instrument {
     this.events.status('idle');
   }
 
+  /** The passage at the station of the leg being shot, and at the one behind it: what a surveyor would measure there. */
+  passage(): { at: Walls; behind: Walls } | null {
+    return this.hint;
+  }
+
   /** The shot the next press will give, or `null` when the script has run out. */
   get upcoming(): ShotSpec | null {
     return this.shots[this.index] ?? null;
@@ -100,6 +110,11 @@ export class X1SimulatedInstrument implements Instrument {
     if (!this.connected || !s) return;
     this.index += 1;
     this.clock += 1;
+    if (s.walls) {
+      // A new leg: the passage at the station it reaches, and (for the first leg) at the one it leaves.
+      this.hint = { at: s.walls, behind: this.behind ?? s.walls };
+      this.behind = s.walls;
+    }
     const packet = encodePacket({ ...s, time: this.clock, short: this.opts.short });
     this.link.onFrame(packet, 'sim');
     if (this.opts.repeatFrames) this.link.onFrame(packet, 'sim');

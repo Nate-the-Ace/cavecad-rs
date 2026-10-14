@@ -7,7 +7,7 @@
 
 import { cave, changed } from './cave.svelte';
 import { engine } from './engine';
-import { SIDES, withSide, type NotebookPage, type Side } from './notebook';
+import { SIDES, withSide, type Lrud, type NotebookPage, type Side } from './notebook';
 import { LegAssembler, type LegEvent } from './instrument/legs';
 import { traverse } from './instrument/simulator';
 import { X1SimulatedInstrument } from './instrument/x1sim';
@@ -32,6 +32,8 @@ export const survey = $state({
   groupsLegs: false,
   /** Where the surveyor stands and what they are doing. */
   state: start('', new Set()) as SessionState,
+  /** With the simulator: give each new station random passage dimensions (L R U D), and have its splays measure them. */
+  randomPassage: true,
   /** Write each thing at once (default, as TopoDroid does) or hold it for an Accept. */
   auto: true,
   /** Things waiting for Accept (only when `auto` is off), oldest first. */
@@ -110,8 +112,29 @@ export function commit(incoming: Incoming): boolean {
   }
   survey.message = '';
   survey.state = out.state;
+  if ('entry' in out && out.entry.kind === 'leg') applyPassage(trip, out.entry);
   changed();
   return true;
+}
+
+/** Writes the passage dimensions of a station (metres) in one edit. Returns true when written. */
+function setWallsAt(trip: string, label: string, w: Record<Side, number>, onlyIfBlank: boolean): boolean {
+  const page = engine.notebookPage(trip);
+  const row = [...(page?.rows ?? [])].reverse().find((r) => r.kind === 'station' && r.label === label && r.lrud !== null && r.lrud_editable);
+  const target = row?.shot ?? row?.station;
+  if (!row?.lrud || !target) return false;
+  if (onlyIfBlank && SIDES.some((s) => row.lrud![s] !== null)) return false;
+  const walls: Lrud = { ...row.lrud, ...w, left_open: false, right_open: false, up_open: false, down_open: false };
+  return !engine.notebookSetWalls(target, walls).startsWith('error');
+}
+
+/** The simulator's passage at the stations of a new leg (and at the one it left, the first time). */
+function applyPassage(trip: string, entry: Entry) {
+  if (!survey.randomPassage || !(instrument instanceof X1SimulatedInstrument) || !entry.to || !entry.from) return;
+  const hint = instrument.passage();
+  if (!hint) return;
+  setWallsAt(trip, entry.from, hint.behind, true);
+  setWallsAt(trip, entry.to, hint.at, false);
 }
 
 /** What to do with something that has arrived: write it, or hold it for Accept. */
