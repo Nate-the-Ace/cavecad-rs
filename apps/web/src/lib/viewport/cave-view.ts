@@ -9,7 +9,7 @@ import type { MapSection, PassageBuffers, Pt, ProfileSketch3d, Scene, TypeStyle 
 import { PenGuard, isEraser, widthFor } from '../pen';
 import { arrowAt, attachOf, nearestVertex, resolveLeaders, withArrow, withoutArrow } from '../leader-edit';
 import { withAttach } from '../line-style-text';
-import { liveWords, stampEditSpot, drawStamp, drawStationMarker, hitsLabelNote, hitsStamp, isStampKind, leaderLook, placement } from '../symbols';
+import { drawStampHalo, liveWords, stampEditSpot, drawStamp, drawStationMarker, hitsLabelNote, hitsStamp, isStampKind, leaderLook, placement } from '../symbols';
 import { paintCopy } from '../copy-ghost';
 import type { ClipLine } from '../clip';
 import { drawMarks, isFillKind, marksFor } from '../fills';
@@ -1197,7 +1197,13 @@ export class CaveView {
         if (a && b) {
           g.setLineDash([]);
           g.lineWidth = Math.max(1, l.weight * 0.7);
-          if (k.id && this.selectedSet.has(k.id) && k.kind !== 'callout') {
+          const look = leaderLook(style, ((this.pixelsPerMetreAt(k.points[0]) ?? 0) * drawing.scale) / 1000);
+          const restPts = rest.filter((q): q is [number, number] => !!q);
+          if (k.id && this.selectedSet.has(k.id) && (k.kind === 'callout' || k.kind === 'text')) {
+            // a text or a leader: its lines thickened and a box round its words
+            drawStampHalo(g, k.kind, a, b, k.text ?? '', look, restPts, `#${this.theme.accent.getHexString()}`);
+            g.setLineDash([]);
+          } else if (k.id && this.selectedSet.has(k.id)) {
             const pl = placement(a, b);
             g.strokeStyle = `#${this.theme.accent.getHexString()}`;
             g.globalAlpha = base * 0.9;
@@ -1209,7 +1215,7 @@ export class CaveView {
             g.lineWidth = Math.max(1, l.weight * 0.7);
             g.globalAlpha = base * l.alpha;
           }
-          drawStamp(g, k.kind, a, b, k.text, leaderLook(style, ((this.pixelsPerMetreAt(k.points[0]) ?? 0) * drawing.scale) / 1000), rest.filter((q): q is [number, number] => !!q));
+          drawStamp(g, k.kind, a, b, k.text, look, restPts);
         }
         continue;
       }

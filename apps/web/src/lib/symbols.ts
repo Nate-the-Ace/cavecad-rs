@@ -376,6 +376,48 @@ export function drawStamp(g: CanvasRenderingContext2D, kind: string, p0: [number
   g.restore();
 }
 
+/** The mark that says a text or a leader is selected: its leader lines thickened and a box round its words. (A symbol gets a ring instead.) */
+export function drawStampHalo(g: CanvasRenderingContext2D, kind: string, p0: [number, number], p1: [number, number], text: string, leader: LeaderLook, more: [number, number][], color: string): void {
+  g.save();
+  g.strokeStyle = color;
+  g.lineJoin = 'round';
+  g.lineCap = 'round';
+  if (kind === 'callout') {
+    const l = calloutLayout([p0, ...more], p1, text, leader);
+    if (!l) {
+      g.globalAlpha = 0.9;
+      g.lineWidth = 2.5;
+      g.beginPath();
+      g.arc(p0[0], p0[1], 9, 0, Math.PI * 2);
+      g.stroke();
+    } else {
+      g.globalAlpha = 0.5;
+      g.lineWidth = 7;
+      for (const branch of l.branches) {
+        g.beginPath();
+        branch.forEach((q, i) => (i === 0 ? g.moveTo(q[0], q[1]) : g.lineTo(q[0], q[1])));
+        g.stroke();
+      }
+      const pad = Math.max(4, l.height * 0.35);
+      const [x1, y1, x2, y2] = l.note;
+      g.globalAlpha = 0.9;
+      g.lineWidth = 2.5;
+      g.strokeRect(Math.min(x1, x2) - pad, Math.min(y1, y2) - pad, Math.abs(x2 - x1) + 2 * pad, Math.abs(y2 - y1) + 2 * pad);
+    }
+  } else if (kind === 'text' && text) {
+    const w = wordsPlacement('text', placement(p0, p1), leader);
+    g.font = fontCss(leader, w.size);
+    const width = g.measureText(text).width;
+    const [a0, a1] = alongRange(leader, width);
+    g.translate(w.x, w.y);
+    g.rotate(w.angle);
+    g.globalAlpha = 0.9;
+    g.lineWidth = 2.5;
+    g.strokeRect(a0 - 5, -w.size * 0.75, a1 - a0 + 10, w.size * 1.5);
+  }
+  g.restore();
+}
+
 /** True when the screen point is on a placed stamp: a symbol's body or label, or the words of a text stroke. */
 export function hitsStamp(kind: string, text: string | undefined, p0: [number, number], p1: [number, number], x: number, y: number, pad = 4, leader: LeaderLook = leaderLook(''), more: [number, number][] = []): boolean {
   if (kind === 'callout') {

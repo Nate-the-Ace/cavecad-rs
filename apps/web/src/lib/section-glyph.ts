@@ -7,7 +7,7 @@ import { drawing, fillLength, parseStyle, patternName, styleFor } from './line-s
 import { lineMarksPx, strokeMarksPx } from './pattern-draw';
 import type { Look } from './ink';
 import { smooth } from './spline.ts';
-import { drawStamp, isStampKind, leaderLook, placement } from './symbols.ts';
+import { drawStamp, drawStampHalo, isStampKind, leaderLook, placement } from './symbols.ts';
 import { drawMarks, isFillKind, marksFor } from './fills.ts';
 
 /** Where shaped-line ornament comes from (the engine sets this once it has loaded). */
@@ -129,7 +129,14 @@ export function drawStrokes(
       g.globalAlpha = l.alpha;
       g.setLineDash([]);
       g.lineWidth = Math.max(1, l.weight * scale * 0.7);
-      if (isChosen(selected, k.id) && k.kind !== 'callout') {
+      const look = leaderLook(style, (pxPerM * drawing.scale) / 1000);
+      const more = k.points.slice(2).map((q) => to(q[0], q[1]));
+      if (isChosen(selected, k.id) && (k.kind === 'callout' || k.kind === 'text')) {
+        // a text or a leader: its lines thickened and a box round its words
+        drawStampHalo(g, k.kind, p0, p1, (k as { text?: string }).text ?? '', look, more, highlightColor());
+        g.setLineDash([]);
+        g.lineWidth = Math.max(1, l.weight * scale * 0.7);
+      } else if (isChosen(selected, k.id)) {
         const pl = placement(p0, p1);
         g.strokeStyle = highlightColor();
         g.globalAlpha = 0.9;
@@ -141,7 +148,7 @@ export function drawStrokes(
         g.globalAlpha = l.alpha;
         g.lineWidth = Math.max(1, l.weight * scale * 0.7);
       }
-      drawStamp(g, k.kind, p0, p1, (k as { text?: string }).text, leaderLook(style, (pxPerM * drawing.scale) / 1000), k.points.slice(2).map((q) => to(q[0], q[1])));
+      drawStamp(g, k.kind, p0, p1, (k as { text?: string }).text, look, more);
       continue;
     }
     const curve = smooth(
