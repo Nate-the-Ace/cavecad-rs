@@ -9,7 +9,7 @@
 //! whatever our count). The second is [`is_close`], one function with its numbers named, to be adjusted.
 
 use crate::{Mark, Reading, angle_gap, mod360, tidy};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 /// Two shots of one leg agree to this much: tape 5 cm or 0.5 %, whichever is larger; compass and clino 2
 /// degrees (a guess until the unit shows what its LEG decision uses).
@@ -38,7 +38,7 @@ pub fn is_close(a: &Reading, b: &Reading) -> bool {
 }
 
 /// How far apart the shots of a leg were: worth a warning when large.
-#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Spread {
     /// Tape, metres.
     pub distance: f64,
@@ -49,7 +49,7 @@ pub struct Spread {
 }
 
 /// What the assembler reports.
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "kebab-case")]
 pub enum LegEvent {
     /// A shot that is not part of a leg.

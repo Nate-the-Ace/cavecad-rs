@@ -162,6 +162,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "cave-session"
+version = "0.0.1"
+dependencies = [
+ "cave-doc",
+ "cave-draw",
+ "cave-fixture",
+ "cave-id",
+ "cave-instrument",
+ "cave-notebook",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "cave-shape"
 version = "0.0.1"
 dependencies = [
