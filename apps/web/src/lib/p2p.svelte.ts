@@ -13,7 +13,7 @@ import { relayServers } from './p2p-relay.svelte';
 import { engine } from './engine';
 import { cave, changed, markSaved } from './cave.svelte';
 import { decodeCode, encodeCode } from './p2p-code';
-import { Reassembler, frames } from './p2p-wire';
+import { Reassembler, decodeMessage, encodeMessage, frames } from './p2p-wire';
 import { addRemoteFile, fileOf, have, scans, select } from './scans.svelte';
 import { fadeCursors, live, me, myPersonId, roomEvents, setPeerHooks, type Person } from './sync.svelte';
 import { hostLoop, joinLoop } from './signal-handshake';
@@ -112,11 +112,14 @@ function drain(ch: RTCDataChannel): Promise<void> {
   });
 }
 
-/** Queues a message to a peer (cut into frames, in order with everything else sent to it). */
-function send(p: Peer, msg: object) {
-  const text = JSON.stringify(msg);
+/** A message turned into what goes over the wire (text, squeezed when long), once, however many people it goes to. */
+const prepare = (msg: object): Promise<string> => encodeMessage(JSON.stringify(msg));
+
+/** Queues an already prepared message to a peer (cut into frames, in order with everything else sent to it). */
+function sendPrepared(p: Peer, prepared: Promise<string>) {
   p.tail = p.tail
     .then(async () => {
+      const text = await prepared;
       const ch = p.ch;
       if (!ch || ch.readyState !== 'open') return;
       for (const f of frames(text, ++p.seq)) {
@@ -125,6 +128,11 @@ function send(p: Peer, msg: object) {
       }
     })
     .catch(() => undefined);
+}
+
+/** Queues a message to a peer. */
+function send(p: Peer, msg: object) {
+  sendPrepared(p, prepare(msg));
 }
 
 /** Queues a page's bytes to a peer, between a header and a trailer, in order. */
@@ -147,22 +155,45 @@ function sendFile(p: Peer, path: string, file: File) {
 const admitted = () => [...peers.values()].filter((p) => p.person && p.ch?.readyState === 'open');
 
 function toAll(msg: object, except?: Peer) {
-  for (const p of admitted()) if (p !== except) send(p, msg);
+  const prepared = prepare(msg); // stringified (and squeezed) once for everyone
+  for (const p of admitted()) if (p !== except) sendPrepared(p, prepared);
 }
 
 // ---- connections ---------------------------------------------------------------------------------
 
+/**
+ * Waits until the connection has found the ways it can be reached, so they can all go into the code. It does not wait
+ * for the browser to say it is finished (which can take the full five seconds when a server is slow): once the kinds of
+ * address that were asked for have turned up (a public one from the STUN lookup, one through the relay) and nothing
+ * new has come for a moment, that is enough. The five seconds stays as the limit.
+ */
 function gathered(pc: RTCPeerConnection): Promise<void> {
   return new Promise((resolve) => {
     if (pc.iceGatheringState === 'complete') return resolve();
+    const urls = (pc.getConfiguration().iceServers ?? []).flatMap((s) => (Array.isArray(s.urls) ? s.urls : [s.urls]));
+    const wantPublic = urls.some((u) => /^stuns?:/i.test(u));
+    const wantRelay = urls.some((u) => /^turns?:/i.test(u));
+    const seen = { any: false, srflx: false, relay: false };
+    let quiet: ReturnType<typeof setTimeout> | undefined;
     const done = () => {
       pc.removeEventListener('icegatheringstatechange', check);
+      pc.removeEventListener('icecandidate', onCandidate);
+      clearTimeout(quiet);
       clearTimeout(t);
       resolve();
     };
     const check = () => pc.iceGatheringState === 'complete' && done();
+    const onCandidate = (e: RTCPeerConnectionIceEvent) => {
+      if (!e.candidate) return done(); // the browser says it is finished
+      seen.any = true;
+      if (e.candidate.type === 'srflx') seen.srflx = true;
+      if (e.candidate.type === 'relay') seen.relay = true;
+      clearTimeout(quiet);
+      if (seen.any && (!wantPublic || seen.srflx) && (!wantRelay || seen.relay)) quiet = setTimeout(done, 350);
+    };
     const t = setTimeout(done, GATHER_MS); // whatever was found by now is enough to try
     pc.addEventListener('icegatheringstatechange', check);
+    pc.addEventListener('icecandidate', onCandidate);
   });
 }
 
@@ -185,18 +216,39 @@ function wire(peer: Peer, ch: RTCDataChannel, role: 'host' | 'guest') {
     const inv = p2p.invites.find((i) => i.id === peer.id);
     if (inv && inv.state === 'connecting') inv.state = 'connected';
   };
+  // Messages are handled in the order they arrived. A squeezed one takes a moment to open; anything that arrives
+  // meanwhile (including the pieces of a scan page, which belong to the message before them) waits its turn.
+  let pending = 0;
+  let queue: Promise<void> = Promise.resolve();
+  const inOrder = (work: () => void | Promise<void>) => {
+    if (pending === 0) {
+      let r: void | Promise<void>;
+      try {
+        r = work();
+      } catch {
+        return; // a message that does not parse is ignored
+      }
+      if (!r) return; // done at once
+      pending++;
+      queue = r.catch(() => undefined).then(() => void pending--);
+      return;
+    }
+    pending++;
+    queue = queue.then(work).catch(() => undefined).then(() => void pending--);
+  };
   ch.onmessage = (ev) => {
     if (typeof ev.data === 'string') {
       const whole = peer.reasm.push(ev.data);
       if (whole === null) return;
-      try {
-        handle(peer, JSON.parse(whole), role);
-      } catch {
-        /* a message that does not parse is ignored */
-      }
-    } else if (peer.incoming) {
-      peer.incoming.parts.push(ev.data as ArrayBuffer);
-      peer.incoming.got += (ev.data as ArrayBuffer).byteLength;
+      const squeezed = whole.charCodeAt(0) === 126; // "~"
+      inOrder(squeezed ? async () => handle(peer, JSON.parse(await decodeMessage(whole)), role) : () => handle(peer, JSON.parse(whole), role));
+    } else {
+      const chunk = ev.data as ArrayBuffer;
+      inOrder(() => {
+        if (!peer.incoming) return;
+        peer.incoming.parts.push(chunk);
+        peer.incoming.got += chunk.byteLength;
+      });
     }
   };
   ch.onclose = () => closed(peer, role);
@@ -499,8 +551,11 @@ function scanBeat() {
   }
   const now = Date.now();
   for (const [path, at] of wantedAt) if (now - at > 30_000) (wanted.delete(path), wantedAt.delete(path)); // asked and nothing came: ask again
-  for (const path of linked) {
+  // Pages are asked for a couple at a time, the one on show first, so a page someone is looking at does not wait behind a whole folder.
+  const order = [scans.selected, ...linked.filter((p) => p !== scans.selected)].filter((p) => p && linked.includes(p));
+  for (const path of order) {
     if (have(path) || wanted.has(path)) continue;
+    if (wanted.size >= 2) break;
     const from = p2p.role === 'host' ? admitted().find((q) => q.has?.has(path)) : guestPeer;
     if (!from) continue;
     wanted.add(path);

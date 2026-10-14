@@ -12,6 +12,8 @@
 import type { Mailbox } from './signal';
 
 export const POLL_MS = 1500;
+/** The host looks for new hellos more often: it is one caller, and a student should not wait on it. */
+export const HOST_POLL_MS = 1000;
 const STUDENT_PATIENCE_MS = 90_000;
 /** Mailbox errors in a row that the teacher's loop puts up with before saying so. */
 const TEACHER_PATIENCE = 5;
@@ -37,7 +39,7 @@ export interface HostHooks {
 }
 
 /** The teacher's side: watches the mailbox for students and walks each through the handshake. Returns the way to stop. */
-export function hostLoop(box: Mailbox, session: string, hooks: HostHooks, pollMs = POLL_MS): () => void {
+export function hostLoop(box: Mailbox, session: string, hooks: HostHooks, pollMs = HOST_POLL_MS): () => void {
   const abort = new AbortController();
   const offered = new Map<string, string>(); // attempt id -> invite id
   const done = new Set<string>();

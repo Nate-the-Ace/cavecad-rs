@@ -34,8 +34,20 @@ export function saveRelay() {
 
 export const relayConfigured = (): boolean => !!BUILT_IN || !!relay.url.trim() || staticServers(relay).length > 0;
 
+/** The credentials a provider gave, kept for a few minutes: every invite and every join asks, and the answer does not change that fast. */
+let cached: { key: string; at: number; servers: RTCIceServer[] } | null = null;
+const CACHE_MS = 5 * 60_000;
+
 /** The relay servers to offer to a new connection. Never throws: a relay that cannot be reached just means direct-only. */
 export async function relayServers(): Promise<RTCIceServer[]> {
+  const key = `${relay.url}|${BUILT_IN}|${relay.urls}|${relay.username}`;
+  if (cached && cached.key === key && Date.now() - cached.at < CACHE_MS) return cached.servers;
+  const servers = await fetchRelayServers();
+  if (relayCount(servers)) cached = { key, at: Date.now(), servers };
+  return servers;
+}
+
+async function fetchRelayServers(): Promise<RTCIceServer[]> {
   const out = staticServers(relay);
   for (const url of [relay.url.trim(), BUILT_IN]) {
     if (!url || !credentialsUrlOk(url)) continue;
