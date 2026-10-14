@@ -249,7 +249,7 @@
   .panel { display: flex; flex-direction: column; height: 100%; background: var(--panel); color: var(--text); font-size: 14px; outline: none; }
   .bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 6px 10px; border-bottom: 1px solid var(--line); }
   .spacer { flex: 1; }
-  .scroll { flex: 1; overflow: auto; padding: 10px; display: flex; flex-direction: column; gap: 12px; }
+  .scroll { flex: 1; overflow-y: auto; overflow-x: hidden; padding: 10px; display: flex; flex-direction: column; gap: 12px; }
   .chip { padding: 3px 10px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); font-size: 12px; }
   .chip.on { border-color: var(--accent); color: var(--text); }
   .chip.warn { border-color: var(--warn); color: var(--warn); }
@@ -261,12 +261,12 @@
   button.no { color: var(--danger); }
   button.shoot { font-size: 17px; font-weight: 600; min-height: 56px; width: 100%; }
   .banner { margin: 0; padding: 8px 10px; border: 1px solid var(--warn); border-radius: var(--radius); font-size: 13px; }
-  .reading { display: flex; gap: 8px; min-height: 88px; align-items: stretch; }
+  .reading { display: flex; flex-wrap: wrap; gap: 8px; min-height: 88px; align-items: stretch; }
   .notes { min-height: 3.4em; }
   .dock { border-top: 1px solid var(--line); padding: 8px 10px; display: flex; flex-direction: column; gap: 8px; background: var(--panel); }
   .slots { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
   .slots button { padding: 8px 6px; font-size: 13px; }
-  .big { flex: 1; text-align: center; padding: 10px 4px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel-2); }
+  .big { flex: 1 1 70px; min-width: 0; text-align: center; padding: 10px 4px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel-2); }
   .big b { display: block; font-size: 26px; font-variant-numeric: tabular-nums; }
   .big small { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; }
   .idle { color: var(--muted); margin: 6px 0; align-self: center; }
