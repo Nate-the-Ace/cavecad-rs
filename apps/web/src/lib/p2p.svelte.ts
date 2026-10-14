@@ -19,7 +19,7 @@ import { fadeCursors, live, me, myPersonId, roomEvents, setPeerHooks, type Perso
 import { hostLoop, joinLoop } from './signal-handshake';
 import { configuredMailbox, mailboxConfig, type Mailbox } from './signal';
 import { liveLink } from './classroom-log';
-import { CLASS_MESSAGES, classLeft, classMessage, classWelcome, newClass, type ClassState, type RoomIo } from './classroom-room.mjs';
+import { CLASS_MESSAGES, classJoined, classLeft, classMessage, classWelcome, newClass, type ClassState, type RoomIo } from './classroom-room.mjs';
 import { flush as keepShelf, shelf } from './shelf.svelte';
 
 /** A person the host has made an invite for. */
@@ -214,7 +214,7 @@ function closed(peer: Peer, role: 'host' | 'guest') {
     const inv = p2p.invites.find((i) => i.id === peer.id);
     if (inv) inv.state = 'closed';
     if (peer.person) {
-      if (cls) classLeft(cls, peer.person.id, classIo(peer));
+      if (cls) classLeft(cls, peer.person.id, classIo(peer), { name: peer.person.name, role: 'student' });
       announce();
       engine.log('info', 'share', `${peer.name || 'Someone'} left the session`);
     }
@@ -322,6 +322,7 @@ function hostHears(peer: Peer, m: Msg) {
       }
       send(peer, { t: 'welcome', merge: !!rejoin, log: JSON.parse(engine.syncSnapshot()), caveName: cave.name, host: { id: myPersonId, name: me.name, color: me.color }, ...(cls ? { class: classWelcome(cls, 'student') } : {}) });
       announce();
+      if (cls) classJoined(cls, { id: peer.person.id, name: peer.person.name, role: 'student' }, classIo(peer));
       sendView(peer);
       engine.log('info', 'share', `${peer.name} joined the session`);
     };

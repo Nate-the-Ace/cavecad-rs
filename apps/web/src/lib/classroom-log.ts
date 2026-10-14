@@ -56,6 +56,7 @@ export function transcript(className: string, started: number, entries: ChatEntr
     const tag = e.role === 'teacher' ? ' (teacher)' : '';
     if (e.kind === 'say') lines.push(`${clock(e.at)}  ${who}${tag}: ${e.text}`);
     else if (e.kind === 'hand') lines.push(`${clock(e.at)}  * ${who} ${e.text}`);
+    else if (e.name) lines.push(`${clock(e.at)}  -- ${who} ${e.text}`);
     else lines.push(`${clock(e.at)}  -- ${e.text}`);
   }
   return `${lines.join('\n')}\n`;

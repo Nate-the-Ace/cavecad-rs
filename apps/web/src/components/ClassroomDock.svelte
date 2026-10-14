@@ -75,6 +75,9 @@
         <button class="hand" class:on={up} disabled={classroom.ended} onclick={() => raiseHand(!up)} aria-pressed={up}>
           <Hand size={16} /> {up ? 'Lower my hand' : 'Raise my hand'}
         </button>
+        <div class="react" role="group" aria-label="Quick reactions">
+          {#each ['👍', '👏', '❓', '😕', '😮'] as r}<button disabled={classroom.ended} onclick={() => say(r)} aria-label={`React ${r}`}>{r}</button>{/each}
+        </div>
       {:else}
         {#if classroom.transport === 'relay' || link}
           <div class="link">
@@ -109,7 +112,7 @@
           {#if e.kind === 'say'}
             <div class="say" class:mine={e.id === live.me}><span class="when">{clock(e.at)}</span> <b class:teacher={e.role === 'teacher'}>{e.name}</b> {e.text}</div>
           {:else}
-            <div class="event"><span class="when">{clock(e.at)}</span> {e.kind === 'hand' ? `${e.name} ${e.text}` : e.text}</div>
+            <div class="event"><span class="when">{clock(e.at)}</span> {e.name ? `${e.name} ${e.text}` : e.text}</div>
           {/if}
         {:else}
           <p class="muted">Questions and answers appear here, and are kept in the class&rsquo;s record.</p>
@@ -186,5 +189,12 @@
   .small.go { background: var(--accent); border-color: var(--accent); color: #fff; }
   .strip { width: 34px; flex: none; display: flex; flex-direction: column; align-items: center; gap: 6px; padding-top: 8px; background: var(--panel); border-left: 1px solid var(--line); }
   .badge { position: absolute; top: -2px; right: -4px; min-width: 15px; height: 15px; padding: 0 3px; border-radius: 999px; background: var(--danger); color: #fff; font-size: 10px; line-height: 15px; text-align: center; box-sizing: border-box; }
-  .badge.hands { position: static; background: var(--accent); }
+  .badge.hands { position: static; background: var(--warn, #f0a020); color: #000; animation: pulse 1.2s ease-in-out infinite; }
+  .person.raised { animation: nudge 1.6s ease-in-out infinite; }
+  .react { display: flex; gap: 6px; }
+  .react button { flex: 1; font-size: 20px; padding: 4px 0; border: 1px solid var(--line); border-radius: 8px; background: var(--panel-2); cursor: pointer; }
+  .react button:disabled { opacity: 0.5; cursor: default; }
+  @keyframes pulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.35); } }
+  @keyframes nudge { 0%, 100% { background: var(--accent-bg); } 50% { background: rgba(240, 160, 32, 0.28); } }
+  @media (prefers-reduced-motion: reduce) { .badge.hands, .person.raised { animation: none; } }
 </style>

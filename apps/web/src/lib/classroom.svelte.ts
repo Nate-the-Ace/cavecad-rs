@@ -32,6 +32,16 @@ export const classroom = $state({
   ended: false,
   /** Everything said and every hand, in order. */
   chat: [] as ChatEntry[],
+  /** Things the teacher should notice now: a hand going up, a line with an emoji in it. They show as cards on the screen. */
+  alerts: [] as { id: number; kind: 'hand' | 'emoji'; whoId: string; who: string; text: string }[],
+  /** A soft chime when a hand goes up (the teacher can turn it off). */
+  chime: (() => {
+    try {
+      return localStorage.getItem('cavecad.chime') !== 'off';
+    } catch {
+      return true;
+    }
+  })(),
   /** Hands up now, longest waiting first. */
   hands: [] as Hand[],
   /** Lines said while the drawer was shut (for the badge). */
@@ -83,6 +93,85 @@ export function openLinkText(text: string): string | null {
   classroom.error = '';
   classroom.pending = { room: '', invite: '', live: found };
   return null;
+}
+
+// ---- getting the teacher's attention ---------------------------------------------------------------
+
+let alertSeq = 0;
+const EMOJI = /\p{Extended_Pictographic}/u;
+
+/** A short soft two-note chime (no sound file; the browser makes it). Quietly does nothing where audio is not allowed. */
+function chime() {
+  if (!classroom.chime) return;
+  try {
+    const Ctx = window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+    if (!Ctx) return;
+    const ctx = new Ctx();
+    const at = ctx.currentTime;
+    [660, 880].forEach((freq, i) => {
+      const o = ctx.createOscillator();
+      const g = ctx.createGain();
+      o.type = 'sine';
+      o.frequency.value = freq;
+      g.gain.setValueAtTime(0.0001, at + i * 0.14);
+      g.gain.exponentialRampToValueAtTime(0.18, at + i * 0.14 + 0.02);
+      g.gain.exponentialRampToValueAtTime(0.0001, at + i * 0.14 + 0.28);
+      o.connect(g).connect(ctx.destination);
+      o.start(at + i * 0.14);
+      o.stop(at + i * 0.14 + 0.3);
+    });
+    setTimeout(() => void ctx.close(), 800);
+  } catch {
+    /* no sound is fine */
+  }
+}
+
+export function setChime(on: boolean) {
+  classroom.chime = on;
+  try {
+    localStorage.setItem('cavecad.chime', on ? 'on' : 'off');
+  } catch {
+    /* kept for this visit */
+  }
+}
+
+/** Takes a card off the screen. */
+export function dismissAlert(id: number) {
+  classroom.alerts = classroom.alerts.filter((a) => a.id !== id);
+}
+
+let titleTimer: ReturnType<typeof setInterval> | undefined;
+let plainTitle = '';
+/** While someone's hand is up and this tab is out of sight, the tab's title flashes who it is. */
+function flashTitle(who: string) {
+  if (!document.hidden || titleTimer) return;
+  plainTitle = document.title;
+  let on = false;
+  titleTimer = setInterval(() => {
+    document.title = (on = !on) ? `✋ ${who} · ${plainTitle}` : plainTitle;
+    if (!document.hidden) stopFlash();
+  }, 900);
+}
+function stopFlash() {
+  if (titleTimer) clearInterval(titleTimer);
+  titleTimer = undefined;
+  if (plainTitle) document.title = plainTitle;
+}
+if (typeof document !== 'undefined') document.addEventListener('visibilitychange', () => !document.hidden && stopFlash());
+
+/** The teacher is told, loudly enough to notice, about a hand or an emoji from a student. */
+function attend(e: ChatEntry) {
+  if (classroom.role !== 'teacher' || e.id === live.me || !e.id) return;
+  const who = e.name ?? 'A student';
+  if (e.kind === 'hand' && e.text === 'raised a hand') {
+    classroom.alerts = [...classroom.alerts.filter((a) => !(a.kind === 'hand' && a.whoId === e.id)), { id: ++alertSeq, kind: 'hand', whoId: e.id, who, text: '✋' }];
+    chime();
+    flashTitle(who);
+  } else if (e.kind === 'say' && EMOJI.test(e.text)) {
+    const id = ++alertSeq;
+    classroom.alerts = [...classroom.alerts, { id, kind: 'emoji', whoId: e.id, who, text: e.text.slice(0, 60) }];
+    setTimeout(() => dismissAlert(id), 7000);
+  }
 }
 
 let intent: 'teacher' | 'student' | '' = '';
@@ -225,10 +314,15 @@ setRoomHooks({
   message: (m) => {
     if (m.t === 'chat') {
       const e = m.entry as ChatEntry;
+      const fresh = !classroom.chat.some((x) => x.n === e.n);
       classroom.chat = mergeEntries(classroom.chat, [e]);
+      if (fresh) attend(e);
       if (!classroom.drawer && e.kind === 'say' && e.id !== live.me) classroom.unread += 1;
     } else if (m.t === 'hands') {
       classroom.hands = (m.hands as Hand[]) ?? [];
+      // a hand that has come down needs no card any more
+      classroom.alerts = classroom.alerts.filter((a) => a.kind !== 'hand' || classroom.hands.some((h) => h.id === a.whoId));
+      if (!classroom.hands.length) stopFlash();
     } else if (m.t === 'mirror') {
       if (classroom.role === 'student') applyMirror(m.state);
     } else if (m.t === 'ended') {

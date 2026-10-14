@@ -25,5 +25,6 @@ export function record(cls: ClassState, entry: object): ClassState['chat'][numbe
 export function handsOf(cls: ClassState): { id: string; name: string; since: number }[];
 export function classWelcome(cls: ClassState, role: string): { role: string; name: string; started: number; ended: boolean; chat: ClassState['chat']; hands: ReturnType<typeof handsOf>; mirror: string };
 export function classMessage(cls: ClassState, sender: Member, msg: { t: string } & Record<string, any>, io: RoomIo): boolean;
-export function classLeft(cls: ClassState, id: string, io: RoomIo): void;
+export function classJoined(cls: ClassState, person: { id: string; name: string; role?: string }, io: RoomIo): void;
+export function classLeft(cls: ClassState, id: string, io: RoomIo, person?: { name: string; role?: string }): void;
 export const CLASS_MESSAGES: string[];

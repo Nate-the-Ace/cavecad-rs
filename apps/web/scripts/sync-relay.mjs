@@ -4,7 +4,7 @@
 // converge in any order. Nothing is stored on disk and nothing leaves the machine the server runs on.
 import { randomBytes } from 'node:crypto';
 import { WebSocketServer } from 'ws';
-import { CLASS_MESSAGES, classLeft, classMessage, classWelcome, newClass } from './classroom-relay.mjs';
+import { CLASS_MESSAGES, classJoined, classLeft, classMessage, classWelcome, newClass } from './classroom-relay.mjs';
 
 const MAX_ROOM = 64;
 const MAX_MESSAGE = 64 * 1024 * 1024;
@@ -84,6 +84,7 @@ export function createRelay(options = {}) {
         room.peers.add(ws);
         send(ws, { t: 'welcome', log: room.log, seed, owner: isOwner, ...(room.class ? { class: classWelcome(room.class, ws.role) } : {}), ...(fresh ? { ownerKey: room.ownerKey } : {}), ...(isOwner ? { invites: invitesOf(room) } : {}) });
         announce(room);
+        classJoined(room, ws, { send });
       } else if (msg.t === 'invite' && room && ws.isOwner) {
         // The owner makes an invite: a secret link token that works for a while and for some people.
         if (room.invites.size >= MAX_INVITES) return send(ws, { t: 'error', message: 'Too many invites: remove some first.' });

@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { READS, WRITES, guardEngine, readOnly } from '../src/lib/readonly.ts';
 import { applyMirror, captureMirror, fitRect, forgetMirror, frontPanels, layoutShape, registerMirror, roundRect, visibleRect } from '../src/lib/classroom-mirror.ts';
-import { CLASS_MESSAGES, classLeft, classMessage, classWelcome, newClass } from '../src/lib/classroom-room.mjs';
+import { CLASS_MESSAGES, classJoined, classLeft, classMessage, classWelcome, newClass } from '../src/lib/classroom-room.mjs';
 import { classLink, liveLink, readLiveLink, clock, mergeEntries, readClassLink, transcript, transcriptName, waiting, type ChatEntry } from '../src/lib/classroom-log.ts';
 
 let bad = 0;
@@ -167,6 +167,27 @@ ok(b === '{"w":3}', 'a part that registers after the state arrived is given it a
 offA();
 applyMirror({ a: { v: 9 } });
 ok(a === '{"v":2}', 'a part that is gone is not written to');
+
+// who comes and goes is in the record, for everyone
+{
+  const room = newClass('Joins');
+  const sent: { to: string; m: any }[] = [];
+  const members = [{ id: 't', name: 'Tess', role: 'teacher' }, { id: 's1', name: 'Bob', role: 'student' }];
+  const io = { members: () => members, send: (to: string, m: object) => void sent.push({ to, m }), all: (m: object) => void sent.push({ to: '*', m }), others: (m: object) => void sent.push({ to: '!', m }) };
+  classJoined(room, { id: 's1', name: 'Bob', role: 'student' }, io);
+  ok(room.chat.length === 1 && room.chat[0].kind === 'system' && room.chat[0].name === 'Bob' && room.chat[0].text === 'joined the class', 'a join is a line in the record');
+  ok(sent.some((x) => x.to === '*' && x.m.t === 'chat' && x.m.entry.text === 'joined the class'), 'and goes to everyone');
+  classMessage(room, { id: 's1', name: 'Bob', role: 'student' }, { t: 'hand', up: true }, io);
+  classLeft(room, 's1', io, { name: 'Bob', role: 'student' });
+  const last = room.chat[room.chat.length - 1];
+  ok(last.kind === 'system' && last.text === 'left the class' && last.name === 'Bob', 'a departure is a line in the record');
+  ok(room.hands.size === 0, 'and the hand goes down');
+  const text = transcript('Joins', room.started, room.chat as ChatEntry[], 'Tess');
+  ok(/-- Bob joined the class/.test(text) && /-- Bob left the class/.test(text), 'the transcript says who came and went, by name');
+  room.ended = true;
+  classJoined(room, { id: 's2', name: 'Late', role: 'student' }, io);
+  ok(!room.chat.some((e) => e.name === 'Late'), 'nothing is recorded after the class has ended');
+}
 
 readOnly.on = false;
 if (bad) process.exit(1);

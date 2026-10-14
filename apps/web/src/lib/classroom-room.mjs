@@ -108,9 +108,16 @@ export function classMessage(cls, sender, msg, io) {
   return false;
 }
 
-/** A person left: their hand goes down. */
-export function classLeft(cls, id, io) {
+/** A person joined: the record says so, for everyone (and for the file the teacher keeps). */
+export function classJoined(cls, person, io) {
+  if (cls.ended) return;
+  io.all({ t: 'chat', entry: record(cls, { kind: 'system', id: person.id, name: person.name, role: person.role, text: 'joined the class' }) });
+}
+
+/** A person left: their hand goes down, and the record says they went. `person` is who left (they are no longer in `io.members()`). */
+export function classLeft(cls, id, io, person) {
   if (cls.hands.delete(id)) io.all({ t: 'hands', hands: handsOf(cls) });
+  if (!cls.ended && person?.name) io.all({ t: 'chat', entry: record(cls, { kind: 'system', id, name: person.name, role: person.role, text: 'left the class' }) });
 }
 
 /** The messages that mean something only inside a class. */

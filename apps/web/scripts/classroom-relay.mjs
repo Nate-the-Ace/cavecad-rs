@@ -4,7 +4,7 @@
 // reaches the people in the relay's room, and appends the record to a file when the server keeps one.
 import { appendFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { classLeft as roomLeft, classMessage as roomMessage, classWelcome, newClass as newRoomClass, CLASS_MESSAGES } from '../src/lib/classroom-room.mjs';
+import { classJoined as roomJoined, classLeft as roomLeft, classMessage as roomMessage, classWelcome, newClass as newRoomClass, CLASS_MESSAGES } from '../src/lib/classroom-room.mjs';
 
 export { classWelcome, CLASS_MESSAGES };
 
@@ -44,7 +44,12 @@ export function classMessage(room, ws, msg, { send }) {
   return roomMessage(room.class, { id: ws.person.id, name: ws.person.name, role: ws.role }, msg, ioFor(room, ws, send));
 }
 
-/** A person left a class room: their hand goes down. */
+/** A person joined a class room: the record says so. */
+export function classJoined(room, ws, { send }) {
+  if (room.class && ws.person) roomJoined(room.class, { id: ws.person.id, name: ws.person.name, role: ws.role }, ioFor(room, ws, send));
+}
+
+/** A person left a class room: their hand goes down and the record says they went. */
 export function classLeft(room, ws, { send }) {
-  if (room.class && ws.person) roomLeft(room.class, ws.person.id, ioFor(room, ws, send));
+  if (room.class && ws.person) roomLeft(room.class, ws.person.id, ioFor(room, ws, send), { name: ws.person.name, role: ws.role });
 }

@@ -12,6 +12,7 @@
   import LiveShare from './components/LiveShare.svelte';
   import ClassroomDock from './components/ClassroomDock.svelte';
   import ClassroomDialogs from './components/ClassroomDialogs.svelte';
+  import ClassroomAlerts from './components/ClassroomAlerts.svelte';
   import { classroom, keepsCave, readClassLinkFromUrl } from './lib/classroom.svelte';
   import { viewChanged } from './lib/p2p.svelte';
   import { scans } from './lib/scans.svelte';
@@ -81,6 +82,7 @@
   <CaveShelf />
   <LiveShare />
   <ClassroomDialogs />
+  <ClassroomAlerts />
   {#if info?.error}
     <div class="banner">Rust build failed. The page is showing the last good build.<pre>{info.error}</pre></div>
   {/if}
