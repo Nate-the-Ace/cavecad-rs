@@ -345,16 +345,20 @@ export function drawStamp(g: CanvasRenderingContext2D, kind: string, p0: [number
       g.font = fontCss(leader, l.height);
       g.textBaseline = 'middle';
       const ink = g.strokeStyle;
-      const x = leader.align === 'center' ? (l.note[0] + l.note[2]) / 2 : leader.align === 'right' ? l.note[2] : l.note[0];
+      // inside a shape (box, diamond, ellipse, ...) the words sit in its middle; against an underline or no frame they start at the left
+      const framed = !!leader.frame && leader.frame !== 'underline' && leader.frame !== 'none';
+      const align = framed && !leader.align ? 'center' : leader.align;
+      const look = align === leader.align ? leader : { ...leader, align };
+      const x = align === 'center' ? (l.note[0] + l.note[2]) / 2 : align === 'right' ? l.note[2] : l.note[0];
       if (leader.flags.includes('h')) {
         // an outline round the letters keeps them readable over linework and fills
-        g.textAlign = leader.align === 'center' ? 'center' : leader.align === 'right' ? 'right' : 'left';
+        g.textAlign = align === 'center' ? 'center' : align === 'right' ? 'right' : 'left';
         g.strokeStyle = back;
         g.lineWidth = Math.max(2, l.height * 0.28);
         g.lineJoin = 'round';
         g.strokeText(text, x, y);
       }
-      paintWords(g, text, x, y, leader, ink);
+      paintWords(g, text, x, y, look, ink);
       g.restore();
     }
     return;
