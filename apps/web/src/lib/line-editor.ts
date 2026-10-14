@@ -52,7 +52,9 @@ export interface Hooks<T extends EditableLine> {
   toWorld: (x: number, y: number) => Pt;
   /** The selected line's id (shared across views), and a way to change it. */
   selected: () => string;
-  select: (id: string) => void;
+  select: (id: string, additive?: boolean) => void;
+  /** Every selected line, when more than one can be (`selected` then gives a line only while it is the only one). */
+  ids?: () => string[];
   /** Saves new fit points for a line (one undoable edit). */
   commit: (id: string, points: Pt[], widths: number[] | null) => void;
   /** Deletes a line (one undoable edit). */
@@ -110,8 +112,8 @@ export class LineEditor<T extends EditableLine = EditableLine> {
   }
 
   /** A press at screen (`x`, `y`). Picks up a fit point of the selected line, or selects the line there. Returns true when a fit point was picked up. */
-  press(x: number, y: number): boolean {
-    const sel = this.selectedLine();
+  press(x: number, y: number, additive = false): boolean {
+    const sel = additive ? undefined : this.selectedLine();
     const op = sel?.kind === 'callout' ? this.h.arrowOp?.(sel.id) : '';
     if (sel && op) {
       const screen = sel.points.map(this.h.toScreen);
@@ -130,7 +132,7 @@ export class LineEditor<T extends EditableLine = EditableLine> {
       }
     }
     // a symbol's label note is picked up where it sits, selected or not
-    for (const k of [...this.shown()].reverse()) {
+    if (!additive) for (const k of [...this.shown()].reverse()) {
       if (!k.text || k.points.length < 3 || !hitsLabelNote(k.kind, k.text, this.h.toScreen(k.points[0]) as [number, number], this.h.toScreen(k.points[1]) as [number, number], this.h.toScreen(k.points[2]) as [number, number], x, y)) continue;
       this.h.select(k.id);
       this.drag = { id: k.id, index: 2, points: k.points.map((p) => [...p] as Pt), widths: k.widths ? [...k.widths] : null, stamp: true, leader: false };
@@ -140,11 +142,11 @@ export class LineEditor<T extends EditableLine = EditableLine> {
     const lines = this.shown();
     const hit = topLineAt(lines, this.h.toScreen, x, y, LINE_REACH, this.h.paperPx?.(), this.h.ornament);
     if (hit >= 0) {
-      this.h.select(lines[hit].id);
+      this.h.select(lines[hit].id, additive);
       this.h.redraw();
       return false;
     }
-    if (this.h.selected()) this.h.select('');
+    if (!additive && (this.h.ids ? this.h.ids().length : this.h.selected())) this.h.select('');
     this.h.redraw();
     return false;
   }
@@ -224,13 +226,30 @@ export class LineEditor<T extends EditableLine = EditableLine> {
     return true;
   }
 
+  /** A right press at screen (`x`, `y`): the line there is selected (unless it already is) and a way to find the lines like it is returned. Null when no line is there. */
+  contextAt(x: number, y: number): (() => string[]) | null {
+    const lines = this.shown();
+    const hit = topLineAt(lines, this.h.toScreen, x, y, LINE_REACH, this.h.paperPx?.(), this.h.ornament);
+    if (hit < 0) return null;
+    const line = lines[hit];
+    const now = this.h.ids ? this.h.ids() : [this.h.selected()];
+    if (!now.includes(line.id)) this.h.select(line.id);
+    this.h.redraw();
+    return () => lines.filter((k) => k.kind === line.kind).map((k) => k.id);
+  }
+
+  /** The ids of every line drawn in this view that is switched on (what Select All picks). */
+  allIds(): string[] {
+    return this.shown().map((k) => k.id);
+  }
+
   /** Delete or Backspace removes the selected line; Escape lets go of it. Returns true if the key was used. */
   key(e: KeyboardEvent): boolean {
-    const sel = this.selectedLine();
-    if (!sel) return false;
+    const ids = this.h.ids ? this.h.ids() : this.h.selected() ? [this.h.selected()] : [];
+    if (!ids.length) return false;
     if (e.key === 'Delete' || e.key === 'Backspace') {
-      this.h.remove(sel.id);
       this.h.select('');
+      for (const id of ids) this.h.remove(id);
       return true;
     }
     if (e.key === 'Escape') {

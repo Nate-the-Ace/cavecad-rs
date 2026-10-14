@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { selectAllInLastView } from './lib/select-all';
+  import LineMenu from './components/LineMenu.svelte';
   import { onMount, untrack } from 'svelte';
   import Ribbon from './components/Ribbon.svelte';
   import NewCave from './components/NewCave.svelte';
@@ -40,6 +42,7 @@
     const t = e.target as HTMLElement | null;
     if (t && (t.isContentEditable || /^(input|textarea|select)$/i.test(t.tagName))) return;
     e.preventDefault();
+    if (!cave.tool) selectAllInLastView();
   }
 
   onMount(() => {
@@ -89,6 +92,14 @@
     void scans.selected;
     viewChanged();
   });
+  // A multiple selection belongs to the line that was picked first: picking another line on its own drops the rest.
+  $effect(() => {
+    if (cave.alsoOf !== cave.selected && (cave.also.length || cave.alsoOf)) {
+      cave.also = [];
+      cave.alsoOf = '';
+    }
+  });
+
   const keepNow = () => keepsCave() && void flush();
 
   const dirty = $derived(unsaved());
@@ -106,6 +117,7 @@
   <LiveShare />
   <ClassroomDialogs />
   <ClassroomAlerts />
+  <LineMenu />
   {#if info?.error}
     <div class="banner">Rust build failed. The page is showing the last good build.<pre>{info.error}</pre></div>
   {/if}

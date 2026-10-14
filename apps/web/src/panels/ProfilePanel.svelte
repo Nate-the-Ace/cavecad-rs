@@ -7,7 +7,9 @@
   import { Maximize } from '@lucide/svelte';
   import PanelUndo from '../components/PanelUndo.svelte';
   import { looks } from '../lib/ink';
-  import { cave, changed, filter, option, setPick, setShowSections, haloFade, haloReach, toolStyle } from '../lib/cave.svelte';
+  import { markViewUsed, registerSelectAll } from '../lib/select-all';
+  import { openLineMenu } from '../lib/line-menu.svelte';
+  import { cave, changed, filter, option, selectedIds, selectIds, toggleSelected, setPick, setShowSections, haloFade, haloReach, toolStyle } from '../lib/cave.svelte';
   import { defaultBandOffset, drawHandles, drawStrokes, glyphCurves, hits, leaderEnd, ornamentFor } from '../lib/section-glyph';
   import { LineEditor, endpointNear, joinFit } from '../lib/line-editor';
   import { Touches } from '../lib/touch';
@@ -62,7 +64,8 @@
     lines: () => band?.sketches ?? [],
     toScreen: (p) => toScreen(p[0], p[1]),
     toWorld: (x, y) => toWorld(x, y),
-    selected: () => cave.selected,
+    selected: () => (selectedIds().length === 1 ? cave.selected : ''),
+    ids: () => selectedIds(),
     arrowOp: (id) => (cave.arrowOp.id === id ? cave.arrowOp.op : ''),
     arrowDone: () => (cave.arrowOp = { id: '', op: '' }),
     commitLeader: (id, pts, style) => {
@@ -70,7 +73,7 @@
       message = r === 'ok' ? '' : r;
       changed();
     },
-    select: (id) => (cave.selected = id),
+    select: (id, additive) => (additive ? toggleSelected(id) : selectIds(id ? [id] : [])),
     commit: (id, pts, widths) => {
       const r = engine.editLine(id, pts, widths, cave.adjusted);
       message = r === 'ok' ? '' : r;
@@ -87,6 +90,7 @@
   });
   $effect(() => {
     void cave.selected;
+    void cave.also;
     schedule();
   });
   // the selected line is fitted again at another detail
@@ -288,7 +292,7 @@
     g.setLineDash([]);
     for (const l of band.legs) stroke(g, [[l[0], l[1]], [l[2], l[3]]], null, c.text, 2);
     const look = looks();
-    drawStrokes(g, editor.display(), toScreen, look, 1, cave.selected, (band?.stations ?? []).map((s) => [s.s, s.z] as [number, number]));
+    drawStrokes(g, editor.display(), toScreen, look, 1, new Set(selectedIds()), (band?.stations ?? []).map((s) => [s.s, s.z] as [number, number]));
     drawHandles(g, editor.handles(), c.accent, c.bg);
     if (pickupAt && cave.tool && !live) {
       // the end of an open line the next stroke would carry on from
@@ -373,6 +377,7 @@
   }
 
   function onDown(e: PointerEvent) {
+    markViewUsed('profile');
     canvas.setPointerCapture(e.pointerId);
     canvas.focus();
     if (e.button === 0 && cave.run && waitingForPoint(`profile:${cave.run}`)) {
@@ -419,7 +424,7 @@
     }
     if (e.button === 0 && !cave.tool) {
       const r = canvas.getBoundingClientRect();
-      if (editor.press(e.clientX - r.left, e.clientY - r.top)) return;
+      if (editor.press(e.clientX - r.left, e.clientY - r.top, e.shiftKey || e.metaKey || e.ctrlKey)) return;
     }
     if (e.button === 0) {
       const rect = canvas.getBoundingClientRect();
@@ -666,6 +671,7 @@
   }
 
   onMount(() => {
+    const offSelectAll = registerSelectAll('profile', () => selectIds(editor.allIds()));
     const ro = new ResizeObserver(() => {
       width = wrap.clientWidth;
       height = wrap.clientHeight;
@@ -678,6 +684,7 @@
       refresh();
     });
     return () => {
+      offSelectAll();
       ro.disconnect();
       offTheme();
     };
@@ -703,7 +710,13 @@
     onkeydown={onKey}
     oncontextmenu={(e) => {
       e.preventDefault();
-      if (cave.tool) cave.tool = ''; // a right click ends the command
+      if (cave.tool) {
+        cave.tool = ''; // a right click ends the command
+        return;
+      }
+      const r = canvas.getBoundingClientRect();
+      const similar = editor.contextAt(e.clientX - r.left, e.clientY - r.top);
+      if (similar) openLineMenu(e.clientX, e.clientY, similar);
     }}
   ></canvas>
   <div class="bar">

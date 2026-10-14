@@ -10,7 +10,9 @@
   import { engine, loadEngine, type Scene, type TypeStyle } from '../lib/engine';
   import { CaveView, type CameraState, type Projection } from '../lib/viewport/cave-view';
   import { fitPlane, heightSurface } from '../lib/plane';
-  import { cave, changed, filter, haloFade, haloReach, option, setPick, setShowSections, setShown, wireFilter, toolStyle } from '../lib/cave.svelte';
+  import { markViewUsed, registerSelectAll } from '../lib/select-all';
+  import { openLineMenu } from '../lib/line-menu.svelte';
+  import { cave, changed, filter, haloFade, haloReach, option, selectedIds, selectIds, toggleSelected, setPick, setShowSections, setShown, wireFilter, toolStyle } from '../lib/cave.svelte';
   import { tolerancePx } from '../lib/commands';
   import { ViewCube } from '../lib/viewport/view-cube';
   import { onTheme } from '../lib/theme';
@@ -149,8 +151,10 @@
 
   // The selected line gets a halo and, on the map, handles; Delete removes a selected map line.
   $effect(() => {
-    const id = cave.selected;
-    view?.setSelectedLine(id);
+    const ids = selectedIds();
+    void cave.also;
+    view?.setSelectedLine(ids.length === 1 ? ids[0] : '');
+    view?.setSelectedLines(ids);
   });
   /** Opens or closes the Show menu; opening re-reads what the cave has, so what was just drawn is listed. */
   function openMenu() {
@@ -167,10 +171,11 @@
       if ((e.shiftKey ? engine.redo('map') : engine.undo('map'))) changed();
       return;
     }
-    if ((e.key === 'Delete' || e.key === 'Backspace') && cave.selected && view?.hasMapLine(cave.selected)) {
+    if ((e.key === 'Delete' || e.key === 'Backspace') && cave.selected && selectedIds().some((id) => view?.hasMapLine(id))) {
       e.preventDefault();
-      engine.deleteLine(cave.selected);
+      const ids = selectedIds().filter((id) => view?.hasMapLine(id));
       cave.selected = '';
+      for (const id of ids) engine.deleteLine(id);
       changed();
     } else if (e.key === 'Escape' && cave.selected) {
       cave.selected = '';
@@ -274,6 +279,7 @@
   }
 
   onMount(() => {
+    const offSelectAll = registerSelectAll('map', () => selectIds(view?.mapLineIds() ?? []));
     const v = new CaveView(gl, overlay);
     const cube = new ViewCube(cubeHost, (dir) => v.snapTo(dir), (da, dp) => v.orbitBy(da, dp));
     v.onRender = (camera, target) => {
@@ -281,7 +287,11 @@
       const hint = cave.tool && !v.canDrawHere ? 'Snap to the Top view to draw on the map' : '';
       if (hint !== drawHint) drawHint = hint;
     };
-    v.onSelectLine = (id) => (cave.selected = id);
+    v.onSelectLine = (id, additive) => (additive && id ? toggleSelected(id) : selectIds(id ? [id] : []));
+    v.onLineMenu = (x, y, id, similar) => {
+      if (!selectedIds().includes(id)) selectIds([id]);
+      openLineMenu(x, y, () => similar);
+    };
     v.arrowOp = () => cave.arrowOp;
     v.onArrowDone = () => (cave.arrowOp = { id: '', op: '' });
     v.onEndCommand = () => (cave.tool = '');
@@ -344,6 +354,7 @@
     });
 
     return () => {
+      offSelectAll();
       unmirror();
       ro.disconnect();
       offTheme();
@@ -355,7 +366,7 @@
 </script>
 
 <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-<div class="vp" role="application" aria-label="Map" bind:this={wrap} tabindex="-1" onkeydown={onKey}>
+<div class="vp" role="application" aria-label="Map" bind:this={wrap} tabindex="-1" onkeydown={onKey} onpointerdowncapture={() => markViewUsed('map')}>
   <canvas bind:this={gl} onpointerdown={onDown} onpointerup={onUp}></canvas>
   <canvas bind:this={overlay} class="overlay"></canvas>
   <div class="bar">

@@ -93,6 +93,12 @@ export function hits(sketches: Sketches, anchor: [number, number], px: number, x
   return x >= anchor[0] + b[0] * px - pad && x <= anchor[0] + b[2] * px + pad && y >= anchor[1] - b[3] * px - pad && y <= anchor[1] - b[1] * px + pad;
 }
 
+/** True when the stroke `id` is the selected one (or one of the selected ones). */
+function isChosen(selected: string | ReadonlySet<string>, id: string | undefined): boolean {
+  if (!id) return false;
+  return typeof selected === 'string' ? !!selected && selected === id : selected.has(id);
+}
+
 /** Draws strokes as smooth curves through their fit points, in the look of their kind (width scaled
  *  by pen weight), `to` mapping section metres to pixels. The stroke with id `selected` gets a halo. */
 export function drawStrokes(
@@ -101,7 +107,7 @@ export function drawStrokes(
   to: (u: number, v: number) => [number, number],
   look: (kind: string, style?: string, pxPerM?: number) => Look,
   scale = 1,
-  selected = '',
+  selected: string | ReadonlySet<string> = '',
   /** The survey's stations in the strokes' own coordinates (wall glyphs go on the side away from them). */
   survey: [number, number][] = [],
 ): void {
@@ -123,7 +129,7 @@ export function drawStrokes(
       g.globalAlpha = l.alpha;
       g.setLineDash([]);
       g.lineWidth = Math.max(1, l.weight * scale * 0.7);
-      if (selected && k.id === selected && k.kind !== 'callout') {
+      if (isChosen(selected, k.id) && k.kind !== 'callout') {
         const pl = placement(p0, p1);
         g.strokeStyle = highlightColor();
         g.globalAlpha = 0.9;
@@ -159,7 +165,7 @@ export function drawStrokes(
         g.stroke();
       }
     };
-    if (selected && k.id === selected) trace(9, highlightColor(), 0.6, []);
+    if (isChosen(selected, k.id)) trace(9, highlightColor(), 0.6, []);
     if (isFillKind(k.kind) && k.points.length >= 3) {
       // An area fill: its marks are made from the outline (in metres) and the stroke's id, then drawn under the outline.
       g.strokeStyle = l.color;

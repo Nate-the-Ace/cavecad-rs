@@ -3,7 +3,7 @@
   // Done sit in the tab's Command group.) Each is one undoable edit in the view the line was drawn in.
   import { onMount } from 'svelte';
   import { Spline, FlipHorizontal2 } from '@lucide/svelte';
-  import { cave, changed, option, requestRefit } from '../lib/cave.svelte';
+  import { cave, changed, option, requestRefit, selectedIds } from '../lib/cave.svelte';
   import { engine, loadEngine, type TypeStyle } from '../lib/engine';
   import { isStampKind } from '../lib/symbols';
   import { fillDefs, isFillKind } from '../lib/fills';
@@ -15,10 +15,20 @@
   });
   const shaped = ['ledge', 'pit', 'flowstone', 'rimstone', 'slope', 'dripline', 'glyphs'];
 
-  const info = $derived.by(() => {
-    void cave.version;
-    return cave.selected ? engine.lineInfo(cave.selected) : null;
+  // One or several selected lines. Several of one kind are edited together: a setting they share shows its value,
+  // one they do not shows VARIOUS, and changing it changes it for every one of them. Several of different kinds
+  // get only the basics.
+  const ids = $derived.by(() => {
+    void cave.also;
+    return selectedIds();
   });
+  const infos = $derived.by(() => {
+    void cave.version;
+    return ids.map((id) => engine.lineInfo(id)).filter((i): i is NonNullable<ReturnType<typeof engine.lineInfo>> => !!i);
+  });
+  const info = $derived(infos[0] ?? null);
+  const multi = $derived(ids.length > 1);
+  const alike = $derived(infos.every((i) => i.kind === infos[0]?.kind));
   const isSymbol = $derived(!!info && isStampKind(info.kind));
   const isFill = $derived(!!info && isFillKind(info.kind));
   const isLeader = $derived(info?.kind === 'callout');
@@ -32,12 +42,32 @@
 
   // This line's own look: its pattern, how long its dashes are, and (for an area) how dense its hatch is. Dragging a slider
   // shows the result at once in every view; letting go saves it as one undoable edit.
-  const style = $derived(parseStyle(liveStyle.id === cave.selected ? liveStyle.style : info?.style));
+  // With several lines selected, the settings changed so far (applied to each line's own style when let go).
+  let pending = $state<Partial<LineStyle>>({});
+  const styles = $derived(infos.map((i) => parseStyle(i.style)));
+  const style = $derived(multi ? { ...(styles[0] ?? parseStyle('')), ...pending } : parseStyle(liveStyle.id === cave.selected ? liveStyle.style : info?.style));
+  /** True when the selected lines do not share a value for this setting. */
+  const various = (field: keyof LineStyle) => multi && !(field in pending) && new Set(styles.map((s) => String(s[field]))).size > 1;
   const draft = (patch: Partial<LineStyle>) => {
+    if (multi) {
+      pending = { ...pending, ...patch };
+      return;
+    }
     liveStyle.id = cave.selected;
     liveStyle.style = styleText({ ...style, ...patch });
   };
   function keep() {
+    if (multi) {
+      const patch = pending;
+      pending = {};
+      let r = 'ok';
+      infos.forEach((i, n) => {
+        const out = engine.setLineStyle(ids[n], styleText({ ...parseStyle(i.style), ...patch }));
+        if (out !== 'ok') r = out;
+      });
+      run(r);
+      return;
+    }
     if (liveStyle.id !== cave.selected) return;
     const text = liveStyle.style;
     run(engine.setLineStyle(cave.selected, text));
@@ -45,7 +75,27 @@
   }
   const resetStyle = () => {
     liveStyle.id = '';
-    run(engine.setLineStyle(cave.selected, ''));
+    pending = {};
+    let r = 'ok';
+    for (const id of ids) {
+      const out = engine.setLineStyle(id, '');
+      if (out !== 'ok') r = out;
+    }
+    run(r);
+  };
+  // a different selection: nothing is half-way
+  $effect(() => {
+    void ids.join(',');
+    pending = {};
+  });
+  /** Applies a change to every selected line. */
+  const each = (f: (id: string) => string) => {
+    let r = 'ok';
+    for (const id of ids) {
+      const out = f(id);
+      if (out !== 'ok') r = out;
+    }
+    run(r);
   };
   // a different line, or none: nothing is half-way
   $effect(() => {
@@ -71,27 +121,34 @@
 
 {#snippet angleSlider()}
   <label class="detail" title="Turns the pattern inside the area; the outline stays where it is">
-    <span>Pattern angle <b>{style.angle.toFixed(0)}°</b></span>
+    <span>Pattern angle <b>{various('angle') ? 'VARIOUS' : `${style.angle.toFixed(0)}°`}</b></span>
     <input type="range" min="-90" max="90" step="1" value={style.angle} oninput={(e) => draft({ angle: Number(e.currentTarget.value) })} onchange={keep} aria-label="Pattern angle" />
   </label>
 {/snippet}
 
 <div class="sel">
+  {#if multi && !alike}
+    <div class="curve">
+      <span class="tip many">{ids.length} items of different kinds are selected.</span>
+      <button class="small" onclick={resetStyle} title="Back to what each one's type gives it">Reset style</button>
+      {#if message}<span class="msg" role="status">{message}</span>{/if}
+    </div>
+  {:else}
   {#if isFill && info}
     <div class="curve">
-      <select class="kind" value={info.kind} aria-label="What the area is" onchange={(e) => run(engine.setLineKind(cave.selected, e.currentTarget.value))}>
+      <select class="kind" value={info.kind} aria-label="What the area is" onchange={(e) => each((id) => engine.setLineKind(id, e.currentTarget.value))}>
         {#each fillDefs() as d}<option value={d.key}>{d.label}</option>{/each}
         <option value="fill-custom">My fill</option>
       </select>
       {#if isCustomFill}
         <select class="kind" value={style.lt} aria-label="Which of your fills" title="The fill, from the Patterns panel" onchange={(e) => (draft({ lt: e.currentTarget.value }), keep())}>
-          {#if !style.lt.startsWith(PATTERN_PREFIX)}<option value="">Pick a fill…</option>{/if}
+          {#if various('lt')}<option value="" disabled selected>VARIOUS</option>{:else if !style.lt.startsWith(PATTERN_PREFIX)}<option value="">Pick a fill…</option>{/if}
           {#each patterns.fills as f}<option value={PATTERN_PREFIX + f.name}>{f.name}</option>{/each}
         </select>
       {/if}
       {#if isCustomFill}
         <label class="detail" title="How many marks or hatch lines this area has">
-          <span>Hatch density <b>×{style.density.toFixed(2)}</b></span>
+          <span>Hatch density <b>{various('density') ? 'VARIOUS' : `×${style.density.toFixed(2)}`}</b></span>
           <input type="range" min="0.25" max="4" step="0.05" value={style.density} oninput={(e) => draft({ density: Number(e.currentTarget.value) })} onchange={keep} aria-label="Hatch density" />
         </label>
         {@render angleSlider()}
@@ -100,30 +157,30 @@
     </div>
   {:else if !isSymbol}
   <div class="types">
-    <select class="kind" value={info?.kind ?? ''} aria-label="What this line is" title="Change what this line is" onchange={(e) => info && run(engine.setLineKind(cave.selected, e.currentTarget.value))}>
+    <select class="kind" value={info?.kind ?? ''} aria-label="What this line is" title="Change what this line is" onchange={(e) => info && each((id) => engine.setLineKind(id, e.currentTarget.value))}>
       {#each tools.filter((t) => t.key !== 'text') as t}<option value={t.key}>{t.label}</option>{/each}
     </select>
   </div>
   {/if}
   <div class="curve">
     {#if !isSymbol && !isFill}
-    <button class="tool" class:pressed={info?.closed} aria-pressed={info?.closed} title={info?.closed ? 'Open the curve: it stops at its last point' : 'Close the curve: it runs from its last point back to its first (needs three points)'} onclick={() => info && run(engine.setLineClosed(cave.selected, !info.closed))}>
+    <button class="tool" class:pressed={infos.every((i) => i.closed)} aria-pressed={infos.every((i) => i.closed)} title={info?.closed ? 'Open the curve: it stops at its last point' : 'Close the curve: it runs from its last point back to its first (needs three points)'} onclick={() => info && each((id) => engine.setLineClosed(id, !infos.every((i) => i.closed)))}>
       <Spline size={22} strokeWidth={1.6} />
-      <span>{info?.closed ? 'Open' : 'Close'}</span>
+      <span>{infos.every((i) => i.closed) ? 'Open' : 'Close'}</span>
     </button>
     {/if}
-    {#if !isSymbol && info}
+    {#if !isSymbol && info && !multi}
       <label class="detail" title="Fit the line again with more or fewer points. Fewer points are easier to edit; more follow the curve closely.">
         <span>Curve detail</span>
         <input type="range" min="1" max="10" step="1" value={option('detail', 5)} onchange={(e) => requestRefit(cave.selected, Number(e.currentTarget.value))} aria-label="Curve detail" />
       </label>
     {/if}
     {#if isSymbol && info}
-      <input class="words" type="text" value={info.text} placeholder={info.kind === 'text' ? 'The text' : info.kind === 'callout' ? 'The note' : 'Label'} maxlength="200" aria-label={info.kind === 'text' ? 'The text' : info.kind === 'callout' ? 'The note' : 'Label'} onchange={(e) => run(engine.setLineText(cave.selected, e.currentTarget.value))} />
-      <span class="tip">Drag the dot to move it, the square to turn and resize it.</span>
+      <input class="words" type="text" value={new Set(infos.map((i) => i.text)).size > 1 ? '' : info.text} placeholder={new Set(infos.map((i) => i.text)).size > 1 ? 'VARIOUS' : info.kind === 'text' ? 'The text' : info.kind === 'callout' ? 'The note' : 'Label'} maxlength="200" aria-label={info.kind === 'text' ? 'The text' : info.kind === 'callout' ? 'The note' : 'Label'} onchange={(e) => each((id) => engine.setLineText(id, e.currentTarget.value))} />
+      {#if !multi}<span class="tip">Drag the dot to move it, the square to turn and resize it.</span>{/if}
     {/if}
     {#if info && shaped.includes(info.kind)}
-      <button class="tool" class:pressed={info.flip} aria-pressed={info.flip} title="Put the marks on the other side of the line" onclick={() => run(engine.setLineFlip(cave.selected, !info.flip))}>
+      <button class="tool" class:pressed={infos.every((i) => i.flip)} aria-pressed={infos.every((i) => i.flip)} title="Put the marks on the other side of the line" onclick={() => each((id) => engine.setLineFlip(id, !infos.every((i) => i.flip)))}>
         <FlipHorizontal2 size={22} strokeWidth={1.6} />
         <span>Flip side</span>
       </button>
@@ -132,29 +189,32 @@
   </div>
   {#if info && isLeader}
     <div class="style" role="group" aria-label="Leader">
-      <select class="kind" value={style.arrow} aria-label="Arrowhead" title="The end of the leader at the thing it points to" onchange={(e) => (draft({ arrow: e.currentTarget.value }), keep())}>
-        {#each ARROW_LABELS as [key, label]}<option value={key}>{label}</option>{/each}
+      <select class="kind" value={various('arrow') ? '' : style.arrow} aria-label="Arrowhead" title="The end of the leader at the thing it points to" onchange={(e) => (draft({ arrow: e.currentTarget.value }), keep())}>
+        {#if various('arrow')}<option value="" disabled selected>VARIOUS</option>{/if}{#each ARROW_LABELS as [key, label]}<option value={key}>{label}</option>{/each}
       </select>
-      <select class="kind" value={style.shape} aria-label="Leader line" title="How the leader runs from the arrow to the note" onchange={(e) => (draft({ shape: e.currentTarget.value }), keep())}>
-        {#each SHAPE_LABELS as [key, label]}<option value={key}>{label}</option>{/each}
+      <select class="kind" value={various('shape') ? '' : style.shape} aria-label="Leader line" title="How the leader runs from the arrow to the note" onchange={(e) => (draft({ shape: e.currentTarget.value }), keep())}>
+        {#if various('shape')}<option value="" disabled selected>VARIOUS</option>{/if}{#each SHAPE_LABELS as [key, label]}<option value={key}>{label}</option>{/each}
       </select>
-      <select class="kind" value={style.frame} aria-label="Note frame" title="A box or an underline round the note" onchange={(e) => (draft({ frame: e.currentTarget.value }), keep())}>
-        {#each FRAME_LABELS as [key, label]}<option value={key}>{label}</option>{/each}
+      <select class="kind" value={various('frame') ? '' : style.frame} aria-label="Note frame" title="A box or an underline round the note" onchange={(e) => (draft({ frame: e.currentTarget.value }), keep())}>
+        {#if various('frame')}<option value="" disabled selected>VARIOUS</option>{/if}{#each FRAME_LABELS as [key, label]}<option value={key}>{label}</option>{/each}
       </select>
-      <label class="check" title="Draw the line round the note's frame"><input type="checkbox" checked={!style.flags.includes('n')} disabled={!style.frame || style.frame === 'underline'} onchange={(e) => (draft({ flags: toggle('n', !e.currentTarget.checked) }), keep())} /> Frame outline</label>
-      <label class="check" title="A paper-coloured backing behind the note, so lines under it do not show through"><input type="checkbox" checked={style.flags.includes('f')} disabled={!style.frame || style.frame === 'underline'} onchange={(e) => (draft({ flags: toggle('f', e.currentTarget.checked) }), keep())} /> Fill</label>
-      <label class="check" title="An outline round the letters, so the text reads over lines and fills"><input type="checkbox" checked={style.flags.includes('h')} onchange={(e) => (draft({ flags: toggle('h', e.currentTarget.checked) }), keep())} /> Text outline</label>
-      <button class="small" title="Then press where the new arrow should touch (in any view)" class:on={cave.arrowOp.id === cave.selected && cave.arrowOp.op === 'add'} onclick={() => arm('add')}>Add arrow</button>
-      <button class="small" title="Then press the arrow to take off (a leader keeps at least one)" class:on={cave.arrowOp.id === cave.selected && cave.arrowOp.op === 'remove'} onclick={() => arm('remove')}>Remove arrow</button>
+      <label class="check" title="Draw the line round the note's frame"><input type="checkbox" indeterminate={various('flags')} checked={!style.flags.includes('n')} disabled={!style.frame || style.frame === 'underline'} onchange={(e) => (draft({ flags: toggle('n', !e.currentTarget.checked) }), keep())} /> Frame outline</label>
+      <label class="check" title="A paper-coloured backing behind the note, so lines under it do not show through"><input type="checkbox" indeterminate={various('flags')} checked={style.flags.includes('f')} disabled={!style.frame || style.frame === 'underline'} onchange={(e) => (draft({ flags: toggle('f', e.currentTarget.checked) }), keep())} /> Fill</label>
+      <label class="check" title="An outline round the letters, so the text reads over lines and fills"><input type="checkbox" indeterminate={various('flags')} checked={style.flags.includes('h')} onchange={(e) => (draft({ flags: toggle('h', e.currentTarget.checked) }), keep())} /> Text outline</label>
+      {#if !multi}
+        <button class="small" title="Then press where the new arrow should touch (in any view)" class:on={cave.arrowOp.id === cave.selected && cave.arrowOp.op === 'add'} onclick={() => arm('add')}>Add arrow</button>
+        <button class="small" title="Then press the arrow to take off (a leader keeps at least one)" class:on={cave.arrowOp.id === cave.selected && cave.arrowOp.op === 'remove'} onclick={() => arm('remove')}>Remove arrow</button>
+      {/if}
       <label class="detail" title="How big the note's text is: ×1 is 3 mm on paper">
-        <span>Text size <b>×{style.size.toFixed(2)}</b></span>
+        <span>Text size <b>{various('size') ? 'VARIOUS' : `×${style.size.toFixed(2)}`}</b></span>
         <input type="range" min="0.5" max="3" step="0.05" value={style.size} oninput={(e) => draft({ size: Number(e.currentTarget.value) })} onchange={keep} aria-label="Leader text size" />
       </label>
-      <button class="small" onclick={resetStyle} disabled={!info.style && liveStyle.id !== cave.selected}>Reset</button>
+      <button class="small" onclick={resetStyle} disabled={!infos.some((i) => i.style) && liveStyle.id !== cave.selected}>Reset</button>
     </div>
   {:else if info && !isSymbol && !isCustomFill}
     <div class="style" role="group" aria-label="Line style">
-      <select class="kind" value={style.lt} aria-label="Linetype" title="The pattern of this line: its type's own, or another" onchange={(e) => (draft({ lt: e.currentTarget.value }), keep())}>
+      <select class="kind" value={various('lt') ? '' : style.lt} aria-label="Linetype" title="The pattern of this line: its type's own, or another" onchange={(e) => (draft({ lt: e.currentTarget.value }), keep())}>
+        {#if various('lt')}<option value="" disabled selected>VARIOUS</option>{/if}
         {#each LINETYPE_LABELS as [key, label]}<option value={key}>{label}</option>{/each}
         {#if patterns.lines.length}
           <optgroup label="Patterns">
@@ -163,18 +223,19 @@
         {/if}
       </select>
       <label class="detail" title="How long this line's dashes and gaps are, whatever its pattern">
-        <span>Linetype scale <b>×{style.scale.toFixed(2)}</b></span>
+        <span>Linetype scale <b>{various('scale') ? 'VARIOUS' : `×${style.scale.toFixed(2)}`}</b></span>
         <input type="range" min="0.25" max="4" step="0.05" value={style.scale} oninput={(e) => draft({ scale: Number(e.currentTarget.value) })} onchange={keep} aria-label="Linetype scale" />
       </label>
       {#if isFill}
         <label class="detail" title="How many marks or hatch lines this area has">
-          <span>Hatch density <b>×{style.density.toFixed(2)}</b></span>
+          <span>Hatch density <b>{various('density') ? 'VARIOUS' : `×${style.density.toFixed(2)}`}</b></span>
           <input type="range" min="0.25" max="4" step="0.05" value={style.density} oninput={(e) => draft({ density: Number(e.currentTarget.value) })} onchange={keep} aria-label="Hatch density" />
         </label>
         {@render angleSlider()}
       {/if}
-      <button class="small" onclick={resetStyle} disabled={!info.style && liveStyle.id !== cave.selected} title="Back to what its type gives it">Reset</button>
+      <button class="small" onclick={resetStyle} disabled={!infos.some((i) => i.style) && liveStyle.id !== cave.selected} title="Back to what its type gives it">Reset</button>
     </div>
+  {/if}
   {/if}
 </div>
 
@@ -195,6 +256,7 @@
   .small.on { background: var(--accent); color: #fff; border-color: var(--accent); }
   .check { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: var(--text); }
   .small:disabled { opacity: 0.5; cursor: default; }
+  .many { max-width: 200px; }
   .tip { font-size: 11px; color: var(--muted); max-width: 150px; line-height: 1.25; }
   .msg { font-size: 11px; color: var(--danger); max-width: 130px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 </style>

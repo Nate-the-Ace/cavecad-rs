@@ -88,6 +88,8 @@ export class CaveView {
   private liveLine: { pts: [number, number][]; widths: number[]; pressure: boolean; z: number } | null = null;
   /** The line selected for editing (a feature id), shown with a halo and, for a map line, handles. */
   private selectedLine = '';
+  /** Every selected line (a multiple selection shows a halo on each, but handles only on a lone one). */
+  private selectedSet = new Set<string>();
   /** A fit point of a map line being moved: which line, which point, and the line's points now. */
   private lineEdit: { id: string; index: number; pts: [number, number, number][]; stamp: boolean; leader: boolean } | null = null;
   /** Called when a map line's fit points have been moved (plan metres) or a line is picked or put down. */
@@ -97,7 +99,9 @@ export class CaveView {
   /** A leader's moved points and its style (where its arrows are fastened), saved as one edit. */
   onLeaderEdited: (id: string, points: [number, number][], style: string) => void = () => {};
   onLineEdited: (id: string, points: [number, number][], widths: number[] | null) => void = () => {};
-  onSelectLine: (id: string) => void = () => {};
+  onSelectLine: (id: string, additive?: boolean) => void = () => {};
+  /** Called on a right click on a map line: where, which line, and the ids of the map lines of its kind. */
+  onLineMenu: (x: number, y: number, id: string, similar: string[]) => void = () => {};
   /** Called when a right click (not a right drag, which pans) asks to end the running command. */
   onEndCommand: () => void = () => {};
   private rightDown: { x: number; y: number } | null = null;
@@ -264,7 +268,14 @@ export class CaveView {
       const d = this.rightDown;
       if (e.button !== 2 || !d) return;
       this.rightDown = null;
-      if (this.drawTool && Math.hypot(e.clientX - d.x, e.clientY - d.y) < 5) this.onEndCommand();
+      if (Math.hypot(e.clientX - d.x, e.clientY - d.y) >= 5) return;
+      if (this.drawTool) {
+        this.onEndCommand();
+        return;
+      }
+      const rect = canvas.getBoundingClientRect();
+      const k = this.lineAt(e.clientX - rect.left, e.clientY - rect.top);
+      if (k) this.onLineMenu(e.clientX, e.clientY, k.id, this.mapLines.filter((m) => m.kind === k.kind && !isKindHidden(m.kind)).map((m) => m.id));
     });
     canvas.addEventListener('contextmenu', (e) => e.preventDefault());
     // A section can be dragged by hand: this runs before the orbit controls see the press.
@@ -831,6 +842,17 @@ export class CaveView {
     this.requestRender();
   }
 
+  /** Every selected line, for the halos. */
+  setSelectedLines(ids: string[]) {
+    this.selectedSet = new Set(ids);
+    this.requestRender();
+  }
+
+  /** The ids of every map line that is switched on (what Select All picks). */
+  mapLineIds(): string[] {
+    return this.mapLines.filter((k) => k.id && !isKindHidden(k.kind)).map((k) => k.id as string);
+  }
+
   /** True when `id` is a line drawn on the map (the only kind edited here). */
   hasMapLine(id: string): boolean {
     return this.mapLines.some((k) => k.id === id);
@@ -890,7 +912,8 @@ export class CaveView {
     const rect = this.canvas.getBoundingClientRect();
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
-    const sel = this.displayMapLines().find((k) => k.id === this.selectedLine);
+    const additive = e.shiftKey || e.metaKey || e.ctrlKey; // adds to the selection or takes out of it
+    const sel = additive ? undefined : this.displayMapLines().find((k) => k.id === this.selectedLine);
     const pending = this.arrowOp();
     if (sel && sel.kind === 'callout' && pending.id === sel.id && pending.op && this.canDrawHere) {
       const cp = this.planPoint(e.clientX, e.clientY);
@@ -915,7 +938,7 @@ export class CaveView {
         return;
       }
     }
-    if (this.canDrawHere) {
+    if (this.canDrawHere && !additive) {
       // a symbol's label note is picked up where it sits, selected or not
       for (const k of [...resolveLeaders(this.mapLines)].reverse()) {
         if (!k.text || k.points.length < 3 || isKindHidden(k.kind)) continue;
@@ -933,10 +956,10 @@ export class CaveView {
     }
     const k = this.lineAt(x, y);
     if (k) {
-      this.onSelectLine(k.id);
+      this.onSelectLine(k.id, additive);
       return;
     }
-    if (this.selectedLine && this.hasMapLine(this.selectedLine)) this.onSelectLine('');
+    if (!additive && [...this.selectedSet].some((id) => this.hasMapLine(id))) this.onSelectLine('');
   }
 
   setMapLines(list: ProfileSketch3d[]) {
@@ -1063,7 +1086,7 @@ export class CaveView {
         if (a && b) {
           g.setLineDash([]);
           g.lineWidth = Math.max(1, l.weight * 0.7);
-          if (k.id && k.id === this.selectedLine && k.kind !== 'callout') {
+          if (k.id && this.selectedSet.has(k.id) && k.kind !== 'callout') {
             const pl = placement(a, b);
             g.strokeStyle = `#${this.theme.accent.getHexString()}`;
             g.globalAlpha = base * 0.9;
@@ -1127,7 +1150,7 @@ export class CaveView {
           }
         }
       }
-      if (k.id && k.id === this.selectedLine) {
+      if (k.id && this.selectedSet.has(k.id)) {
         g.strokeStyle = `#${this.theme.accent.getHexString()}`;
         trace(9, 0.6, []);
         g.strokeStyle = l.color;

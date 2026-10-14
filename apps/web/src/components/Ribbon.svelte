@@ -6,7 +6,7 @@
   import { leave, live } from '../lib/sync.svelte';
   import { classroom } from '../lib/classroom.svelte';
   import { registerMirror } from '../lib/classroom-mirror';
-  import { cave, clearPick, setCompactRibbon, setPick, setUnits, option, setOption } from '../lib/cave.svelte';
+  import { cave, clearPick, selectedIds, selectIds, setCompactRibbon, setPick, setUnits, option, setOption } from '../lib/cave.svelte';
   import DrawTools from './DrawTools.svelte';
   import ThemeGroup from './ThemeGroup.svelte';
   import ContextOptions from './ContextOptions.svelte';
@@ -124,13 +124,19 @@
   onMount(() => {
     loadEngine().then(() => (loaded = true));
   });
-  const selection = $derived.by(() => {
+  const selections = $derived.by(() => {
     void cave.version;
-    return loaded && cave.selected && !cave.tool ? engine.lineInfo(cave.selected) : null;
+    void cave.also;
+    return loaded && !cave.tool ? selectedIds().map((id) => ({ id, info: engine.lineInfo(id) })) : [];
   });
+  const selection = $derived(selections[0]?.info ?? null);
+  /** More than one line is selected. */
+  const several = $derived(selections.length > 1);
+  /** Every selected line is of one kind (so its settings can be edited together). */
+  const alike = $derived(selections.every((s) => s.info && s.info.kind === selection?.kind));
   $effect(() => {
-    // The selected line is gone (undone, deleted elsewhere): nothing is selected any more.
-    if (loaded && cave.selected && !cave.tool && selection === null) cave.selected = '';
+    // Selected lines that are gone (undone, deleted elsewhere) are dropped from the selection.
+    if (loaded && !cave.tool && selections.some((s) => s.info === null)) selectIds(selections.filter((s) => s.info).map((s) => s.id));
   });
   const mode = $derived(cave.tool ? 'command' : selection ? 'selection' : cave.pick.kind ? 'pick' : '');
   // one thing is picked at a time: a line, a station, or a tool
@@ -138,7 +144,7 @@
     if (cave.tool || cave.selected) clearPick();
   });
   const contextName = $derived(
-    mode === 'command' ? (toolLabels[cave.tool] ?? symbolDef(cave.tool)?.name ?? fillLabel(cave.tool) ?? cave.tool) : mode === 'pick' ? INSPECTORS[cave.pick.kind as Exclude<PickKind, ''>].title : mode === 'selection' ? `Edit ${toolLabels[selection!.kind] ?? symbolDef(selection!.kind)?.name ?? fillLabel(selection!.kind) ?? selection!.kind}` : '',
+    mode === 'command' ? (toolLabels[cave.tool] ?? symbolDef(cave.tool)?.name ?? fillLabel(cave.tool) ?? cave.tool) : mode === 'pick' ? INSPECTORS[cave.pick.kind as Exclude<PickKind, ''>].title : mode === 'selection' ? (several && !alike ? 'MULTIPLE' : `Edit ${toolLabels[selection!.kind] ?? symbolDef(selection!.kind)?.name ?? fillLabel(selection!.kind) ?? selection!.kind}${several ? ` (${selections.length})` : ''}`) : '',
   );
   const commandGroups: Group[] = [
     { name: 'Settings', items: [], custom: ContextOptions },
@@ -153,9 +159,9 @@
           label: 'Delete',
           icon: Trash2,
           run: () => {
-            const id = cave.selected;
+            const ids = selectedIds();
             cave.selected = '';
-            if (id) engine.deleteLine(id);
+            for (const id of ids) engine.deleteLine(id);
             cave.version += 1;
           },
         },
