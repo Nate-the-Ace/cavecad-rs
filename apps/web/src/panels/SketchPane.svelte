@@ -33,6 +33,13 @@
   let wrap: HTMLDivElement;
   let scales = $state<SheetOptions['scales']>([]);
   let message = $state('');
+  // The note about having no station is stale as soon as there is one (it was drawn once and then never cleared).
+  $effect(() => {
+    if (stations.length && message) {
+      message = '';
+      schedule();
+    }
+  });
   let live: { pts: Pt[]; widths: number[]; pressure: boolean } | null = null;
   let frame = 0;
   onMount(() => {
