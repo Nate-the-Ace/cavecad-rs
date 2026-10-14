@@ -7,6 +7,7 @@
   import { engine, loadEngine, type TypeStyle } from '../lib/engine';
   import { isStampKind } from '../lib/symbols';
   import { fillDefs, isFillKind } from '../lib/fills';
+  import { copyOp } from '../lib/view-clip.svelte';
   import { ARROW_LABELS, FRAME_LABELS, LINETYPE_LABELS, PATTERN_PREFIX, SHAPE_LABELS, liveStyle, parseStyle, styleText, type LineStyle } from '../lib/line-style.svelte';
 
   let tools = $state<TypeStyle[]>([]);
@@ -39,6 +40,7 @@
     return engine.patternLibrary();
   });
   let message = $state('');
+  const copying = $derived(copyOp.on);
 
   // This line's own look: its pattern, how long its dashes are, and (for an area) how dense its hatch is. Dragging a slider
   // shows the result at once in every view; letting go saves it as one undoable edit.
@@ -127,6 +129,9 @@
 {/snippet}
 
 <div class="sel">
+  {#if copying}
+    <span class="tip copy" role="status">{copyOp.base ? 'Click to drop copies' : 'Pick a base point'}</span>
+  {/if}
   {#if multi && !alike}
     <div class="curve">
       <span class="tip many">{ids.length} items of different kinds are selected.</span>
@@ -257,6 +262,7 @@
   .check { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: var(--text); }
   .small:disabled { opacity: 0.5; cursor: default; }
   .many { max-width: 200px; }
+  .copy { max-width: 90px; color: var(--accent); font-weight: 600; }
   .tip { font-size: 11px; color: var(--muted); max-width: 150px; line-height: 1.25; }
   .msg { font-size: 11px; color: var(--danger); max-width: 130px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 </style>

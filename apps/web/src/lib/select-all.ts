@@ -24,3 +24,8 @@ export function selectAllInLastView(): boolean {
   run();
   return true;
 }
+
+/** The view last pressed in (empty before any). */
+export function lastView(): string {
+  return last;
+}

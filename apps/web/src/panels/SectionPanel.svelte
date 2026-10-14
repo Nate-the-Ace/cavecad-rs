@@ -23,6 +23,9 @@
   import { drawing, liveStyle } from '../lib/line-style.svelte';
   import { tolerancePx } from '../lib/commands';
   import { markViewUsed, registerSelectAll } from '../lib/select-all';
+  import { copyGhost, copyOp, copyPress, endCopy, registerClipView, snapToSelection } from '../lib/view-clip.svelte';
+  import { paintCopy } from '../lib/copy-ghost';
+  import type { Drawn } from '../lib/clip';
   import { openLineMenu } from '../lib/line-menu.svelte';
   import { cave, changed, option, selectedIds, selectIds, toggleSelected, filter, wireFilter, haloFade, haloReach, toolStyle } from '../lib/cave.svelte';
   import { drawScan } from '../lib/scan-draw';
@@ -265,6 +268,10 @@
     const look = looks();
     drawStrokes(g, editor.display(), toScreen, look, 1, new Set(selectedIds()), [[0, 0]]);
     drawHandles(g, editor.handles(), c.accent, c.panel);
+    if (copyOp.on && copyOp.view === 'section' && cursorW) {
+      const ghost = copyGhost('section', cursorW);
+      paintCopy(g, copyOp.base ? toScreen(copyOp.base[0], copyOp.base[1]) : null, toScreen(cursorW[0], cursorW[1]), ghost?.lines ?? null, (tg, lines) => drawStrokes(tg, lines.map((l) => ({ ...l, points: l.points as [number, number][] })), toScreen, look, 1, '', [[0, 0]]));
+    }
     if (pickupAt && cave.tool && !live) {
       // the end of an open line the next stroke would carry on from
       g.strokeStyle = c.accent;
@@ -376,6 +383,14 @@
       if (e.timeStamp - lastMiddle < 350) fit();
       lastMiddle = e.timeStamp;
     }
+    if (e.button === 0 && !cave.tool && copyOp.on && copyOp.view === 'section') {
+      // the Copy command: the first press is the base point, each after drops a copy
+      const r = canvas.getBoundingClientRect();
+      const w = toWorld(e.clientX - r.left, e.clientY - r.top);
+      copyPress('section', copyOp.base ? w : snapToSelection('section', w, 10 / (scale || 1)));
+      schedule();
+      return;
+    }
     if (e.button === 0 && !cave.tool) {
       const r = canvas.getBoundingClientRect();
       if (editor.press(e.clientX - r.left, e.clientY - r.top, e.shiftKey || e.metaKey || e.ctrlKey)) return;
@@ -412,11 +427,15 @@
     if (editor.eraseAt(e.clientX - r.left, e.clientY - r.top)) schedule();
   }
 
+  /** Where the pointer last was, in this view's own space (for paste and the Copy command). */
+  let cursorW: [number, number] | null = null;
   function onMove(e: PointerEvent) {
     if (e.pointerType !== 'touch') {
       // tell the others where this pointer is (rate limited; nothing happens when not sharing)
       const rr = canvas.getBoundingClientRect();
       const w = toWorld(e.clientX - rr.left, e.clientY - rr.top);
+      cursorW = w;
+      if (copyOp.on) schedule();
       reportCursor('section', cave.station, w[0], w[1], cave.tool);
     }
     if (e.pointerType === 'pen') {
@@ -584,6 +603,12 @@
   });
 
   onMount(() => {
+    const offClip = registerClipView('section', {
+      lines: () => (section?.sketches ?? []) as unknown as (Drawn & { id: string })[],
+      target: () => cave.station,
+      cursor: () => cursorW,
+      centre: () => (width > 0 ? toWorld(width / 2, height / 2) : null),
+    });
     const offSelectAll = registerSelectAll('section', () => selectIds(editor.allIds()));
     const ro = new ResizeObserver(() => {
       width = wrap.clientWidth;
@@ -595,6 +620,7 @@
     loadEngine().then(() => (ready = true));
     return () => {
       offSelectAll();
+      offClip();
       ro.disconnect();
       offTheme();
       cancelAnimationFrame(frame);
@@ -619,6 +645,10 @@
     onkeydown={onKey}
     oncontextmenu={(e) => {
       e.preventDefault();
+      if (copyOp.on) {
+        endCopy(); // a right click ends the Copy command
+        return;
+      }
       if (cave.tool) {
         cave.tool = ''; // a right click ends the command
         return;

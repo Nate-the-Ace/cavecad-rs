@@ -1,5 +1,6 @@
 <script lang="ts">
   import { selectAllInLastView } from './lib/select-all';
+  import { copyEvent, deleteSelection, pasteEvent } from './lib/view-clip.svelte';
   import LineMenu from './components/LineMenu.svelte';
   import { onMount, untrack } from 'svelte';
   import Ribbon from './components/Ribbon.svelte';
@@ -45,8 +46,26 @@
     if (!cave.tool) selectAllInLastView();
   }
 
+  /** True when the keyboard is in a text field, where copy and paste are about text. */
+  const inField = (e: Event) => {
+    const t = e.target as HTMLElement | null;
+    return !!t && (t.isContentEditable || /^(input|textarea|select)$/i.test(t.tagName));
+  };
+  const onCopy = (e: ClipboardEvent) => {
+    if (!inField(e)) copyEvent(e);
+  };
+  const onCut = (e: ClipboardEvent) => {
+    if (!inField(e) && copyEvent(e)) deleteSelection();
+  };
+  const onPaste = (e: ClipboardEvent) => {
+    if (!inField(e)) pasteEvent(e);
+  };
+
   onMount(() => {
     window.addEventListener('keydown', noPageSelectAll);
+    window.addEventListener('copy', onCopy);
+    window.addEventListener('cut', onCut);
+    window.addEventListener('paste', onPaste);
     const teardown = initWorkspace(host);
     installDiagnostics();
     readInviteFromUrl();
@@ -75,6 +94,9 @@
       document.removeEventListener('visibilitychange', keepNow);
       window.removeEventListener('pagehide', keepNow);
       window.removeEventListener('keydown', noPageSelectAll);
+      window.removeEventListener('copy', onCopy);
+      window.removeEventListener('cut', onCut);
+      window.removeEventListener('paste', onPaste);
       teardown();
     };
   });

@@ -1005,6 +1005,87 @@ pub fn add_section_sketch(
     }
 }
 
+/// Pastes several drawn lines into one view as ONE undoable edit. `view` is `map`, `profile` or `section`;
+/// `target` is the run (profile) or the station (section) they go on, empty for the map. `items` is JSON:
+/// `[{kind, points: [[x, y], ...], widths?: [...], closed?: bool, text?: string, style?: string}]` in that view's own
+/// space. Returns `{"ids": [...]}` (the new lines, in order) or `error: ...`.
+#[wasm_bindgen]
+pub fn paste_lines(view: &str, target: &str, adjusted: bool, items: &str) -> String {
+    #[derive(serde::Deserialize)]
+    struct Item {
+        kind: String,
+        points: Vec<[f64; 2]>,
+        #[serde(default)]
+        widths: Option<Vec<f64>>,
+        #[serde(default)]
+        closed: bool,
+        #[serde(default)]
+        text: String,
+        #[serde(default)]
+        style: String,
+    }
+    let Ok(items) = serde_json::from_str::<Vec<Item>>(items) else {
+        return "error: unreadable lines".into();
+    };
+    if items.is_empty() || items.len() > 2000 {
+        return "error: nothing to paste".into();
+    }
+    let result = DOC.with(|d| {
+        let mut slot = d.borrow_mut();
+        let doc = slot.as_mut().ok_or("no cave is open")?;
+        enum Space {
+            Map(Vec<cave_doc::Frame>),
+            Profile(Vec<cave_doc::Frame>),
+            Section(cave_id::Id, Option<cave_id::Id>),
+        }
+        let space = match view {
+            "map" => Space::Map(cave_scene::map_frames(doc, adjusted)),
+            "profile" => Space::Profile(
+                cave_scene::profile_frames(doc, target, adjusted).ok_or("no such run")?,
+            ),
+            "section" => Space::Section(
+                target
+                    .parse::<cave_id::Id>()
+                    .map_err(|_| "no such station")?,
+                cave_scene::section_trip(doc, adjusted, target),
+            ),
+            _ => return Err("no such view".to_string()),
+        };
+        let mut ids = random_ids();
+        let mut all = Vec::new();
+        let mut made = Vec::new();
+        for it in items {
+            let widths = it.widths.filter(|w| w.len() == it.points.len());
+            let (id, actions) = match &space {
+                Space::Map(frames) => {
+                    cave_draw::map_line(doc, &mut ids, &it.kind, &it.points, widths, frames)
+                }
+                Space::Profile(frames) => cave_draw::profile_sketch(
+                    doc, &mut ids, &it.kind, target, &it.points, widths, frames,
+                ),
+                Space::Section(station, trip) => cave_draw::section_sketch(
+                    doc, &mut ids, &it.kind, *station, &it.points, widths, *trip,
+                ),
+            }
+            .map_err(|e| format!("{e:?}"))?;
+            let actions =
+                cave_draw::with_closed(actions, it.closed).map_err(|e| format!("{e:?}"))?;
+            let actions = cave_draw::with_text(actions, id, &it.text);
+            let actions =
+                cave_draw::with_style(actions, id, &it.style).map_err(|e| format!("{e:?}"))?;
+            all.extend(actions);
+            made.push(id.to_string());
+        }
+        let edit = doc.edit(all).map_err(|e| format!("{e:?}"))?;
+        record_edit(view, &edit);
+        Ok::<Vec<String>, String>(made)
+    });
+    match result {
+        Ok(made) => serde_json::json!({ "ids": made }).to_string(),
+        Err(e) => format!("error: {e}"),
+    }
+}
+
 /// The view filter the viewer sends (JSON); anything unreadable hides nothing.
 fn parse_filter(json: &str) -> cave_scene::ViewFilter {
     serde_json::from_str(json).unwrap_or_default()

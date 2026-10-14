@@ -11,6 +11,7 @@
   import { CaveView, type CameraState, type Projection } from '../lib/viewport/cave-view';
   import { fitPlane, heightSurface } from '../lib/plane';
   import { markViewUsed, registerSelectAll } from '../lib/select-all';
+  import { copyGhost, copyOp, copyPress, endCopy, registerClipView } from '../lib/view-clip.svelte';
   import { openLineMenu } from '../lib/line-menu.svelte';
   import { cave, changed, filter, haloFade, haloReach, option, selectedIds, selectIds, toggleSelected, setPick, setShowSections, setShown, wireFilter, toolStyle } from '../lib/cave.svelte';
   import { tolerancePx } from '../lib/commands';
@@ -149,6 +150,13 @@
     view?.requestRender();
   });
 
+  // The Copy command on the map: running, and its base point.
+  $effect(() => {
+    const on = copyOp.on && copyOp.view === 'map';
+    const base = copyOp.base ? ([copyOp.base[0], copyOp.base[1]] as [number, number]) : null;
+    view?.setCopy(on, base);
+  });
+
   // The selected line gets a halo and, on the map, handles; Delete removes a selected map line.
   $effect(() => {
     const ids = selectedIds();
@@ -177,7 +185,7 @@
       cave.selected = '';
       for (const id of ids) engine.deleteLine(id);
       changed();
-    } else if (e.key === 'Escape' && cave.selected) {
+    } else if (e.key === 'Escape' && cave.selected && !copyOp.on) {
       cave.selected = '';
     }
   }
@@ -188,7 +196,9 @@
     const pressure = option('pressure', true);
     const close = option('close', false);
     const finger = option('finger', true);
-    view?.setDrawOptions({ tolerancePx: tol, pressure, close, finger, symbolSize: option('symbolSize', 1.5), label: option('label', '') });
+    const symbolSize = option('symbolSize', 1.5);
+    const label = option('label', '');
+    view?.setDrawOptions({ tolerancePx: tol, pressure, close, finger, symbolSize, label });
   });
 
   // The picked drawing tool: drawing on the map goes to its plan, from the Top or Bottom view.
@@ -280,6 +290,12 @@
 
   onMount(() => {
     const offSelectAll = registerSelectAll('map', () => selectIds(view?.mapLineIds() ?? []));
+    const offClip = registerClipView('map', {
+      lines: () => (view?.ownedMapLines() ?? []).map((k) => ({ id: k.id, kind: k.kind, points: k.points, widths: k.widths, closed: k.closed, text: k.text, style: k.style })),
+      target: () => '',
+      cursor: () => view?.lastPlanPoint() ?? null,
+      centre: () => view?.centreXY() ?? null,
+    });
     const v = new CaveView(gl, overlay);
     const cube = new ViewCube(cubeHost, (dir) => v.snapTo(dir), (da, dp) => v.orbitBy(da, dp));
     v.onRender = (camera, target) => {
@@ -292,6 +308,9 @@
       if (!selectedIds().includes(id)) selectIds([id]);
       openLineMenu(x, y, () => similar);
     };
+    v.copyLines = (cursor) => copyGhost('map', cursor)?.lines ?? null;
+    v.onCopyPress = (p) => copyPress('map', p);
+    v.onEndCopy = () => endCopy();
     v.arrowOp = () => cave.arrowOp;
     v.onArrowDone = () => (cave.arrowOp = { id: '', op: '' });
     v.onEndCommand = () => (cave.tool = '');
@@ -355,6 +374,7 @@
 
     return () => {
       offSelectAll();
+      offClip();
       unmirror();
       ro.disconnect();
       offTheme();

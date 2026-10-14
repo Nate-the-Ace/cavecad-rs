@@ -10,6 +10,8 @@ import { PenGuard, isEraser, widthFor } from '../pen';
 import { arrowAt, attachOf, nearestVertex, resolveLeaders, withArrow, withoutArrow } from '../leader-edit';
 import { withAttach } from '../line-style-text';
 import { drawStamp, drawStationMarker, hitsLabelNote, hitsStamp, isStampKind, leaderLook, placement } from '../symbols';
+import { paintCopy } from '../copy-ghost';
+import type { ClipLine } from '../clip';
 import { drawMarks, isFillKind, marksFor } from '../fills';
 import { drawing, fillLength, parseStyle, patternName, styleFor } from '../line-style.svelte';
 import { lineMarksPx, strokeMarksPx } from '../pattern-draw';
@@ -105,6 +107,14 @@ export class CaveView {
   /** Called when a right click (not a right drag, which pans) asks to end the running command. */
   onEndCommand: () => void = () => {};
   private rightDown: { x: number; y: number } | null = null;
+  /** Where the pointer last was on the map plan (for paste and the Copy command). */
+  private lastPlan: [number, number] | null = null;
+  /** The Copy command: running, its base point once picked, what it would drop at a pointer spot, and the calls for a press and an end. */
+  private copyOn = false;
+  private copyBase: [number, number] | null = null;
+  copyLines: (cursor: [number, number]) => ClipLine[] | null = () => null;
+  onCopyPress: (p: [number, number]) => void = () => {};
+  onEndCopy: () => void = () => {};
   /** Where the next stroke would carry an open line on from, on screen, while a tool waits. */
   private pickupAt: [number, number] | null = null;
   /** How a drawn stroke is turned into a curve: the fit tolerance in pixels, and whether pen pressure counts. */
@@ -269,6 +279,10 @@ export class CaveView {
       if (e.button !== 2 || !d) return;
       this.rightDown = null;
       if (Math.hypot(e.clientX - d.x, e.clientY - d.y) >= 5) return;
+      if (this.copyOn) {
+        this.onEndCopy();
+        return;
+      }
       if (this.drawTool) {
         this.onEndCommand();
         return;
@@ -319,7 +333,9 @@ export class CaveView {
     canvas.addEventListener('pointermove', (e) => {
       if (e.pointerType !== 'touch') {
         const cp = this.planPoint(e.clientX, e.clientY);
+        this.lastPlan = cp;
         if (cp) this.onCursor(cp[0], cp[1]);
+        if (this.copyOn) this.requestRender();
       }
       if (e.pointerType === 'pen') {
         this.guard.pen(e);
@@ -842,6 +858,28 @@ export class CaveView {
     this.requestRender();
   }
 
+  /** The lines drawn on the map itself (not profile sketches shown on it), as copies of what the view holds. */
+  ownedMapLines(): ProfileSketch3d[] {
+    return this.mapLines.filter((k) => this.hasMapLine(k.id));
+  }
+
+  /** Where the pointer last was on the plan, or null. */
+  lastPlanPoint(): [number, number] | null {
+    return this.lastPlan;
+  }
+
+  /** The plan point at the middle of what the map is looking at. */
+  centreXY(): [number, number] {
+    return [this.controls.target.x, this.controls.target.y];
+  }
+
+  /** Runs or stops the Copy command here (`base` is its base point once picked). */
+  setCopy(on: boolean, base: [number, number] | null) {
+    this.copyOn = on;
+    this.copyBase = base;
+    this.requestRender();
+  }
+
   /** Every selected line, for the halos. */
   setSelectedLines(ids: string[]) {
     this.selectedSet = new Set(ids);
@@ -912,6 +950,29 @@ export class CaveView {
     const rect = this.canvas.getBoundingClientRect();
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
+    if (this.copyOn) {
+      // the Copy command: the first press is the base point (snapping to a point of what is being copied), each after drops a copy
+      const p = this.canDrawHere ? this.planPoint(e.clientX, e.clientY) : null;
+      e.stopImmediatePropagation();
+      e.stopPropagation();
+      if (!p) return;
+      let at: [number, number] = p;
+      if (!this.copyBase) {
+        let bd = 10;
+        for (const k of this.mapLines.filter((m) => this.selectedSet.has(m.id))) {
+          for (const q of k.points) {
+            const s = this.project(q);
+            const d = s ? Math.hypot(s[0] - x, s[1] - y) : Infinity;
+            if (d <= bd) {
+              bd = d;
+              at = [q[0], q[1]];
+            }
+          }
+        }
+      }
+      this.onCopyPress(at);
+      return;
+    }
     const additive = e.shiftKey || e.metaKey || e.ctrlKey; // adds to the selection or takes out of it
     const sel = additive ? undefined : this.displayMapLines().find((k) => k.id === this.selectedLine);
     const pending = this.arrowOp();
@@ -1065,6 +1126,22 @@ export class CaveView {
   }
 
   /** Strokes 3D lines (projected to the screen) in the look of their kind. */
+  /** The Copy command's overlay: the cross to pick a base point with, then the copies faded under the pointer. */
+  private drawCopy(g: CanvasRenderingContext2D) {
+    if (!this.copyOn || !this.lastPlan) return;
+    const z = this.controls.target.z;
+    const cur = this.project([this.lastPlan[0], this.lastPlan[1], z]);
+    if (!cur) return;
+    const base = this.copyBase ? this.project([this.copyBase[0], this.copyBase[1], z]) : null;
+    const lines = this.copyBase ? this.copyLines(this.lastPlan) : null;
+    paintCopy(g, base, cur, lines, (tg, ls) =>
+      this.strokeLines(
+        tg,
+        ls.map((l, i) => ({ id: `copy-${i}`, closed: l.closed, kind: l.kind, run: '', text: l.text, style: l.style, widths: l.widths, points: l.points.map((p) => [p[0], p[1], z] as [number, number, number]) })),
+      ),
+    );
+  }
+
   private strokeLines(g: CanvasRenderingContext2D, lines: ProfileSketch3d[]) {
     const look = looks();
     refreshFlipped();
@@ -1493,6 +1570,7 @@ export class CaveView {
       g.restore();
     }
     this.strokeLines(g, this.displayMapLines());
+    this.drawCopy(g);
     for (const r of this.remoteCursors) {
       const q = this.project([r.x, r.y, this.controls.target.z]);
       if (q) drawCursor(g, q[0], q[1], r.name, r.color);

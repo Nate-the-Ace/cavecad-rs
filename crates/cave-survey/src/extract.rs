@@ -237,7 +237,7 @@ pub fn extract(doc: &Document) -> Extracted {
             // panel and the section edit, and a later arrival from the other side (a loop closing
             // on a junction) faces the other way, which would swap the walls left for right.
             if lrud.has_evidence() {
-                last_arrival_lruds.insert(t, lrud.clone());
+                last_arrival_lruds.insert(t, lrud);
                 lruds.entry(t).or_insert(lrud);
             }
         }

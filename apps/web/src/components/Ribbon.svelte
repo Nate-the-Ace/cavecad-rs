@@ -11,6 +11,8 @@
   import ThemeGroup from './ThemeGroup.svelte';
   import ContextOptions from './ContextOptions.svelte';
   import SelectionTools from './SelectionTools.svelte';
+  import CopyIcon from './CopyIcon.svelte';
+  import { copyOp, endCopy, startCopy } from '../lib/view-clip.svelte';
   import CollaborateGroup from './CollaborateGroup.svelte';
   import FillTools from './FillTools.svelte';
   import SheetGroup from './SheetGroup.svelte';
@@ -138,6 +140,9 @@
     // Selected lines that are gone (undone, deleted elsewhere) are dropped from the selection.
     if (loaded && !cave.tool && selections.some((s) => s.info === null)) selectIds(selections.filter((s) => s.info).map((s) => s.id));
   });
+  $effect(() => {
+    if (copyOp.on && !selections.length) endCopy();
+  });
   const mode = $derived(cave.tool ? 'command' : selection ? 'selection' : cave.pick.kind ? 'pick' : '');
   // one thing is picked at a time: a line, a station, or a tool
   $effect(() => {
@@ -165,7 +170,8 @@
             cave.version += 1;
           },
         },
-        { label: 'Done', icon: Check, run: () => (cave.selected = '') },
+        { label: 'Copy', icon: CopyIcon, run: () => (copyOp.on ? endCopy() : startCopy()), pressed: () => copyOp.on },
+        { label: 'Done', icon: Check, run: () => { endCopy(); cave.selected = ''; } },
       ],
     },
   ];
@@ -218,6 +224,10 @@
   }
 
   function keys(e: KeyboardEvent) {
+    if (e.key === 'Escape' && copyOp.on) {
+      endCopy(); // Escape finishes the Copy command first; the selection stays
+      return;
+    }
     if (e.key === 'Escape' && openAt) {
       openAt = null;
       return;

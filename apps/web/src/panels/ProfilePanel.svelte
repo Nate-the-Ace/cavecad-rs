@@ -8,6 +8,9 @@
   import PanelUndo from '../components/PanelUndo.svelte';
   import { looks } from '../lib/ink';
   import { markViewUsed, registerSelectAll } from '../lib/select-all';
+  import { copyGhost, copyOp, copyPress, endCopy, registerClipView, snapToSelection } from '../lib/view-clip.svelte';
+  import { paintCopy } from '../lib/copy-ghost';
+  import type { Drawn } from '../lib/clip';
   import { openLineMenu } from '../lib/line-menu.svelte';
   import { cave, changed, filter, option, selectedIds, selectIds, toggleSelected, setPick, setShowSections, haloFade, haloReach, toolStyle } from '../lib/cave.svelte';
   import { defaultBandOffset, drawHandles, drawStrokes, glyphCurves, hits, leaderEnd, ornamentFor } from '../lib/section-glyph';
@@ -294,6 +297,10 @@
     const look = looks();
     drawStrokes(g, editor.display(), toScreen, look, 1, new Set(selectedIds()), (band?.stations ?? []).map((s) => [s.s, s.z] as [number, number]));
     drawHandles(g, editor.handles(), c.accent, c.bg);
+    if (copyOp.on && copyOp.view === 'profile' && cursorW) {
+      const ghost = copyGhost('profile', cursorW);
+      paintCopy(g, copyOp.base ? toScreen(copyOp.base[0], copyOp.base[1]) : null, toScreen(cursorW[0], cursorW[1]), ghost?.lines ?? null, (tg, lines) => drawStrokes(tg, lines.map((l) => ({ ...l, points: l.points as [number, number][] })), toScreen, look, 1, '', (band?.stations ?? []).map((s) => [s.s, s.z] as [number, number])));
+    }
     if (pickupAt && cave.tool && !live) {
       // the end of an open line the next stroke would carry on from
       g.strokeStyle = c.accent;
@@ -422,6 +429,14 @@
       if (e.timeStamp - lastMiddle < 350) fit();
       lastMiddle = e.timeStamp;
     }
+    if (e.button === 0 && !cave.tool && copyOp.on && copyOp.view === 'profile') {
+      // the Copy command: the first press is the base point, each after drops a copy
+      const r = canvas.getBoundingClientRect();
+      const w = toWorld(e.clientX - r.left, e.clientY - r.top);
+      copyPress('profile', copyOp.base ? w : snapToSelection('profile', w, 10 / (scale || 1)));
+      schedule();
+      return;
+    }
     if (e.button === 0 && !cave.tool) {
       const r = canvas.getBoundingClientRect();
       if (editor.press(e.clientX - r.left, e.clientY - r.top, e.shiftKey || e.metaKey || e.ctrlKey)) return;
@@ -466,11 +481,15 @@
     if (editor.eraseAt(e.clientX - r.left, e.clientY - r.top)) schedule();
   }
 
+  /** Where the pointer last was, in this view's own space (for paste and the Copy command). */
+  let cursorW: [number, number] | null = null;
   function onMove(e: PointerEvent) {
     if (e.pointerType !== 'touch') {
       // tell the others where this pointer is (rate limited; nothing happens when not sharing)
       const rr = canvas.getBoundingClientRect();
       const w = toWorld(e.clientX - rr.left, e.clientY - rr.top);
+      cursorW = w;
+      if (copyOp.on) schedule();
       reportCursor('profile', cave.run, w[0], w[1], cave.tool);
     }
     if (e.pointerType === 'pen') {
@@ -671,6 +690,12 @@
   }
 
   onMount(() => {
+    const offClip = registerClipView('profile', {
+      lines: () => (band?.sketches ?? []) as unknown as (Drawn & { id: string })[],
+      target: () => cave.run,
+      cursor: () => cursorW,
+      centre: () => (width > 0 ? toWorld(width / 2, height / 2) : null),
+    });
     const offSelectAll = registerSelectAll('profile', () => selectIds(editor.allIds()));
     const ro = new ResizeObserver(() => {
       width = wrap.clientWidth;
@@ -685,6 +710,7 @@
     });
     return () => {
       offSelectAll();
+      offClip();
       ro.disconnect();
       offTheme();
     };
@@ -710,6 +736,10 @@
     onkeydown={onKey}
     oncontextmenu={(e) => {
       e.preventDefault();
+      if (copyOp.on) {
+        endCopy(); // a right click ends the Copy command
+        return;
+      }
       if (cave.tool) {
         cave.tool = ''; // a right click ends the command
         return;
