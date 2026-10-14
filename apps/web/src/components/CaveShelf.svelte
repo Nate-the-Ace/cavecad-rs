@@ -277,6 +277,7 @@
   .row { display: flex; gap: 6px; }
   .row button { flex: 1; }
   .joinbox { width: min(640px, 96vw); height: auto; max-height: 92vh; }
+  .joinpage .field input { flex: 1; min-width: 0; }
   .joinpage { flex: 1; min-width: 0; padding: 20px 24px; display: flex; flex-direction: column; gap: 10px; overflow: auto; }
   .detail { flex: 1; min-width: 0; padding: 16px 20px; display: flex; flex-direction: column; gap: 8px; }
   h2 { margin: 0; font-size: 22px; }
