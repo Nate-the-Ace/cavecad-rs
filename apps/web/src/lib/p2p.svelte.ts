@@ -18,7 +18,7 @@ import { addRemoteFile, fileOf, have, scans, select } from './scans.svelte';
 import { fadeCursors, live, me, myPersonId, roomEvents, setPeerHooks, type Person } from './sync.svelte';
 import { hostLoop, joinLoop } from './signal-handshake';
 import { configuredMailbox, mailboxConfig, type Mailbox } from './signal';
-import { liveLink } from './classroom-log';
+import { desktopLink, liveLink } from './classroom-log';
 import { shareBase } from './share-base';
 import { CLASS_MESSAGES, classJoined, classLeft, classMessage, classWelcome, newClass, type ClassState, type RoomIo } from './classroom-room.mjs';
 import { flush as keepShelf, shelf } from './shelf.svelte';
@@ -42,6 +42,8 @@ export const p2p = $state({
   invites: [] as PeerInvite[],
   /** The one link anyone can open to join this session (made with the class mailbox), or empty. */
   link: '',
+  /** The same link in the form that opens the desktop app. */
+  appLink: '',
   /** Why the last step failed, in plain words. */
   error: '',
   /** The guest's reply code, to send back to the host. */
@@ -759,6 +761,7 @@ export function startLinkSharing(): string | null {
   openSessionLink(session, box);
   const config = mailboxConfig();
   p2p.link = liveLink(shareBase(), session, config?.source === 'local' ? config : undefined);
+  p2p.appLink = desktopLink(session, config?.source === 'local' ? config : undefined);
   p2p.error = '';
   return p2p.link;
 }
@@ -891,6 +894,7 @@ export function leaveP2p() {
   stopSignal?.();
   stopSignal = null;
   p2p.link = '';
+  p2p.appLink = '';
   clearTimeout(viewTimer);
   stopTimer();
   for (const p of peers.values()) {

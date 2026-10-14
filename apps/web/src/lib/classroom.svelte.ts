@@ -14,7 +14,7 @@
 // server's /sync), so it needs that server; the serverless peer sessions are for working together.
 import { cave, changed, filter } from './cave.svelte';
 import { applyMirror, captureMirror, forgetMirror, registerMirror } from './classroom-mirror';
-import { classLink, liveLink, mergeEntries, readClassLink, readJoinLink, readLiveLink, transcript, transcriptName, type ChatEntry, type Hand } from './classroom-log';
+import { classLink, desktopLink, liveLink, mergeEntries, readClassLink, readJoinLink, readLiveLink, transcript, transcriptName, type ChatEntry, type Hand } from './classroom-log';
 import { readOnly } from './readonly';
 import { shelf } from './shelf.svelte';
 import { joinViaLink, openClassLink, p2p, sendClass, startClassHosting } from './p2p.svelte';
@@ -33,6 +33,8 @@ export const classroom = $state({
   /** The teacher ended it: nothing more can be said. */
   ended: false,
   /** Everything said and every hand, in order. */
+  /** The same link as one that opens the desktop app. */
+  appLink: '',
   chat: [] as ChatEntry[],
   /** Things the teacher should notice now: a hand going up, a line with an emoji in it. They show as cards on the screen. */
   alerts: [] as { id: number; kind: 'hand' | 'emoji'; whoId: string; who: string; text: string }[],
@@ -81,11 +83,22 @@ export function readClassLinkFromUrl() {
   const live = readLiveLink(location.search);
   const found = live ? { room: '', invite: '', live: { session: live.session, mailbox: live.mailbox } } : readClassLink(location.search);
   if (!found) return;
-  classroom.pending = found;
   history.replaceState(null, '', location.pathname + location.hash);
-  // Someone who has used CaveCAD here before is joined at once, under the name they gave: opening the link is all it takes.
-  // A first-time visitor is asked for a name first.
+  acceptLink(found);
+}
+
+/** A join link has arrived (opened in the browser, pasted, or handed over by the desktop app): the page for it comes up.
+ *  Someone who has used CaveCAD here before is joined at once, under the name they gave: opening the link is all it takes.
+ *  A first-time visitor is asked for a name first. */
+function acceptLink(found: NonNullable<typeof classroom.pending>) {
+  classroom.pending = found;
   if ('live' in found && found.live && hasSavedName()) void loadEngine().then(() => classroom.pending && classroom.role === 'none' && joinClass(me.name));
+}
+
+/** A join link that opened the desktop app (`cavecad://join?...`). */
+export function openJoinUrl(url: string) {
+  const found = readJoinLink(url);
+  if (found && classroom.role === 'none' && p2p.role === 'none') acceptLink({ room: '', invite: '', live: found });
 }
 
 /**
@@ -96,7 +109,7 @@ export function openLinkText(text: string): string | null {
   const found = readJoinLink(text);
   if (!found) return 'That is not a CaveCAD join link. Paste the whole link the host sent you.';
   classroom.error = '';
-  classroom.pending = { room: '', invite: '', live: found };
+  acceptLink({ room: '', invite: '', live: found });
   return null;
 }
 
@@ -217,6 +230,7 @@ export function startClass(className: string, teacherName: string, via: 'relay' 
     const config = mailboxConfig();
     openClassLink(session, box);
     classroom.link = liveLink(shareBase(), session, config?.source === 'local' ? config : undefined);
+    classroom.appLink = desktopLink(session, config?.source === 'local' ? config : undefined);
     return;
   }
   live.made = ''; // the link of an earlier class is not this one's

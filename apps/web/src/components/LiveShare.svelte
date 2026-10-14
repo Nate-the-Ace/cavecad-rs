@@ -23,6 +23,16 @@
       /* the link is selectable: copy it by hand */
     }
   }
+  let appCopied = $state(false);
+  async function copyAppLink() {
+    try {
+      await navigator.clipboard.writeText(p2p.appLink);
+      appCopied = true;
+      setTimeout(() => (appCopied = false), 1500);
+    } catch {
+      /* selectable: copy it by hand */
+    }
+  }
   const states: Record<string, string> = { waiting: 'Connecting…', connecting: 'Connecting…', asking: 'Wants to join', connected: 'In the session', closed: 'Left' };
   /** The people the link has brought, newest last (an unused invite the mailbox made ahead is not one of them). */
   const arrivals = $derived(p2p.invites.filter((i) => i.name || i.state === 'asking' || i.state === 'connected'));
@@ -51,6 +61,11 @@
           <div class="code">
             <textarea readonly rows="2" value={p2p.link} aria-label="Invite link" onfocus={(e) => e.currentTarget.select()}></textarea>
             <button class="small" onclick={copyLink}><Copy size={13} /> {linkCopied ? 'Copied' : 'Copy'}</button>
+          </div>
+          <p class="step">Opens in the browser. For people who have the CaveCAD desktop app, this one opens the app instead:</p>
+          <div class="code">
+            <textarea readonly rows="1" value={p2p.appLink} aria-label="Link that opens the desktop app" onfocus={(e) => e.currentTarget.select()}></textarea>
+            <button class="small" onclick={copyAppLink}><Copy size={13} /> {appCopied ? 'Copied' : 'Copy'}</button>
           </div>
         </div>
         <div class="people" aria-label="People">

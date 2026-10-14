@@ -13,7 +13,8 @@
   import ClassroomDock from './components/ClassroomDock.svelte';
   import ClassroomDialogs from './components/ClassroomDialogs.svelte';
   import ClassroomAlerts from './components/ClassroomAlerts.svelte';
-  import { classroom, keepsCave, readClassLinkFromUrl } from './lib/classroom.svelte';
+  import { classroom, keepsCave, openJoinUrl, readClassLinkFromUrl } from './lib/classroom.svelte';
+  import { listenForLinks } from './lib/desktop';
   import { viewChanged } from './lib/p2p.svelte';
   import { scans } from './lib/scans.svelte';
   import { autosaveSoon, flush, loadShelf, shelf } from './lib/shelf.svelte';
@@ -29,6 +30,7 @@
     installDiagnostics();
     readInviteFromUrl();
     readClassLinkFromUrl();
+    listenForLinks(openJoinUrl); // in the desktop app, a link that opened it
     void checkRemembered(); // the scans kept from last time come back before any panel is opened
     const unguard = guardUnload();
     document.addEventListener('visibilitychange', keepNow);

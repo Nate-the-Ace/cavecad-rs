@@ -85,6 +85,7 @@
             <button class="small" onclick={copy} disabled={!link}><Copy size={13} /> {copied ? 'Copied' : 'Copy'}</button>
           </div>
           <p class="note">Send students this link. They watch your screen and can raise a hand.</p>
+          {#if classroom.transport === 'p2p' && classroom.appLink}<button class="small" onclick={() => navigator.clipboard.writeText(classroom.appLink).catch(() => undefined)} title="For students who have the CaveCAD desktop app: this link opens the app">Copy the desktop-app link</button>{/if}
         {:else}
           <button class="small" onclick={() => (p2p.dialog = true)}>Make a link…</button>
           <p class="note">Make one link, send it to your students, and they join and watch.</p>

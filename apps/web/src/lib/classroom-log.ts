@@ -82,6 +82,12 @@ export function liveLink(base: string, session: string, mailbox?: { endpoint: st
   return `${u.origin}${u.pathname}?live=${encodeURIComponent(session)}${extra}`;
 }
 
+/** The same join as a link that opens the desktop app (`cavecad://join?...`), if it is installed. */
+export function desktopLink(session: string, mailbox?: { endpoint: string; key: string }): string {
+  const extra = mailbox ? `&mb=${encodeURIComponent(mailbox.endpoint)}&mk=${encodeURIComponent(mailbox.key)}` : '';
+  return `cavecad://join?live=${encodeURIComponent(session)}${extra}`;
+}
+
 /** Reads a direct class link's query: the session and the mailbox it names, if any; null when it is not one. */
 export function readLiveLink(search: string): { session: string; mailbox: { endpoint: string; key: string } | null } | null {
   const q = new URLSearchParams(search);

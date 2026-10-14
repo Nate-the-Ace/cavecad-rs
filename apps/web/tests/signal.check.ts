@@ -125,6 +125,8 @@ await handshake(httpMailbox('https://script.example/exec', 'K', appsScript('K'))
   ok(b?.session === sess && b.mailbox?.endpoint === 'https://x.example/exec' && b.mailbox.key === 'KEY', 'a link that carries its mailbox gives that too');
   ok(readJoinLink(`  ?live=${sess} `)?.session === sess, 'just the part after the question mark works, spaces and all');
   ok(readJoinLink(sess)?.session === sess, 'the bare session code works');
+  const app = readJoinLink(`cavecad://join?live=${sess}&mb=${encodeURIComponent('https://x.example/exec')}&mk=KEY`);
+  ok(app?.session === sess && app.mailbox?.key === 'KEY', 'a link that opens the desktop app (cavecad://) reads the same way');
   ok(readJoinLink('hello there') === null && readJoinLink('') === null && readJoinLink('https://example.com/') === null, 'anything else is not a join link');
 }
 

@@ -7,6 +7,8 @@
   import { classroom, joinClass, startClass } from '../lib/classroom.svelte';
   import { live, me } from '../lib/sync.svelte';
   import { p2p } from '../lib/p2p.svelte';
+  import { isDesktop } from '../lib/desktop';
+  import { desktopLink } from '../lib/classroom-log';
   import MailboxSettings from './MailboxSettings.svelte';
   import { mailboxConfig } from '../lib/signal';
 
@@ -15,6 +17,8 @@
   let studentName = $state('');
   // How long joining has taken, so a wait is a number and not a mystery.
   let waited = $state(0);
+  /** The same join as a link that opens the CaveCAD desktop app, for someone who has it. */
+  const appUrl = $derived(classroom.pending && 'live' in classroom.pending && classroom.pending.live ? desktopLink(classroom.pending.live.session, classroom.pending.live.mailbox ?? undefined) : '');
   $effect(() => {
     if (!classroom.busy || !classroom.pending) return void (waited = 0);
     const t0 = Date.now();
@@ -68,6 +72,7 @@
       {#if classroom.busy}<p class="note" role="status">{p2p.waiting || 'Joining…'} {waited ? `${waited} s` : ''}</p>{/if}
       {#if why}<p class="err" role="alert">{why}</p>{/if}
       <div class="row">
+        {#if appUrl && !isDesktop()}<a class="app" href={appUrl} title="Opens the CaveCAD desktop app, if you have it, and joins from there">Open in the desktop app</a>{/if}
         <button class="go" disabled={!studentName.trim() || classroom.busy} onclick={() => joinClass(studentName)}>{classroom.busy ? 'Joining…' : classroom.pending.live && !classroom.pending.room ? 'Join' : 'Join as an observer'}</button>
       </div>
     </div>
@@ -90,4 +95,5 @@
   button { font: inherit; font-size: 13px; padding: 6px 14px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel-2); color: var(--text); cursor: pointer; }
   button:disabled { opacity: 0.5; cursor: default; }
   button.go { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .app { align-self: center; margin-right: auto; font-size: 12px; color: var(--muted); }
 </style>
