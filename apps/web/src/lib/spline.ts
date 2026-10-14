@@ -106,6 +106,13 @@ export function insideCurve(pts: Pt[], x: number, y: number): boolean {
   return inside;
 }
 
+/** Distance from (`x`, `y`) to the straight segments joining `pts` in order (no smoothing: for a line that is already traced). */
+export function distanceToPolyline(pts: Pt[], x: number, y: number): number {
+  let d = Infinity;
+  for (let i = 1; i < pts.length; i++) d = Math.min(d, segmentDistance([x, y], pts[i - 1], pts[i]));
+  return d;
+}
+
 /** Distance from (`x`, `y`) to the curve through `pts`. */
 export function distanceToCurve(pts: Pt[], x: number, y: number, closed = false): number {
   const c = smooth(pts, null, 10, closed).pts;

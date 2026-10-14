@@ -299,7 +299,7 @@ export function loadEngine(): Promise<void> {
     start();
     setInkPalette(JSON.parse(palette()));
     setSymbolCatalogue(JSON.parse(symbols()));
-    setCalloutSource((tip, at, chars) => JSON.parse(callout(tip[0], tip[1], at[0], at[1], chars, false)));
+    setCalloutSource((tip, at, chars, shape, height) => JSON.parse(callout(tip[0], tip[1], at[0], at[1], chars, shape, height)));
     setFillSource(engine);
   });
   return ready;

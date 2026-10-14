@@ -147,11 +147,30 @@ pub struct Layout {
 
 /// Lays out a callout of `chars` characters (see [`Layout`]).
 pub fn layout(tip: [f64; 2], at: [f64; 2], chars: usize, curved: bool) -> Layout {
-    let height = (at[0] - tip[0]).hypot(at[1] - tip[1]) / 3.0;
+    layout_with(tip, at, chars, curved, None, false)
+}
+
+/// Lays out a leader with its own settings: `height` fixes the text height (otherwise a third of the drag, as `layout` does),
+/// `straight` runs the leader from the tip straight to the note's edge instead of by an elbow, and `curved` bows it.
+pub fn layout_with(
+    tip: [f64; 2],
+    at: [f64; 2],
+    chars: usize,
+    curved: bool,
+    height: Option<f64>,
+    straight: bool,
+) -> Layout {
+    let height = height
+        .filter(|h| h.is_finite() && *h > 0.0)
+        .unwrap_or_else(|| (at[0] - tip[0]).hypot(at[1] - tip[1]) / 3.0);
     let side = side_for(&[tip], at[0]);
     let b = note_box(at, chars, height, side);
-    let r = reflow(b, &[tip], Some(side), curved);
-    let leader = r.branches.into_iter().next().unwrap_or_default();
+    let r = reflow(b, &[tip], Some(side), curved && !straight);
+    let mut leader = r.branches.into_iter().next().unwrap_or_default();
+    if straight {
+        // no elbow: from the tip directly to where the leader meets the note
+        leader = vec![tip, r.landing];
+    }
     // the barbs lie back along the leader's first stretch
     let next = leader.get(1).copied().unwrap_or(at);
     let (dx, dy) = (next[0] - tip[0], next[1] - tip[1]);

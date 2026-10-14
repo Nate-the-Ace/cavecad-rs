@@ -70,6 +70,12 @@ pub enum Pattern {
         /// Distance between dots in feet.
         spacing: f64,
     },
+    /// Rock: short horizontal bedding lines, each with a vertical joint at one end, a little stepped from row to row (the same
+    /// marks as the rock halo). `cell` is the grid the marks sit in, in feet.
+    Bedrock {
+        /// Size of one cell, in feet.
+        cell: f64,
+    },
     /// A solid tint.
     Solid,
     /// Nothing but the outline.
@@ -156,8 +162,8 @@ pub const FILLS: &[Fill] = &[
     Fill {
         key: "fill-bedrock",
         label: "Bedrock",
-        help: "Solid rock floor with nothing lying on it. Draws its outline and no fill.",
-        pattern: Pattern::Outline,
+        help: "Solid rock with nothing lying on it: bedding lines with joints, as in the rock halo.",
+        pattern: Pattern::Bedrock { cell: 3.0 },
     },
     Fill {
         key: "fill-water",
@@ -479,6 +485,56 @@ pub fn dots(poly: &[[f64; 2]], spacing: f64) -> Vec<[f64; 2]> {
     out
 }
 
+/// The marks of rock inside `poly` (feet): in each cell of a grid `cell` across, unless a few are left out, a bedding line of
+/// varying length with, usually, a vertical joint at one end, stepped slightly from row to row. Only marks that lie wholly inside
+/// the outline are kept. Seeded, so the same area is always filled the same way.
+pub fn bedrock(poly: &[[f64; 2]], cell: f64, seed: u64) -> Vec<Vec<[f64; 2]>> {
+    let (lo, hi) = bounds(poly);
+    let mut rng = Rng::new(seed);
+    let mut out = Vec::new();
+    let (x0, y0) = (
+        (lo[0] / cell).floor() as i64 - 1,
+        (lo[1] / cell).floor() as i64 - 1,
+    );
+    let (x1, y1) = (
+        (hi[0] / cell).ceil() as i64 + 1,
+        (hi[1] / cell).ceil() as i64 + 1,
+    );
+    for iy in y0..=y1 {
+        for ix in x0..=x1 {
+            // the same draws in every cell, so a gap does not shift the marks that follow
+            let (gap, len, dx, dy, joint, end, drop, up) = (
+                rng.next_f64(),
+                rng.next_f64(),
+                rng.next_f64(),
+                rng.next_f64(),
+                rng.next_f64(),
+                rng.next_f64(),
+                rng.next_f64(),
+                rng.next_f64(),
+            );
+            if gap > 0.78 {
+                continue;
+            }
+            let length = cell * (0.55 + 0.9 * len);
+            let (ax, ay) = ((ix as f64 + 0.6 * dx) * cell, (iy as f64 + 0.1 * dy) * cell);
+            let (bx, by) = (ax + length, ay);
+            if !(inside([ax, ay], poly) && inside([bx, by], poly)) {
+                continue;
+            }
+            out.push(vec![[ax, ay], [bx, by]]);
+            if joint < 0.7 {
+                let jx = if end < 0.5 { ax } else { bx };
+                let reach = cell * (0.3 + 0.4 * drop) * if up < 0.5 { 1.0 } else { -1.0 };
+                if inside([jx, ay + reach], poly) {
+                    out.push(vec![[jx, ay], [jx, ay + reach]]);
+                }
+            }
+        }
+    }
+    out
+}
+
 /// The most marks drawn for one fill: a very large outline gets sparser rather than slower.
 pub const MAX_MARKS: usize = 6000;
 
@@ -536,6 +592,17 @@ pub fn marks_with(key: &str, outline: &[[f64; 2]], seed: u64, amount: f64) -> Ma
     match f.pattern {
         Pattern::Outline => {}
         Pattern::Solid => out.tint = true,
+        Pattern::Bedrock { cell } => {
+            let mut c = cell / amount.sqrt();
+            let (lo, hi) = bounds(&poly);
+            while ((hi[0] - lo[0]) / c) * ((hi[1] - lo[1]) / c) > MAX_MARKS as f64 / 2.0 {
+                c *= 1.5;
+            }
+            out.lines = bedrock(&poly, c, seed)
+                .into_iter()
+                .map(|l| l.into_iter().map(m).collect())
+                .collect();
+        }
         Pattern::Hatch { angle, spacing } => {
             let mut sp = spacing / amount;
             // keep the line count reasonable on a huge outline
@@ -692,7 +759,10 @@ mod tests {
     fn solid_and_outline_fills_have_no_marks_and_unknown_makes_nothing() {
         let o = square(10.0);
         assert!(marks("fill-water", &o, 1).tint && marks("fill-water", &o, 1).lines.is_empty());
-        assert_eq!(marks("fill-bedrock", &o, 1), Marks::default());
+        assert!(
+            !marks("fill-bedrock", &o, 1).lines.is_empty(),
+            "bedrock has its bedding lines and joints"
+        );
         assert_eq!(marks("fill-nothing", &o, 1), Marks::default());
         assert_eq!(marks("fill-sand", &o[..2], 1), Marks::default());
     }
@@ -749,6 +819,48 @@ mod tests {
             marks_at("fill-sand", &small, 3, 1.0, f64::NAN),
             marks("fill-sand", &small, 3),
             "nonsense means as authored"
+        );
+    }
+
+    #[test]
+    fn bedrock_is_bedding_lines_and_joints_inside_the_outline() {
+        let o = square(40.0);
+        let m = marks("fill-bedrock", &o, 11);
+        assert!(m.lines.len() > 30, "plenty of marks: {}", m.lines.len());
+        assert!(m.circles.is_empty() && !m.tint);
+        for line in &m.lines {
+            assert_eq!(line.len(), 2, "each mark is one straight stroke");
+            for p in line {
+                assert!(
+                    p[0] >= -1e-6 && p[0] <= 40.0 + 1e-6 && p[1] >= -1e-6 && p[1] <= 40.0 + 1e-6,
+                    "inside: {p:?}"
+                );
+            }
+        }
+        let horizontal = m
+            .lines
+            .iter()
+            .filter(|l| (l[0][1] - l[1][1]).abs() < 1e-9)
+            .count();
+        let vertical = m
+            .lines
+            .iter()
+            .filter(|l| (l[0][0] - l[1][0]).abs() < 1e-9)
+            .count();
+        assert!(
+            horizontal > vertical && vertical > 0,
+            "mostly bedding lines, with joints: {horizontal} / {vertical}"
+        );
+        assert_eq!(
+            m,
+            marks("fill-bedrock", &o, 11),
+            "the same area fills the same way"
+        );
+        let small = square(8.0);
+        assert!(
+            marks_with("fill-bedrock", &small, 11, 2.0).lines.len()
+                > marks("fill-bedrock", &small, 11).lines.len(),
+            "denser on request"
         );
     }
 

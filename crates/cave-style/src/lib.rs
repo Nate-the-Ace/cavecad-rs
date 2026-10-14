@@ -372,7 +372,7 @@ pub const PALETTE: &[Style] = &[
     s("text", "Text", Text, 1.4, Solid, 1.0, 0.4, "CAVE-TEXT"),
     s(
         "callout",
-        "Callout",
+        "Leader",
         Text,
         1.2,
         Solid,
@@ -547,10 +547,9 @@ pub const TOOL_GROUPS: &[(&str, &[&str])] = &[
             "rimstone",
             "slope",
             "sketch",
-            "text",
-            "callout",
         ],
     ),
+    ("Annotation", &["text", "callout"]),
     (
         "Passage lines",
         &["presumed", "narrow", "dripline", "glyphs"],

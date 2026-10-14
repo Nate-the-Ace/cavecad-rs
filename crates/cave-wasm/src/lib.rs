@@ -410,11 +410,26 @@ pub fn ornament(
     serde_json::json!({"spine": spine, "lines": lines}).to_string()
 }
 
-/// The drawing of a callout: dragged from `tip` to `at`, with a note of `chars` characters.
-/// `{height, side, note:[x1,y1,x2,y2], leader:[[x,y]..], head:[[x,y]..]}` as JSON.
+/// The drawing of a leader: dragged from `tip` to `at`, with a note of `chars` characters. `shape` is `elbow`, `straight` or
+/// `curved`; `height` is the text height in the same units as the points (0 for a third of the drag).
 #[wasm_bindgen]
-pub fn callout(tip_x: f64, tip_y: f64, at_x: f64, at_y: f64, chars: usize, curved: bool) -> String {
-    let l = cave_shape::callout::layout([tip_x, tip_y], [at_x, at_y], chars, curved);
+pub fn callout(
+    tip_x: f64,
+    tip_y: f64,
+    at_x: f64,
+    at_y: f64,
+    chars: usize,
+    shape: &str,
+    height: f64,
+) -> String {
+    let l = cave_shape::callout::layout_with(
+        [tip_x, tip_y],
+        [at_x, at_y],
+        chars,
+        shape == "curved",
+        (height > 0.0).then_some(height),
+        shape == "straight",
+    );
     serde_json::to_string(&l).unwrap_or_default()
 }
 

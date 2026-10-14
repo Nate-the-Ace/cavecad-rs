@@ -3,10 +3,10 @@
 // draws it at true size beside the station, joined to it by a dashed leader, and the person drags
 // it to where they want it. The offset they leave it at is saved with the drawing.
 
-import { fillLength, parseStyle, styleFor } from './line-style.svelte';
+import { drawing, fillLength, parseStyle, styleFor } from './line-style.svelte';
 import type { Look } from './ink';
 import { smooth } from './spline.ts';
-import { drawStamp, isStampKind, placement } from './symbols.ts';
+import { drawStamp, isStampKind, leaderLook, placement } from './symbols.ts';
 import { drawMarks, isFillKind, marksFor } from './fills.ts';
 
 /** Where shaped-line ornament comes from (the engine sets this once it has loaded). */
@@ -134,7 +134,7 @@ export function drawStrokes(
         g.globalAlpha = l.alpha;
         g.lineWidth = Math.max(1, l.weight * scale * 0.7);
       }
-      drawStamp(g, k.kind, p0, p1, (k as { text?: string }).text);
+      drawStamp(g, k.kind, p0, p1, (k as { text?: string }).text, leaderLook(style, (pxPerM * drawing.scale) / 1000));
       continue;
     }
     const curve = smooth(

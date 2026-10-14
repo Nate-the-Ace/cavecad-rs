@@ -105,16 +105,34 @@ export interface CalloutLayout {
   leader: [number, number][];
   head: [number, number][];
 }
-let calloutSource: ((tip: [number, number], at: [number, number], chars: number) => CalloutLayout) | null = null;
+let calloutSource: ((tip: [number, number], at: [number, number], chars: number, shape: string, height: number) => CalloutLayout) | null = null;
 /** Installs the engine's callout layout (call once it has loaded). */
-export function setCalloutSource(f: (tip: [number, number], at: [number, number], chars: number) => CalloutLayout) {
+export function setCalloutSource(f: (tip: [number, number], at: [number, number], chars: number, shape: string, height: number) => CalloutLayout) {
   calloutSource = f;
 }
 
 /** A callout's layout on the canvas: dragged from the thing pointed at (`p0`) to where the note goes (`p1`). */
-function calloutLayout(p0: [number, number], p1: [number, number], text: string): CalloutLayout | null {
+function calloutLayout(p0: [number, number], p1: [number, number], text: string, o: LeaderLook): CalloutLayout | null {
   if (!calloutSource || Math.hypot(p1[0] - p0[0], p1[1] - p0[1]) < 3) return null;
-  return calloutSource(p0, p1, Math.max(1, text.length));
+  // the text is a size of its own (3 mm on paper times the leader's size) when the view knows how big a paper millimetre is
+  const height = o.paperPx && o.paperPx > 0 ? 3 * o.paperPx * o.size : 0;
+  return calloutSource(p0, p1, Math.max(1, text.length), o.shape || 'elbow', height);
+}
+
+/** How a leader is drawn besides its line: its arrowhead, line, note frame and text size, and how big a paper millimetre is here. */
+export interface LeaderLook {
+  arrow: string;
+  shape: string;
+  frame: string;
+  size: number;
+  paperPx?: number;
+}
+
+/** Reads a leader's look from a stored style (the part after the line's own three). */
+export function leaderLook(style: string | undefined, paperPx?: number): LeaderLook {
+  const [, , , arrow = '', shape = '', frame = '', size = '1'] = (style ?? '').split(';');
+  const n = Number(size);
+  return { arrow, shape, frame, size: Number.isFinite(n) && n > 0 ? n : 1, paperPx };
 }
 
 /** Where a stamp's words go and how big: for text, at the first point, turned to the aim; for a symbol's label, to its right. */
@@ -124,16 +142,47 @@ function wordsPlacement(kind: string, pl: ReturnType<typeof placement>): { x: nu
 }
 
 /** Draws a symbol (with its label) or a text stroke at `p0`, aimed toward `p1`. */
-export function drawStamp(g: CanvasRenderingContext2D, kind: string, p0: [number, number], p1: [number, number], text = ''): void {
+export function drawStamp(g: CanvasRenderingContext2D, kind: string, p0: [number, number], p1: [number, number], text = '', leader: LeaderLook = leaderLook('')): void {
   if (kind === 'callout') {
-    const l = calloutLayout(p0, p1, text);
+    const l = calloutLayout(p0, p1, text, leader);
     if (!l) return;
     g.beginPath();
     l.leader.forEach((q, i) => (i === 0 ? g.moveTo(q[0], q[1]) : g.lineTo(q[0], q[1])));
     g.stroke();
-    g.beginPath();
-    l.head.forEach((q, i) => (i === 0 ? g.moveTo(q[0], q[1]) : g.lineTo(q[0], q[1])));
-    g.stroke();
+    // the arrowhead: open barbs, a filled triangle, a dot at the tip, or nothing
+    if (leader.arrow === 'dot') {
+      g.save();
+      g.fillStyle = g.strokeStyle;
+      g.beginPath();
+      g.arc(p0[0], p0[1], Math.max(2, l.height * 0.22), 0, Math.PI * 2);
+      g.fill();
+      g.restore();
+    } else if (leader.arrow !== 'none') {
+      g.beginPath();
+      l.head.forEach((q, i) => (i === 0 ? g.moveTo(q[0], q[1]) : g.lineTo(q[0], q[1])));
+      if (leader.arrow === 'filled') {
+        g.closePath();
+        g.save();
+        g.fillStyle = g.strokeStyle;
+        g.fill();
+        g.restore();
+      }
+      g.stroke();
+    }
+    // the note's frame
+    if (leader.frame === 'box' || leader.frame === 'underline') {
+      const pad = l.height * 0.2;
+      const [x1, y1, x2, y2] = l.note;
+      const top = Math.min(y1, y2);
+      const bottom = Math.max(y1, y2);
+      g.beginPath();
+      if (leader.frame === 'box') g.rect(x1 - pad, top - pad, x2 - x1 + 2 * pad, bottom - top + 2 * pad);
+      else {
+        g.moveTo(x1 - pad, bottom + pad * 0.5);
+        g.lineTo(x2 + pad, bottom + pad * 0.5);
+      }
+      g.stroke();
+    }
     if (text) {
       g.save();
       g.fillStyle = g.strokeStyle;
@@ -160,9 +209,9 @@ export function drawStamp(g: CanvasRenderingContext2D, kind: string, p0: [number
 }
 
 /** True when the screen point is on a placed stamp: a symbol's body or label, or the words of a text stroke. */
-export function hitsStamp(kind: string, text: string | undefined, p0: [number, number], p1: [number, number], x: number, y: number, pad = 4): boolean {
+export function hitsStamp(kind: string, text: string | undefined, p0: [number, number], p1: [number, number], x: number, y: number, pad = 4, leader: LeaderLook = leaderLook('')): boolean {
   if (kind === 'callout') {
-    const l = calloutLayout(p0, p1, text ?? '');
+    const l = calloutLayout(p0, p1, text ?? '', leader);
     if (!l) return Math.hypot(x - p0[0], y - p0[1]) <= pad + 6;
     const inNote = x >= l.note[0] - pad && x <= l.note[2] + pad && y >= Math.min(l.note[1], l.note[3]) - pad && y <= Math.max(l.note[1], l.note[3]) + pad;
     if (inNote) return true;

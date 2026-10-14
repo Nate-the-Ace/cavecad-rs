@@ -455,8 +455,15 @@ pub fn set_drawing_scale(doc: &Document, n: f64) -> Result<Vec<Action>, DrawErro
 /// The line patterns a single line may be given, besides its type's own (empty).
 pub const LINETYPE_CHOICES: &[&str] = &["", "solid", "dashed", "longdash", "sparse", "dashdot"];
 
-/// A line's own style, as `linetype;scale;density` (empty for none). Anything unreadable gives `None`; the scale and the
-/// density are held to a sensible range and written in a fixed form, so equal styles are equal text.
+/// How a leader's arrow, line and note are drawn, besides what any line has.
+pub const ARROWS: &[&str] = &["", "arrow", "filled", "dot", "none"];
+/// The shapes of a leader's line.
+pub const SHAPES: &[&str] = &["", "elbow", "straight", "curved"];
+/// The frames a leader's note may have.
+pub const FRAMES: &[&str] = &["", "none", "box", "underline"];
+
+/// A line's own style, as `linetype;scale;density`, and for a leader also `;arrow;shape;frame;size` (empty for none). Anything
+/// unreadable gives `None`; numbers are held to a sensible range and written in a fixed form, so equal styles are equal text.
 pub fn normalize_style(text: &str) -> Option<String> {
     let t = text.trim();
     if t.is_empty() {
@@ -473,13 +480,25 @@ pub fn normalize_style(text: &str) -> Option<String> {
     };
     let scale = num(parts.next())?.clamp(0.2, 6.0);
     let density = num(parts.next())?.clamp(0.2, 4.0);
+    let mut pick = |choices: &[&str]| -> Option<String> {
+        let v = parts.next().map_or("", str::trim).to_ascii_lowercase();
+        choices.contains(&v.as_str()).then_some(v)
+    };
+    let arrow = pick(ARROWS)?;
+    let shape = pick(SHAPES)?;
+    let frame = pick(FRAMES)?;
+    let size = num(parts.next())?.clamp(0.4, 4.0);
     if parts.next().is_some() {
         return None;
     }
-    if lt.is_empty() && (scale - 1.0).abs() < 0.005 && (density - 1.0).abs() < 0.005 {
-        return Some(String::new());
-    }
-    Some(format!("{lt};{scale:.2};{density:.2}"))
+    let plain_line = lt.is_empty() && (scale - 1.0).abs() < 0.005 && (density - 1.0).abs() < 0.005;
+    let plain_leader =
+        arrow.is_empty() && shape.is_empty() && frame.is_empty() && (size - 1.0).abs() < 0.005;
+    Some(match (plain_line, plain_leader) {
+        (true, true) => String::new(),
+        (_, true) => format!("{lt};{scale:.2};{density:.2}"),
+        _ => format!("{lt};{scale:.2};{density:.2};{arrow};{shape};{frame};{size:.2}"),
+    })
 }
 
 /// Actions that set how this one line is drawn (its linetype, scale and fill density), apart from its type's look.
@@ -1230,5 +1249,36 @@ mod tests {
             setting_id("drawing-scale"),
             "the id comes from the name"
         );
+    }
+
+    #[test]
+    fn a_leaders_own_settings_are_checked_and_written_one_way() {
+        assert_eq!(
+            normalize_style(";1;1;dot;straight;box;1.5"),
+            Some(";1.00;1.00;dot;straight;box;1.50".into())
+        );
+        assert_eq!(
+            normalize_style(";1;1;;;;1"),
+            Some(String::new()),
+            "all defaults means none"
+        );
+        assert_eq!(
+            normalize_style("dashed;2;1;;;;1"),
+            Some("dashed;2.00;1.00".into()),
+            "only the line part when the leader part is plain"
+        );
+        assert_eq!(
+            normalize_style(";1;1;;curved;;1"),
+            Some(";1.00;1.00;;curved;;1.00".into())
+        );
+        assert_eq!(
+            normalize_style(";1;1;;;;99"),
+            Some(";1.00;1.00;;;;4.00".into()),
+            "size held to a range"
+        );
+        assert_eq!(normalize_style(";1;1;spear;;;1"), None);
+        assert_eq!(normalize_style(";1;1;;wiggly;;1"), None);
+        assert_eq!(normalize_style(";1;1;;;fancy;1"), None);
+        assert_eq!(normalize_style(";1;1;;;;1;1"), None, "too many parts");
     }
 }

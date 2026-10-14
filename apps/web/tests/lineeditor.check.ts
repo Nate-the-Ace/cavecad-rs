@@ -92,4 +92,17 @@ ok(w.widths!.length === w.pts.length, 'pen weights stay one per point');
   const over = [fill, { id: 'g', kind: 'fill-clay', closed: true, points: [[50, 50], [150, 50], [150, 150], [50, 150]], widths: null } as EditableLine];
   ok(topLineAt(over, id, 100, 100, 7) === 1, 'of two areas over each other the topmost one is picked');
 }
+// a shaped line is picked by any part of its marks, not only by the line
+{
+  const id = (p: [number, number]) => p;
+  const ledge: EditableLine = { id: 'l', kind: 'ledge', points: [[0, 100], [200, 100]], widths: null };
+  // ticks hanging 12 px below the line every 20 px
+  const ticks = () => Array.from({ length: 10 }, (_, i): [number, number][] => [[10 + i * 20, 100], [10 + i * 20, 112]]);
+  const ornament = () => ticks();
+  ok(topLineAt([ledge], id, 70, 111, 7) === -1, 'without the marks, a click on a tick misses the line');
+  ok(topLineAt([ledge], id, 70, 111, 7, undefined, ornament) === 0, 'a click on a tick end picks the line');
+  ok(topLineAt([ledge], id, 74, 108, 7, undefined, ornament) === 0, 'and so does one beside a tick');
+  ok(topLineAt([ledge], id, 70, 160, 7, undefined, ornament) === -1, 'but not one far from every mark');
+  ok(topLineAt([ledge], id, 100, 101, 7, undefined, ornament) === 0, 'the line itself still works');
+}
 console.log(bad ? 'FAILED' : 'line editor checks ok'); process.exit(bad ? 1 : 0);

@@ -2,23 +2,29 @@
 // double-click to add a fit point, Delete to remove the line. One implementation for every view
 // that draws on a canvas (Profile, Cross Section). The view says where its lines are and how
 // world and screen relate; this decides what a press, a drag and a key do.
-import { distanceToCurve, insertionAt, insideCurve, nearestPoint, refit, type Pt } from './spline.ts';
+import { distanceToCurve, distanceToPolyline, insertionAt, insideCurve, nearestPoint, refit, type Pt } from './spline.ts';
 import { isFillKind } from './fills.ts';
-import { hitsStamp, isStampKind } from './symbols.ts';
+import { hitsStamp, isStampKind, leaderLook } from './symbols.ts';
 
 /** How near, in pixels, a point is to a line (a symbol counts as its whole body). */
-function reach(l: { points: Pt[]; closed?: boolean; kind?: string; text?: string }, toScreen: (p: Pt) => Pt, x: number, y: number): number {
-  if (isStampKind(l.kind) && l.points.length >= 2) return hitsStamp(l.kind ?? '', l.text, toScreen(l.points[0]), toScreen(l.points[1]), x, y) ? 0 : Infinity;
-  return distanceToCurve(l.points.map(toScreen), x, y, !!l.closed);
+function reach(l: { points: Pt[]; closed?: boolean; kind?: string; text?: string; style?: string }, toScreen: (p: Pt) => Pt, x: number, y: number, paperPx?: number, ornament?: OrnamentOf): number {
+  if (isStampKind(l.kind) && l.points.length >= 2) return hitsStamp(l.kind ?? '', l.text, toScreen(l.points[0]), toScreen(l.points[1]), x, y, 4, leaderLook(l.style, paperPx)) ? 0 : Infinity;
+  let d = distanceToCurve(l.points.map(toScreen), x, y, !!l.closed);
+  // a shaped line (ledge ticks, pit hachures, flowstone, slope, ...) is picked by any part of its marks, not only by the line itself
+  if (ornament && d > 2) for (const line of ornament(l) ?? []) d = Math.min(d, distanceToPolyline(line.map(toScreen), x, y));
+  return d;
 }
+
+/** The marks that dress a shaped line, as polylines in the view's own coordinates (none for a plain line). */
+export type OrnamentOf = (l: { points: Pt[]; closed?: boolean; kind?: string; id?: string }) => Pt[][];
 
 /**
  * The topmost line at a point: a line, symbol or area's edge within reach first (topmost wins), then any area the point is
  * inside, so the hatch of a fill can be clicked as well as its outline, while a click on a wall or symbol that lies over a
  * fill still gets the wall or symbol. Returns the index, or -1.
  */
-export function topLineAt<T extends { points: Pt[]; closed?: boolean; kind?: string; text?: string }>(lines: T[], toScreen: (p: Pt) => Pt, x: number, y: number, reachPx: number): number {
-  for (let i = lines.length - 1; i >= 0; i--) if (reach(lines[i], toScreen, x, y) <= reachPx) return i;
+export function topLineAt<T extends { points: Pt[]; closed?: boolean; kind?: string; text?: string; style?: string }>(lines: T[], toScreen: (p: Pt) => Pt, x: number, y: number, reachPx: number, paperPx?: number, ornament?: OrnamentOf): number {
+  for (let i = lines.length - 1; i >= 0; i--) if (reach(lines[i], toScreen, x, y, paperPx, ornament) <= reachPx) return i;
   for (let i = lines.length - 1; i >= 0; i--) if (isFillKind(lines[i].kind) && lines[i].points.length >= 3 && insideCurve(lines[i].points.map(toScreen), x, y)) return i;
   return -1;
 }
@@ -33,6 +39,8 @@ export interface EditableLine {
   kind?: string;
   /** Words that go with it. */
   text?: string;
+  /** How this one line differs from its type's look (and a leader's arrow, line, frame and size). */
+  style?: string;
 }
 
 export interface Hooks<T extends EditableLine> {
@@ -50,6 +58,10 @@ export interface Hooks<T extends EditableLine> {
   redraw: () => void;
   /** True for a type that is switched off in the Show menu (it cannot be picked, seen or erased). */
   hidden?: (kind: string | undefined) => boolean;
+  /** How many pixels a millimetre of paper is here (a leader's text is sized on paper), when the view knows. */
+  paperPx?: () => number;
+  /** The marks that dress a shaped line, so it can be picked by any part of them. */
+  ornament?: OrnamentOf;
 }
 
 /** How close, in pixels, a press must be to a line to select it, and to a fit point to pick it up. */
@@ -99,7 +111,7 @@ export class LineEditor<T extends EditableLine = EditableLine> {
       }
     }
     const lines = this.shown();
-    const hit = topLineAt(lines, this.h.toScreen, x, y, LINE_REACH);
+    const hit = topLineAt(lines, this.h.toScreen, x, y, LINE_REACH, this.h.paperPx?.(), this.h.ornament);
     if (hit >= 0) {
       this.h.select(lines[hit].id);
       this.h.redraw();
@@ -113,7 +125,7 @@ export class LineEditor<T extends EditableLine = EditableLine> {
   /** The eraser passing screen (`x`, `y`): deletes the topmost line there (one undoable edit). Returns true if it did. */
   eraseAt(x: number, y: number): boolean {
     const lines = this.shown();
-    const hit = topLineAt(lines, this.h.toScreen, x, y, LINE_REACH);
+    const hit = topLineAt(lines, this.h.toScreen, x, y, LINE_REACH, this.h.paperPx?.(), this.h.ornament);
     if (hit < 0) return false;
     if (this.h.selected() === lines[hit].id) this.h.select('');
     this.h.remove(lines[hit].id);

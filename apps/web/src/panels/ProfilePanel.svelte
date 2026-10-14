@@ -8,7 +8,7 @@
   import PanelUndo from '../components/PanelUndo.svelte';
   import { looks } from '../lib/ink';
   import { cave, changed, filter, option, setPick, setShowSections, haloFade, haloReach } from '../lib/cave.svelte';
-  import { defaultBandOffset, drawHandles, drawStrokes, glyphCurves, hits, leaderEnd } from '../lib/section-glyph';
+  import { defaultBandOffset, drawHandles, drawStrokes, glyphCurves, hits, leaderEnd, ornamentFor } from '../lib/section-glyph';
   import { LineEditor, endpointNear, joinFit } from '../lib/line-editor';
   import { Touches } from '../lib/touch';
   import { PenGuard, isEraser, widthFor } from '../lib/pen';
@@ -74,6 +74,8 @@
       changed();
     },
     redraw: () => schedule(),
+    paperPx: () => (scale * drawing.scale) / 1000,
+    ornament: (l) => ornamentFor(l.kind ?? '', l.id ?? '', smooth(l.points, null, 10, !!l.closed).pts, !!l.closed, (band?.stations ?? []).map((s) => [s.s, s.z] as [number, number])).lines,
     hidden: (kind) => !!kind && filter.hiddenTypes.includes(kind),
   });
   $effect(() => {

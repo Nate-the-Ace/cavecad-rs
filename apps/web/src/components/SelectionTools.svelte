@@ -7,7 +7,7 @@
   import { engine, loadEngine, type TypeStyle } from '../lib/engine';
   import { isStampKind } from '../lib/symbols';
   import { fillDefs, isFillKind } from '../lib/fills';
-  import { LINETYPE_LABELS, liveStyle, parseStyle, styleText, type LineStyle } from '../lib/line-style.svelte';
+  import { ARROW_LABELS, FRAME_LABELS, LINETYPE_LABELS, SHAPE_LABELS, liveStyle, parseStyle, styleText, type LineStyle } from '../lib/line-style.svelte';
 
   let tools = $state<TypeStyle[]>([]);
   onMount(() => {
@@ -21,6 +21,7 @@
   });
   const isSymbol = $derived(!!info && isStampKind(info.kind));
   const isFill = $derived(!!info && isFillKind(info.kind));
+  const isLeader = $derived(info?.kind === 'callout');
   let message = $state('');
 
   // This line's own look: its pattern, how long its dashes are, and (for an area) how dense its hatch is. Dragging a slider
@@ -91,7 +92,24 @@
     {/if}
     {#if message}<span class="msg" role="status">{message}</span>{/if}
   </div>
-  {#if info && !isSymbol}
+  {#if info && isLeader}
+    <div class="style" role="group" aria-label="Leader">
+      <select class="kind" value={style.arrow} aria-label="Arrowhead" title="The end of the leader at the thing it points to" onchange={(e) => (draft({ arrow: e.currentTarget.value }), keep())}>
+        {#each ARROW_LABELS as [key, label]}<option value={key}>{label}</option>{/each}
+      </select>
+      <select class="kind" value={style.shape} aria-label="Leader line" title="How the leader runs from the arrow to the note" onchange={(e) => (draft({ shape: e.currentTarget.value }), keep())}>
+        {#each SHAPE_LABELS as [key, label]}<option value={key}>{label}</option>{/each}
+      </select>
+      <select class="kind" value={style.frame} aria-label="Note frame" title="A box or an underline round the note" onchange={(e) => (draft({ frame: e.currentTarget.value }), keep())}>
+        {#each FRAME_LABELS as [key, label]}<option value={key}>{label}</option>{/each}
+      </select>
+      <label class="detail" title="How big the note's text is: ×1 is 3 mm on paper">
+        <span>Text size <b>×{style.size.toFixed(2)}</b></span>
+        <input type="range" min="0.5" max="3" step="0.05" value={style.size} oninput={(e) => draft({ size: Number(e.currentTarget.value) })} onchange={keep} aria-label="Leader text size" />
+      </label>
+      <button class="small" onclick={resetStyle} disabled={!info.style && liveStyle.id !== cave.selected}>Reset</button>
+    </div>
+  {:else if info && !isSymbol}
     <div class="style" role="group" aria-label="Line style">
       <select class="kind" value={style.lt} aria-label="Linetype" title="The pattern of this line: its type's own, or another" onchange={(e) => (draft({ lt: e.currentTarget.value }), keep())}>
         {#each LINETYPE_LABELS as [key, label]}<option value={key}>{label}</option>{/each}

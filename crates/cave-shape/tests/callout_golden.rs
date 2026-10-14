@@ -1,7 +1,7 @@
 //! The callout geometry must match the old app's `CsCallout.reflow` on every case in
 //! `golden/callout.json` (made by `tools/golden/gen_callout_golden.mjs`).
 
-use cave_shape::callout::{NoteBox, Side, reflow};
+use cave_shape::callout::{NoteBox, Side, layout, layout_with, reflow};
 use serde_json::Value;
 
 fn pt(v: &Value) -> [f64; 2] {
@@ -64,4 +64,30 @@ fn note_grows_away_from_the_arrow() {
     assert!(l.x1 == 10.0 && l.x2 > 10.0);
     let r = cave_shape::callout::note_box([10.0, 5.0], 10, 2.0, Side::Right);
     assert!(r.x2 == 10.0 && r.x1 < 10.0);
+}
+
+#[test]
+fn a_leader_can_have_its_own_text_height_and_run_straight() {
+    let auto = layout([0.0, 0.0], [90.0, 0.0], 5, false);
+    assert!(
+        (auto.height - 30.0).abs() < 1e-9,
+        "by default a third of the drag"
+    );
+    let fixed = layout_with([0.0, 0.0], [90.0, 0.0], 5, false, Some(12.0), false);
+    assert_eq!(fixed.height, 12.0, "or what the leader says");
+    assert_eq!(fixed.leader.len(), 3, "tip, elbow, landing");
+    let straight = layout_with([0.0, 0.0], [90.0, 40.0], 5, false, Some(12.0), true);
+    assert_eq!(straight.leader.len(), 2, "straight has no elbow");
+    assert_eq!(straight.leader[0], [0.0, 0.0]);
+    assert_eq!(
+        straight.leader[1][0], straight.note[0],
+        "and ends on the note's edge"
+    );
+    let curved = layout_with([0.0, 0.0], [90.0, 40.0], 5, true, Some(12.0), false);
+    assert!(curved.leader.len() > 3, "a curved one is traced in pieces");
+    assert_eq!(
+        layout([0.0, 0.0], [90.0, 40.0], 5, false),
+        layout_with([0.0, 0.0], [90.0, 40.0], 5, false, None, false),
+        "the plain layout is unchanged"
+    );
 }

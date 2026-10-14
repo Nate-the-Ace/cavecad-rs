@@ -11,7 +11,7 @@
   import { Maximize, ChevronLeft, ChevronRight } from '@lucide/svelte';
   import PanelUndo from '../components/PanelUndo.svelte';
   import { looks } from '../lib/ink';
-  import { drawHandles, drawStrokes } from '../lib/section-glyph';
+  import { drawHandles, drawStrokes, ornamentFor } from '../lib/section-glyph';
   import { LineEditor, endpointNear, joinFit } from '../lib/line-editor';
   import { Touches } from '../lib/touch';
   import { PenGuard, isEraser, widthFor } from '../lib/pen';
@@ -76,6 +76,8 @@
       changed();
     },
     redraw: () => schedule(),
+    paperPx: () => (scale * drawing.scale) / 1000,
+    ornament: (l) => ornamentFor(l.kind ?? '', l.id ?? '', smooth(l.points, null, 10, !!l.closed).pts, !!l.closed, [[0, 0]] as [number, number][]).lines,
     hidden: (kind) => !!kind && filter.hiddenTypes.includes(kind),
   });
   $effect(() => {

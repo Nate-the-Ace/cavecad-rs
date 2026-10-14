@@ -7,7 +7,7 @@ import { LineSegmentsGeometry } from 'three/addons/lines/LineSegmentsGeometry.js
 import { LineMaterial } from 'three/addons/lines/LineMaterial.js';
 import type { MapSection, PassageBuffers, Pt, ProfileSketch3d, Scene, TypeStyle } from '../engine';
 import { PenGuard, isEraser, widthFor } from '../pen';
-import { drawStamp, drawStationMarker, hitsStamp, isStampKind, placement } from '../symbols';
+import { drawStamp, drawStationMarker, hitsStamp, isStampKind, leaderLook, placement } from '../symbols';
 import { drawMarks, isFillKind, marksFor } from '../fills';
 import { drawing, fillLength, parseStyle, styleFor } from '../line-style.svelte';
 import { dashMetres } from '../dash';
@@ -16,7 +16,7 @@ import { drawHalo, type HaloLine } from '../halo';
 import { isKindHidden, ornamentFor, refreshFlipped } from '../section-glyph';
 import { drawCursor } from '../presence-draw';
 import { defaultMapOffset, drawHandles, drawStrokes, glyphCurves, hits, leaderEnd } from '../section-glyph';
-import { distanceToCurve, fitStroke, insideCurve, nearestPoint, refit, smooth } from '../spline';
+import { distanceToCurve, distanceToPolyline, fitStroke, insideCurve, nearestPoint, refit, smooth } from '../spline';
 import { PICKUP_REACH, joinFit } from '../line-editor';
 import { looks } from '../ink';
 import { elevationColor, inkColor, readTheme, type ViewTheme } from './theme';
@@ -837,7 +837,18 @@ export class CaveView {
     const pts = (k: ProfileSketch3d) => this.screenPoints(k).filter((p): p is [number, number] => !!p);
     for (const k of lines) {
       const p = pts(k);
-      if (p.length === k.points.length && (isStampKind(k.kind) ? hitsStamp(k.kind, k.text, p[0], p[1], x, y) : distanceToCurve(p, x, y, k.closed) <= 7)) return k;
+      if (p.length === k.points.length && (isStampKind(k.kind) ? hitsStamp(k.kind, k.text, p[0], p[1], x, y, 4, leaderLook(k.style, ((this.pixelsPerMetreAt(k.points[0]) ?? 0) * drawing.scale) / 1000)) : distanceToCurve(p, x, y, k.closed) <= 7)) return k;
+    }
+    // a shaped line (ledge ticks, pit hachures, flowstone, slope, ...) is also picked by any part of its marks
+    const stationsXY = (this.data?.stations ?? []).map((s) => [s.at[0], s.at[1]] as [number, number]);
+    for (const k of lines) {
+      if (isStampKind(k.kind) || isFillKind(k.kind) || k.points.length < 2) continue;
+      const plan = smooth(k.points.map((q) => [q[0], q[1]] as [number, number]), null, 10, k.closed).pts;
+      const z = k.points[0][2];
+      for (const line of ornamentFor(k.kind, k.id, plan, k.closed, stationsXY).lines) {
+        const screen = line.map((q) => this.project([q[0], q[1], z])).filter((q): q is [number, number] => !!q);
+        if (screen.length === line.length && distanceToPolyline(screen, x, y) <= 7) return k;
+      }
     }
     for (const k of lines) {
       const p = pts(k);
@@ -1021,7 +1032,7 @@ export class CaveView {
             g.lineWidth = Math.max(1, l.weight * 0.7);
             g.globalAlpha = base * l.alpha;
           }
-          drawStamp(g, k.kind, a, b, k.text);
+          drawStamp(g, k.kind, a, b, k.text, leaderLook(style, ((this.pixelsPerMetreAt(k.points[0]) ?? 0) * drawing.scale) / 1000));
         }
         continue;
       }
