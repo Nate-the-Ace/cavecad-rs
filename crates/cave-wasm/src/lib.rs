@@ -14,9 +14,11 @@ use wasm_bindgen::prelude::*;
 
 static CONSOLE: OnceLock<LogBuffer> = OnceLock::new();
 
+mod survey;
+
 thread_local! {
     /// The cave currently open. The browser is single-threaded, so this is the one document.
-    static DOC: RefCell<Option<Document>> = const { RefCell::new(None) };
+    pub(crate) static DOC: RefCell<Option<Document>> = const { RefCell::new(None) };
     /// Undo and redo for the person at this browser.
     /// One undo history per panel (`profile`, `section`, `map`), so a panel's Undo and Redo only
     /// touch what was done in that panel.
@@ -1042,7 +1044,7 @@ pub fn add_profile_sketch(
 }
 
 /// Puts an edit on a panel's undo history (`profile`, `section` or `map`).
-fn record_edit(scope: &str, edit: &cave_doc::Edit) {
+pub(crate) fn record_edit(scope: &str, edit: &cave_doc::Edit) {
     HISTORY.with(|h| {
         h.borrow_mut()
             .entry(scope.to_string())

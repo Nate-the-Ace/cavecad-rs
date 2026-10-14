@@ -245,6 +245,11 @@ impl Session {
         &self.state
     }
 
+    /// The trip this session was set up for.
+    pub fn trip(&self) -> Option<Id> {
+        self.trip
+    }
+
     /// Sets the session up for `trip`: standing at the last station on its page (or A1 on an empty one),
     /// keeping the surveyor's mode and backsight choice. Does nothing when it is already set up for it.
     pub fn sync_to_trip(&mut self, host: &dyn Host, trip: Id) {
@@ -270,6 +275,12 @@ impl Session {
         self.message.clear();
         self.warnings.clear();
         self.assembler.reset();
+    }
+
+    /// The surveyor typed new station names: where they stand and where the next leg goes.
+    pub fn set_names(&mut self, from: &str, to: &str) {
+        self.state.from = from.to_string();
+        self.state.to = to.to_string();
     }
 
     /// Chooses between writing each thing at once and holding it for Accept.

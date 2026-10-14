@@ -1,7 +1,7 @@
 use crate::Pt;
 use crate::layout::Layout;
 use crate::source::DimsByStation;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 /// Heading (unit east, north) of the passage at chain position `i`: the bisector of the legs either side.
 fn heading(l: &Layout, i: usize) -> Pt {
@@ -22,7 +22,7 @@ fn heading(l: &Layout, i: usize) -> Pt {
 }
 
 /// A station by label in a view's own metres.
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Mark {
     /// Its label.
     pub label: String,
