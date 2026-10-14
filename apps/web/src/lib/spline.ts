@@ -118,15 +118,59 @@ export function insertionAt(pts: Pt[], x: number, y: number, closed = false): { 
   return { index: best.index, at: best.at };
 }
 
+/** Fit point spacing of a drawn stroke: 0.1 ft, in metres (the units every drawing surface works in). */
+export const FIT_SPACING = 0.1 * 0.3048;
+
+/**
+ * The stroke with a point every `spacing` along its length (the ends kept), pen weights interpolated.
+ * Hand jitter finer than the spacing is averaged away; gaps the pointer left are filled along the chord.
+ */
+export function resample(pts: Pt[], widths: number[] | null, spacing: number): { pts: Pt[]; widths: number[] | null } {
+  if (pts.length < 2 || !(spacing > 0)) return { pts, widths };
+  const out: Pt[] = [pts[0]];
+  const w: number[] = widths ? [widths[0]] : [];
+  let carry = 0; // distance walked since the last emitted point
+  for (let i = 1; i < pts.length; i++) {
+    const [a, b] = [pts[i - 1], pts[i]];
+    const len = Math.hypot(b[0] - a[0], b[1] - a[1]);
+    if (len < 1e-12) continue;
+    let at = spacing - carry;
+    while (at <= len) {
+      const t = at / len;
+      out.push([a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t]);
+      if (widths) w.push(widths[i - 1] + (widths[i] - widths[i - 1]) * t);
+      at += spacing;
+    }
+    carry = len - (at - spacing);
+  }
+  const last = pts[pts.length - 1];
+  const end = out[out.length - 1];
+  if (Math.hypot(last[0] - end[0], last[1] - end[1]) > spacing * 0.25 || out.length < 2) {
+    out.push(last);
+    if (widths) w.push(widths[widths.length - 1]);
+  } else {
+    out[out.length - 1] = last; // the tail is too short to be a point of its own
+  }
+  return { pts: out, widths: widths ? w : null };
+}
+
 /**
  * A freehand stroke as fit points: reduced within `tol`, and for a closed curve the last point
  * (which the hand left beside the first) is dropped when it sits within reach of it.
+ * With `spacing` the stroke is first resampled to a point every `spacing`, and then only points that lie
+ * on a straight run (within a fifth of the spacing, or `tol` if that is tighter) are merged away: the
+ * curve keeps its detail instead of being smoothed down to a few points.
  */
-export function fitStroke(pts: Pt[], widths: number[] | null, tol: number, closed: boolean): { pts: Pt[]; widths: number[] | null } {
-  const f = simplify(pts, widths, tol);
+export function fitStroke(pts: Pt[], widths: number[] | null, tol: number, closed: boolean, spacing?: number): { pts: Pt[]; widths: number[] | null } {
+  let src = { pts, widths };
+  if (spacing) {
+    src = resample(pts, widths, spacing);
+    tol = Math.min(tol, spacing * 0.2);
+  }
+  const f = simplify(src.pts, src.widths, tol);
   if (closed && f.pts.length > 3) {
     const [a, b] = [f.pts[0], f.pts[f.pts.length - 1]];
-    if (Math.hypot(a[0] - b[0], a[1] - b[1]) < tol * 3) return { pts: f.pts.slice(0, -1), widths: f.widths ? f.widths.slice(0, -1) : null };
+    if (Math.hypot(a[0] - b[0], a[1] - b[1]) < (spacing ? spacing * 1.5 : tol * 3)) return { pts: f.pts.slice(0, -1), widths: f.widths ? f.widths.slice(0, -1) : null };
   }
   return f;
 }

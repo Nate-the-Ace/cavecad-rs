@@ -14,7 +14,7 @@
   import { LineEditor, endpointNear, joinFit, type EditableLine } from '../lib/line-editor';
   import { Touches } from '../lib/touch';
   import { PenGuard, isEraser, widthFor } from '../lib/pen';
-  import { fitStroke } from '../lib/spline';
+  import { FIT_SPACING, fitStroke } from '../lib/spline';
   import { tolerancePx } from '../lib/commands';
   import { isStampKind } from '../lib/symbols';
   import { cave, changed, filter, option, setOption } from '../lib/cave.svelte';
@@ -500,7 +500,7 @@
     if (stroked.pts.length >= 2) {
       // A freehand stroke becomes a smooth curve through a few fit points.
       const wantClosed = option('close', false);
-      const fit = fitStroke(stroked.pts, stroked.pressure ? stroked.widths : null, tolerancePx(option('detail', 5)) / tf().scale, wantClosed);
+      const fit = fitStroke(stroked.pts, stroked.pressure ? stroked.widths : null, tolerancePx(option('detail', 5)) / tf().scale, wantClosed, FIT_SPACING);
       const closed = wantClosed && fit.pts.length >= 3;
       // Starting on the end of an open line of the same kind carries that line on instead of starting a new one.
       const start = toScreen(stroked.pts[0]);

@@ -14,7 +14,7 @@ import { drawHalo, type HaloLine } from '../halo';
 import { isKindHidden, ornamentFor, refreshFlipped } from '../section-glyph';
 import { drawCursor } from '../presence-draw';
 import { defaultMapOffset, drawHandles, drawStrokes, glyphCurves, hits, leaderEnd } from '../section-glyph';
-import { distanceToCurve, fitStroke, nearestPoint, refit, smooth } from '../spline';
+import { FIT_SPACING, distanceToCurve, fitStroke, nearestPoint, refit, smooth } from '../spline';
 import { PICKUP_REACH, joinFit } from '../line-editor';
 import { looks } from '../ink';
 import { elevationColor, inkColor, readTheme, type ViewTheme } from './theme';
@@ -378,13 +378,13 @@ export class CaveView {
           const first = this.project([line.pts[0][0], line.pts[0][1], line.z]);
           const pickup = first ? this.openEndNear(first[0], first[1]) : null;
           if (pickup) {
-            const fit = fitStroke(line.pts, line.pressure ? line.widths : null, this.drawOptions.tolerancePx / px, false);
+            const fit = fitStroke(line.pts, line.pressure ? line.widths : null, this.drawOptions.tolerancePx / px, false, FIT_SPACING);
             const own = { id: pickup.line.id, points: pickup.line.points.map((p) => [p[0], p[1]] as [number, number]), widths: pickup.line.widths };
             const joined = joinFit(own, fit, pickup.atStart);
             this.onLineEdited(pickup.line.id, joined.pts, joined.widths);
           } else {
             const loop = this.drawOptions.close || isFillKind(this.drawTool); // an area fill is always a loop
-            const fit = fitStroke(line.pts, line.pressure ? line.widths : null, this.drawOptions.tolerancePx / px, loop);
+            const fit = fitStroke(line.pts, line.pressure ? line.widths : null, this.drawOptions.tolerancePx / px, loop, FIT_SPACING);
             if (isFillKind(this.drawTool) && fit.pts.length < 3) {
               this.onLineDrawn([], null, false); // too small to enclose anything
             } else {

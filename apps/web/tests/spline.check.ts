@@ -1,4 +1,4 @@
-import { simplify, smooth, fitStroke, nearestPoint, distanceToCurve, insertionAt, refit, detailFraction } from '../src/lib/spline.ts';
+import { resample, FIT_SPACING, simplify, smooth, fitStroke, nearestPoint, distanceToCurve, insertionAt, refit, detailFraction } from '../src/lib/spline.ts';
 let bad = 0; const ok = (c: boolean, m: string) => { if (!c) { bad++; console.log('FAIL', m); } };
 // a dense arc simplifies to a handful of points that stay within tolerance
 const arc = Array.from({ length: 200 }, (_, i) => [i, Math.sin(i / 200 * Math.PI) * 40] as [number, number]);
@@ -47,4 +47,22 @@ const rl = refit(ring, null, true, 2), rh = refit(ring, null, true, 9);
 ok(rl.pts.length >= 3 && rl.pts.length <= rh.pts.length, `a closed loop keeps at least three points (${rl.pts.length}, ${rh.pts.length})`);
 ok(Math.hypot(rh.pts[0][0] - rh.pts[rh.pts.length - 1][0], rh.pts[0][1] - rh.pts[rh.pts.length - 1][1]) > 1e-6, 'a closed loop does not repeat its first point');
 ok(detailFraction(1) > detailFraction(5) && detailFraction(5) > detailFraction(10) && detailFraction(0) === detailFraction(1) && detailFraction(99) === detailFraction(10), 'detail runs from loose to tight, clamped');
+// fine fit: a point every 0.1 ft, straight runs merged
+{
+  const sp = FIT_SPACING;
+  const line: [number, number][] = [[0, 0], [sp * 3.4, 0], [sp * 10, 0]];
+  const r = resample(line, null, sp);
+  ok(r.pts.length === 11 && Math.abs(r.pts[10][0] - sp * 10) < 1e-9, `resample gives a point every spacing (${r.pts.length})`);
+  const w = resample([[0, 0], [sp * 4, 0]], [1, 5], sp);
+  ok(w.widths!.length === w.pts.length && Math.abs(w.widths![2] - 3) < 1e-9, 'pen weights interpolate');
+  ok(fitStroke(line, null, 5, false, sp).pts.length === 2, 'a straight stroke still collapses to its ends');
+  const bend: [number, number][] = Array.from({ length: 400 }, (_, i) => [i * sp * 0.4, Math.sin(i * 0.05) * sp * 6]);
+  const coarse = fitStroke(bend, null, sp * 3, false), fine = fitStroke(bend, null, sp * 3, false, sp);
+  ok(fine.pts.length > coarse.pts.length * 2, `fine fit keeps far more points (${fine.pts.length} vs ${coarse.pts.length})`);
+  let off = 0; for (const q of bend) off = Math.max(off, distanceToCurve(fine.pts, q[0], q[1]));
+  ok(off < sp * 0.5, `and follows the hand closely (off by ${(off / sp).toFixed(2)} spacings)`);
+  const ringStroke: [number, number][] = Array.from({ length: 300 }, (_, i) => [Math.cos(i / 299 * 2 * Math.PI) * 0.5, Math.sin(i / 299 * 2 * Math.PI) * 0.5]);
+  const rf = fitStroke(ringStroke, null, 0.05, true, sp);
+  ok(Math.hypot(rf.pts[0][0] - rf.pts[rf.pts.length - 1][0], rf.pts[0][1] - rf.pts[rf.pts.length - 1][1]) > sp * 0.5, 'a closed stroke drops the point beside its start');
+}
 console.log(bad ? 'FAILED' : 'spline checks ok'); process.exit(bad ? 1 : 0);

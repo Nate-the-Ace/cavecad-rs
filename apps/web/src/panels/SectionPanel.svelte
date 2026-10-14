@@ -17,7 +17,7 @@
   import { isFillKind } from '../lib/fills';
   import { cursorsFor, live as room, reportCursor } from '../lib/sync.svelte';
   import { drawCursor } from '../lib/presence-draw';
-  import { fitStroke, smooth } from '../lib/spline';
+  import { FIT_SPACING, fitStroke, smooth } from '../lib/spline';
   import { tolerancePx } from '../lib/commands';
   import { cave, changed, option, filter, wireFilter, haloFade, haloReach } from '../lib/cave.svelte';
   import { drawScan } from '../lib/scan-draw';
@@ -477,7 +477,7 @@
     if (stroked.pts.length >= 2 && cave.station) {
       // A freehand stroke becomes a smooth curve through a few fit points.
       const wantClosed = option('close', false) || isFillKind(cave.tool); // an area fill is always a loop
-      const fit = fitStroke(stroked.pts, stroked.pressure ? stroked.widths : null, tolerancePx(option('detail', 5)) / scale, wantClosed);
+      const fit = fitStroke(stroked.pts, stroked.pressure ? stroked.widths : null, tolerancePx(option('detail', 5)) / scale, wantClosed, FIT_SPACING);
       const closed = wantClosed && fit.pts.length >= 3;
       if (isFillKind(cave.tool) && !closed) {
         message = 'A fill needs a loop: draw all the way around the area.';
