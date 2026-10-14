@@ -127,5 +127,29 @@ ok(splays.every((s, i) => s.from === `A${Math.floor(i / 2) + 2}`), 'splays are t
   ok(nobacks.decision.plan?.kind === 'leg', 'with nothing awaited a leg that comes back is just a leg (a switchback)');
 }
 
+// LRUD: a shot that measures a wall of the station is a dimension, never a splay
+{
+  const lrudMode: SessionState = { ...start('A1', new Set(), { mode: 'leg', backsights: false }), mode: 'lrud', last: { shot: 's1', reading: r(5, 100, 0) } };
+  const side = (az: number, inc: number) => { const d = decide(lrudMode, r(1.5, az, inc)); return d.plan && d.plan.kind === 'lrud' ? d.plan.side : d.reject ? 'rejected' : 'splay'; };
+  ok(side(190, 0) === 'right' && side(10, 0) === 'left', 'LRUD mode: square to the passage is the right or left wall (passage heading 100)');
+  ok(side(100, 80) === 'up' && side(280, -70) === 'down', 'LRUD mode: well up or down is the roof or floor, whatever the compass says');
+  ok(side(100, 0) === 'rejected' && side(280, 5) === 'rejected', 'LRUD mode: along the passage is not a wall');
+  const noHeading = decide({ ...lrudMode, last: null }, r(1.5, 190, 0));
+  ok(!noHeading.plan && /left from/.test(noHeading.reject ?? ''), 'LRUD mode: with no leg yet there is no left to speak of, and it says so');
+  ok(decide({ ...lrudMode, last: null }, r(2, 0, 88)).plan?.kind === 'lrud', 'LRUD mode: up needs no heading');
+  const plan = decide(lrudMode, r(1.5, 190, 0)).plan as Extract<Plan, { kind: 'lrud' }>;
+  ok(plan.station === 'A1' && plan.reading.distance === 1.5, 'it is written at the station the surveyor stands at, with the shot length');
+  ok(applied(lrudMode, plan, 'x', new Set()) === lrudMode, 'a wall shot moves nobody on');
+  const flagged = decide({ ...lrudMode, mode: 'leg' }, { ...r(1.2, 0, 0), lrud: 'left' });
+  ok(flagged.plan?.kind === 'lrud' && flagged.plan.side === 'left', 'a reading that says which wall it is needs no LRUD mode');
+  const waiting = decide({ ...lrudMode, mode: 'leg', backsights: true, from: 'A1', to: 'A2', awaiting: { shot: 's1', reading: r(5, 100, 0) } }, { ...r(1.2, 0, 0), lrud: 'up' });
+  ok(waiting.plan?.kind === 'lrud' && waiting.plan.station === 'A2', 'a wall shot while a backsight is awaited is not the backsight, and belongs to the station stood at');
+  const ev = decideEvent({ ...lrudMode, mode: 'auto' }, { kind: 'lrud', reading: { ...r(1.2, 0, 0), lrud: 'down' } }, new Set());
+  ok(ev.decision.plan?.kind === 'lrud', 'the X1 path: an LRUD event is a wall dimension');
+  const asSplay = decideEvent(lrudMode, { kind: 'splay', reading: r(1.5, 190, 0) }, new Set());
+  ok(asSplay.decision.plan?.kind === 'lrud', 'in LRUD mode even what the X1 grouping settled as a splay is a wall');
+  ok(/not a splay/.test(nextStep(lrudMode)), 'the instruction says what the shots are');
+}
+
 if (bad) process.exit(1);
 console.log('survey ok');

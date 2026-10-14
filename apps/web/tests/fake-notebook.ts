@@ -12,6 +12,7 @@ export interface Row { id: string; from: string; to: string | null; cells: Parti
  */
 export function fakeNotebook(fail?: (shot: string, which: CellName) => boolean) {
   const rows: Row[] = [];
+  const walls: Record<string, number | null> = {};
   let n = 0;
   const port: NotebookPort = {
     page: () =>
@@ -30,6 +31,11 @@ export function fakeNotebook(fail?: (shot: string, which: CellName) => boolean) 
       row.cells[which] = value;
       return 'ok';
     },
+    setWall: (_t, station, side, value) => {
+      if (!station.trim()) return 'error: no station';
+      walls[`${station}:${side}`] = value;
+      return 'ok';
+    },
     removeShot: (shot) => {
       const i = rows.findIndex((x) => x.id === shot);
       if (i < 0) return 'error: no such shot';
@@ -37,6 +43,6 @@ export function fakeNotebook(fail?: (shot: string, which: CellName) => boolean) 
       return 'ok';
     },
   };
-  return { rows, port };
+  return { rows, walls, port };
 }
 

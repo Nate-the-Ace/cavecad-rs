@@ -21,6 +21,8 @@ export interface Reading {
   error?: string | null;
   /** Laser signal quality, raw. */
   quality?: number | null;
+  /** This shot measures that wall at the station (left, right, up or down): written as a passage dimension, never as a splay. Set where the instrument cannot say (the simulator; the surveyor's LRUD mode). */
+  lrud?: 'left' | 'right' | 'up' | 'down';
 }
 
 /** A mark the surveyor sets on a shot at the instrument. */

@@ -102,8 +102,43 @@ const fail = (m: string) => {
   return false;
 };
 
+/** Wall dimensions shot at a station that has no line on the page yet (before its first leg): written once it has one. */
+const pendingWalls = new Map<string, Partial<Record<Side, number | null>>>();
+const pendingKey = (trip: string, station: string) => `${trip}\u0000${station}`;
+
+/** The station's line on the page, where its dimensions are written, or `null` when it has none yet. */
+function wallRow(trip: string, station: string) {
+  const page = engine.notebookPage(trip);
+  const row = [...(page?.rows ?? [])].reverse().find((r) => r.kind === 'station' && r.label === station && r.lrud !== null && r.lrud_editable);
+  return row?.lrud && (row.shot ?? row.station) ? { target: (row.shot ?? row.station)!, lrud: row.lrud } : null;
+}
+
+/** Sets one wall dimension of a station. At a station with no line yet it waits (`flushWalls` writes it). */
+function setWall(trip: string, station: string, side: Side, value: number | null): string {
+  const row = wallRow(trip, station);
+  if (!row) {
+    const key = pendingKey(trip, station);
+    pendingWalls.set(key, { ...pendingWalls.get(key), [side]: value });
+    return 'ok';
+  }
+  return engine.notebookSetWalls(row.target, withSide(row.lrud, side, value, false));
+}
+
+/** Writes the dimensions that were waiting for a station to get its line. */
+function flushWalls(trip: string) {
+  for (const [key, patch] of [...pendingWalls]) {
+    const [t, station] = key.split('\u0000');
+    if (t !== trip) continue;
+    const row = wallRow(trip, station);
+    if (!row) continue;
+    const lrud = (Object.entries(patch) as [Side, number | null][]).reduce((l, [side, v]) => withSide(l, side, v, false), row.lrud);
+    if (!engine.notebookSetWalls(row.target, lrud).startsWith('error')) pendingWalls.delete(key);
+  }
+}
+
 /** The notebook calls the writer needs, answered by the real engine. */
 const port: NotebookPort = {
+  setWall,
   page: (trip) => engine.notebookPage(trip),
   addShot: (trip, from, to, splay) => engine.notebookAddShot(trip, from, to, splay),
   setReading: (shot, which, value) => engine.notebookSetReading(shot, which, value),
@@ -124,29 +159,9 @@ export function commit(incoming: Incoming): boolean {
   }
   survey.message = '';
   survey.state = out.state;
-  if ('entry' in out && out.entry.kind === 'leg') applyPassage(trip, out.entry);
+  flushWalls(trip);
   changed();
   return true;
-}
-
-/** Writes the passage dimensions of a station (metres) in one edit. Returns true when written. */
-function setWallsAt(trip: string, label: string, w: Record<Side, number>, onlyIfBlank: boolean): boolean {
-  const page = engine.notebookPage(trip);
-  const row = [...(page?.rows ?? [])].reverse().find((r) => r.kind === 'station' && r.label === label && r.lrud !== null && r.lrud_editable);
-  const target = row?.shot ?? row?.station;
-  if (!row?.lrud || !target) return false;
-  if (onlyIfBlank && SIDES.some((s) => row.lrud![s] !== null)) return false;
-  const walls: Lrud = { ...row.lrud, ...w, left_open: false, right_open: false, up_open: false, down_open: false };
-  return !engine.notebookSetWalls(target, walls).startsWith('error');
-}
-
-/** The simulator's passage at the stations of a new leg (and at the one it left, the first time). */
-function applyPassage(trip: string, entry: Entry) {
-  if (!survey.randomPassage || !(instrument instanceof SimulatedInstrument) || !entry.to || !entry.from) return;
-  const hint = instrument.passage();
-  if (!hint) return;
-  if (!setWallsAt(trip, entry.from, hint.behind, true)) engine.log('info', 'survey', `${entry.from} already has its passage dimensions, or has no line in the notebook to put them on.`);
-  if (!setWallsAt(trip, entry.to, hint.at, false)) engine.log('warn', 'survey', `Could not write the passage dimensions at ${entry.to}.`);
 }
 
 /** What to do with something that has arrived: write it, or hold it for Accept. */
@@ -172,7 +187,7 @@ export function preview(incoming: Incoming): { text: string; warnings: string[];
   const d = incoming.kind === 'single' ? decide(survey.state, incoming.reading) : incoming.kind === 'leg-update' ? null : decideEvent(survey.state, incoming, taken).decision;
   if (!d) return { text: 'a refined leg', warnings: [], reject: null };
   const p = d.plan;
-  const what = !p ? '' : p.kind === 'leg' ? `${p.from} to ${p.to}` : p.kind === 'splay' ? `a splay at ${p.from}` : 'the backsight';
+  const what = !p ? '' : p.kind === 'leg' ? `${p.from} to ${p.to}` : p.kind === 'splay' ? `a splay at ${p.from}` : p.kind === 'lrud' ? `the ${p.side} wall at ${p.station}` : 'the backsight';
   return { text: what, warnings: d.warnings, reject: d.reject };
 }
 
@@ -193,7 +208,7 @@ export function discard() {
 export function undoLast(): boolean {
   const entry = survey.log[survey.log.length - 1];
   if (!entry) return false;
-  const result = undoWritten(port, entry.kind, entry.shot);
+  const result = undoWritten(port, entry.kind, entry.shot, cave.trip ?? '');
   if (result.startsWith('error')) return fail(result);
   survey.log = survey.log.slice(0, -1);
   survey.state = entry.before;
@@ -308,17 +323,19 @@ export async function connect(kind: LinkKind, given: { services?: string[]; anyD
     // A fresh page starts with the splays at the first station; a survey already under way carries on from where the surveyor stands.
     const fresh = !cave.trip || (engine.notebookPage(cave.trip)?.totals.shots ?? 0) === 0;
     const quirk = deviceOf(survey.sim.device).quirks.find((q) => q.id === survey.sim.quirk);
-    instrument = new SimulatedInstrument(events, { kind: survey.sim.device, steps: traverse({ seed: 7, legs: 40, backsights: true, splays: 4, startSplays: fresh }), quirks: survey.sim.quirk === 'none' ? [] : [survey.sim.quirk] });
+    instrument = new SimulatedInstrument(events, { kind: survey.sim.device, steps: traverse({ seed: 7, legs: 40, backsights: true, splays: 4, startSplays: fresh, lrud: true }), quirks: survey.sim.quirk === 'none' ? [] : [survey.sim.quirk] });
     survey.simNote = `${deviceOf(survey.sim.device).label}${quirk && quirk.id !== 'none' ? `, ${quirk.label}: ${quirk.expect}` : ''}`;
   } else {
     survey.simNote = '';
     instrument = new WebBleInstrument(events, { mode: kind === 'capture' ? 'capture' : 'auto', services: options.services, anyDevice: options.anyDevice });
   }
+  pendingWalls.clear();
   survey.groupsLegs = device;
   survey.kind = kind;
   survey.running = false;
   if (instrument instanceof SimulatedInstrument) {
     instrument.wantBacksights = () => survey.state.backsights;
+    instrument.wantLrud = () => survey.randomPassage;
     instrument.onFinished = () => (survey.running = false);
     instrument.onBurst = () => settleNow(); // a station shot in one go: nothing more is coming, so what is waiting is settled
   }

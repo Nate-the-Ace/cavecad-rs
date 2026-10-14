@@ -44,6 +44,8 @@ export interface Spread {
 export type LegEvent =
   /** A shot that is not part of a leg. */
   | { kind: 'splay'; reading: Reading }
+  /** A shot that measures a wall of the station (its `lrud` says which): never part of a leg, never a splay. */
+  | { kind: 'lrud'; reading: Reading }
   /** A leg is complete: the average of its shots. `group` names it for later updates. */
   | { kind: 'leg'; group: number; reading: Reading; shots: number; mark: Mark; spread: Spread; flagged: boolean }
   /** Another close shot joined a leg already reported: the new average, to replace the old. */
@@ -100,6 +102,10 @@ export class LegAssembler {
   /** Takes the next shot, in the order the instrument sent them. Returns what that settled. */
   push(shot: Reading): LegEvent[] {
     const out: LegEvent[] = [];
+    if (shot.lrud) {
+      out.push(...this.settle(), { kind: 'lrud', reading: shot });
+      return out;
+    }
     const g = this.group;
     if (g && isClose(g.shots[g.shots.length - 1], shot)) {
       g.shots.push(shot);

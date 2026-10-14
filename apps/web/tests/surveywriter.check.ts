@@ -95,5 +95,14 @@ const leg = (from: string, to: string, reading: Reading): Plan => ({ kind: 'leg'
   ok(nb.rows.filter((x) => x.to === null).every((x) => typeof x.cells.distance === 'number' && x.cells.az_bs === undefined), 'splays have a foresight reading and no backsight');
 }
 
+// writing and taking back a wall dimension
+{
+  const nb = fakeNotebook();
+  const plan: Plan = { kind: 'lrud', station: 'A2', side: 'left', reading: r(1.75, 10, 0) };
+  const w = write(nb.port, 't', plan);
+  ok(w.ok && w.label === 'left wall at A2' && nb.walls['A2:left'] === 1.75 && nb.rows.length === 0, 'a wall dimension goes to the station, not onto the page as a shot');
+  ok(w.ok && undo(nb.port, 'lrud', w.shot, 't') === 'ok' && nb.walls['A2:left'] === null, 'taking it back clears the dimension');
+}
+
 if (bad) process.exit(1);
 console.log('surveywriter ok');

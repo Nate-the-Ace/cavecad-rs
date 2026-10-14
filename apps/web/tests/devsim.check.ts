@@ -13,7 +13,7 @@ let bad = 0;
 const ok = (c: boolean, m: string) => { if (!c) { bad++; console.log('FAIL', m); } };
 const near = (a: number | null | undefined, b: number, e: number) => typeof a === 'number' && Math.abs(a - b) <= e;
 
-const STEPS = traverse({ seed: 31, legs: 3, backsights: true, splays: 4, startSplays: true });
+const STEPS = traverse({ seed: 31, legs: 3, backsights: true, splays: 4, startSplays: true, lrud: true });
 
 async function survey(kind: DeviceKind, quirks: string[] = [], backsights = true) {
   const nb = fakeNotebook();
@@ -42,7 +42,7 @@ async function survey(kind: DeviceKind, quirks: string[] = [], backsights = true
   await sim.connect();
   const fired = [sim.takeStation(), sim.takeStation(), sim.takeStation(), sim.takeStation()];
   sim.disconnect();
-  return { rows: nb.rows, errors, warnings, frames, sim, fired, state };
+  return { rows: nb.rows, walls: nb.walls, errors, warnings, frames, sim, fired, state };
 }
 
 /** The notebook as data, to compare two surveys. */
@@ -55,7 +55,8 @@ for (const d of DEVICES) {
   base[d.kind] = b;
   ok(b.errors.length === 0, `${d.label}: a clean survey is refused nothing (${b.errors.join('; ')})`);
   ok(legsOf(b.rows) === 'A1-A2 A2-A3 A3-A4', `${d.label}: three legs, A1 to A4`);
-  ok(b.rows.filter((r) => r.to === null).length === 16, `${d.label}: sixteen splays: four at each of the four stations, none left waiting`);
+  ok(b.rows.filter((r) => r.to === null).length === 0, `${d.label}: the wall shots are not splays: no splay rows at all`);
+  ok(Object.keys(b.walls).length === 16 && Object.values(b.walls).every((v) => typeof v === 'number' && v > 0), `${d.label}: sixteen wall dimensions: left, right, up and down at each of the four stations`);
   ok(b.rows.filter((r) => r.to !== null).every((r) => typeof (r.cells as Record<string, number>).az_bs === 'number'), `${d.label}: every leg has its backsight`);
   ok(b.fired.join() === '14,10,10,0', `${d.label}: the first click is four splays, a leg, its backsight and four splays (14); then ten; then nothing`);
   ok(b.state.from === 'A4' && b.state.awaiting === null, `${d.label}: the surveyor ends at A4`);
@@ -73,6 +74,7 @@ for (const d of DEVICES.filter((x) => x.kind !== 'x1')) {
     for (const k of ['distance', 'az_fs', 'inc_fs', 'az_bs', 'inc_bs']) if (typeof a[k] === 'number' || typeof b[k] === 'number') if (!near(a[k] as number, b[k] as number, k === 'distance' ? 0.01 : 0.05)) agree = false;
   });
   ok(agree, `${d.label} and the Cavway X1 write the same survey (distances to 1 cm, angles to 0.05 degrees)`);
+  ok(Object.keys(base.x1.walls).every((k) => near(base[d.kind].walls[k], base.x1.walls[k] as number, 0.01)), `${d.label} and the Cavway X1 write the same wall dimensions`);
 }
 
 // Quirks that must change nothing about the survey.
@@ -85,6 +87,7 @@ for (const [kind, q] of same) {
   const label = `${deviceOf(kind).label} / ${q}`;
   ok(r.errors.length === 0, `${label}: nothing is refused (${r.errors.join('; ')})`);
   ok(book(r.rows) === book(base[kind].rows), `${label}: the survey is the same as without the quirk`);
+  ok(JSON.stringify(r.walls) === JSON.stringify(base[kind].walls), `${label}: and so are its wall dimensions`);
 }
 
 // And the ones that must show something.

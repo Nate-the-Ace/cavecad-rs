@@ -8,12 +8,12 @@
 // own sign and direction, and a steep shot keeps whatever bearing the instrument gave (the engine
 // already ignores the compass on a pitch, so nothing here invents or drops one).
 
-import { suggestNext } from './notebook.ts';
+import { suggestNext, type Side } from './notebook.ts';
 import type { LegEvent } from './instrument/legs.ts';
 import type { Reading } from './instrument/types.ts';
 
-/** `auto`: the instrument says what each shot is (an X1: three close shots are a leg). `leg` and `splay`: the surveyor says. */
-export type Mode = 'auto' | 'leg' | 'splay';
+/** `auto`: the instrument says what each shot is (an X1: three close shots are a leg). `leg`, `splay` and `lrud`: the surveyor says (`lrud`: each shot measures a wall of the station). */
+export type Mode = 'auto' | 'leg' | 'splay' | 'lrud';
 
 /** A foresight has been written and its backsight is the next reading. */
 export interface Awaiting {
@@ -39,6 +39,8 @@ export interface SessionState {
 export type Plan =
   | { kind: 'leg'; from: string; to: string; reading: Reading }
   | { kind: 'splay'; from: string; reading: Reading }
+  /** A wall dimension of `station`: the shot's length, on the side it was aimed. */
+  | { kind: 'lrud'; station: string; side: Side; reading: Reading }
   | { kind: 'back'; shot: string; reading: Reading };
 
 export interface Decision {
@@ -112,11 +114,41 @@ export function looksLikeBack(fore: Reading, r: Reading): boolean {
   return Math.abs(fore.distance - r.distance) <= Math.max(1, 0.25 * fore.distance);
 }
 
-/** Decides what a reading is: the next leg, a splay, or the backsight being waited for. */
+/** How far from square on a shot may be and still count as aimed at the left or right wall, degrees either side. */
+export const WALL_AIM_DEG = 45;
+
+/**
+ * Which wall a shot measures, from the way the passage runs (`heading`, the compass of the last leg): up or down when
+ * it points well up or down, else left or right of the heading. `null` when it points along the passage, or when
+ * there is no heading yet to say left from right.
+ */
+export function sideOf(r: Reading, heading: number | null): Side | null {
+  if (r.inclination >= WALL_AIM_DEG) return 'up';
+  if (r.inclination <= -WALL_AIM_DEG) return 'down';
+  if (heading === null) return null;
+  const rel = mod360(r.azimuth - heading);
+  if (Math.abs(rel - 90) <= WALL_AIM_DEG) return 'right';
+  if (Math.abs(rel - 270) <= WALL_AIM_DEG) return 'left';
+  return null;
+}
+
+const NO_SIDE = 'That shot points along the passage, not at a wall. Aim left, right, up or down (and shoot a leg first, so there is a direction to say left from).';
+
+/** An LRUD shot at `station`: the side it says, or the side its aim gives. */
+function lrudPlan(station: string, reading: Reading, heading: number | null, warnings: string[]): Decision {
+  const side = reading.lrud ?? sideOf(reading, heading);
+  if (!side) return { plan: null, reject: NO_SIDE, warnings };
+  if (!station) return { plan: null, reject: 'Say which station you are standing at.', warnings };
+  return { plan: { kind: 'lrud', station, side, reading }, reject: null, warnings };
+}
+
+/** Decides what a reading is: the next leg, a splay, a wall dimension, or the backsight being waited for. */
 export function decide(state: SessionState, reading: Reading): Decision {
-  const checked = checkReading(reading, state.mode === 'splay' && !state.awaiting);
+  const lrud = state.mode === 'lrud' || !!reading.lrud;
+  const checked = checkReading(reading, (state.mode === 'splay' && !state.awaiting) || lrud);
   if (!checked.ok) return { plan: null, reject: checked.why, warnings: [] };
   const warnings = [...checked.warnings];
+  if (lrud) return lrudPlan(standing(state), reading, state.last?.reading.azimuth ?? null, warnings);
   if (state.awaiting) {
     warnings.push(...backsightWarnings(state.awaiting.reading, reading));
     return { plan: { kind: 'back', shot: state.awaiting.shot, reading }, reject: null, warnings };
@@ -151,6 +183,7 @@ export function applied(state: SessionState, plan: Plan, shot: string, taken: Re
       // A backsight that was awaited moves them on; one marked on the instrument for a leg already left behind does not.
       return state.awaiting ? advance(state, taken) : state;
     case 'splay':
+    case 'lrud':
       return state;
   }
 }
@@ -176,6 +209,7 @@ export function standing(state: SessionState): string {
 
 /** What to tell the surveyor to do next, in plain words. */
 export function nextStep(state: SessionState): string {
+  if (state.mode === 'lrud') return `Shoot the walls at ${standing(state) || '(name the station)'}: left, right, up, down. Each shot is a dimension of the station, not a splay.`;
   if (state.mode === 'auto') {
     if (state.awaiting) return `Backsight: shoot back from ${state.to.trim()} to ${state.from.trim()} (three shots; an X1 can mark them Backsight with M). Or carry on without.`;
     const from = state.from.trim();
@@ -201,13 +235,18 @@ const SPREAD_DISTANCE_M = 0.03;
 const SPREAD_ANGLE_DEG = 1.5;
 
 /** The instrument's own events (what the X1 says is a leg or a splay), made into a plan. `base` is where the surveyor stands when it is written (they have moved on if a backsight was awaited and something else came). */
-export function decideEvent(state: SessionState, ev: Extract<LegEvent, { kind: 'leg' | 'splay' }>, taken: ReadonlySet<string>): { base: SessionState; decision: Decision } {
+export function decideEvent(state: SessionState, ev: Extract<LegEvent, { kind: 'leg' | 'splay' | 'lrud' }>, taken: ReadonlySet<string>): { base: SessionState; decision: Decision } {
   const reading = ev.reading;
-  const checked = checkReading(reading, ev.kind === 'splay');
+  const asWall = ev.kind === 'lrud' || (ev.kind === 'splay' && state.mode === 'lrud');
+  const checked = checkReading(reading, ev.kind !== 'leg' || asWall);
   if (!checked.ok) return { base: state, decision: { plan: null, reject: checked.why, warnings: [] } };
   const warnings = [...checked.warnings];
   if (reading.error) warnings.push(`The instrument reports an ${reading.error}.`);
   const refuse = (base: SessionState, why: string) => ({ base, decision: { plan: null, reject: why, warnings } });
+  if (asWall) {
+    const base = state.awaiting ? advance(state, taken) : state;
+    return { base, decision: lrudPlan(base.from.trim(), reading, base.last?.reading.azimuth ?? null, warnings) };
+  }
   if (ev.kind === 'splay') {
     const base = state.awaiting ? advance(state, taken) : state;
     const from = base.from.trim();

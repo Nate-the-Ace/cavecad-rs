@@ -98,5 +98,16 @@ for (const policy of ['all', 'third', 'none'] as FlagPolicy[]) {
   else ok(events.filter((e) => e.kind === 'leg-update').length === 0, `policy ${policy}: a leg is reported when the third shot arrives`);
 }
 
+// a shot that measures a wall is neither part of a leg nor a splay
+{
+  const a = new LegAssembler();
+  const out = [...a.push(r(5, 100, 0)), ...a.push(r(5.001, 100.1, 0)), ...a.push({ ...r(1.4, 190, 0), lrud: 'right' }), ...a.push(r(5, 100, 0))];
+  ok(out.map((e) => e.kind).join() === 'splay,splay,lrud', `a wall shot settles what waited (as splays) and goes on its own: ${out.map((e) => e.kind)}`);
+  const b = new LegAssembler();
+  const legs = [...b.push(r(5, 100, 0)), ...b.push(r(5.001, 100, 0)), ...b.push(r(5.002, 100, 0)), ...b.push({ ...r(1.4, 190, 0), lrud: 'right' }), ...b.push({ ...r(1.4, 190, 0), lrud: 'left' })];
+  ok(legs.map((e) => e.kind).join() === 'leg,lrud,lrud', 'two wall shots as close as two splays never become a leg');
+  ok(b.waiting === 0, 'and nothing is left waiting');
+}
+
 if (bad) process.exit(1);
 console.log('legs ok');

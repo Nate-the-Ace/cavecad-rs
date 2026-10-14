@@ -17,7 +17,9 @@ export interface Walls {
 
 /** What a surveyor does at one point of a traverse. */
 export interface Step {
-  kind: 'leg' | 'back' | 'splay';
+  kind: 'leg' | 'back' | 'splay' | 'lrud';
+  /** On an lrud step: the wall it measures. */
+  side?: keyof Walls;
   distance: number;
   azimuth: number;
   inclination: number;
@@ -44,11 +46,12 @@ const round = (v: number, d: number) => Math.round(v * 10 ** d) / 10 ** d;
 
 /**
  * The shots of a wandering passage, in the order a surveyor takes them: a foresight per leg, then (when
- * `backsights`) the backsight, then `splays` readings round the new station (left, right, up, down).
+ * `backsights`) the backsight, then `splays` readings round the new station (left, right, up, down). With `lrud`
+ * those readings are wall dimensions of the station (kind `lrud`, carrying the side), not splays.
  * Readings are rounded the way an instrument shows them, and a backsight reads the opposite way with a
  * little noise, so a closing check on it has something to do.
  */
-export function traverse(opts: { seed: number; legs: number; backsights?: boolean; splays?: number; startSplays?: boolean }): Step[] {
+export function traverse(opts: { seed: number; legs: number; backsights?: boolean; splays?: number; startSplays?: boolean; lrud?: boolean }): Step[] {
   const next = rng(opts.seed);
   const out: Step[] = [];
   let heading = next() * 360;
@@ -62,7 +65,7 @@ export function traverse(opts: { seed: number; legs: number; backsights?: boolea
     const first = mod360(heading + (next() - 0.5) * 70);
     for (let s = 0; s < (opts.splays ?? 0); s++) {
       const [turn, up, side] = aims[s % 4];
-      out.push({ kind: 'splay', distance: round(Math.max(0.1, start[side] + (next() - 0.5) * 0.06), 2), azimuth: round(mod360(first + turn), 1), inclination: up });
+      out.push({ kind: opts.lrud ? 'lrud' : 'splay', ...(opts.lrud ? { side } : {}), distance: round(Math.max(0.1, start[side] + (next() - 0.5) * 0.06), 2), azimuth: round(mod360(first + turn), 1), inclination: up });
     }
   }
   for (let i = 0; i < opts.legs; i++) {
@@ -80,10 +83,10 @@ export function traverse(opts: { seed: number; legs: number; backsights?: boolea
       });
     }
     // Splays aim left, right, up and down and measure the passage, give or take a few centimetres.
-    const splayAims: [number, number, number][] = [[-90, 0, walls.left], [90, 0, walls.right], [0, 90, walls.up], [0, -90, walls.down]];
+    const splayAims: [number, number, number, keyof Walls][] = [[-90, 0, walls.left, 'left'], [90, 0, walls.right, 'right'], [0, 90, walls.up, 'up'], [0, -90, walls.down, 'down']];
     for (let s = 0; s < (opts.splays ?? 0); s++) {
-      const [turn, up, wall] = splayAims[s % 4];
-      out.push({ kind: 'splay', distance: round(Math.max(0.1, wall + (next() - 0.5) * 0.06), 2), azimuth: round(mod360(heading + turn), 1), inclination: up });
+      const [turn, up, wall, side] = splayAims[s % 4];
+      out.push({ kind: opts.lrud ? 'lrud' : 'splay', ...(opts.lrud ? { side } : {}), distance: round(Math.max(0.1, wall + (next() - 0.5) * 0.06), 2), azimuth: round(mod360(heading + turn), 1), inclination: up });
     }
   }
   return out;

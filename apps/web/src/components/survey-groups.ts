@@ -30,7 +30,7 @@ export function surveyGroups(options: { inCave?: () => void } = {}): Group[] {
       custom: SimulatorOptions,
       items: [
         { label: 'Run on its own', icon: Play, run: live.toggleRun, pressed: () => survey.running },
-        { label: 'Random passage', icon: Shuffle, run: () => (survey.randomPassage = !survey.randomPassage), pressed: () => survey.randomPassage },
+        { label: 'LRUD shots', icon: Shuffle, run: () => (survey.randomPassage = !survey.randomPassage), pressed: () => survey.randomPassage },
       ],
     },
   ];

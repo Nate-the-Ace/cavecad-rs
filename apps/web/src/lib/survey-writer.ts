@@ -9,6 +9,7 @@
 import type { NotebookPage } from './notebook.ts';
 import type { Reading } from './instrument/types.ts';
 import type { Plan } from './survey.ts';
+import type { Side } from './notebook.ts';
 
 export type CellName = 'distance' | 'az_fs' | 'az_bs' | 'inc_fs' | 'inc_bs';
 
@@ -18,6 +19,8 @@ export interface NotebookPort {
   addShot(trip: string, from: string, to: string, splay: boolean): string;
   setReading(shot: string, which: CellName, value: number | null): string;
   removeShot(shot: string): string;
+  /** Sets (or with `null` clears) one wall dimension of a station, metres. */
+  setWall(trip: string, station: string, side: Side, value: number | null): string;
 }
 
 export type Written = { ok: true; shot: string; label: string } | { ok: false; error: string };
@@ -56,6 +59,11 @@ export function write(port: NotebookPort, trip: string, plan: Plan, standingBack
     const where = standingBack ? `backsight ${standingBack.to.trim()} to ${standingBack.from.trim()}` : 'backsight';
     return { ok: true, shot: plan.shot, label: where };
   }
+  if (plan.kind === 'lrud') {
+    const result = port.setWall(trip, plan.station, plan.side, plan.reading.distance);
+    if (bad(result)) return { ok: false, error: clean(result) };
+    return { ok: true, shot: `${plan.station}|${plan.side}`, label: `${plan.side} wall at ${plan.station}` };
+  }
   const known = shotIds(port.page(trip));
   const splay = plan.kind === 'splay';
   const added = port.addShot(trip, plan.from, splay ? '' : plan.to, splay);
@@ -76,7 +84,11 @@ export function rewrite(port: NotebookPort, shot: string, r: Reading, which: 'fs
 }
 
 /** Takes a written plan back out: the shot is removed, or a backsight's cells are cleared. Returns `ok` or an error. */
-export function undo(port: NotebookPort, kind: Plan['kind'], shot: string): string {
+export function undo(port: NotebookPort, kind: Plan['kind'], shot: string, trip = ''): string {
+  if (kind === 'lrud') {
+    const at = shot.lastIndexOf('|');
+    return port.setWall(trip, shot.slice(0, at), shot.slice(at + 1) as Side, null);
+  }
   if (kind !== 'back') return port.removeShot(shot);
   for (const cell of ['az_bs', 'inc_bs'] as const) {
     const result = port.setReading(shot, cell, null);

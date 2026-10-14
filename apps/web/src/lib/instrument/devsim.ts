@@ -89,6 +89,8 @@ export interface ShotSpec {
   /** Part of a leg whatever the flag says: for the quirks that need to know. */
   isLeg: boolean;
   mark: X1Mark;
+  /** A shot that measures this wall of the station (the surveyor has the LRUD mode on): never a splay. */
+  lrud?: 'left' | 'right' | 'up' | 'down';
   /** The passage at the station a leg arrives at (carried on the first shot of a foresight leg). */
   walls?: Walls;
   /** On the first leg, when the survey starts with splays: the passage at the station it leaves. */
@@ -102,8 +104,8 @@ export function shotsFor(steps: Step[], policy: FlagPolicy, seed = 1): ShotSpec[
   const next = rng(seed);
   const out: ShotSpec[] = [];
   for (const s of steps) {
-    if (s.kind === 'splay') {
-      out.push({ distance: s.distance, azimuth: s.azimuth, inclination: s.inclination, leg: false, isLeg: false, mark: 'none' });
+    if (s.kind === 'splay' || s.kind === 'lrud') {
+      out.push({ distance: s.distance, azimuth: s.azimuth, inclination: s.inclination, leg: false, isLeg: false, mark: 'none', ...(s.kind === 'lrud' ? { lrud: s.side } : {}) });
       continue;
     }
     for (let i = 0; i < 3; i++) {
@@ -148,6 +150,8 @@ export class SimulatedInstrument implements Instrument {
   onBurst: (() => void) | null = null;
   /** Whether the surveyor is taking backsights right now (asked at each press, so the switch can change mid-survey). */
   wantBacksights: () => boolean = () => true;
+  /** Whether the wall shots (LRUD) are being taken right now. */
+  wantLrud: () => boolean = () => true;
   private readonly events: LinkEvents;
   private readonly quirks: Set<string>;
   private readonly shots: ShotSpec[];
@@ -156,6 +160,8 @@ export class SimulatedInstrument implements Instrument {
   private readonly sap5: Sap5Link;
   private readonly bric: BricLink;
   private index = 0;
+  /** Which wall each shot fired measures, in the order fired: put on its reading when it comes out of the decoder (a BRIC's comes late). */
+  private readonly walls: (ShotSpec['lrud'])[] = [];
   private fired = 0;
   private seq: 0 | 1 = 0;
   private bricIndex = 0;
@@ -174,10 +180,12 @@ export class SimulatedInstrument implements Instrument {
     this.shots = shotsFor(opts.steps ?? traverse({ seed: 7, legs: 20, backsights: true, splays: 2 }), policy);
     // The SAP5 fault shows on long shots: a survey of legs several times the length shows it.
     if (this.quirks.has('fault32')) for (const s of this.shots) if (s.isLeg) s.distance = round(s.distance * 8, 3);
-    this.x1 = new X1Link(events, (b) => this.received.push(b), 'sim');
-    this.sap6 = new LegLink(events, (b) => this.received.push(Uint8Array.of(b)), 'sim');
-    this.sap5 = new Sap5Link(events, 'sim');
-    this.bric = new BricLink(events, 'sim');
+    // An instrument cannot say that a shot is a wall dimension: the surveyor does, so the reading is marked after it is decoded.
+    const marked: LinkEvents = { ...events, status: (s, d) => events.status(s, d), frame: (h, f) => events.frame(h, f), reading: (r) => { const lrud = this.walls.shift(); events.reading(lrud ? { ...r, lrud } : r); } };
+    this.x1 = new X1Link(marked, (b) => this.received.push(b), 'sim');
+    this.sap6 = new LegLink(marked, (b) => this.received.push(Uint8Array.of(b)), 'sim');
+    this.sap5 = new Sap5Link(marked, 'sim');
+    this.bric = new BricLink(marked, 'sim');
   }
 
   async connect() {
@@ -188,6 +196,7 @@ export class SimulatedInstrument implements Instrument {
 
   disconnect() {
     this.stop();
+    this.walls.length = 0;
     this.bric.flush();
     this.connected = false;
     this.events.status('idle');
@@ -210,6 +219,7 @@ export class SimulatedInstrument implements Instrument {
     this.index += 1;
     this.fired += 1;
     this.clock += 1;
+    this.walls.push(s.lrud);
     if (s.walls) {
       // A new leg: the passage at the station it reaches, and (for the first leg) at the one it leaves.
       this.hint = { at: s.walls, behind: s.behind ?? this.behind ?? s.walls };
@@ -279,6 +289,10 @@ export class SimulatedInstrument implements Instrument {
       const next = this.upcoming;
       if (next?.mark === 'backsight' && !this.wantBacksights()) {
         this.index += 1; // no backsights today: that leg's backsight is not shot
+        continue;
+      }
+      if (next?.lrud && !this.wantLrud()) {
+        this.index += 1; // no LRUD today: that wall is not shot
         continue;
       }
       if (next?.walls) sawLeg = true;
