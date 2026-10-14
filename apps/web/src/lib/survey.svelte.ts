@@ -1,55 +1,51 @@
-// The live Survey session: ties an instrument link to the notebook. Readings come in from a link
-// (Bluetooth, or the simulator), `survey.ts` decides what each one is, and this file writes it to the
-// notebook through the engine's existing notebook calls, so every shot is an ordinary document edit
-// (undoable, merged like any other, shown on the Map, Profile and Cross Section the moment it lands).
-// Nothing here is stored in the cave: the session (where the surveyor stands, the mode, the log) is
-// view state that is rebuilt from the notebook page when a trip is opened.
+// The live Survey session: ties an instrument link to the notebook. Shots come in from a link (a Cavway X1
+// over Bluetooth, or the simulator); for an X1 `legs.ts` groups them into legs and splays; `survey.ts`
+// decides what each is; `survey-run.ts` writes it to the notebook through the engine's existing notebook
+// calls, so every shot is an ordinary document edit (undoable, merged like any other, shown on the Map,
+// Profile and Cross Section the moment it lands). Nothing here is stored in the cave: the session (where the
+// surveyor stands, the mode, the log) is view state rebuilt from the notebook page when a trip is opened.
 
 import { cave, changed } from './cave.svelte';
 import { engine } from './engine';
 import { SIDES, withSide, type NotebookPage, type Side } from './notebook';
-import { SimulatedInstrument, traverse } from './instrument/simulator';
+import { LegAssembler, type LegEvent } from './instrument/legs';
+import { traverse } from './instrument/simulator';
+import { X1SimulatedInstrument } from './instrument/x1sim';
 import { WebBleInstrument } from './instrument/webble';
 import type { Instrument, LinkEvents, LinkStatus, Reading } from './instrument/types';
-import { advance, applied, decide, nextStep, skipBack, standing, start, withMode, type Mode, type Plan, type SessionState } from './survey';
-import { undo as undoWritten, write, type NotebookPort } from './survey-writer';
+import { advance, decide, decideEvent, nextStep, skipBack, standing, start, withMode, type Mode, type SessionState } from './survey';
+import { run, type Entry, type Incoming } from './survey-run';
+import { undo as undoWritten, type NotebookPort } from './survey-writer';
 
-/** One thing written, with what is needed to take it back. */
-export interface LogEntry {
-  /** A counter, for list keys. */
-  n: number;
-  kind: Plan['kind'];
-  /** Where it was written, as the surveyor would say it (`A3 to A4`, `splay at A4`, `backsight A4 to A3`). */
-  label: string;
-  reading: Reading;
-  /** The shot it created (leg, splay) or completed (backsight). */
-  shot: string;
-  warnings: string[];
-  /** Where the surveyor stood before it, so undoing it puts them back. */
-  before: SessionState;
-}
+export type LogEntry = Entry;
+export type LinkKind = 'x1' | 'caveble' | 'capture' | 'simulator';
 
-export type LinkKind = 'simulator' | 'cave' | 'capture';
+/** How long after the last shot an X1 group still waiting (one or two close shots) is settled as splays. */
+const IDLE_FLUSH_MS = 8000;
 
 export const survey = $state({
   status: 'idle' as LinkStatus,
   detail: '',
   device: '',
   canTakeShot: false,
+  /** The instrument sends single shots and says itself what is a leg (an X1): the Leg/Splay switch is not used. */
+  groupsLegs: false,
   /** Where the surveyor stands and what they are doing. */
   state: start('', new Set()) as SessionState,
-  /** Write each reading at once (default, as TopoDroid does) or hold it for an Accept. */
+  /** Write each thing at once (default, as TopoDroid does) or hold it for an Accept. */
   auto: true,
-  /** A reading waiting for Accept (only when `auto` is off). */
-  pending: null as Reading | null,
-  /** The latest reading, accepted or not, for the big display. */
+  /** Things waiting for Accept (only when `auto` is off), oldest first. */
+  held: [] as Incoming[],
+  /** Close shots the X1 grouping is holding while it waits to see if they become a leg (0, 1 or 2). */
+  waiting: 0,
+  /** The latest reading, written or not, for the big display. */
   last: null as Reading | null,
-  log: [] as LogEntry[],
+  log: [] as Entry[],
   /** Raw frames, newest last, for working out an instrument whose protocol is not known. */
   frames: [] as string[],
-  /** Why the last reading was refused (or the last edit failed). Empty when all is well. */
+  /** Why the last thing was refused (or the last edit failed). Empty when all is well. */
   message: '',
-  /** Worth a look about the last reading, which was written anyway. */
+  /** Worth a look about the last thing written, which was written anyway. */
   warnings: [] as string[],
   /** The trip this session was set up for: a different trip starts it again. */
   trip: '',
@@ -57,6 +53,8 @@ export const survey = $state({
 
 let instrument: Instrument | null = null;
 let counter = 0;
+const assembler = new LegAssembler();
+let flushTimer: ReturnType<typeof setTimeout> | undefined;
 
 /** Every station name in use anywhere in the cave and on this page: never suggest one that would close a loop by accident. */
 function takenNames(page: NotebookPage | null): Set<string> {
@@ -64,6 +62,8 @@ function takenNames(page: NotebookPage | null): Set<string> {
   for (const r of page?.rows ?? []) taken.add(r.label);
   return taken;
 }
+
+const names = () => takenNames(cave.trip ? engine.notebookPage(cave.trip) : null);
 
 /**
  * Sets the session up for the open trip: standing at the last station on its page (or A1 on an empty
@@ -76,13 +76,15 @@ export function syncToTrip() {
   const last = [...(page?.rows ?? [])].reverse().find((r) => r.kind === 'station');
   survey.state = start(last?.label ?? 'A1', takenNames(page), survey.state);
   survey.log = [];
-  survey.pending = null;
+  survey.held = [];
   survey.message = '';
   survey.warnings = [];
+  assembler.reset();
+  survey.waiting = 0;
 }
 
 const fail = (m: string) => {
-  survey.message = m.replace(/^error: /, '');
+  if (m) survey.message = m.replace(/^error: /, '');
   return false;
 };
 
@@ -94,42 +96,62 @@ const port: NotebookPort = {
   removeShot: (shot) => engine.notebookRemoveShot(shot),
 };
 
-/** Writes a reading to the notebook as the session says it should go. Returns true when it was written. */
-export function commit(reading: Reading): boolean {
-  survey.pending = null;
-  survey.last = reading;
-  survey.warnings = [];
+/** Writes one thing to the notebook. Returns true when it was written (or an earlier leg was refined). */
+export function commit(incoming: Incoming): boolean {
   const trip = cave.trip;
   if (!trip) return fail('Open a cave first.');
-  const d = decide(survey.state, reading);
-  if (!d.plan) return fail(d.reject ?? 'That reading cannot be used.');
-  const before = survey.state;
-  const done = write(port, trip, d.plan, before);
-  if (!done.ok) return fail(done.error);
+  const out = run(port, trip, survey.state, incoming, names, survey.log);
+  if (!out.ok) return fail(out.error);
+  if ('entry' in out) {
+    survey.log = [...survey.log, { ...out.entry, n: ++counter }].slice(-50);
+    survey.warnings = out.warnings;
+  } else {
+    survey.log = survey.log.map((e) => (e.shot === out.updated.shot ? out.updated : e));
+  }
   survey.message = '';
-  survey.warnings = d.warnings;
-  survey.log = [...survey.log, { n: ++counter, kind: d.plan.kind, label: done.label, reading, shot: done.shot, warnings: d.warnings, before }].slice(-50);
+  survey.state = out.state;
   changed();
-  survey.state = applied(before, d.plan, done.shot, takenNames(engine.notebookPage(trip)));
   return true;
 }
 
-/** A reading arrived from the instrument. */
-function onReading(reading: Reading) {
-  survey.last = reading;
-  if (survey.auto) commit(reading);
-  else {
-    survey.pending = reading;
-    survey.message = '';
+/** What to do with something that has arrived: write it, or hold it for Accept. */
+function handle(incoming: Incoming) {
+  if (survey.auto) {
+    commit(incoming);
+    return;
   }
+  if (incoming.kind === 'leg-update') {
+    // A held leg gained a shot: the held one is replaced. One already written is refined without asking.
+    const i = survey.held.findIndex((h) => h.kind === 'leg' && h.group === incoming.group);
+    if (i >= 0) survey.held = survey.held.map((h, k) => (k === i ? ({ ...incoming, kind: 'leg' } as Incoming) : h));
+    else commit(incoming);
+    return;
+  }
+  survey.held = [...survey.held, incoming];
+  survey.message = '';
 }
 
-/** Writes the held reading (the Accept button). */
-export const accept = () => survey.pending && commit(survey.pending);
+/** What the held thing would do when accepted, for the preview card. */
+export function preview(incoming: Incoming): { text: string; warnings: string[]; reject: string | null } {
+  const taken = names();
+  const d = incoming.kind === 'single' ? decide(survey.state, incoming.reading) : incoming.kind === 'leg-update' ? null : decideEvent(survey.state, incoming, taken).decision;
+  if (!d) return { text: 'a refined leg', warnings: [], reject: null };
+  const p = d.plan;
+  const what = !p ? '' : p.kind === 'leg' ? `${p.from} to ${p.to}` : p.kind === 'splay' ? `a splay at ${p.from}` : 'the backsight';
+  return { text: what, warnings: d.warnings, reject: d.reject };
+}
 
-/** Throws the held reading away (the Discard button). */
+/** Writes the oldest held thing (the Accept button). */
+export function accept() {
+  const [next, ...rest] = survey.held;
+  if (!next) return;
+  survey.held = rest;
+  commit(next);
+}
+
+/** Throws the oldest held thing away (the Discard button). */
 export function discard() {
-  survey.pending = null;
+  survey.held = survey.held.slice(1);
 }
 
 /** Takes back the last thing written: the shot is removed (or its backsight cleared) and the surveyor stands where they did. */
@@ -142,12 +164,9 @@ export function undoLast(): boolean {
   survey.state = entry.before;
   survey.message = '';
   survey.warnings = [];
+  assembler.reset(); // so that shooting the same leg again right away is a new leg, not a refinement of the one just taken back
   changed();
   return true;
-}
-
-function names(): Set<string> {
-  return takenNames(cave.trip ? engine.notebookPage(cave.trip) : null);
 }
 
 export function setMode(mode: Mode) {
@@ -199,13 +218,42 @@ export function setStandingWall(side: Side, value: number | null): boolean {
 
 // ---- the link ----
 
+/** Hands what the grouping has settled to `handle`. */
+function settle(events: LegEvent[]) {
+  for (const e of events) handle(e);
+}
+
+/** Settle what is waiting as splays now, without waiting for the pause (the surveyor means them to be splays). */
+export function settleNow() {
+  clearTimeout(flushTimer);
+  settle(assembler.flush());
+  survey.waiting = 0;
+}
+
+/** A shot arrived from the instrument. */
+function onReading(reading: Reading) {
+  survey.last = reading;
+  if (!instrument?.groupsLegs) {
+    handle({ kind: 'single', reading });
+    return;
+  }
+  settle(assembler.push(reading));
+  survey.waiting = assembler.waiting;
+  // One or two close shots may yet become a leg; when the surveyor pauses they are splays.
+  clearTimeout(flushTimer);
+  flushTimer = setTimeout(() => {
+    settle(assembler.flush());
+    survey.waiting = 0;
+  }, IDLE_FLUSH_MS);
+}
+
 const events: LinkEvents = {
   status(status, detail = '') {
     survey.status = status;
     survey.detail = detail;
     survey.device = instrument && status === 'connected' ? instrument.name : survey.device;
     survey.canTakeShot = !!instrument?.canTakeShot && status === 'connected';
-    if (status === 'idle' || status === 'error' || status === 'unsupported') survey.pending = null;
+    if (status === 'idle' || status === 'error' || status === 'unsupported') survey.held = [];
   },
   frame(hex, from) {
     survey.frames = [...survey.frames, `${from.length > 8 ? from.slice(0, 8) : from}  ${hex}`].slice(-300);
@@ -213,21 +261,28 @@ const events: LinkEvents = {
   reading: onReading,
 };
 
-/** Connects to an instrument. `simulator` needs no hardware; `cave` is the open protocol; `capture` logs a device's frames. */
-export async function connect(kind: LinkKind, services: string[] = []) {
-  instrument?.disconnect();
+/** Connects to an instrument. `x1` is the Cavway X1; `simulator` a pretend one; `caveble` the open protocol; `capture` logs any device's frames. */
+export async function connect(kind: LinkKind, options: { services?: string[]; anyDevice?: boolean } = {}) {
+  disconnect();
   survey.message = '';
   survey.frames = [];
+  const device = kind === 'x1' || kind === 'simulator';
   if (kind === 'simulator') {
-    // Its script follows the surveyor's choice: backsights if they are on, no splays (they flip to splay and fire more).
-    instrument = new SimulatedInstrument(events, { steps: traverse({ seed: 7, legs: 60, backsights: survey.state.backsights, splays: 0 }) });
+    instrument = new X1SimulatedInstrument(events, { steps: traverse({ seed: 7, legs: 30, backsights: survey.state.backsights, splays: 2 }), policy: 'third' });
   } else {
-    instrument = new WebBleInstrument(events, { mode: kind, services });
+    instrument = new WebBleInstrument(events, { mode: kind, services: options.services, anyDevice: options.anyDevice });
   }
+  survey.groupsLegs = device;
+  // An X1 says itself what is a leg; any other instrument is told by the surveyor.
+  survey.state = { ...survey.state, mode: device ? 'auto' : survey.state.mode === 'auto' ? 'leg' : survey.state.mode };
+  assembler.reset();
+  survey.waiting = 0;
   await instrument.connect();
 }
 
 export function disconnect() {
+  clearTimeout(flushTimer);
+  if (instrument?.groupsLegs) settle(assembler.flush());
   instrument?.disconnect();
   instrument = null;
   survey.status = 'idle';
@@ -241,9 +296,9 @@ export function takeShot() {
 
 /** The simulator runs on its own, a shot every `ms`, until its script is out. */
 export function autoRun(ms: number | null) {
-  if (!(instrument instanceof SimulatedInstrument)) return;
+  if (!(instrument instanceof X1SimulatedInstrument)) return;
   if (ms === null) instrument.stop();
   else instrument.auto(ms);
 }
 
-export const simulating = () => instrument instanceof SimulatedInstrument;
+export const simulating = () => instrument instanceof X1SimulatedInstrument;

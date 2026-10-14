@@ -12,7 +12,7 @@ instrument straight into the notebook".
 - `npx svelte-check`: 0 errors.
 - The panel itself was run in a browser against a MOCK of the wasm engine (the real one cannot be built on
   that PC): connect to the simulator, backsights, splay mode, undo, hold/accept/discard, passage fields. That
-  harness was throwaway and is not in the branch.
+  harness is now `npm run harness` (see DESIGN.md), so anyone can tap through it.
 - NOT run: the panel against the real engine, the other panels reacting to new shots, `surveyLayout()` (it
   is dockview code like `workLayout()`, not exercised), Web Bluetooth (`webble.ts` is written from the API
   without a device), any Rust.
@@ -31,13 +31,13 @@ instrument straight into the notebook".
 
 ## When the Cavway X1 is in hand
 
-The CaveBLE protocol is verified against its reference client, NOT against the X1. Whether the X1 speaks it is
-the open question. Test in a Chromium browser on a laptop (Web Bluetooth works there), then on the iPad in
-Bluefy.
+The X1 decoder is written from the vendor PDF, manual and Windows app (`docs/CAVWAY-X1.md`), NOT yet checked against a
+unit. Test in a Chromium browser on a laptop (Web Bluetooth works there), then on the iPad in Bluefy. Work through the
+UNVERIFIED list in that note; the capture log (Survey panel, bottom) is how: it shows every frame as hex.
 
-1. Survey panel > Connect. If the chooser shows the X1, it advertises the CaveBLE service
-   (`137c4435-8a64-4bcb-93f1-3792c6bdc965`) and shots should appear. Check distance, compass and clino against
-   the instrument's own display, and that Take shot fires it.
+1. Survey panel > Connect X1. If the chooser does not show it, tick "Show every Bluetooth device" under the capture
+   section and try again (the X1's advertised name and service list are not in any source). Check distance, compass
+   and clino against the X1's own display, that Take shot fires it, and that three close shots become a leg.
 2. If the X1 is not offered: use a Bluetooth scanner (nRF Connect) to list its services and characteristics,
    paste the service UUIDs into "Instrument log and capture", and Connect in capture mode. Fire shots and
    copy the log: each line is the characteristic and the frame in hex. That is the sniffed protocol; a
@@ -55,3 +55,10 @@ Bluefy.
 - **Offline loading** (see DESIGN.md): a network-first service worker, or "load before the cave and do not reload".
 - **Single-edit shot** in `cave-notebook` (Rust, laptop): one undo step per shot instead of several.
 - **Write at once** is on by default (as TopoDroid does); the alternative is holding every reading for Accept.
+
+## Update 2026-10-14 (later): the X1 decoder
+
+CaveBLE turned out to be wrong for the X1; see `docs/CAVWAY-X1.md`. The decoder, the grouping of shots into legs, the
+simulator and the X1 transport are built and tested (`test:cavway`, `test:legs`, `test:x1session`). Two numbers are
+guesses to settle on the unit: how close shots must be to count as one leg (`isClose` in `legs.ts`), and the 8 second
+pause after which one or two waiting shots become splays (`IDLE_FLUSH_MS` in `survey.svelte.ts`).

@@ -72,6 +72,7 @@ export interface SimulatorOptions {
 export class SimulatedInstrument implements Instrument {
   readonly name = 'Simulated instrument';
   readonly canTakeShot = true;
+  readonly groupsLegs = false;
   /** Every command byte the surveyor sent, in order (the acks). */
   readonly received: number[] = [];
   private readonly link: LegLink;

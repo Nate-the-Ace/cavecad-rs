@@ -70,6 +70,11 @@ export function write(port: NotebookPort, trip: string, plan: Plan, standingBack
   return { ok: true, shot, label: splay ? `splay at ${plan.from}` : `${plan.from} to ${plan.to}` };
 }
 
+/** Replaces the readings of a shot already written (a leg that gained a close shot, so its average moved). Returns `ok` or an error. */
+export function rewrite(port: NotebookPort, shot: string, r: Reading, which: 'fs' | 'bs'): string {
+  return fill(port, shot, r, which);
+}
+
 /** Takes a written plan back out: the shot is removed, or a backsight's cells are cleared. Returns `ok` or an error. */
 export function undo(port: NotebookPort, kind: Plan['kind'], shot: string): string {
   if (kind !== 'back') return port.removeShot(shot);

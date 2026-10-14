@@ -122,25 +122,33 @@ Acknowledge = the flag byte `OR 0x55`, sent framed (TopoDroid: `sendCommand(pack
 - Calibration is done on the device alone (groups of four shots), with the same method as the DistoX2.
 - Battery: 1800 mAh, non-magnetic. USB-C charges and carries data. IP67.
 
-## What this changes in the Survey panel
+## What is built from this (branch `survey`)
 
-1. **Replace the CaveBLE protocol with this one.** New `lib/instrument/cavway.ts` beside `caveble.ts`: the NUS UUIDs,
-   framing, the packet decoder, the ack, the commands. `webble.ts` takes the protocol as a parameter; `link.ts`
-   shares the duplicate-frame handling.
-2. **The leg/splay switch becomes the device's job.** A reading arrives with `isLeg`, `mark` and `calibration`.
-   The session needs: collect consecutive flagged shots, make ONE leg of them (TopoDroid and the DistoX average the
-   triple; our rule must be chosen), treat unflagged shots as splays at the station stood at, treat mark
-   `backsight` as the backsight, ignore calibration shots (type `0x02`). Nathan's `cavway-assistant-web/src/cavecad.js` already
-   merges legs with a guessed tolerance (5 cm, 1.5 degrees); that guess is replaced by what the real packets show.
-3. **More to keep per shot, for checks:** accuracy error text, laser quality, the two sensors' agreement. A shot
-   with an accuracy error should be flagged in the log, not silently written.
-4. **Simulator and tests** emit X1 packets: Nathan's emulator (`cavway-x1-emulator/device/`) already encodes his
-   reading of them; reuse its packet builder for the test fixtures rather than writing another.
-5. Keep the capture mode: it is how every UNVERIFIED line below gets settled in ten minutes with the real unit.
+- `lib/instrument/cavway.ts`: the decoder, framing, ack, commands, memory queries, accuracy-error parsing, and an
+  encoder used by the simulator and tests (`npm run test:cavway`: a packet written out by hand from the PDF layout,
+  the 33-byte short form, a 70 m shot, flags and marks, framing bytes).
+- `lib/instrument/link.ts` `X1Link`: decode, acknowledge every packet (a repeat too), drop a byte-for-byte repeat of
+  one of the last eight packets, leave calibration shots out.
+- `lib/instrument/legs.ts` `LegAssembler`: the X1 sends single shots, so close shots are grouped (tape 5 cm or 0.5 %,
+  compass and clino 2 degrees: a guess, one function, `isClose`). Three close shots, or one the device flags as a
+  leg, are ONE leg (the average, circular for the compass); a fourth close shot refines it; any other shot is a splay,
+  settled when the next far shot arrives or after an 8 second pause (or the "Splays now" button). It does not depend
+  on whether all three shots carry the flag or only one: all three behaviours are tested (`npm run test:legs`).
+- `lib/survey.ts`: an `auto` mode where the instrument says what each thing is: a splay is at the station stood at, a
+  leg marked Backsight goes to the leg awaiting one (or the last leg, if backsights are not switched on), anything
+  else is the next leg. Moving on without a backsight is understood from the next splay or leg.
+- `lib/survey-run.ts`: one event start to finish (decide, write, new state); `npm run test:x1session` runs whole
+  trips from a simulated X1 into a stand-in notebook under all three flag behaviours, repeated and short packets,
+  with and without backsights.
+- `lib/instrument/x1sim.ts`: a pretend X1: one press, one shot (a leg is three close shots, marked Backsight for a
+  backsight), going through the same framing and decoding. `webble.ts` has an `x1` mode (service filter or "show every
+  device", writes one at a time 100 ms apart as TopoDroid does, reconnect), a `caveble` mode and `capture`.
+- Not built: marks other than Backsight reaching the notebook (feature, ridge and generic are decoded and carried but
+  not written), history download over BLE (`queryFrame` and `parseReply` exist), calibration, laser buttons.
 
 ## UNVERIFIED (settled with the real X1)
 
-1. **Packet size over BLE: 33 or 64 bytes?** The PDF says 64. TopoDroid's X1 driver only accepts a packet of exactly
+1. **Packet size over BLE: 33 or 64 bytes?** (the decoder takes both) The PDF says 64. TopoDroid's X1 driver only accepts a packet of exactly
    33 bytes (offsets 0 to 32: through sensor 1's raw M), and asks for no larger MTU (the X1 negotiates it). The
    decoder should take any length of 33 or more, and the log will say which.
 2. **Where the leg flag is.** The PDF's figure puts "LF" at bit 1 and "CF" at bit 0; the Windows app reads leg

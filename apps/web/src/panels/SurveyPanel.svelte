@@ -14,13 +14,14 @@
   import { formatLength } from '../lib/units';
   import * as live from '../lib/survey.svelte';
   import { survey } from '../lib/survey.svelte';
-  import { decide, nextStep } from '../lib/survey';
+  import { nextStep } from '../lib/survey';
   import { webBluetoothAvailable } from '../lib/instrument/webble';
 
   let ready = $state(false);
   let running = $state(false);
   let services = $state('');
   let showCapture = $state(false);
+  let anyDevice = $state(false);
   loadEngine().then(() => (ready = true));
 
   // Set up for the open trip (not on every edit: that would move the surveyor back to the page's end).
@@ -36,8 +37,12 @@
     return ready ? (engine.notebookTrips().find((t) => t.id === cave.trip)?.name || 'Untitled trip') : '';
   });
 
-  // The held reading and what writing it would do, for the preview card.
-  const held = $derived(survey.pending ? decide(survey.state, survey.pending) : null);
+  // The oldest thing held for Accept, and what writing it would do, for the preview card.
+  const held = $derived.by(() => {
+    void survey.state;
+    const next = survey.held[0];
+    return next ? live.preview(next) : null;
+  });
 
   // Passage dimensions at the station the surveyor stands at.
   let wallInput = $state<Record<Side, number | null>>({ left: null, right: null, up: null, down: null });
@@ -76,9 +81,9 @@
     running = !running;
     live.autoRun(running ? 1200 : null);
   }
-  async function connect(kind: 'simulator' | 'cave' | 'capture') {
+  async function connect(kind: live.LinkKind) {
     running = false;
-    await live.connect(kind, services.split(/[\s,]+/).filter(Boolean));
+    await live.connect(kind, { services: services.split(/[\s,]+/).filter(Boolean), anyDevice });
   }
   function disconnect() {
     running = false;
@@ -88,7 +93,7 @@
   function onKey(e: KeyboardEvent) {
     const t = e.target as HTMLElement;
     if (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA') return; // typing: leave the keys to the field
-    if (e.key === 'Enter' && survey.pending) live.accept();
+    if (e.key === 'Enter' && survey.held.length > 0) live.accept();
     else if (e.key === 'Escape') live.discard();
     else if (e.key === ' ' && survey.canTakeShot) {
       e.preventDefault();
@@ -119,7 +124,7 @@
     {#if linked}
       <button class="small" onclick={disconnect}>Disconnect</button>
     {:else}
-      <button class="small primary" onclick={() => connect('cave')} title="Connect to an instrument that speaks the open cave-survey Bluetooth protocol"><Bluetooth size={15} /> Connect</button>
+      <button class="small primary" onclick={() => connect('x1')} title="Connect to a Cavway X1 over Bluetooth"><Bluetooth size={15} /> Connect X1</button>
       <button class="small" onclick={() => connect('simulator')} title="A pretend instrument: try the whole workflow with no hardware"><FlaskConical size={15} /> Simulator</button>
     {/if}
   </div>
@@ -144,24 +149,28 @@
     {#if survey.message}<p class="problem" role="alert">{survey.message}</p>{/if}
     {#each survey.warnings as w}<p class="caution" role="status">{w}</p>{/each}
 
-    {#if survey.pending && held}
+    {#if held}
       <section class="hold" aria-label="Reading waiting">
-        {#if held.plan}
-          <p>Write this as <b>{held.plan.kind === 'leg' ? `${held.plan.from} to ${held.plan.to}` : held.plan.kind === 'splay' ? `a splay at ${held.plan.from}` : 'the backsight'}</b>?</p>
+        {#if !held.reject}
+          <p>Write this as <b>{held.text}</b>?{#if survey.held.length > 1} <span class="hint">({survey.held.length - 1} more waiting)</span>{/if}</p>
           {#each held.warnings as w}<p class="caution">{w}</p>{/each}
         {:else}<p class="problem">{held.reject}</p>{/if}
         <div class="row">
-          <button class="go" onclick={live.accept} disabled={!held.plan}><Check size={20} /> Accept</button>
+          <button class="go" onclick={live.accept} disabled={held.reject !== null}><Check size={20} /> Accept</button>
           <button class="no" onclick={live.discard}><X size={20} /> Discard</button>
         </div>
       </section>
     {/if}
 
     <section class="where" aria-label="Where you are">
-      <div class="seg" role="group" aria-label="What the next shot is">
-        <button class:sel={survey.state.mode === 'leg'} aria-pressed={survey.state.mode === 'leg'} onclick={() => live.setMode('leg')}>Leg</button>
-        <button class:sel={survey.state.mode === 'splay'} aria-pressed={survey.state.mode === 'splay'} onclick={() => live.setMode('splay')}>Splay</button>
-      </div>
+      {#if survey.groupsLegs}
+        <p class="auto" title="The X1 itself calls three or more consecutive close shots a leg; any other shot is a splay. Mark a leg Backsight with the M button on the X1.">The X1 decides: three close shots are a leg, one shot is a splay.</p>
+      {:else}
+        <div class="seg" role="group" aria-label="What the next shot is">
+          <button class:sel={survey.state.mode === 'leg'} aria-pressed={survey.state.mode === 'leg'} onclick={() => live.setMode('leg')}>Leg</button>
+          <button class:sel={survey.state.mode === 'splay'} aria-pressed={survey.state.mode === 'splay'} onclick={() => live.setMode('splay')}>Splay</button>
+        </div>
+      {/if}
       <label class="chk"><input type="checkbox" checked={survey.state.backsights} onchange={(e) => live.setBacksights(e.currentTarget.checked)} /> Backsights</label>
       <label class="chk" title="Off: each reading waits for Accept before it is written"><input type="checkbox" bind:checked={survey.auto} /> Write at once</label>
       <div class="names">
@@ -170,6 +179,9 @@
         <label>To <input class="name" bind:value={survey.state.to} maxlength="40" aria-label="Station the next shot goes to" onkeydown={enter} disabled={survey.state.mode === 'splay' || survey.state.awaiting !== null} /></label>
       </div>
       <p class="next" role="status">{nextStep(survey.state)}</p>
+      {#if survey.groupsLegs && survey.waiting > 0}
+        <p class="wait" role="status">{survey.waiting} close shot{survey.waiting === 1 ? '' : 's'} so far: {survey.waiting === 1 ? 'two more make' : 'one more makes'} a leg. A pause of a few seconds makes {survey.waiting === 1 ? 'it a splay' : 'them splays'}. <button class="link" onclick={live.settleNow}>Splays now</button></p>
+      {/if}
     </section>
 
     <section class="actions" aria-label="Actions">
@@ -215,9 +227,11 @@
     <details class="capture" bind:open={showCapture}>
       <summary>Instrument log and capture (for an instrument whose protocol is not known)</summary>
       <p class="hint">Capture connects to any Bluetooth device and logs every frame it sends. The browser can only reach services it is told about in advance: list the service UUIDs (from a Bluetooth scanner app such as nRF Connect), separated by spaces or commas.</p>
+      <label class="chk"><input type="checkbox" bind:checked={anyDevice} /> Show every Bluetooth device when connecting (if the X1 is not offered by default)</label>
       <textarea bind:value={services} rows="2" placeholder="service uuids, e.g. 0000ffe0-0000-1000-8000-00805f9b34fb" aria-label="Service UUIDs to reach"></textarea>
       <div class="row">
         <button class="small" onclick={() => connect('capture')} disabled={linked}>Connect in capture mode</button>
+        <button class="small" onclick={() => connect('caveble')} disabled={linked} title="The open protocol of the Shetland Attack Pony and similar instruments">Connect (CaveBLE)</button>
         <button class="small" onclick={() => navigator.clipboard?.writeText(survey.frames.join('\n'))} disabled={survey.frames.length === 0}>Copy log</button>
         <button class="small" onclick={() => (survey.frames = [])} disabled={survey.frames.length === 0}>Clear</button>
       </div>
@@ -265,6 +279,9 @@
   .names label { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); }
   input.name { width: 6.5em; font: inherit; font-size: 18px; font-weight: 600; padding: 6px 8px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel-2); color: var(--text); }
   input.name:disabled { opacity: 0.5; }
+  button.link { min-height: 0; padding: 2px 8px; font-size: 12px; margin-left: 6px; }
+  .wait { margin: 0; flex: 1 1 100%; font-size: 13px; color: var(--accent); }
+  .auto { margin: 0; font-size: 13px; color: var(--muted); flex: 1 1 60%; }
   .next { margin: 0; flex: 1 1 100%; font-size: 15px; font-weight: 600; }
   .actions { display: flex; flex-wrap: wrap; gap: 8px; }
   h4 { margin: 0 0 6px; font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; font-weight: 600; }

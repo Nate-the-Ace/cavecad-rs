@@ -9,9 +9,11 @@
 // already ignores the compass on a pitch, so nothing here invents or drops one).
 
 import { suggestNext } from './notebook.ts';
+import type { LegEvent } from './instrument/legs.ts';
 import type { Reading } from './instrument/types.ts';
 
-export type Mode = 'leg' | 'splay';
+/** `auto`: the instrument says what each shot is (an X1: three close shots are a leg). `leg` and `splay`: the surveyor says. */
+export type Mode = 'auto' | 'leg' | 'splay';
 
 /** A foresight has been written and its backsight is the next reading. */
 export interface Awaiting {
@@ -29,6 +31,8 @@ export interface SessionState {
   /** The station the next leg goes to. */
   to: string;
   awaiting: Awaiting | null;
+  /** The last leg written: what a backsight marked on the instrument belongs to when none is awaited. */
+  last: Awaiting | null;
 }
 
 /** What to write to the notebook. */
@@ -117,12 +121,15 @@ export function advance(state: SessionState, taken: ReadonlySet<string>): Sessio
 /** The state once `plan` has been written to the notebook (`shot` is the id of the shot it created or changed). */
 export function applied(state: SessionState, plan: Plan, shot: string, taken: ReadonlySet<string>): SessionState {
   switch (plan.kind) {
-    case 'leg':
+    case 'leg': {
+      const made = { shot, reading: plan.reading };
       // With backsights the surveyor has not moved yet: the backsight is taken from the new station
       // looking back. They move on once it is in (or skipped).
-      return state.backsights ? { ...state, awaiting: { shot, reading: plan.reading } } : advance(state, taken);
+      return state.backsights ? { ...state, awaiting: made, last: made } : { ...advance(state, taken), last: made };
+    }
     case 'back':
-      return advance(state, taken);
+      // A backsight that was awaited moves them on; one marked on the instrument for a leg already left behind does not.
+      return state.awaiting ? advance(state, taken) : state;
     case 'splay':
       return state;
   }
@@ -149,6 +156,13 @@ export function standing(state: SessionState): string {
 
 /** What to tell the surveyor to do next, in plain words. */
 export function nextStep(state: SessionState): string {
+  if (state.mode === 'auto') {
+    if (state.awaiting) return `Backsight from ${state.to.trim()} back to ${state.from.trim()}: three shots, marked Backsight (M). Or carry on without.`;
+    const from = state.from.trim();
+    const to = state.to.trim();
+    if (!from || !to) return 'Name the two stations, then shoot the leg: three close shots.';
+    return `Shoot ${from} to ${to}: three close shots make a leg. A single shot is a splay at ${from}.`;
+  }
   if (state.awaiting) return `Take the backsight from ${state.to.trim()} back to ${state.from.trim()}.`;
   if (state.mode === 'splay') return `Take a splay from ${state.from.trim() || '(name the station)'}.`;
   if (!state.from.trim() || !state.to.trim()) return 'Name the two stations, then take the shot.';
@@ -159,5 +173,42 @@ export function nextStep(state: SessionState): string {
 export function start(from: string, taken: ReadonlySet<string>, keep?: Pick<SessionState, 'mode' | 'backsights'>): SessionState {
   const names = new Set(taken);
   names.add(from);
-  return { mode: keep?.mode ?? 'leg', backsights: keep?.backsights ?? false, from, to: suggestNext(from, names), awaiting: null };
+  return { mode: keep?.mode ?? 'leg', backsights: keep?.backsights ?? false, from, to: suggestNext(from, names), awaiting: null, last: null };
+}
+
+/** Spread among the shots of a leg beyond which it is worth a word, metres and degrees. */
+const SPREAD_DISTANCE_M = 0.03;
+const SPREAD_ANGLE_DEG = 1.5;
+
+/** The instrument's own events (what the X1 says is a leg or a splay), made into a plan. `base` is where the surveyor stands when it is written (they have moved on if a backsight was awaited and something else came). */
+export function decideEvent(state: SessionState, ev: Extract<LegEvent, { kind: 'leg' | 'splay' }>, taken: ReadonlySet<string>): { base: SessionState; decision: Decision } {
+  const reading = ev.reading;
+  const checked = checkReading(reading);
+  if (!checked.ok) return { base: state, decision: { plan: null, reject: checked.why, warnings: [] } };
+  const warnings = [...checked.warnings];
+  if (reading.error) warnings.push(`The instrument reports an ${reading.error}.`);
+  const refuse = (base: SessionState, why: string) => ({ base, decision: { plan: null, reject: why, warnings } });
+  if (ev.kind === 'splay') {
+    const base = state.awaiting ? advance(state, taken) : state;
+    const from = base.from.trim();
+    if (!from) return refuse(base, 'Say which station you are standing at.');
+    return { base, decision: { plan: { kind: 'splay', from, reading }, reject: null, warnings } };
+  }
+  const { spread } = ev;
+  if (spread.distance > SPREAD_DISTANCE_M || spread.azimuth > SPREAD_ANGLE_DEG || spread.inclination > SPREAD_ANGLE_DEG) {
+    warnings.push(`The shots of this leg differ by ${spread.distance.toFixed(3)} m, ${spread.azimuth.toFixed(1)}\u00b0 compass, ${spread.inclination.toFixed(1)}\u00b0 clino.`);
+  }
+  if (ev.mark === 'backsight') {
+    const target = state.awaiting ?? state.last;
+    if (!target) return refuse(state, 'A backsight needs a leg before it.');
+    warnings.push(...backsightWarnings(target.reading, reading));
+    return { base: state, decision: { plan: { kind: 'back', shot: target.shot, reading }, reject: null, warnings } };
+  }
+  const base = state.awaiting ? advance(state, taken) : state;
+  const from = base.from.trim();
+  const to = base.to.trim();
+  if (!from) return refuse(base, 'Say which station you are standing at.');
+  if (!to) return refuse(base, 'Name the station this leg goes to.');
+  if (from === to) return refuse(base, 'A leg joins two different stations.');
+  return { base, decision: { plan: { kind: 'leg', from, to, reading }, reject: null, warnings } };
 }

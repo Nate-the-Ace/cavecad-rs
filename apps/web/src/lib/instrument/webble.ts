@@ -1,13 +1,15 @@
 // Web Bluetooth transport. Chromium browsers have it, and so does Bluefy on an iPad; Safari does not.
-// Two modes: the CaveBLE protocol (shots become readings), and "capture", which connects to any
-// device the person names services for and writes every frame it sends to the log as hex. Capture is
-// how an instrument whose protocol is not known yet gets figured out: the log is the sniffed packets.
+// Three modes: `x1` (the Cavway X1: Nordic UART service, framed writes, packets acknowledged), `caveble` (the
+// open protocol of the Shetland Attack Pony and similar), and `capture`, which connects to any device the
+// person names services for and writes every frame it sends to the log as hex: how an instrument whose
+// protocol is unknown gets worked out.
 //
-// Written against the Web Bluetooth API without a browser to run it in; the decoding it hands bytes
-// to is tested (tests/caveble.check.ts), the connecting is first exercised on the real instrument.
+// Written against the Web Bluetooth API without a browser to run it in; everything it hands bytes to is
+// tested (tests/cavway.check.ts, caveble.check.ts), the connecting is first exercised on a real instrument.
 
 import { CAVE_BLE_SERVICE, COMMAND_CHARACTERISTIC, Command, LEG_CHARACTERISTIC, NAME_CHARACTERISTIC, hex } from './caveble.ts';
-import { LegLink } from './link.ts';
+import { X1Command, X1_NOTIFY, X1_SERVICE, X1_WRITE, command } from './cavway.ts';
+import { LegLink, X1Link } from './link.ts';
 import type { Instrument, LinkEvents } from './types.ts';
 
 // The Web Bluetooth types are not in the DOM lib this project builds against: only what is used.
@@ -29,8 +31,8 @@ interface GattCharacteristic {
   properties: { notify: boolean; indicate: boolean; read: boolean };
   startNotifications(): Promise<GattCharacteristic>;
   readValue(): Promise<DataView>;
-  writeValueWithoutResponse?(v: BufferSource): Promise<void>;
-  writeValue(v: BufferSource): Promise<void>;
+  writeValueWithoutResponse?(v: ArrayBufferView): Promise<void>;
+  writeValue(v: ArrayBufferView): Promise<void>;
   addEventListener(type: 'characteristicvaluechanged', l: (e: Event) => void): void;
 }
 interface BtDevice {
@@ -50,29 +52,38 @@ export const webBluetoothAvailable = (): boolean => api() !== undefined;
 const bytesOf = (v: DataView) => new Uint8Array(v.buffer, v.byteOffset, v.byteLength);
 const valueOf = (e: Event) => (e.target as unknown as GattCharacteristic).value;
 
+/** The X1's microcontroller needs a gap between frames (TopoDroid waits 100 ms): writes go one at a time, this far apart. */
+const WRITE_GAP_MS = 100;
+
 export interface WebBleOptions {
-  /** `cave`: the CaveBLE protocol. `capture`: any device, log every frame. */
-  mode: 'cave' | 'capture';
+  /** `x1`: the Cavway X1. `caveble`: the open protocol. `capture`: any device, log every frame. */
+  mode: 'x1' | 'caveble' | 'capture';
   /** In capture mode: service uuids to be allowed to reach (the browser cannot list what it was not told). */
   services?: string[];
+  /** Offer every Bluetooth device, not only those advertising the instrument's service (the X1's advertised name and service list are not known yet). */
+  anyDevice?: boolean;
 }
 
 export class WebBleInstrument implements Instrument {
   name = 'Bluetooth instrument';
   readonly canTakeShot: boolean;
+  readonly groupsLegs: boolean;
   private device: BtDevice | null = null;
-  private command: GattCharacteristic | null = null;
-  private readonly link: LegLink;
-  private wanted = false;
-
+  private writer: GattCharacteristic | null = null;
+  private readonly legLink: LegLink;
+  private readonly x1Link: X1Link;
   private readonly events: LinkEvents;
   private readonly opts: WebBleOptions;
+  private wanted = false;
+  private queue: Promise<void> = Promise.resolve();
 
   constructor(events: LinkEvents, opts: WebBleOptions) {
     this.events = events;
     this.opts = opts;
-    this.canTakeShot = opts.mode === 'cave';
-    this.link = new LegLink(events, (b) => void this.write(b), 'bluetooth');
+    this.canTakeShot = opts.mode !== 'capture';
+    this.groupsLegs = opts.mode === 'x1';
+    this.legLink = new LegLink(events, (b) => this.write(Uint8Array.of(b)), 'bluetooth');
+    this.x1Link = new X1Link(events, (bytes) => this.write(bytes), 'x1');
   }
 
   async connect() {
@@ -83,11 +94,8 @@ export class WebBleInstrument implements Instrument {
     }
     this.events.status('connecting');
     try {
-      const services = [CAVE_BLE_SERVICE, ...(this.opts.services ?? [])];
-      this.device = await bt.requestDevice(
-        this.opts.mode === 'cave' ? { filters: [{ services: [CAVE_BLE_SERVICE] }] } : { acceptAllDevices: true, optionalServices: services },
-      );
-      this.name = this.device.name || this.name;
+      this.device = await bt.requestDevice(this.chooser());
+      this.name = this.device.name || (this.opts.mode === 'x1' ? 'Cavway X1' : this.name);
       this.wanted = true;
       this.device.addEventListener('gattserverdisconnected', () => void this.lost());
       await this.attach();
@@ -105,27 +113,49 @@ export class WebBleInstrument implements Instrument {
   }
 
   takeShot() {
-    void this.write(Command.TAKE_SHOT);
+    if (this.opts.mode === 'x1') this.write(command(X1Command.TRIGGER));
+    else if (this.opts.mode === 'caveble') this.write(Uint8Array.of(Command.TAKE_SHOT));
   }
 
-  private async write(byte: number) {
-    const c = this.command;
-    if (!c) return;
-    const data = Uint8Array.of(byte);
-    try {
-      if (c.writeValueWithoutResponse) await c.writeValueWithoutResponse(data);
-      else await c.writeValue(data);
-    } catch {
-      /* a lost ack is repeated by the instrument: nothing to do */
-    }
+  /** What the browser's device chooser is asked to show. */
+  private chooser(): unknown {
+    const service = this.opts.mode === 'x1' ? X1_SERVICE : CAVE_BLE_SERVICE;
+    const reach = [service, ...(this.opts.services ?? [])];
+    if (this.opts.mode === 'capture' || this.opts.anyDevice) return { acceptAllDevices: true, optionalServices: reach };
+    return { filters: [{ services: [service] }] };
+  }
+
+  /** Queues a write: one at a time, with a gap, and never throwing (a lost ack is sent again by the instrument). */
+  private write(data: Uint8Array) {
+    this.queue = this.queue.then(async () => {
+      const c = this.writer;
+      if (!c) return;
+      try {
+        if (c.writeValueWithoutResponse) await c.writeValueWithoutResponse(data);
+        else await c.writeValue(data);
+      } catch {
+        /* nothing to do: see above */
+      }
+      await new Promise((r) => setTimeout(r, WRITE_GAP_MS));
+    });
   }
 
   private async attach() {
     const gatt = await this.device!.gatt!.connect();
-    this.link.reset();
-    if (this.opts.mode === 'cave') {
+    this.legLink.reset();
+    this.x1Link.reset();
+    if (this.opts.mode === 'x1') {
+      const service = await gatt.getPrimaryService(X1_SERVICE);
+      this.writer = await service.getCharacteristic(X1_WRITE);
+      const notify = await service.getCharacteristic(X1_NOTIFY);
+      notify.addEventListener('characteristicvaluechanged', (e) => {
+        const v = valueOf(e);
+        if (v) this.x1Link.onFrame(bytesOf(v));
+      });
+      await notify.startNotifications();
+    } else if (this.opts.mode === 'caveble') {
       const service = await gatt.getPrimaryService(CAVE_BLE_SERVICE);
-      this.command = await service.getCharacteristic(COMMAND_CHARACTERISTIC);
+      this.writer = await service.getCharacteristic(COMMAND_CHARACTERISTIC);
       try {
         const nameChar = await service.getCharacteristic(NAME_CHARACTERISTIC);
         this.events.frame(`protocol: ${new TextDecoder().decode(await nameChar.readValue())}`, 'name');
@@ -135,7 +165,7 @@ export class WebBleInstrument implements Instrument {
       const leg = await service.getCharacteristic(LEG_CHARACTERISTIC);
       leg.addEventListener('characteristicvaluechanged', (e) => {
         const v = valueOf(e);
-        if (v) this.link.onFrame(bytesOf(v));
+        if (v) this.legLink.onFrame(bytesOf(v));
       });
       await leg.startNotifications();
     } else {
@@ -165,7 +195,7 @@ export class WebBleInstrument implements Instrument {
 
   /** The link dropped (the instrument went out of range, or into a pocket): try again a few times, quietly. */
   private async lost() {
-    this.command = null;
+    this.writer = null;
     if (!this.wanted) return;
     this.events.status('lost', 'Reconnecting…');
     for (const wait of [500, 1500, 4000, 8000]) {
