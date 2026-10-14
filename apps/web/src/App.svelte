@@ -34,7 +34,16 @@
     if (engineReady) untrack(syncDrawing);
   });
 
+  // Select All outside a text field must not select the page's own buttons and labels.
+  function noPageSelectAll(e: KeyboardEvent) {
+    if (!(e.metaKey || e.ctrlKey) || e.altKey || e.key.toLowerCase() !== 'a') return;
+    const t = e.target as HTMLElement | null;
+    if (t && (t.isContentEditable || /^(input|textarea|select)$/i.test(t.tagName))) return;
+    e.preventDefault();
+  }
+
   onMount(() => {
+    window.addEventListener('keydown', noPageSelectAll);
     const teardown = initWorkspace(host);
     installDiagnostics();
     readInviteFromUrl();
@@ -62,6 +71,7 @@
       unguard();
       document.removeEventListener('visibilitychange', keepNow);
       window.removeEventListener('pagehide', keepNow);
+      window.removeEventListener('keydown', noPageSelectAll);
       teardown();
     };
   });
