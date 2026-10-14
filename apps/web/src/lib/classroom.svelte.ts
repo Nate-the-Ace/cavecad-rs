@@ -327,34 +327,66 @@ registerMirror('cave', {
   }),
   write: (state) => {
     const s = state as Record<string, any>;
-    cave.trip = String(s.trip ?? '');
-    cave.run = String(s.run ?? '');
-    cave.station = String(s.station ?? '');
-    cave.tool = String(s.tool ?? '');
-    cave.selected = String(s.selected ?? '');
-    cave.pick = { kind: s.pick?.kind ?? '', id: s.pick?.id ?? '' };
-    cave.adjusted = s.adjusted !== false;
-    if (s.units === 'imperial' || s.units === 'metric') cave.units = s.units;
-    if (s.sections) cave.showSections = { ...cave.showSections, ...s.sections };
-    if (s.hidden) {
-      filter.hiddenTypes = [...(s.hidden.types ?? [])];
-      filter.hiddenTrips = [...(s.hidden.trips ?? [])];
+    // Only what differs is touched: setting a value to what it already is would still wake everything that watches it,
+    // and re-reading the cave for a change of trip or pointer is work nobody needs.
+    const set = <K extends keyof typeof cave>(key: K, value: (typeof cave)[K]) => {
+      if (cave[key] !== value) cave[key] = value;
+    };
+    set('trip', String(s.trip ?? ''));
+    set('run', String(s.run ?? ''));
+    set('station', String(s.station ?? ''));
+    set('tool', String(s.tool ?? ''));
+    set('selected', String(s.selected ?? ''));
+    if (cave.pick.kind !== (s.pick?.kind ?? '') || cave.pick.id !== (s.pick?.id ?? '')) cave.pick = { kind: s.pick?.kind ?? '', id: s.pick?.id ?? '' };
+    let reread = false;
+    const adjusted = s.adjusted !== false;
+    if (cave.adjusted !== adjusted) {
+      cave.adjusted = adjusted;
+      reread = true;
     }
-    if (s.options) cave.options = { ...s.options };
-    changed();
+    if ((s.units === 'imperial' || s.units === 'metric') && cave.units !== s.units) cave.units = s.units;
+    if (s.sections && JSON.stringify(s.sections) !== JSON.stringify({ ...cave.showSections, ...s.sections })) {
+      cave.showSections = { ...cave.showSections, ...s.sections };
+      reread = true;
+    }
+    if (s.hidden) {
+      const types = [...(s.hidden.types ?? [])];
+      const trips = [...(s.hidden.trips ?? [])];
+      if (JSON.stringify(types) !== JSON.stringify(filter.hiddenTypes)) {
+        filter.hiddenTypes = types;
+        reread = true;
+      }
+      if (JSON.stringify(trips) !== JSON.stringify(filter.hiddenTrips)) {
+        filter.hiddenTrips = trips;
+        reread = true;
+      }
+    }
+    if (s.options && JSON.stringify(s.options) !== JSON.stringify(cave.options)) cave.options = { ...s.options };
+    if (reread) changed();
   },
 });
 
+/** What was last sent for each part, so only a part that changed goes out (a camera move is a few numbers, not the whole page). */
+const sentParts = new Map<string, string>();
+
 function startMirroring() {
   stopMirroring();
+  sentParts.clear();
   lastSent = '';
   beat = setInterval(() => {
     if (classroom.role !== 'teacher' || classroom.ended || live.status !== 'live') return;
     const state = captureMirror();
-    const key = JSON.stringify(state);
-    if (key === lastSent) return;
-    if (transmit({ t: 'mirror', state })) lastSent = key;
-  }, 150);
+    const delta: Record<string, unknown> = {};
+    const sent: [string, string][] = [];
+    for (const [key, value] of Object.entries(state)) {
+      const json = JSON.stringify(value);
+      if (sentParts.get(key) === json) continue;
+      delta[key] = value;
+      sent.push([key, json]);
+    }
+    if (!sent.length) return;
+    if (transmit({ t: 'mirror', state: delta })) for (const [key, json] of sent) sentParts.set(key, json);
+  }, 120);
 }
 
 function stopMirroring() {
