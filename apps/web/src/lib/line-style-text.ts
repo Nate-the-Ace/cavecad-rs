@@ -23,9 +23,26 @@ export interface LineStyle {
   flags: string;
   /** Where a leader's arrows are fastened to other drawn things: `index=id#vertex` pairs, comma-separated (see `leader-edit.ts`). */
   attach: string;
+  /** A note's type face: '' (sans), serif or mono. */
+  font: string;
+  /** A note's colour as `#rrggbb`, or '' for the line's own ink. */
+  color: string;
+  /** Where a note's words sit against the point they are placed at: '' (left), center or right. */
+  align: string;
 }
 
-export const PLAIN: LineStyle = { lt: '', scale: 1, density: 1, arrow: '', shape: '', frame: '', size: 1, angle: 0, flags: '', attach: '' };
+/** The switches a note may have, as letters in the order they are stored: b bold, f fill, h letter outline, i italic, n no frame outline, u underline. */
+export const NOTE_FLAGS = 'bfhinu';
+
+export const PLAIN: LineStyle = { lt: '', scale: 1, density: 1, arrow: '', shape: '', frame: '', size: 1, angle: 0, flags: '', attach: '', font: '', color: '', align: '' };
+
+export const FONT_LABELS: [string, string][] = [['', 'Sans'], ['serif', 'Serif'], ['mono', 'Mono']];
+export const ALIGN_LABELS: [string, string][] = [['', 'Left'], ['center', 'Centre'], ['right', 'Right']];
+
+/** The flags with `letter` switched on or off. */
+export function withFlag(flags: string, letter: string, on: boolean): string {
+  return [...NOTE_FLAGS].filter((c) => (c === letter ? on : flags.includes(c))).join('');
+}
 
 export const ARROW_LABELS: [string, string][] = [
   ['', 'Open arrow'],
@@ -66,12 +83,12 @@ export const LINETYPE_LABELS: [string, string][] = [
 /** Reads a stored style (anything unreadable is the type's look). */
 export function parseStyle(text: string | undefined): LineStyle {
   if (!text) return PLAIN;
-  const [lt = '', scale = '1', density = '1', arrow = '', shape = '', frame = '', size = '1', angle = '0', flags = '', attach = ''] = text.split(';');
+  const [lt = '', scale = '1', density = '1', arrow = '', shape = '', frame = '', size = '1', angle = '0', flags = '', attach = '', font = '', color = '', align = ''] = text.split(';');
   const num = (v: string) => {
     const n = Number(v);
     return Number.isFinite(n) && n > 0 ? n : 1;
   };
-  return { lt, scale: num(scale), density: num(density), arrow, shape, frame: frame === 'none' ? '' : frame, size: num(size), angle: Number.isFinite(Number(angle)) ? Number(angle) : 0, flags, attach };
+  return { lt, scale: num(scale), density: num(density), arrow, shape, frame: frame === 'none' ? '' : frame, size: num(size), angle: Number.isFinite(Number(angle)) ? Number(angle) : 0, flags, attach, font, color, align: align === 'left' ? '' : align };
 }
 
 /** Writes a style the way it is stored (empty when it is the type's look). */
@@ -79,7 +96,9 @@ export function styleText(s: LineStyle): string {
   const plainLine = !s.lt && Math.abs(s.scale - 1) < 0.005 && Math.abs(s.density - 1) < 0.005;
   const plainLeader = !s.arrow && !s.shape && !s.frame && Math.abs(s.size - 1) < 0.005;
   const turned = Math.abs(s.angle) >= 0.05;
-  const flags = [...'fhn'].filter((c) => s.flags.includes(c)).join('');
+  const flags = [...NOTE_FLAGS].filter((c) => s.flags.includes(c)).join('');
+  const align = s.align === 'left' ? '' : s.align;
+  if (s.font || s.color || align) return `${s.lt};${s.scale.toFixed(2)};${s.density.toFixed(2)};${s.arrow};${s.shape};${s.frame};${s.size.toFixed(2)};${s.angle.toFixed(1)};${flags};${s.attach};${s.font};${s.color};${align}`;
   if (s.attach) return `${s.lt};${s.scale.toFixed(2)};${s.density.toFixed(2)};${s.arrow};${s.shape};${s.frame};${s.size.toFixed(2)};${s.angle.toFixed(1)};${flags};${s.attach}`;
   if (flags) return `${s.lt};${s.scale.toFixed(2)};${s.density.toFixed(2)};${s.arrow};${s.shape};${s.frame};${s.size.toFixed(2)};${s.angle.toFixed(1)};${flags}`;
   if (plainLine && plainLeader && !turned) return '';

@@ -37,3 +37,12 @@ const st = parseStyle(styleText({ ...parseStyle(''), attach: '0=w1#2' }));
 ok2(st.attach === '0=w1#2', 'attach survives the style text: ' + styleText({ ...parseStyle(''), attach: '0=w1#2' }));
 if (bad2) process.exit(1);
 console.log('fastening ok');
+
+// a note's formatting (bold, italic, underline, type face, colour, alignment) survives the style text
+{
+  const f = { ...parseStyle(''), size: 1.5, flags: 'ui', font: 'serif', color: '#e8590c', align: 'center' };
+  const text = styleText(f);
+  const back = parseStyle(text);
+  ok2(back.flags === 'iu' && back.font === 'serif' && back.color === '#e8590c' && back.align === 'center' && Math.abs(back.size - 1.5) < 1e-9, 'format survives: ' + text);
+  ok2(styleText({ ...parseStyle(''), align: 'left' }) === '', 'left is the plain look');
+}

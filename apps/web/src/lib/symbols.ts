@@ -128,22 +128,56 @@ export interface LeaderLook {
   shape: string;
   frame: string;
   size: number;
-  /** The note's switches: f (fill behind it), h (outline round the letters), n (no outline on the frame). */
+  /** The note's switches: b bold, f (fill behind it), h (outline round the letters), i italic, n (no outline on the frame), u underline. */
   flags: string;
+  /** The words' type face (`serif`, `mono`, or '' for sans), colour (`#rrggbb` or '' for the ink) and alignment (`center`, `right`, or '' for left). */
+  font: string;
+  color: string;
+  align: string;
   paperPx?: number;
 }
 
 /** Reads a leader's look from a stored style (the part after the line's own three). */
 export function leaderLook(style: string | undefined, paperPx?: number): LeaderLook {
-  const [, , , arrow = '', shape = '', frame = '', size = '1', , flags = ''] = (style ?? '').split(';');
+  const [, , , arrow = '', shape = '', frame = '', size = '1', , flags = '', , font = '', color = '', align = ''] = (style ?? '').split(';');
   const n = Number(size);
-  return { arrow, shape, frame, size: Number.isFinite(n) && n > 0 ? n : 1, flags, paperPx };
+  return { arrow, shape, frame, size: Number.isFinite(n) && n > 0 ? n : 1, flags, font, color, align: align === 'left' ? '' : align, paperPx };
+}
+
+const FAMILIES: Record<string, string> = { '': 'system-ui, sans-serif', serif: "Georgia, 'Times New Roman', serif", mono: "ui-monospace, Menlo, Consolas, monospace" };
+
+/** The canvas font for words of `px` pixels in this look (bold, italic and type face). */
+function fontCss(look: LeaderLook, px: number): string {
+  return `${look.flags.includes('i') ? 'italic ' : ''}${look.flags.includes('b') ? 'bold ' : ''}${px}px ${FAMILIES[look.font] ?? FAMILIES['']}`;
+}
+
+/** Sets the context's text alignment from a look and returns the x offset of the words' start from their anchor, for hit tests (width `w`). */
+function alongRange(look: LeaderLook, w: number): [number, number] {
+  return look.align === 'center' ? [-w / 2, w / 2] : look.align === 'right' ? [-w, 0] : [0, w];
+}
+
+/** Draws `text` at (`x`, `y`) in the context's current font, aligned by the look, filled in its colour, underlined if asked. */
+function paintWords(g: CanvasRenderingContext2D, text: string, x: number, y: number, look: LeaderLook, ink: string | CanvasGradient | CanvasPattern) {
+  g.textAlign = look.align === 'center' ? 'center' : look.align === 'right' ? 'right' : 'left';
+  g.fillStyle = look.color || ink;
+  g.fillText(text, x, y);
+  if (look.flags.includes('u')) {
+    const w = g.measureText(text).width;
+    const left = look.align === 'center' ? x - w / 2 : look.align === 'right' ? x - w : x;
+    const px = parseFloat(g.font.match(/([\d.]+)px/)?.[1] ?? '12');
+    g.strokeStyle = look.color || (typeof ink === 'string' ? ink : '#000');
+    g.lineWidth = Math.max(1, px / 14);
+    g.beginPath();
+    g.moveTo(left, y + px * 0.55);
+    g.lineTo(left + w, y + px * 0.55);
+    g.stroke();
+  }
 }
 
 /** Where a stamp's words go and how big: for text, at the first point, turned to the aim; for a symbol's label, to its right. */
-function wordsPlacement(kind: string, pl: ReturnType<typeof placement>): { x: number; y: number; size: number; angle: number } {
-  if (kind === 'text') return { x: pl.cx, y: pl.cy, size: Math.max(6, pl.r), angle: Math.atan2(pl.ux, -pl.uy) };
-  return { x: pl.cx + 1.3 * pl.r, y: pl.cy, size: Math.max(7, pl.r * 0.9), angle: 0 };
+function wordsPlacement(kind: string, pl: ReturnType<typeof placement>, look: LeaderLook = leaderLook('')): { x: number; y: number; size: number; angle: number } {
+  if (kind === 'text') return { x: pl.cx, y: pl.cy, size: Math.max(6, pl.r) * look.size, angle: Math.atan2(pl.ux, -pl.uy) };
+  return { x: pl.cx + 1.3 * pl.r, y: pl.cy, size: Math.max(7, pl.r * 0.9) * look.size, angle: 0 };
 }
 
 /** A colour that shows against the stroke's: pale behind dark ink, dark behind pale ink (for a note's fill and the outline of its letters). */
@@ -231,18 +265,19 @@ export function stampEditSpot(kind: string, pts: [number, number][], leader: Lea
     const size = leader.paperPx && leader.paperPx > 0 ? 3 * leader.paperPx * leader.size : Math.hypot(p1[0] - p0[0], p1[1] - p0[1]) / 3;
     return { x: p1[0], y: p1[1], size, angle: 0 };
   }
-  if (kind === 'text') return { x: pl.cx, y: pl.cy, size: Math.max(6, pl.r), angle: Math.atan2(pl.ux, -pl.uy) };
+  if (kind === 'text') return { x: pl.cx, y: pl.cy, size: Math.max(6, pl.r) * leader.size, angle: Math.atan2(pl.ux, -pl.uy) };
   if (!isSymbolKind(kind)) return null;
-  const w = wordsPlacement(kind, pl);
+  const w = wordsPlacement(kind, pl, leader);
   const note = pts[2];
   return note ? { x: note[0], y: note[1], size: w.size, angle: 0 } : { x: w.x, y: w.y, size: w.size, angle: 0 };
 }
 
 /** True when screen (`x`, `y`) is on the words of a symbol's label note (so a press there can pick the note up, selected or not). */
-export function hitsLabelNote(kind: string | undefined, text: string | undefined, p0: [number, number], p1: [number, number], note: [number, number] | undefined, x: number, y: number, pad = 5): boolean {
+export function hitsLabelNote(kind: string | undefined, text: string | undefined, p0: [number, number], p1: [number, number], note: [number, number] | undefined, x: number, y: number, pad = 5, look: LeaderLook = leaderLook('')): boolean {
   if (!kind || !isSymbolKind(kind) || !text || !note) return false;
-  const size = wordsPlacement(kind, placement(p0, p1)).size;
-  return x >= note[0] - pad && x <= note[0] + text.length * size * 0.6 + pad && Math.abs(y - note[1]) <= size * 0.6 + pad;
+  const size = wordsPlacement(kind, placement(p0, p1), look).size;
+  const [a0, a1] = alongRange(look, text.length * size * 0.6);
+  return x >= note[0] + a0 - pad && x <= note[0] + a1 + pad && Math.abs(y - note[1]) <= size * 0.6 + pad;
 }
 
 /** The points of a new symbol with its label's note spot added (to the right of it, where the label has always sat), so the label is a draggable leader from the start. */
@@ -260,19 +295,18 @@ export function drawStamp(g: CanvasRenderingContext2D, kind: string, p0: [number
     // the label is a leader's note: just words beside the symbol until pulled away, then a leader (no arrowhead) back to it
     drawSymbol(g, kind, p0, p1);
     const pl = placement(p0, p1);
-    const w = wordsPlacement(kind, pl);
+    const w = wordsPlacement(kind, pl, leader);
     const note = more[0];
     if (!noteIsFar(pl, note)) {
       g.save();
-      g.fillStyle = g.strokeStyle;
-      g.font = `${w.size}px system-ui, sans-serif`;
+      g.font = fontCss(leader, w.size);
       g.textBaseline = 'middle';
-      g.fillText(text, note[0], note[1]);
+      paintWords(g, text, note[0], note[1], leader, g.strokeStyle);
       g.restore();
       return;
     }
     kind = 'callout';
-    leader = LABEL_LOOK;
+    leader = { ...LABEL_LOOK, flags: leader.flags, font: leader.font, color: leader.color, align: leader.align };
     more = [];
     p1 = note;
     labelHeight = w.size;
@@ -308,19 +342,19 @@ export function drawStamp(g: CanvasRenderingContext2D, kind: string, p0: [number
     if (text) {
       const y = (l.note[1] + l.note[3]) / 2;
       g.save();
-      g.font = `${l.height}px system-ui, sans-serif`;
+      g.font = fontCss(leader, l.height);
       g.textBaseline = 'middle';
-      g.textAlign = 'left';
       const ink = g.strokeStyle;
+      const x = leader.align === 'center' ? (l.note[0] + l.note[2]) / 2 : leader.align === 'right' ? l.note[2] : l.note[0];
       if (leader.flags.includes('h')) {
         // an outline round the letters keeps them readable over linework and fills
+        g.textAlign = leader.align === 'center' ? 'center' : leader.align === 'right' ? 'right' : 'left';
         g.strokeStyle = back;
         g.lineWidth = Math.max(2, l.height * 0.28);
         g.lineJoin = 'round';
-        g.strokeText(text, l.note[0], y);
+        g.strokeText(text, x, y);
       }
-      g.fillStyle = ink;
-      g.fillText(text, l.note[0], y);
+      paintWords(g, text, x, y, leader, ink);
       g.restore();
     }
     return;
@@ -328,14 +362,13 @@ export function drawStamp(g: CanvasRenderingContext2D, kind: string, p0: [number
   const pl = placement(p0, p1);
   if (kind !== 'text') drawSymbol(g, kind, p0, p1);
   if (!text || pl.r < 1) return;
-  const w = wordsPlacement(kind, pl);
+  const w = wordsPlacement(kind, pl, leader);
   g.save();
-  g.fillStyle = g.strokeStyle;
-  g.font = `${w.size}px system-ui, sans-serif`;
+  g.font = fontCss(leader, w.size);
   g.textBaseline = 'middle';
   g.translate(w.x, w.y);
   g.rotate(w.angle);
-  g.fillText(text, 0, 0);
+  paintWords(g, text, 0, 0, leader, g.strokeStyle);
   g.restore();
 }
 
@@ -354,10 +387,11 @@ export function hitsStamp(kind: string, text: string | undefined, p0: [number, n
   }
   const pl = placement(p0, p1);
   if (!text) return hitsSymbol(p0, p1, x, y, pad);
-  const w = wordsPlacement(kind, pl);
+  const w = wordsPlacement(kind, pl, leader);
+  const [a0, a1] = alongRange(leader, text.length * w.size * 0.6);
   if (labelLeader(kind, text, more)) {
     const note = more[0];
-    const inWords = x >= note[0] - pad && x <= note[0] + text.length * w.size * 0.6 + pad && Math.abs(y - note[1]) <= w.size * 0.6 + pad;
+    const inWords = x >= note[0] + a0 - pad && x <= note[0] + a1 + pad && Math.abs(y - note[1]) <= w.size * 0.6 + pad;
     if (inWords || hitsSymbol(p0, p1, x, y, pad)) return true;
     return noteIsFar(pl, note) && distToSegment(x, y, p0, note) <= pad + 2;
   }
@@ -366,7 +400,7 @@ export function hitsStamp(kind: string, text: string | undefined, p0: [number, n
   const dy = y - w.y;
   const along = dx * Math.cos(w.angle) + dy * Math.sin(w.angle);
   const across = -dx * Math.sin(w.angle) + dy * Math.cos(w.angle);
-  const inWords = along >= -pad && along <= text.length * w.size * 0.6 + pad && Math.abs(across) <= w.size * 0.6 + pad;
+  const inWords = along >= a0 - pad && along <= a1 + pad && Math.abs(across) <= w.size * 0.6 + pad;
   return inWords || (kind !== 'text' && hitsSymbol(p0, p1, x, y, pad));
 }
 

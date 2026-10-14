@@ -1039,7 +1039,7 @@ export class CaveView {
         if (!k.text || k.points.length < 3 || isKindHidden(k.kind)) continue;
         const p = this.screenPoints(k);
         if (p.length < 3 || !p[0] || !p[1] || !p[2]) continue;
-        if (!hitsLabelNote(k.kind, k.text, p[0], p[1], p[2], x, y)) continue;
+        if (!hitsLabelNote(k.kind, k.text, p[0], p[1], p[2], x, y, 5, leaderLook(k.style, ((this.pixelsPerMetreAt(k.points[0]) ?? 0) * drawing.scale) / 1000))) continue;
         e.stopImmediatePropagation();
         e.stopPropagation();
         this.controls.enabled = false;

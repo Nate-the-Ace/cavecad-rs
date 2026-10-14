@@ -133,7 +133,7 @@ export class LineEditor<T extends EditableLine = EditableLine> {
     }
     // a symbol's label note is picked up where it sits, selected or not
     if (!additive) for (const k of [...this.shown()].reverse()) {
-      if (!k.text || k.points.length < 3 || !hitsLabelNote(k.kind, k.text, this.h.toScreen(k.points[0]) as [number, number], this.h.toScreen(k.points[1]) as [number, number], this.h.toScreen(k.points[2]) as [number, number], x, y)) continue;
+      if (!k.text || k.points.length < 3 || !hitsLabelNote(k.kind, k.text, this.h.toScreen(k.points[0]) as [number, number], this.h.toScreen(k.points[1]) as [number, number], this.h.toScreen(k.points[2]) as [number, number], x, y, 5, leaderLook(k.style, this.h.paperPx?.()))) continue;
       this.h.select(k.id);
       this.drag = { id: k.id, index: 2, points: k.points.map((p) => [...p] as Pt), widths: k.widths ? [...k.widths] : null, stamp: true, leader: false };
       this.h.redraw();

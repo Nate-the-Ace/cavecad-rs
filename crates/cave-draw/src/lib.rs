@@ -502,11 +502,16 @@ pub const FRAMES: &[&str] = &[
     "ellipse",
     "banner",
 ];
-/// The switches a leader's note may have, written as letters in alphabetical order: `f` a paper-coloured fill behind the note,
-/// `h` an outline round the text's letters, `n` no outline on the frame.
-pub const NOTE_FLAGS: &str = "fhn";
+/// The switches a note may have, written as letters in alphabetical order: `b` bold, `f` a paper-coloured fill behind the note,
+/// `h` an outline round the text's letters, `i` italic, `n` no outline on the frame, `u` underlined.
+pub const NOTE_FLAGS: &str = "bfhinu";
+/// The type faces a note may have besides the usual one (empty).
+pub const FONTS: &[&str] = &["", "serif", "mono"];
+/// How a note's words sit against the point they are placed at (`left` is the usual, written as empty).
+pub const ALIGNS: &[&str] = &["", "left", "center", "right"];
 
-/// A line's own style, as `linetype;scale;density`, and for a leader also `;arrow;shape;frame;size` (empty for none). Anything
+/// A line's own style, as `linetype;scale;density`, and for a leader also `;arrow;shape;frame;size` (empty for none), then for notes
+/// `;angle;flags;attach;font;colour;align`. Anything
 /// unreadable gives `None`; numbers are held to a sensible range and written in a fixed form, so equal styles are equal text.
 pub fn normalize_style(text: &str) -> Option<String> {
     let t = text.trim();
@@ -574,6 +579,28 @@ pub fn normalize_style(text: &str) -> Option<String> {
             a.to_string()
         }
     };
+    // the words' look: type face, colour (`#rrggbb`) and how they sit against their point
+    let choose = |v: Option<&str>, choices: &[&str]| -> Option<String> {
+        let v = v.map_or("", str::trim).to_ascii_lowercase();
+        choices.contains(&v.as_str()).then_some(v)
+    };
+    let font = choose(parts.next(), FONTS)?;
+    let color = match parts.next() {
+        None => String::new(),
+        Some(c) => {
+            let c = c.trim().to_ascii_lowercase();
+            let hex =
+                c.len() == 7 && c.starts_with('#') && c[1..].chars().all(|d| d.is_ascii_hexdigit());
+            if !c.is_empty() && !hex {
+                return None;
+            }
+            c
+        }
+    };
+    let align = match choose(parts.next(), ALIGNS)?.as_str() {
+        "left" => String::new(),
+        other => other.to_string(),
+    };
     if parts.next().is_some() {
         return None;
     }
@@ -583,19 +610,23 @@ pub fn normalize_style(text: &str) -> Option<String> {
     let turned = angle != 0.0;
     let head = format!("{lt};{scale:.2};{density:.2}");
     let leader = format!("{arrow};{shape};{frame};{size:.2}");
-    Some(if !attach.is_empty() {
-        format!("{head};{leader};{angle:.1};{flags};{attach}")
-    } else if !flags.is_empty() {
-        format!("{head};{leader};{angle:.1};{flags}")
-    } else if turned {
-        format!("{head};{leader};{angle:.1}")
-    } else if !plain_leader {
-        format!("{head};{leader}")
-    } else if !plain_line {
-        head
-    } else {
-        String::new()
-    })
+    Some(
+        if !font.is_empty() || !color.is_empty() || !align.is_empty() {
+            format!("{head};{leader};{angle:.1};{flags};{attach};{font};{color};{align}")
+        } else if !attach.is_empty() {
+            format!("{head};{leader};{angle:.1};{flags};{attach}")
+        } else if !flags.is_empty() {
+            format!("{head};{leader};{angle:.1};{flags}")
+        } else if turned {
+            format!("{head};{leader};{angle:.1}")
+        } else if !plain_leader {
+            format!("{head};{leader}")
+        } else if !plain_line {
+            head
+        } else {
+            String::new()
+        },
+    )
 }
 
 /// The angle (degrees) a line's style turns an area's pattern by; 0 when it names none.
@@ -741,6 +772,20 @@ mod tests {
             Some(";1.00;1.00;stealth;;hexagon;1.00;0.0;fn")
         );
         assert_eq!(super::normalize_style(";1;1;;;;1;0;x"), None);
+        // a note's look: bold italic, serif, a colour, centred
+        assert_eq!(
+            super::normalize_style(";1;1;;;;1.5;0;iub;;Serif;#E8590C;center").as_deref(),
+            Some(";1.00;1.00;;;;1.50;0.0;biu;;serif;#e8590c;center")
+        );
+        assert_eq!(
+            super::normalize_style(";1;1;;;;1;0;;;comic").as_deref(),
+            None
+        );
+        assert_eq!(super::normalize_style(";1;1;;;;1;0;;;;red"), None);
+        assert_eq!(
+            super::normalize_style(";1;1;;;;1;0;;;;;left").as_deref(),
+            Some("")
+        );
         // arrows fastened to other things
         assert_eq!(
             super::normalize_style(";1;1;;;;1;0;;0=ab12#3,2=cd#0").as_deref(),
