@@ -80,6 +80,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "cave-instrument"
+version = "0.0.1"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "cave-log"
 version = "0.0.1"
 dependencies = [
