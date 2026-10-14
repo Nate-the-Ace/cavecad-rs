@@ -11,9 +11,9 @@
 
 import type { Mailbox } from './signal';
 
-export const POLL_MS = 1500;
+export const POLL_MS = 800;
 /** The host looks for new hellos more often: it is one caller, and a student should not wait on it. */
-export const HOST_POLL_MS = 1000;
+export const HOST_POLL_MS = 600;
 const STUDENT_PATIENCE_MS = 90_000;
 /** Mailbox errors in a row that the teacher's loop puts up with before saying so. */
 const TEACHER_PATIENCE = 5;
@@ -38,29 +38,33 @@ export interface HostHooks {
   seen?(attempt: string, what: 'offered' | 'connected' | 'refused'): void;
 }
 
-/** The teacher's side: watches the mailbox for students and walks each through the handshake. Returns the way to stop. */
+/** The teacher's side: watches the mailbox for students and walks each through the handshake. Returns the way to stop.
+ *  Hellos and answers are watched by two loops of their own: each mailbox call takes a second or so, and one loop doing
+ *  both would make an answer wait for the whole round of hellos before it was even looked for. */
 export function hostLoop(box: Mailbox, session: string, hooks: HostHooks, pollMs = HOST_POLL_MS): () => void {
   const abort = new AbortController();
   const offered = new Map<string, string>(); // attempt id -> invite id
   const done = new Set<string>();
-  let bad = 0;
-  let told = false;
+  /** Tidying the mailbox is not on anyone's way: it is done in the background and a failure does not matter. */
+  const tidy = (p: Promise<void>) => void p.catch(() => undefined);
 
-  async function once() {
+  async function hellos() {
     // New hellos: an offer for each, all at once (a class arrives together).
-    const hellos = (await box.list(session, 'hello:')).map((n) => n.name.slice('hello:'.length)).filter((id) => !offered.has(id));
-    for (const id of hellos) offered.set(id, ''); // claimed now, so the next pass does not make a second offer
+    const fresh = (await box.list(session, 'hello:')).map((n) => n.name.slice('hello:'.length)).filter((id) => !offered.has(id));
+    for (const id of fresh) offered.set(id, ''); // claimed now, so the next pass does not make a second offer
     await Promise.all(
-      hellos.map(async (id) => {
+      fresh.map(async (id) => {
         const made = await hooks.offer();
         if (!made) return void offered.delete(id);
         offered.set(id, made.id);
         await box.put(session, `offer:${id}`, made.code);
-        await box.del(session, `hello:${id}`);
+        tidy(box.del(session, `hello:${id}`));
         hooks.seen?.(id, 'offered');
       })
     );
-    // Answers to offers made.
+  }
+
+  async function answers() {
     for (const note of await box.list(session, 'answer:')) {
       const id = note.name.slice('answer:'.length);
       const invite = offered.get(id);
@@ -68,26 +72,32 @@ export function hostLoop(box: Mailbox, session: string, hooks: HostHooks, pollMs
       done.add(id);
       const problem = await hooks.reply(invite, note.value);
       hooks.seen?.(id, problem ? 'refused' : 'connected');
-      await box.del(session, `answer:${id}`);
-      await box.del(session, `offer:${id}`);
+      tidy(box.del(session, `answer:${id}`));
+      tidy(box.del(session, `offer:${id}`));
     }
   }
 
-  (async () => {
-    while (!abort.signal.aborted) {
-      try {
-        await once();
-        bad = 0;
-        told = false;
-      } catch (e) {
-        if (++bad >= TEACHER_PATIENCE && !told) {
-          told = true;
-          hooks.trouble?.(e instanceof Error ? e.message : String(e));
+  let told = false; // one report for both loops
+  function watch(pass: () => Promise<void>) {
+    let bad = 0;
+    (async () => {
+      while (!abort.signal.aborted) {
+        try {
+          await pass();
+          bad = 0;
+          told = false;
+        } catch (e) {
+          if (++bad >= TEACHER_PATIENCE && !told) {
+            told = true;
+            hooks.trouble?.(e instanceof Error ? e.message : String(e));
+          }
         }
+        await nap(pollMs, abort.signal);
       }
-      await nap(pollMs, abort.signal);
-    }
-  })();
+    })();
+  }
+  watch(hellos);
+  watch(answers);
   return () => abort.abort();
 }
 

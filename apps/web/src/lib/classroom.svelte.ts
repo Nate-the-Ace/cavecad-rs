@@ -18,8 +18,10 @@ import { classLink, liveLink, mergeEntries, readClassLink, readJoinLink, readLiv
 import { readOnly } from './readonly';
 import { shelf } from './shelf.svelte';
 import { joinViaLink, openClassLink, p2p, sendClass, startClassHosting } from './p2p.svelte';
+import { shareBase } from './share-base';
+import { loadEngine } from './engine';
 import { configuredMailbox, httpMailbox, mailboxConfig, type Mailbox } from './signal';
-import { createInvite, join, leave, live, rename, sendRoom, setRoomHooks } from './sync.svelte';
+import { createInvite, hasSavedName, join, leave, live, me, rename, sendRoom, setRoomHooks } from './sync.svelte';
 
 export const classroom = $state({
   /** What this device is in a class: nothing, the teacher, or a student. */
@@ -81,6 +83,9 @@ export function readClassLinkFromUrl() {
   if (!found) return;
   classroom.pending = found;
   history.replaceState(null, '', location.pathname + location.hash);
+  // Someone who has used CaveCAD here before is joined at once, under the name they gave: opening the link is all it takes.
+  // A first-time visitor is asked for a name first.
+  if ('live' in found && found.live && hasSavedName()) void loadEngine().then(() => classroom.pending && classroom.role === 'none' && joinClass(me.name));
 }
 
 /**
@@ -211,7 +216,7 @@ export function startClass(className: string, teacherName: string, via: 'relay' 
     const session = crypto.randomUUID().replace(/-/g, '').slice(0, 20);
     const config = mailboxConfig();
     openClassLink(session, box);
-    classroom.link = liveLink(location.href, session, config?.source === 'local' ? config : undefined);
+    classroom.link = liveLink(shareBase(), session, config?.source === 'local' ? config : undefined);
     return;
   }
   live.made = ''; // the link of an earlier class is not this one's

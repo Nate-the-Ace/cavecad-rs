@@ -6,12 +6,21 @@
   import { cave } from '../lib/cave.svelte';
   import { classroom, joinClass, startClass } from '../lib/classroom.svelte';
   import { live, me } from '../lib/sync.svelte';
+  import { p2p } from '../lib/p2p.svelte';
   import MailboxSettings from './MailboxSettings.svelte';
   import { mailboxConfig } from '../lib/signal';
 
   let className = $state('');
   let teacherName = $state('');
   let studentName = $state('');
+  // How long joining has taken, so a wait is a number and not a mystery.
+  let waited = $state(0);
+  $effect(() => {
+    if (!classroom.busy || !classroom.pending) return void (waited = 0);
+    const t0 = Date.now();
+    const t = setInterval(() => (waited = Math.round((Date.now() - t0) / 1000)), 500);
+    return () => clearInterval(t);
+  });
   const start = () => startClass(className, teacherName, 'link');
   // The class mailbox (CaveCAD's Apps Script): built into this copy, or typed in and kept on this machine.
   let hasMailbox = $state(!!mailboxConfig());
@@ -56,6 +65,7 @@
       <p class="note">You are joining {classroom.pending.room ? '' : 'a class'}{#if classroom.pending.room}<b>{classroom.pending.room}</b>{/if} as an observer. You will see what the teacher sees, and the teacher will see where your pointer is. You can raise your hand and chat to ask a question.</p>
       {/if}
       <label>Your name <input bind:value={studentName} maxlength="40" placeholder="So the others know who you are" onkeydown={(e) => e.key === 'Enter' && joinClass(studentName)} /></label>
+      {#if classroom.busy}<p class="note" role="status">{p2p.waiting || 'Joining…'} {waited ? `${waited} s` : ''}</p>{/if}
       {#if why}<p class="err" role="alert">{why}</p>{/if}
       <div class="row">
         <button class="go" disabled={!studentName.trim() || classroom.busy} onclick={() => joinClass(studentName)}>{classroom.busy ? 'Joining…' : classroom.pending.live && !classroom.pending.room ? 'Join' : 'Join as an observer'}</button>

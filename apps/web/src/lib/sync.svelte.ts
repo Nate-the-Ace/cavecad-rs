@@ -30,6 +30,15 @@ const myId = Math.random().toString(36).slice(2, 10);
 export const me = $state({ name: savedName(), color: COLORS[[...myId].reduce((n, c) => n + c.charCodeAt(0), 0) % COLORS.length] });
 
 /** Renames this device (remembered in this browser; takes effect the next time it joins). */
+/** True when this browser has been given a name before (so a join link can use it without asking). */
+export function hasSavedName(): boolean {
+  try {
+    return !!localStorage.getItem(NAME_KEY);
+  } catch {
+    return false;
+  }
+}
+
 export function rename(name: string) {
   me.name = name.slice(0, 40);
   try {

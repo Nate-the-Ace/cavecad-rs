@@ -19,6 +19,7 @@ import { fadeCursors, live, me, myPersonId, roomEvents, setPeerHooks, type Perso
 import { hostLoop, joinLoop } from './signal-handshake';
 import { configuredMailbox, mailboxConfig, type Mailbox } from './signal';
 import { liveLink } from './classroom-log';
+import { shareBase } from './share-base';
 import { CLASS_MESSAGES, classJoined, classLeft, classMessage, classWelcome, newClass, type ClassState, type RoomIo } from './classroom-room.mjs';
 import { flush as keepShelf, shelf } from './shelf.svelte';
 
@@ -197,10 +198,47 @@ function gathered(pc: RTCPeerConnection): Promise<void> {
   });
 }
 
+/**
+ * Writes how a connection went into the Console, with the time of each step, and (once it is up) which kind of path it
+ * took: `host` (straight across the local network), `srflx` (through the router's public address) or `relay` (through the
+ * relay server). A connection that takes long shows where: waiting for addresses, for the other side, or for a path to work.
+ */
+function watchConnection(pc: RTCPeerConnection, id: string) {
+  const t0 = performance.now();
+  const say = (what: string) => engine.log('info', 'connect', `${id.slice(0, 5)} +${((performance.now() - t0) / 1000).toFixed(1)}s ${what}`);
+  say('made');
+  pc.addEventListener('icegatheringstatechange', () => say(`finding addresses: ${pc.iceGatheringState}`));
+  pc.addEventListener('iceconnectionstatechange', () => say(`connection checks: ${pc.iceConnectionState}`));
+  pc.addEventListener('connectionstatechange', async () => {
+    say(`connection: ${pc.connectionState}`);
+    if (pc.connectionState !== 'connected') return;
+    try {
+      const stats = await pc.getStats();
+      let pair: RTCStats | undefined;
+      stats.forEach((r) => {
+        const x = r as RTCStats & { type: string; state?: string; nominated?: boolean; selected?: boolean };
+        if (x.type === 'candidate-pair' && (x.nominated || x.selected) && x.state === 'succeeded') pair = x;
+      });
+      const p = pair as unknown as { localCandidateId: string; remoteCandidateId: string } | undefined;
+      if (p) {
+        const kind = (cid: string) => (stats.get(cid) as { candidateType?: string } | undefined)?.candidateType ?? '?';
+        say(`path: this device ${kind(p.localCandidateId)}, the other ${kind(p.remoteCandidateId)}`);
+      }
+    } catch {
+      /* the path is a nicety to report */
+    }
+  });
+  pc.addEventListener('icecandidateerror', (e) => {
+    const x = e as RTCPeerConnectionIceErrorEvent;
+    say(`address lookup problem (${x.url || 'a server'}): ${x.errorText || x.errorCode}`);
+  });
+}
+
 async function newPeer(id: string): Promise<Peer> {
   const pc = new RTCPeerConnection({ iceServers: await iceServers() });
   const peer: Peer = { id, pc, ch: null, person: null, name: '', color: '', reasm: new Reassembler(), tail: Promise.resolve(), seq: 0, incoming: null };
   peers.set(id, peer);
+  watchConnection(pc, id);
   return peer;
 }
 
@@ -689,11 +727,14 @@ export function openSessionLink(session: string, box: Mailbox) {
   stopSignal?.();
   stopSignal = hostLoop(box, session, {
     offer: async () => {
+      const t0 = performance.now();
+      engine.log('info', 'connect', 'host: a hello arrived; making an offer');
       const id = await makeInvite();
+      engine.log('info', 'connect', `host: offer ready after ${((performance.now() - t0) / 1000).toFixed(1)}s`);
       const code = id ? p2p.invites.find((i) => i.id === id)?.code : '';
       return id && code ? { id, code } : null;
     },
-    reply: (id, code) => takeReply(id, code),
+    reply: (id, code) => (engine.log('info', 'connect', 'host: the answer arrived; connecting'), takeReply(id, code)),
     trouble: (message) => (p2p.error = message),
   });
 }
@@ -717,19 +758,29 @@ export function startLinkSharing(): string | null {
   const session = crypto.randomUUID().replace(/-/g, '').slice(0, 20);
   openSessionLink(session, box);
   const config = mailboxConfig();
-  p2p.link = liveLink(location.href, session, config?.source === 'local' ? config : undefined);
+  p2p.link = liveLink(shareBase(), session, config?.source === 'local' ? config : undefined);
   p2p.error = '';
   return p2p.link;
 }
 
 /** A student's page joins the class a link named, through the mailbox. Gives back a sentence when it cannot. */
 export async function joinViaLink(session: string, box: Mailbox): Promise<string | null> {
-  return joinLoop(box, session, {
+  const t0 = performance.now();
+  const took = () => `+${((performance.now() - t0) / 1000).toFixed(1)}s`;
+  engine.log('info', 'connect', `join: leaving a hello in the mailbox`);
+  p2p.waiting = 'Looking for the host…';
+  const problem = await joinLoop(box, session, {
     answer: async (offer) => {
+      engine.log('info', 'connect', `join ${took()} the host's offer arrived; making an answer`);
+      p2p.waiting = 'Found the host. Setting up the connection…';
       const problem = await joinWithCode(offer);
+      engine.log('info', 'connect', `join ${took()} answer ${problem ? 'failed' : 'ready, leaving it in the mailbox'}`);
       return problem ? { error: problem } : { code: p2p.reply };
     },
   });
+  engine.log('info', 'connect', `join ${took()} ${problem ? `stopped: ${problem}` : 'answer left; waiting for the connection to open'}`);
+  if (!problem) p2p.waiting = 'Connecting to the host…';
+  return problem;
 }
 
 /** The host pastes a guest's reply code to finish connecting them. */
@@ -831,7 +882,7 @@ export async function joinWithCode(text: string): Promise<string | null> {
   }
   live.status = 'connecting';
   live.room = 'peer session';
-  p2p.waiting = 'Send the reply code below to the host. It connects by itself when they paste it.';
+  p2p.waiting = 'Connecting to the host…';
   return null;
 }
 
