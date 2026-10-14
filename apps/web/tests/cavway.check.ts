@@ -49,6 +49,12 @@ const wide = Uint8Array.from(hand);
 wide.set([0xff, 0xff, 0x00, 0x80], 5);
 ok(near(decodePacket(wide)?.azimuth, 360, 1e-9) && (decodePacket(wide)?.inclination ?? 0) < -179, '0xffff is 360 degrees; 0x8000 is the most negative inclination');
 
+// Straight up and straight down: 0x4000 and 0xC000 read as exactly 90 and -90, not 90.0014 (which would be refused as past vertical).
+const incl = (raw: number) => { const q = Uint8Array.from(hand); q[7] = raw & 0xff; q[8] = (raw >> 8) & 0xff; return decodePacket(q)?.inclination; };
+ok(incl(0x4000) === 90 && incl(0xc000) === -90, 'a vertical shot reads 90 and -90 exactly');
+ok(near(incl(0x3fff), 89.9959, 0.001) && near(incl(0x4001), 90, 0.0001) === true, 'one step either side of vertical is within the slack');
+ok((incl(0x4010) ?? 0) > 90.05 && (incl(0xbff0) ?? 0) < -90.05, 'but a reading well past vertical is not snapped: it stays out of range for the checks to refuse');
+
 // Flags and what they say.
 const withFlag = (flag: number, type = 1) => decodePacket(Uint8Array.from(hand, (v, i) => (i === 0 ? type : i === 1 ? flag : v)));
 ok(withFlag(0xff)?.leg === false && withFlag(0xff)?.mark === 'none', 'an ordinary shot (0xff): not a leg, no mark');

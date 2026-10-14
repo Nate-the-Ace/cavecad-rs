@@ -153,5 +153,68 @@ for (const policy of ['all', 'third', 'none'] as FlagPolicy[]) {
   ok(sim.passage()!.at.left === steps.filter((x) => x.kind === 'leg')[1].walls!.left && sim.passage()!.behind.left === steps[0].walls!.left, 'the second leg: its own passage, with the first behind it');
 }
 
+// One call shoots a whole station: the leg, its backsight when wanted, the four splays; it stops before the next leg.
+{
+  const steps = traverse({ seed: 31, legs: 3, backsights: true, splays: 4 });
+  const shootStations = async (backs: boolean) => {
+    const nb = fakeNotebook();
+    const assembler = new LegAssembler();
+    const trip: Trip = { rows: nb.rows, state: start('A1', new Set(), { mode: 'auto', backsights: backs }), log: [], errors: [], warnings: [] };
+    const names = () => new Set(nb.rows.flatMap((r) => [r.from, r.to ?? '']));
+    const handle = (incoming: Incoming) => {
+      const out = run(nb.port, 't', trip.state, incoming, names, trip.log);
+      if (!out.ok) {
+        if (out.error) trip.errors.push(out.error);
+        return;
+      }
+      trip.state = out.state;
+      if ('entry' in out) trip.log.push({ ...out.entry, n: trip.log.length + 1 });
+      else trip.log = trip.log.map((e) => (e.shot === out.updated.shot ? out.updated : e));
+    };
+    const events: LinkEvents = { status() {}, frame() {}, reading: (r: Reading) => assembler.push(r).forEach((e: LegEvent) => handle(e)) };
+    const sim = new X1SimulatedInstrument(events, { steps, policy: 'third' });
+    let bursts = 0;
+    sim.wantBacksights = () => backs;
+    sim.onBurst = () => {
+      bursts += 1;
+      assembler.flush().forEach((e) => handle(e)); // the surveyor stops: what waits is settled
+    };
+    await sim.connect();
+    const fired = [sim.takeStation(), sim.takeStation(), sim.takeStation(), sim.takeStation()];
+    return { nb, trip, fired, bursts };
+  };
+  const withBacks = await shootStations(true);
+  ok(withBacks.fired.join() === '10,10,10,0', 'a station is ten shots (leg 3, backsight 3, four splays); after three, nothing is left');
+  ok(withBacks.bursts === 3, 'and each press reports that the surveyor has stopped');
+  ok(withBacks.nb.rows.filter((r) => r.to !== null).map((r) => `${r.from}-${r.to}`).join(' ') === 'A1-A2 A2-A3 A3-A4', 'three presses give three legs');
+  ok(withBacks.nb.rows.filter((r) => r.to === null).length === 12, 'with four splays at each of the new stations, none left waiting');
+  ok(withBacks.nb.rows.filter((r) => r.to !== null).every((r) => r.cells.az_bs !== undefined), 'and every leg has its backsight');
+  const noBacks = await shootStations(false);
+  ok(noBacks.fired.join() === '7,7,7,0', 'with backsights off a station is seven shots');
+  ok(noBacks.nb.rows.filter((r) => r.to !== null).every((r) => r.cells.az_bs === undefined) && noBacks.nb.rows.length === 3 + 12, 'and no leg has one');
+  ok(noBacks.trip.errors.length === 0 && withBacks.trip.errors.length === 0, 'nothing is refused either way');
+  ok(noBacks.trip.state.from === 'A4', 'the surveyor ends standing at the last station');
+}
+
+// A survey that starts with splays at the first station: the first click does those, the first leg, its backsight and
+// the splays at the second station; and the first station has a passage of its own, not a copy of the second's.
+{
+  const steps = traverse({ seed: 31, legs: 2, backsights: true, splays: 4, startSplays: true });
+  ok(steps.slice(0, 4).every((s) => s.kind === 'splay') && steps[4].kind === 'leg', 'the script starts with four splays, then the first leg');
+  ok(steps[4].behind !== undefined && steps[4].walls !== undefined && JSON.stringify(steps[4].behind) !== JSON.stringify(steps[4].walls), 'the first station has its own passage, different from the second one');
+  const lefts = steps.slice(0, 4).map((s) => s.distance);
+  ok(Math.abs(lefts[0] - steps[4].behind!.left) < 0.04 && Math.abs(lefts[2] - steps[4].behind!.up) < 0.04, 'and the splays at the first station measure it');
+  const events: LinkEvents = { status() {}, frame() {}, reading() {} };
+  const sim = new X1SimulatedInstrument(events, { steps, policy: 'third' });
+  await sim.connect();
+  ok(sim.takeStation() === 4 + 3 + 3 + 4, 'the first click: four splays, the leg, its backsight, four splays');
+  const hint = sim.passage();
+  ok(hint !== null && hint.behind.left === steps[4].behind!.left && hint.at.left === steps[4].walls!.left, 'and the passage at both its stations is on offer');
+  ok(sim.takeStation() === 3 + 3 + 4, 'the second click: the next leg, its backsight, four splays');
+  ok(sim.takeStation() === 0, 'then there is nothing left');
+  const plain = traverse({ seed: 31, legs: 2, backsights: true, splays: 4 });
+  ok(plain[0].kind === 'leg' && plain[0].behind === undefined, 'without the option the script starts with the leg, as before');
+}
+
 if (bad) process.exit(1);
 console.log('x1session ok');

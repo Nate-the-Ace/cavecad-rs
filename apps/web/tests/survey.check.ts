@@ -14,6 +14,9 @@ ok(!checkReading(r(5, 10, 91)).ok && !checkReading(r(5, 10, -90.5)).ok && checkR
 ok(!checkReading(r(NaN, 10, 0)).ok && !checkReading(r(5, Infinity, 0)).ok, 'a reading that is not a number is refused');
 const steep = checkReading(r(5, 10, 88));
 ok(steep.ok && steep.warnings.length === 1 && /pitch/.test(steep.warnings[0]), 'a steep shot is kept and flagged as a pitch (the engine ignores its compass)');
+const upSplay = checkReading(r(2, 10, 90), true);
+ok(upSplay.ok && upSplay.warnings.length === 0, 'but a splay straight up is how a passage is measured: no warning');
+ok(decide({ ...start('A1', new Set()), mode: 'splay' }, r(2, 10, -90)).warnings.length === 0, 'in splay mode too');
 const tiny = checkReading(r(0.02, 10, 0));
 ok(tiny.ok && tiny.warnings.length === 1, 'a very short shot is kept and flagged');
 

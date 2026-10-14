@@ -65,15 +65,19 @@ const mod360 = (a: number) => ((a % 360) + 360) % 360;
 /** Smallest angle between two bearings, degrees (0 to 180). */
 const gap = (a: number, b: number) => Math.abs(((((a - b) % 360) + 540) % 360) - 180);
 
-/** A reading that can be written as it is, or the reason it cannot. */
-export function checkReading(r: Reading): { ok: true; warnings: string[] } | { ok: false; why: string } {
+/**
+ * A reading that can be written as it is, or the reason it cannot. A shot steeper than the plumb limit is flagged for a
+ * leg (the engine reads it as a pitch and ignores the compass), but not for a splay: up and down splays are how a
+ * passage is measured, and say nothing the surveyor needs told.
+ */
+export function checkReading(r: Reading, splay = false): { ok: true; warnings: string[] } | { ok: false; why: string } {
   if (![r.distance, r.azimuth, r.inclination].every(Number.isFinite)) return { ok: false, why: 'The instrument sent something that is not a number.' };
   if (r.distance <= 0) return { ok: false, why: 'The tape reading is zero or negative.' };
   if (r.distance > MAX_DISTANCE_M) return { ok: false, why: 'The tape reading is far too long to be right.' };
   if (r.inclination < -90 || r.inclination > 90) return { ok: false, why: 'The clino reading is past vertical.' };
   const warnings: string[] = [];
   if (r.distance < MIN_DISTANCE_M) warnings.push('Very short shot: check it was not a mis-fire.');
-  if (Math.abs(r.inclination) > PLUMB_DEG) warnings.push(`Steeper than ${PLUMB_DEG}°: read as a pitch, so the compass is ignored.`);
+  if (!splay && Math.abs(r.inclination) > PLUMB_DEG) warnings.push(`Steeper than ${PLUMB_DEG}°: read as a pitch, so the compass is ignored.`);
   return { ok: true, warnings };
 }
 
@@ -94,7 +98,7 @@ export function backsightWarnings(fore: Reading, back: Reading): string[] {
 
 /** Decides what a reading is: the next leg, a splay, or the backsight being waited for. */
 export function decide(state: SessionState, reading: Reading): Decision {
-  const checked = checkReading(reading);
+  const checked = checkReading(reading, state.mode === 'splay' && !state.awaiting);
   if (!checked.ok) return { plan: null, reject: checked.why, warnings: [] };
   const warnings = [...checked.warnings];
   if (state.awaiting) {
@@ -183,7 +187,7 @@ const SPREAD_ANGLE_DEG = 1.5;
 /** The instrument's own events (what the X1 says is a leg or a splay), made into a plan. `base` is where the surveyor stands when it is written (they have moved on if a backsight was awaited and something else came). */
 export function decideEvent(state: SessionState, ev: Extract<LegEvent, { kind: 'leg' | 'splay' }>, taken: ReadonlySet<string>): { base: SessionState; decision: Decision } {
   const reading = ev.reading;
-  const checked = checkReading(reading);
+  const checked = checkReading(reading, ev.kind === 'splay');
   if (!checked.ok) return { base: state, decision: { plan: null, reject: checked.why, warnings: [] } };
   const warnings = [...checked.warnings];
   if (reading.error) warnings.push(`The instrument reports an ${reading.error}.`);

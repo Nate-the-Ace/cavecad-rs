@@ -18,13 +18,21 @@ import { run, type Entry, type Incoming } from './survey-run';
 import { undo as undoWritten, type NotebookPort } from './survey-writer';
 
 export type LogEntry = Entry;
-export type LinkKind = 'x1' | 'caveble' | 'capture' | 'simulator';
+/** `auto`: any supported instrument (Cavway X1, SAP5, SAP6, BRIC4, BRIC5), told apart by its name; `capture`: any device, frames logged; `simulator`: a pretend X1. */
+export type LinkKind = 'auto' | 'capture' | 'simulator';
 
 /** How long after the last shot an X1 group still waiting (one or two close shots) is settled as splays. */
 const IDLE_FLUSH_MS = 8000;
 
 export const survey = $state({
   status: 'idle' as LinkStatus,
+  /** Which kind of link is up (or was asked for), so the ribbon can show it pressed. */
+  kind: '' as LinkKind | '',
+  /** The simulator is firing shots on its own. */
+  running: false,
+  /** Connection choices for an instrument that is not found by default (kept in the panel's capture section). */
+  services: '',
+  anyDevice: false,
   detail: '',
   device: '',
   canTakeShot: false,
@@ -133,8 +141,8 @@ function applyPassage(trip: string, entry: Entry) {
   if (!survey.randomPassage || !(instrument instanceof X1SimulatedInstrument) || !entry.to || !entry.from) return;
   const hint = instrument.passage();
   if (!hint) return;
-  setWallsAt(trip, entry.from, hint.behind, true);
-  setWallsAt(trip, entry.to, hint.at, false);
+  if (!setWallsAt(trip, entry.from, hint.behind, true)) engine.log('info', 'survey', `${entry.from} already has its passage dimensions, or has no line in the notebook to put them on.`);
+  if (!setWallsAt(trip, entry.to, hint.at, false)) engine.log('warn', 'survey', `Could not write the passage dimensions at ${entry.to}.`);
 }
 
 /** What to do with something that has arrived: write it, or hold it for Accept. */
@@ -276,6 +284,7 @@ const events: LinkEvents = {
     survey.detail = detail;
     survey.device = instrument && status === 'connected' ? instrument.name : survey.device;
     survey.canTakeShot = !!instrument?.canTakeShot && status === 'connected';
+    if (status === 'connected' && instrument) survey.groupsLegs = instrument.groupsLegs; // known only once the instrument has been told apart
     if (status === 'idle' || status === 'error' || status === 'unsupported') survey.held = [];
   },
   frame(hex, from) {
@@ -285,17 +294,25 @@ const events: LinkEvents = {
 };
 
 /** Connects to an instrument. `x1` is the Cavway X1; `simulator` a pretend one; `caveble` the open protocol; `capture` logs any device's frames. */
-export async function connect(kind: LinkKind, options: { services?: string[]; anyDevice?: boolean } = {}) {
+export async function connect(kind: LinkKind, given: { services?: string[]; anyDevice?: boolean } = {}) {
+  const options = { services: given.services ?? survey.services.split(/[\s,]+/).filter(Boolean), anyDevice: given.anyDevice ?? survey.anyDevice };
   disconnect();
   survey.message = '';
   survey.frames = [];
-  const device = kind === 'x1' || kind === 'simulator';
+  const device = kind !== 'capture';
   if (kind === 'simulator') {
-    instrument = new X1SimulatedInstrument(events, { steps: traverse({ seed: 7, legs: 30, backsights: survey.state.backsights, splays: 2 }), policy: 'third' });
+    instrument = new X1SimulatedInstrument(events, { steps: traverse({ seed: 7, legs: 40, backsights: true, splays: 4, startSplays: true }), policy: 'third' });
   } else {
-    instrument = new WebBleInstrument(events, { mode: kind, services: options.services, anyDevice: options.anyDevice });
+    instrument = new WebBleInstrument(events, { mode: kind === 'capture' ? 'capture' : 'auto', services: options.services, anyDevice: options.anyDevice });
   }
   survey.groupsLegs = device;
+  survey.kind = kind;
+  survey.running = false;
+  if (instrument instanceof X1SimulatedInstrument) {
+    instrument.wantBacksights = () => survey.state.backsights;
+    instrument.onFinished = () => (survey.running = false);
+    instrument.onBurst = () => settleNow(); // a station shot in one go: nothing more is coming, so what is waiting is settled
+  }
   // An X1 says itself what is a leg; any other instrument is told by the surveyor.
   survey.state = { ...survey.state, mode: device ? 'auto' : survey.state.mode === 'auto' ? 'leg' : survey.state.mode };
   assembler.reset();
@@ -310,11 +327,15 @@ export function disconnect() {
   instrument = null;
   survey.status = 'idle';
   survey.canTakeShot = false;
+  survey.kind = '';
+  survey.running = false;
 }
 
 /** Fires a shot from the screen (the instrument must support it). */
 export function takeShot() {
-  instrument?.takeShot();
+  // The simulator shoots a whole station (leg, backsight, splays and passage) for one press; a real instrument fires one shot.
+  if (instrument instanceof X1SimulatedInstrument) instrument.takeStation();
+  else instrument?.takeShot();
 }
 
 /** The simulator runs on its own, a shot every `ms`, until its script is out. */
@@ -322,6 +343,13 @@ export function autoRun(ms: number | null) {
   if (!(instrument instanceof X1SimulatedInstrument)) return;
   if (ms === null) instrument.stop();
   else instrument.auto(ms);
+}
+
+/** The simulator fires on its own, or stops (the Survey tab's Run button). */
+export function toggleRun() {
+  if (!(instrument instanceof X1SimulatedInstrument)) return;
+  survey.running = !survey.running;
+  autoRun(survey.running ? 1200 : null);
 }
 
 export const simulating = () => instrument instanceof X1SimulatedInstrument;

@@ -119,6 +119,14 @@ export interface X1Packet {
 }
 
 const ANGLE = 360 / 0xffff;
+
+/**
+ * A shot straight up or down is 0x4000 (or 0xC000) in the packet, which is 90.0014 degrees on this scale. Read as it
+ * stands it would be "past vertical" and every pit and dome shot would be refused, so an inclination a hair past 90,
+ * within the packet's own resolution, is vertical. Anything further out is left alone for the checks to refuse.
+ */
+const VERTICAL_SLACK_DEG = 0.05;
+const snapVertical = (d: number) => (Math.abs(d) > 90 && Math.abs(d) <= 90 + VERTICAL_SLACK_DEG ? Math.sign(d) * 90 : d);
 const u16 = (b: Uint8Array, i: number) => b[i] | (b[i + 1] << 8);
 const i16 = (b: Uint8Array, i: number) => (u16(b, i) << 16) >> 16;
 
@@ -171,7 +179,7 @@ export function decodePacket(data: ArrayLike<number> | ArrayBufferView): X1Packe
     mark: MARKS[markBits] ?? 'none',
     distance,
     azimuth: u16(b, 5) * ANGLE,
-    inclination: i16(b, 7) * ANGLE,
+    inclination: snapVertical(i16(b, 7) * ANGLE),
     roll: u16(b, 9) * ANGLE,
     time: b.length >= 21 ? (b[17] | (b[18] << 8) | (b[19] << 16) | (b[20] << 24)) >>> 0 : null,
     sensors,

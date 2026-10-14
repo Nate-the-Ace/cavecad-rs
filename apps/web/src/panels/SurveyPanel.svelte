@@ -5,7 +5,7 @@
   // surveyed. Everything here is sized for a tablet held in a glove: big targets, one thing to do next.
   // The rules (what a reading is, where the surveyor stands next) are in lib/survey.ts and tested there.
   import { untrack } from 'svelte';
-  import { Bluetooth, Check, Crosshair, FlaskConical, Play, SkipForward, Square, Undo2, X } from '@lucide/svelte';
+  import { Check, Crosshair, SkipForward, Undo2, X } from '@lucide/svelte';
   import LengthField from '../components/LengthField.svelte';
   import PanelUndo from '../components/PanelUndo.svelte';
   import { cave, changed } from '../lib/cave.svelte';
@@ -18,10 +18,7 @@
   import { webBluetoothAvailable } from '../lib/instrument/webble';
 
   let ready = $state(false);
-  let running = $state(false);
-  let services = $state('');
   let showCapture = $state(false);
-  let anyDevice = $state(false);
   loadEngine().then(() => (ready = true));
 
   // Set up for the open trip (not on every edit: that would move the surveyor back to the page's end).
@@ -77,19 +74,6 @@
   const noBluetooth = $derived(!webBluetoothAvailable());
   const dist = (m: number) => formatLength(m, units, 2);
 
-  function toggleRun() {
-    running = !running;
-    live.autoRun(running ? 1200 : null);
-  }
-  async function connect(kind: live.LinkKind) {
-    running = false;
-    await live.connect(kind, { services: services.split(/[\s,]+/).filter(Boolean), anyDevice });
-  }
-  function disconnect() {
-    running = false;
-    live.disconnect();
-  }
-
   function onKey(e: KeyboardEvent) {
     const t = e.target as HTMLElement;
     if (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA') return; // typing: leave the keys to the field
@@ -120,13 +104,6 @@
       {:else}No instrument{/if}
     </span>
     <span class="trip" title="The notebook page shots are written to (choose it in the Notebook)">{tripName}</span>
-    <span class="spacer"></span>
-    {#if linked}
-      <button class="small" onclick={disconnect}>Disconnect</button>
-    {:else}
-      <button class="small primary" onclick={() => connect('x1')} title="Connect to a Cavway X1 over Bluetooth"><Bluetooth size={15} /> Connect X1</button>
-      <button class="small" onclick={() => connect('simulator')} title="A pretend instrument: try the whole workflow with no hardware"><FlaskConical size={15} /> Simulator</button>
-    {/if}
   </div>
 
   <div class="scroll">
@@ -142,7 +119,7 @@
         <div class="big"><b>{angleText(+survey.last.azimuth.toFixed(1))}°</b><small>compass</small></div>
         <div class="big"><b>{angleText(+survey.last.inclination.toFixed(1))}°</b><small>clino</small></div>
       {:else}
-        <p class="idle">{linked ? 'Waiting for a shot…' : 'Connect an instrument, or try the simulator.'}</p>
+        <p class="idle">{linked ? 'Waiting for a shot…' : 'Connect an instrument in the Survey tab, or try the simulator.'}</p>
       {/if}
     </section>
 
@@ -165,19 +142,6 @@
     {/if}
 
     <section class="where" aria-label="Where you are">
-      {#if survey.groupsLegs}
-        <p class="auto" title="The X1 itself calls three or more consecutive close shots a leg; any other shot is a splay. Mark a leg Backsight with the M button on the X1.">The X1 decides: three close shots are a leg, one shot is a splay.</p>
-      {:else}
-        <div class="seg" role="group" aria-label="What the next shot is">
-          <button class:sel={survey.state.mode === 'leg'} aria-pressed={survey.state.mode === 'leg'} onclick={() => live.setMode('leg')}>Leg</button>
-          <button class:sel={survey.state.mode === 'splay'} aria-pressed={survey.state.mode === 'splay'} onclick={() => live.setMode('splay')}>Splay</button>
-        </div>
-      {/if}
-      <label class="chk"><input type="checkbox" checked={survey.state.backsights} onchange={(e) => live.setBacksights(e.currentTarget.checked)} /> Backsights</label>
-      {#if live.simulating() && linked}
-        <label class="chk" title="The simulator gives each new station random passage dimensions and its splays measure them: a passage to look at"><input type="checkbox" bind:checked={survey.randomPassage} /> Random passage</label>
-      {/if}
-      <label class="chk" title="Off: each reading waits for Accept before it is written"><input type="checkbox" bind:checked={survey.auto} /> Write at once</label>
       <div class="names">
         <label>From <input class="name" bind:value={survey.state.from} maxlength="40" aria-label="Station you are at" onkeydown={enter} disabled={survey.state.awaiting !== null} /></label>
         <span aria-hidden="true">→</span>
@@ -217,13 +181,12 @@
     </section>
 
     <details class="capture" bind:open={showCapture}>
-      <summary>Instrument log and capture (for an instrument whose protocol is not known)</summary>
+      <summary>Instrument log, and capture for an instrument that is not supported yet</summary>
       <p class="hint">Capture connects to any Bluetooth device and logs every frame it sends. The browser can only reach services it is told about in advance: list the service UUIDs (from a Bluetooth scanner app such as nRF Connect), separated by spaces or commas.</p>
-      <label class="chk"><input type="checkbox" bind:checked={anyDevice} /> Show every Bluetooth device when connecting (if the X1 is not offered by default)</label>
-      <textarea bind:value={services} rows="2" placeholder="service uuids, e.g. 0000ffe0-0000-1000-8000-00805f9b34fb" aria-label="Service UUIDs to reach"></textarea>
+      <label class="chk"><input type="checkbox" bind:checked={survey.anyDevice} /> Show every Bluetooth device when connecting (if the instrument is not offered by default)</label>
+      <textarea bind:value={survey.services} rows="2" placeholder="service uuids, e.g. 0000ffe0-0000-1000-8000-00805f9b34fb" aria-label="Service UUIDs to reach"></textarea>
       <div class="row">
-        <button class="small" onclick={() => connect('capture')} disabled={linked}>Connect in capture mode</button>
-        <button class="small" onclick={() => connect('caveble')} disabled={linked} title="The open protocol of the Shetland Attack Pony and similar instruments">Connect (CaveBLE)</button>
+        <button class="small" onclick={() => live.connect('capture')} disabled={linked}>Connect in capture mode</button>
         <button class="small" onclick={() => navigator.clipboard?.writeText(survey.frames.join('\n'))} disabled={survey.frames.length === 0}>Copy log</button>
         <button class="small" onclick={() => (survey.frames = [])} disabled={survey.frames.length === 0}>Clear</button>
       </div>
@@ -232,7 +195,7 @@
   </div>
 
   <footer class="dock" aria-label="Actions">
-    <button class="shoot" onclick={live.takeShot} disabled={!survey.canTakeShot}><Crosshair size={22} /> Take shot</button>
+    <button class="shoot" onclick={live.takeShot} disabled={!survey.canTakeShot}><Crosshair size={22} /> {survey.kind === 'simulator' ? 'Shoot station' : 'Take shot'}</button>
     <div class="slots">
       <button onclick={live.undoLast} disabled={survey.log.length === 0}><Undo2 size={18} /> Undo last shot</button>
       {#if survey.state.awaiting}
@@ -240,7 +203,6 @@
       {:else}
         <button onclick={live.nextStation} disabled={survey.state.mode === 'splay'} title="Move on to the next station without a shot">Next station</button>
       {/if}
-      <button onclick={toggleRun} disabled={!(live.simulating() && linked)} title="The simulator fires a shot every second or so">{#if running}<Square size={16} /> Stop{:else}<Play size={16} /> Run on its own{/if}</button>
     </div>
   </footer>
 </div>
@@ -248,7 +210,6 @@
 <style>
   .panel { display: flex; flex-direction: column; height: 100%; background: var(--panel); color: var(--text); font-size: 14px; outline: none; }
   .bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 6px 10px; border-bottom: 1px solid var(--line); }
-  .spacer { flex: 1; }
   .scroll { flex: 1; overflow-y: auto; overflow-x: hidden; padding: 10px; display: flex; flex-direction: column; gap: 12px; }
   .chip { padding: 3px 10px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); font-size: 12px; }
   .chip.on { border-color: var(--accent); color: var(--text); }
@@ -257,14 +218,14 @@
   button { font: inherit; padding: 10px 14px; min-height: 44px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel-2); color: var(--text); cursor: pointer; display: inline-flex; align-items: center; justify-content: center; gap: 6px; touch-action: manipulation; }
   button:disabled { opacity: 0.45; cursor: default; }
   button.small { min-height: 34px; padding: 4px 10px; font-size: 13px; }
-  button.primary, button.go, button.shoot { background: var(--accent); border-color: var(--accent); color: var(--on-accent, #fff); }
+  button.go, button.shoot { background: var(--accent); border-color: var(--accent); color: var(--on-accent, #fff); }
   button.no { color: var(--danger); }
   button.shoot { font-size: 17px; font-weight: 600; min-height: 56px; width: 100%; }
   .banner { margin: 0; padding: 8px 10px; border: 1px solid var(--warn); border-radius: var(--radius); font-size: 13px; }
   .reading { display: flex; flex-wrap: wrap; gap: 8px; min-height: 88px; align-items: stretch; }
   .notes { min-height: 3.4em; }
   .dock { border-top: 1px solid var(--line); padding: 8px 10px; display: flex; flex-direction: column; gap: 8px; background: var(--panel); }
-  .slots { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+  .slots { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
   .slots button { padding: 8px 6px; font-size: 13px; }
   .big { flex: 1 1 70px; min-width: 0; text-align: center; padding: 10px 4px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel-2); }
   .big b { display: block; font-size: 26px; font-variant-numeric: tabular-nums; }
@@ -277,11 +238,6 @@
   .row { display: flex; flex-wrap: wrap; gap: 8px; }
   .row button { flex: 1; }
   .where { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; }
-  .seg { display: inline-flex; }
-  .seg button { border-radius: 0; min-width: 76px; }
-  .seg button:first-child { border-radius: var(--radius) 0 0 var(--radius); }
-  .seg button:last-child { border-radius: 0 var(--radius) var(--radius) 0; border-left: none; }
-  .seg button.sel { background: var(--accent); border-color: var(--accent); color: var(--on-accent, #fff); }
   .chk { display: inline-flex; align-items: center; gap: 6px; min-height: 44px; }
   .chk input { width: 20px; height: 20px; }
   .names { display: flex; align-items: center; gap: 8px; flex: 1 1 100%; }
@@ -290,7 +246,6 @@
   input.name:disabled { opacity: 0.5; }
   button.link { min-height: 0; padding: 2px 8px; font-size: 12px; margin-left: 6px; }
   .wait { margin: 0; flex: 1 1 100%; font-size: 13px; color: var(--accent); min-height: 2.6em; }
-  .auto { margin: 0; font-size: 13px; color: var(--muted); flex: 1 1 60%; }
   .next { margin: 0; flex: 1 1 100%; font-size: 15px; font-weight: 600; min-height: 2.6em; }
   h4 { margin: 0 0 6px; font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; font-weight: 600; }
   .lrud { display: flex; flex-wrap: wrap; gap: 10px; }

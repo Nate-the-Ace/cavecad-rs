@@ -8,6 +8,7 @@
   import Ribbon, { type Group } from '../src/components/Ribbon.svelte';
   import DrawTools from '../src/components/DrawTools.svelte';
   import LayoutGroup from '../src/components/LayoutGroup.svelte';
+  import { surveyGroups } from '../src/components/survey-groups';
   import { cave, option, setOption, setUnits } from '../src/lib/cave.svelte';
   import { loadEngine } from '../src/lib/engine';
   import { survey } from '../src/lib/survey.svelte';
@@ -49,6 +50,7 @@
 
   /** The ribbon: the app's Draw groups as they are, and a View tab of the same kind as the app's. */
   const tabs: Record<string, Group[]> = {
+    Survey: surveyGroups(),
     Draw: ['Linework', 'Passage lines', 'Geology and relief'].map((name) => ({ name, items: [], custom: DrawTools, props: { group: name } })),
     View: [
       { name: 'Panels', items: Object.entries(PANELS).map(([id, def]) => ({ label: def.title, icon: icons[id as keyof typeof icons], run: () => togglePanel(id), pressed: () => !!panelState.open[id] })) },

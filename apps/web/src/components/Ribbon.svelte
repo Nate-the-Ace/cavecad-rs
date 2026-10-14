@@ -32,6 +32,7 @@
   import SelectionTools from './SelectionTools.svelte';
   import CollaborateGroup from './CollaborateGroup.svelte';
   import LayoutGroup from './LayoutGroup.svelte';
+  import { surveyGroups } from './survey-groups';
   import FillTools from './FillTools.svelte';
   import SheetGroup from './SheetGroup.svelte';
   import { INSPECTORS } from '../lib/inspectors';
@@ -74,7 +75,7 @@
     Home: [
       { name: 'File', items: [{ label: 'Caves', icon: Library, run: () => (shelf.open = true) }, { label: 'New', icon: FilePlus, run: () => (cave.newDialog = true) }, { label: 'Open', icon: FolderOpen, run: open }, { label: 'Save', icon: Save, run: save }, { label: 'Save as', icon: Save, run: saveAs }, { label: 'Scans in file', icon: ScanLine, run: () => setOption('saveScans', !option('saveScans', true)), pressed: () => option('saveScans', true) }] },
       { name: 'Export', items: [{ label: 'DXF', icon: FileOutput, run: () => run(exportDxf()) }, { label: 'Project', icon: Package, run: () => run(exportProject()) }] },
-      { name: 'Survey', items: [{ label: 'In cave', icon: Crosshair, run: surveyLayout }, stub('Import', FileInput), stub('Draw', Route), stub('Adjust', Waypoints)] },
+      { name: 'Survey', items: [stub('Import', FileInput), stub('Draw', Route), stub('Adjust', Waypoints)] },
       {
         name: 'Live',
         items: [
@@ -91,6 +92,7 @@
       { name: 'Symbols', items: [{ label: 'Symbols', icon: Shapes, run: () => showPanel('symbols'), pressed: () => !!panelState.visible.symbols }] },
       { name: 'Area fill', items: [], custom: FillTools },
     ],
+    Survey: surveyGroups({ inCave: surveyLayout }),
     Sheets: [
       { name: 'Paper and scale', items: [], custom: SheetGroup, props: { part: 'paper' } },
       { name: 'Title block', items: [], custom: SheetGroup, props: { part: 'title' } },

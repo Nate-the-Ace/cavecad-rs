@@ -22,6 +22,8 @@ export interface ShotSpec {
   mark: X1Mark;
   /** The passage at the station a leg arrives at (carried on the first shot of a foresight leg). */
   walls?: Walls;
+  /** On the first leg, when the survey starts with splays: the passage at the station it leaves. */
+  behind?: Walls;
 }
 
 const round = (v: number, d: number) => Math.round(v * 10 ** d) / 10 ** d;
@@ -44,6 +46,7 @@ export function shotsFor(steps: Step[], policy: FlagPolicy, seed = 1): ShotSpec[
         leg: policy === 'all' || (policy === 'third' && i === 2),
         mark: s.kind === 'back' ? 'backsight' : 'none',
         walls: i === 0 && s.kind === 'leg' ? s.walls : undefined,
+        behind: i === 0 && s.kind === 'leg' ? s.behind : undefined,
       });
     }
   }
@@ -69,6 +72,12 @@ export class X1SimulatedInstrument implements Instrument {
   private readonly shots: ShotSpec[];
   private readonly opts: X1SimOptions;
   private readonly events: LinkEvents;
+  /** Called when the script has run out while firing on its own. */
+  onFinished: (() => void) | null = null;
+  /** Called after a whole station has been shot: the surveyor stops, so what is waiting is settled. */
+  onBurst: (() => void) | null = null;
+  /** Whether the surveyor is taking backsights right now (asked at each press, so the switch can change mid-survey). */
+  wantBacksights: () => boolean = () => true;
   private index = 0;
   private hint: { at: Walls; behind: Walls } | null = null;
   private behind: Walls | null = null;
@@ -112,7 +121,7 @@ export class X1SimulatedInstrument implements Instrument {
     this.clock += 1;
     if (s.walls) {
       // A new leg: the passage at the station it reaches, and (for the first leg) at the one it leaves.
-      this.hint = { at: s.walls, behind: this.behind ?? s.walls };
+      this.hint = { at: s.walls, behind: s.behind ?? this.behind ?? s.walls };
       this.behind = s.walls;
     }
     const packet = encodePacket({ ...s, time: this.clock, short: this.opts.short });
@@ -120,10 +129,40 @@ export class X1SimulatedInstrument implements Instrument {
     if (this.opts.repeatFrames) this.link.onFrame(packet, 'sim');
   }
 
-  /** Fires a shot every `ms` until the script runs out (the demo mode of the Survey panel). */
+  /**
+   * Shoots the next whole station in one go, as a surveyor would: any splays still to be shot where they stand (the
+   * first station's), the leg (three close shots), its backsight when the script has one, and the splays that measure
+   * the passage at the new station. Stops before the next leg. Returns how many shots it fired.
+   */
+  takeStation(): number {
+    if (!this.connected || !this.upcoming) return 0;
+    let fired = 0;
+    let sawLeg = false;
+    do {
+      const next = this.upcoming;
+      if (next?.mark === 'backsight' && !this.wantBacksights()) {
+        this.index += 1; // no backsights today: that leg's backsight is not shot
+        continue;
+      }
+      if (next?.walls) sawLeg = true;
+      this.takeShot();
+      fired += 1;
+      // A foresight leg's first shot carries the passage at its far end: the one after the leg this call shot starts the next station.
+    } while (this.upcoming && !(sawLeg && this.upcoming.walls));
+    this.onBurst?.();
+    return fired;
+  }
+
+  /** Shoots a whole station every `ms` until the script runs out (the demo mode of the Survey panel). */
   auto(ms: number) {
     this.stop();
-    this.timer = setInterval(() => (this.upcoming ? this.takeShot() : this.stop()), ms);
+    this.timer = setInterval(() => {
+      if (this.upcoming) this.takeStation();
+      else {
+        this.stop();
+        this.onFinished?.();
+      }
+    }, ms);
   }
 
   stop() {
