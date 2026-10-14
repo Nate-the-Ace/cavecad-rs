@@ -1,0 +1,163 @@
+// The Survey session's rules, with no screen and no engine in them: given what the surveyor has set
+// (leg or splay, backsights or not, where they stand) and a reading from the instrument, what should be
+// written to the notebook, and where do they stand afterwards. Pure, so every rule is tested
+// (tests/survey.check.ts). The panel and `survey.svelte.ts` only carry these decisions out.
+//
+// What the instrument sends is never changed on the way in: the compass reading stays what the compass
+// said (the notebook turns it into a true bearing with the trip's declination), a backsight keeps its
+// own sign and direction, and a steep shot keeps whatever bearing the instrument gave (the engine
+// already ignores the compass on a pitch, so nothing here invents or drops one).
+
+import { suggestNext } from './notebook.ts';
+import type { Reading } from './instrument/types.ts';
+
+export type Mode = 'leg' | 'splay';
+
+/** A foresight has been written and its backsight is the next reading. */
+export interface Awaiting {
+  shot: string;
+  /** The foresight, to compare the backsight against. */
+  reading: Reading;
+}
+
+export interface SessionState {
+  mode: Mode;
+  /** Take a backsight after each foresight. */
+  backsights: boolean;
+  /** The station the surveyor stands at (a leg starts here, a splay is taken from here). */
+  from: string;
+  /** The station the next leg goes to. */
+  to: string;
+  awaiting: Awaiting | null;
+}
+
+/** What to write to the notebook. */
+export type Plan =
+  | { kind: 'leg'; from: string; to: string; reading: Reading }
+  | { kind: 'splay'; from: string; reading: Reading }
+  | { kind: 'back'; shot: string; reading: Reading };
+
+export interface Decision {
+  plan: Plan | null;
+  /** Why the reading cannot be used at all (nothing is written). */
+  reject: string | null;
+  /** Worth a look, but written anyway. */
+  warnings: string[];
+}
+
+/** Longest shot taken as believable, metres. A laser reading past this is a glitch. */
+export const MAX_DISTANCE_M = 600;
+/** Shots shorter than this are probably a mis-fire, metres. */
+export const MIN_DISTANCE_M = 0.05;
+/** The engine reads a shot steeper than this as a plumbed pitch and ignores its compass. */
+export const PLUMB_DEG = 85;
+/** Degrees by which foresight and backsight may disagree (the same figure the notebook flags at). */
+export const BACKSIGHT_TOLERANCE_DEG = 3;
+/** Tape difference between foresight and backsight that is worth saying: larger of 0.1 m and 2 %. */
+export const TAPE_TOLERANCE_M = 0.1;
+export const TAPE_TOLERANCE_FRACTION = 0.02;
+
+const mod360 = (a: number) => ((a % 360) + 360) % 360;
+/** Smallest angle between two bearings, degrees (0 to 180). */
+const gap = (a: number, b: number) => Math.abs(((((a - b) % 360) + 540) % 360) - 180);
+
+/** A reading that can be written as it is, or the reason it cannot. */
+export function checkReading(r: Reading): { ok: true; warnings: string[] } | { ok: false; why: string } {
+  if (![r.distance, r.azimuth, r.inclination].every(Number.isFinite)) return { ok: false, why: 'The instrument sent something that is not a number.' };
+  if (r.distance <= 0) return { ok: false, why: 'The tape reading is zero or negative.' };
+  if (r.distance > MAX_DISTANCE_M) return { ok: false, why: 'The tape reading is far too long to be right.' };
+  if (r.inclination < -90 || r.inclination > 90) return { ok: false, why: 'The clino reading is past vertical.' };
+  const warnings: string[] = [];
+  if (r.distance < MIN_DISTANCE_M) warnings.push('Very short shot: check it was not a mis-fire.');
+  if (Math.abs(r.inclination) > PLUMB_DEG) warnings.push(`Steeper than ${PLUMB_DEG}°: read as a pitch, so the compass is ignored.`);
+  return { ok: true, warnings };
+}
+
+/** What a backsight says about its foresight: the same checks the notebook flags a page with. */
+export function backsightWarnings(fore: Reading, back: Reading): string[] {
+  const out: string[] = [];
+  // Steep shots have no meaningful compass, so only the clino is compared.
+  if (Math.abs(fore.inclination) <= PLUMB_DEG && Math.abs(back.inclination) <= PLUMB_DEG) {
+    const g = gap(fore.azimuth, mod360(back.azimuth + 180));
+    if (g > BACKSIGHT_TOLERANCE_DEG) out.push(`Compass foresight and backsight differ by ${g.toFixed(1)}°.`);
+  }
+  const sum = Math.abs(fore.inclination + back.inclination);
+  if (sum > BACKSIGHT_TOLERANCE_DEG) out.push(`Clino foresight and backsight differ by ${sum.toFixed(1)}°.`);
+  const d = Math.abs(fore.distance - back.distance);
+  if (d > Math.max(TAPE_TOLERANCE_M, TAPE_TOLERANCE_FRACTION * fore.distance)) out.push(`Tape differs by ${d.toFixed(2)} m between foresight and backsight.`);
+  return out;
+}
+
+/** Decides what a reading is: the next leg, a splay, or the backsight being waited for. */
+export function decide(state: SessionState, reading: Reading): Decision {
+  const checked = checkReading(reading);
+  if (!checked.ok) return { plan: null, reject: checked.why, warnings: [] };
+  const warnings = [...checked.warnings];
+  if (state.awaiting) {
+    warnings.push(...backsightWarnings(state.awaiting.reading, reading));
+    return { plan: { kind: 'back', shot: state.awaiting.shot, reading }, reject: null, warnings };
+  }
+  const from = state.from.trim();
+  const to = state.to.trim();
+  if (!from) return { plan: null, reject: 'Say which station you are standing at.', warnings };
+  if (state.mode === 'splay') return { plan: { kind: 'splay', from, reading }, reject: null, warnings };
+  if (!to) return { plan: null, reject: 'Name the station this shot goes to.', warnings };
+  if (from === to) return { plan: null, reject: 'A shot joins two different stations.', warnings };
+  return { plan: { kind: 'leg', from, to, reading }, reject: null, warnings };
+}
+
+/** The surveyor moves on: they stand at `to`, and the next leg goes to the next name in the sequence. */
+export function advance(state: SessionState, taken: ReadonlySet<string>): SessionState {
+  const stand = state.to.trim();
+  const names = new Set(taken);
+  names.add(stand);
+  return { ...state, from: stand, to: suggestNext(stand, names), awaiting: null };
+}
+
+/** The state once `plan` has been written to the notebook (`shot` is the id of the shot it created or changed). */
+export function applied(state: SessionState, plan: Plan, shot: string, taken: ReadonlySet<string>): SessionState {
+  switch (plan.kind) {
+    case 'leg':
+      // With backsights the surveyor has not moved yet: the backsight is taken from the new station
+      // looking back. They move on once it is in (or skipped).
+      return state.backsights ? { ...state, awaiting: { shot, reading: plan.reading } } : advance(state, taken);
+    case 'back':
+      return advance(state, taken);
+    case 'splay':
+      return state;
+  }
+}
+
+/** Gives up on the backsight being waited for and moves on. */
+export function skipBack(state: SessionState, taken: ReadonlySet<string>): SessionState {
+  return state.awaiting ? advance(state, taken) : state;
+}
+
+/**
+ * Switches between leg and splay. A surveyor who changes mode while a backsight is awaited has given
+ * it up and is already at the new station, so they move on (a splay taken now belongs to that station).
+ */
+export function withMode(state: SessionState, mode: Mode, taken: ReadonlySet<string>): SessionState {
+  if (state.mode === mode) return state;
+  return { ...(state.awaiting ? advance(state, taken) : state), mode };
+}
+
+/** The station the surveyor is physically at: the new one while its backsight is awaited. */
+export function standing(state: SessionState): string {
+  return (state.awaiting ? state.to : state.from).trim();
+}
+
+/** What to tell the surveyor to do next, in plain words. */
+export function nextStep(state: SessionState): string {
+  if (state.awaiting) return `Take the backsight from ${state.to.trim()} back to ${state.from.trim()}.`;
+  if (state.mode === 'splay') return `Take a splay from ${state.from.trim() || '(name the station)'}.`;
+  if (!state.from.trim() || !state.to.trim()) return 'Name the two stations, then take the shot.';
+  return `Take the shot ${state.from.trim()} to ${state.to.trim()}.`;
+}
+
+/** A fresh state standing at `from` (the last station of the page, or the first of a new one). */
+export function start(from: string, taken: ReadonlySet<string>, keep?: Pick<SessionState, 'mode' | 'backsights'>): SessionState {
+  const names = new Set(taken);
+  names.add(from);
+  return { mode: keep?.mode ?? 'leg', backsights: keep?.backsights ?? false, from, to: suggestNext(from, names), awaiting: null };
+}

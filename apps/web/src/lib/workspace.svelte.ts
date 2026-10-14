@@ -15,6 +15,7 @@ import StationsPanel from '../panels/StationsPanel.svelte';
 import SheetPanel from '../panels/SheetPanel.svelte';
 import NotebookPanel from '../panels/NotebookPanel.svelte';
 import ScansPanel from '../panels/ScansPanel.svelte';
+import SurveyPanel from '../panels/SurveyPanel.svelte';
 
 const LAYOUT_KEY = 'cavecad.layout.v1';
 
@@ -35,6 +36,7 @@ export const PANELS: Record<string, PanelDef> = {
   symbols: { title: 'Symbols', component: SymbolsPanel, width: 300 },
   stations: { title: 'Stations', component: StationsPanel, height: 260 },
   notebook: { title: 'Notebook', component: NotebookPanel, height: 320 },
+  survey: { title: 'Survey', component: SurveyPanel, width: 380 },
   scans: { title: 'Scans', component: ScansPanel, width: 520 },
   sheet: { title: 'Sheet', component: SheetPanel, width: 520 },
   console: { title: 'Console', component: ConsolePanel, height: 260 },
@@ -232,6 +234,26 @@ export function workLayout() {
   a.panels.find((p) => p.id === 'map')?.api.setActive();
   // Narrower scans, wider notebook: its columns need the room.
   a.getPanel('scans')?.api.setSize({ width: Math.round(el0Width() * 0.38) });
+  refreshOpen();
+}
+
+/**
+ * The arrangement for surveying in the cave, made for a tablet held landscape: the Survey panel on the
+ * left (with the Notebook behind it as a tab), the Map in plan in the middle, and the Profile over the
+ * Cross Section on the right, so each shot shows in all three views as it is taken.
+ */
+export function surveyLayout() {
+  if (!api) return;
+  const a = api;
+  a.clear();
+  a.addPanel({ id: 'survey', component: 'survey', title: PANELS.survey.title });
+  a.addPanel({ id: 'notebook', component: 'notebook', title: PANELS.notebook.title, position: { referencePanel: 'survey', direction: 'within' } });
+  a.addPanel({ id: 'map', component: 'map', title: PANELS.map.title, position: { referencePanel: 'survey', direction: 'right' } });
+  a.addPanel({ id: 'profile', component: 'profile', title: PANELS.profile.title, position: { referencePanel: 'map', direction: 'right' } });
+  a.addPanel({ id: 'section', component: 'section', title: PANELS.section.title, position: { referencePanel: 'profile', direction: 'below' } });
+  a.panels.find((p) => p.id === 'survey')?.api.setActive();
+  a.getPanel('survey')?.api.setSize({ width: Math.max(340, Math.round(el0Width() * 0.3)) });
+  a.getPanel('profile')?.api.setSize({ width: Math.round(el0Width() * 0.3) });
   refreshOpen();
 }
 

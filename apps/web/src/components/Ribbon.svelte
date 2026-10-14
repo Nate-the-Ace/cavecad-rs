@@ -18,8 +18,8 @@
   import { symbolDef } from '../lib/symbols';
   import { fillLabel } from '../lib/fills';
   import { onMount } from 'svelte';
-  import { PANELS, panelState, resetLayout, showPanel, togglePanel } from '../lib/workspace.svelte';
-  import { Check, Trash2, LogIn, LogOut, Users, Library, FilePlus, FileInput, FolderOpen, Save, Ruler, Footprints, Route, Waypoints, Scissors, Map as MapIcon, Terminal, LayoutDashboard, Activity, Shapes, Table2, BookOpen, ScanLine, FileText, ChevronDown, PanelTop, FileOutput, Package, Mountain, SlidersHorizontal } from '@lucide/svelte';
+  import { PANELS, panelState, resetLayout, showPanel, surveyLayout, togglePanel } from '../lib/workspace.svelte';
+  import { Check, Trash2, LogIn, LogOut, Users, Library, FilePlus, FileInput, FolderOpen, Save, Ruler, Footprints, Route, Waypoints, Scissors, Map as MapIcon, Terminal, LayoutDashboard, Activity, Shapes, Table2, BookOpen, ScanLine, FileText, ChevronDown, PanelTop, FileOutput, Package, Mountain, SlidersHorizontal, Crosshair, Tent } from '@lucide/svelte';
   import type { Component } from 'svelte';
 
   interface Item {
@@ -61,7 +61,7 @@
     Home: [
       { name: 'File', items: [{ label: 'Caves', icon: Library, run: () => (shelf.open = true) }, { label: 'New', icon: FilePlus, run: () => (cave.newDialog = true) }, { label: 'Open', icon: FolderOpen, run: open }, { label: 'Save', icon: Save, run: save }, { label: 'Save as', icon: Save, run: saveAs }, { label: 'Scans in file', icon: ScanLine, run: () => setOption('saveScans', !option('saveScans', true)), pressed: () => option('saveScans', true) }] },
       { name: 'Export', items: [{ label: 'DXF', icon: FileOutput, run: () => run(exportDxf()) }, { label: 'Project', icon: Package, run: () => run(exportProject()) }] },
-      { name: 'Survey', items: [stub('Import', FileInput), stub('Draw', Route), stub('Adjust', Waypoints)] },
+      { name: 'Survey', items: [{ label: 'In cave', icon: Crosshair, run: surveyLayout }, stub('Import', FileInput), stub('Draw', Route), stub('Adjust', Waypoints)] },
       {
         name: 'Live',
         items: [
@@ -85,12 +85,12 @@
       { name: 'Save', items: [], custom: SheetGroup, props: { part: 'save' } },
     ],
     View: [
-      { name: 'Panels', items: [panelItem('map', MapIcon), panelItem('profile', Activity), panelItem('section', Scissors), panelItem('symbols', Shapes), panelItem('stations', Table2), panelItem('notebook', BookOpen), panelItem('scans', ScanLine), panelItem('sheet', FileText), panelItem('console', Terminal)] },
+      { name: 'Panels', items: [panelItem('map', MapIcon), panelItem('profile', Activity), panelItem('section', Scissors), panelItem('symbols', Shapes), panelItem('stations', Table2), panelItem('notebook', BookOpen), panelItem('survey', Crosshair), panelItem('scans', ScanLine), panelItem('sheet', FileText), panelItem('console', Terminal)] },
       { name: 'Units', items: [{ label: 'Metric', icon: Ruler, run: () => setUnits('metric'), pressed: () => cave.units === 'metric' }, { label: 'Imperial', icon: Footprints, run: () => setUnits('imperial'), pressed: () => cave.units === 'imperial' }] },
       { name: 'Theme', items: [], custom: ThemeGroup },
       { name: 'Rock halo', items: [{ label: 'Rock halo', icon: Mountain, run: () => setOption('halo', !option('halo', true)), pressed: () => option('halo', true) }, { label: 'Settings', icon: SlidersHorizontal, run: () => setPick('halo', 'halo'), pressed: () => cave.pick.kind === 'halo' }] },
       { name: 'Live editing', items: [], custom: CollaborateGroup },
-      { name: 'Layout', items: [{ label: 'Reset', icon: LayoutDashboard, run: resetLayout }] },
+      { name: 'Layout', items: [{ label: 'Reset', icon: LayoutDashboard, run: resetLayout }, { label: 'In cave', icon: Tent, run: surveyLayout }] },
       { name: 'Ribbon settings', items: [{ label: 'Compact layout', icon: PanelTop, run: () => setCompactRibbon(!cave.compactRibbon), pressed: () => cave.compactRibbon }] },
     ],
   };
