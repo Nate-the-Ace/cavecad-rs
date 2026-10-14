@@ -5,10 +5,20 @@
   import { onMount } from 'svelte';
   import { Boxes, Shapes, CircleDot, Grip, Layers, Mountain, Waves, Droplet, Droplets, Milk, Feather, Snowflake, Bone, PaintBucket } from '@lucide/svelte';
   import { cave, setTool } from '../lib/cave.svelte';
-  import { loadEngine } from '../lib/engine';
+  import { engine, loadEngine } from '../lib/engine';
   import { fillDefs, type FillDef } from '../lib/fills';
 
   let defs = $state<FillDef[]>([]);
+  /** The fills from the Patterns panel (the built-in ones and the cave's own). */
+  const mine = $derived.by(() => {
+    void cave.version;
+    return defs.length ? engine.patternLibrary().fills : [];
+  });
+  function pickMine(name: string) {
+    if (cave.tool === 'fill-custom' && cave.options.customFill === name) return setTool('fill-custom'); // the same one again puts it down
+    cave.options.customFill = name;
+    if (cave.tool !== 'fill-custom') setTool('fill-custom');
+  }
   onMount(() => {
     loadEngine().then(() => (defs = fillDefs()));
   });
@@ -36,6 +46,13 @@
     <button class="tool" class:pressed={on} aria-pressed={on} title={on ? `Put ${d.label} down (Esc)` : `${d.label}: ${d.help}. Then draw all the way around the area in the Map, Profile or Cross Section`} onclick={() => setTool(d.key)}>
       <Icon size={22} strokeWidth={1.6} />
       <span>{d.label}</span>
+    </button>
+  {/each}
+  {#each mine as f (f.name)}
+    {@const on = cave.tool === 'fill-custom' && cave.options.customFill === f.name}
+    <button class="tool" class:pressed={on} aria-pressed={on} title={on ? `Put ${f.name} down (Esc)` : `${f.name}: made in the Patterns panel. Then draw all the way around the area`} onclick={() => pickMine(f.name)}>
+      <PaintBucket size={22} strokeWidth={1.6} />
+      <span>{f.name}</span>
     </button>
   {/each}
 </div>

@@ -1,5 +1,6 @@
 // Loads the Rust engine (WASM) once and re-exports the few calls the UI uses.
-import init, { start, log, console_events, console_clear, engine_version, open_demo, scene, profile_runs, profile_band, add_profile_sketch, undo, redo, edit_state, passage_mesh, shading, palette, open_dxf, save_dxf, section_stations, section_at, add_section_sketch, map_sections, place_section, map_profile_sketches, add_map_line, map_lines, draw_tools, edit_line, delete_line, set_line_closed, set_line_kind, line_info, set_line_flip, set_line_style, drawing_scale, set_drawing_scale, linetypes, set_line_text, ornament, callout, sheet_options, sheet_plan, flipped_lines, revision, station_rows, set_station_mark, station_detail, shot_detail, set_shot, set_station_walls, set_station_note, set_station_benchmark, symbols, fills, fill_marks, draw_tool_groups, sync_outbox, sync_apply, sync_snapshot, sync_load, notebook_trips, notebook_page, notebook_set_reading, notebook_set_walls, notebook_set_note, notebook_set_trip_field, notebook_set_declination, notebook_add_shot, notebook_remove_shot, notebook_rename_station, notebook_new_trip, scan_links, scan_link, scan_unlink, scan_placements, scan_alignment, scan_add_anchor, scan_remove_anchor, scan_set_mode, scan_trim, scan_set_trim, scan_view_stations, new_cave, scan_completed, scan_set_complete, shelf_summary, shelf_summarize, shelf_summarize_demo, shelf_summarize_native } from '../wasm/cave_wasm.js';
+import type { FillDef as PatternFillDef, LineDef, Motif, PatternKind, PatternLibrary, PatternMarks, Prim } from './patterns';
+import init, { start, log, console_events, console_clear, engine_version, open_demo, scene, profile_runs, profile_band, add_profile_sketch, undo, redo, edit_state, passage_mesh, shading, palette, open_dxf, save_dxf, section_stations, section_at, add_section_sketch, map_sections, place_section, map_profile_sketches, add_map_line, map_lines, draw_tools, edit_line, edit_leader, delete_line, set_line_closed, set_line_kind, line_info, set_line_flip, set_line_style, drawing_scale, set_drawing_scale, linetypes, pattern_library, motif_from_drawing, save_pattern, remove_pattern, check_pattern, line_pattern_marks, fill_pattern_marks, line_pattern_marks_named, fill_pattern_marks_named, set_line_text, ornament, callout, sheet_options, sheet_plan, flipped_lines, revision, station_rows, set_station_mark, station_detail, shot_detail, set_shot, set_station_walls, set_station_note, set_station_benchmark, symbols, fills, fill_marks, draw_tool_groups, sync_outbox, sync_apply, sync_snapshot, sync_load, notebook_trips, notebook_page, notebook_set_reading, notebook_set_walls, notebook_set_note, notebook_set_trip_field, notebook_set_declination, notebook_add_shot, notebook_remove_shot, notebook_rename_station, notebook_new_trip, scan_links, scan_link, scan_unlink, scan_placements, scan_alignment, scan_add_anchor, scan_remove_anchor, scan_set_mode, scan_trim, scan_set_trim, scan_view_stations, new_cave, scan_completed, scan_set_complete, shelf_summary, shelf_summarize, shelf_summarize_demo, shelf_summarize_native } from '../wasm/cave_wasm.js';
 
 import { setInkPalette } from './ink';
 import { setOrnamentSource } from './section-glyph';
@@ -299,7 +300,7 @@ export function loadEngine(): Promise<void> {
     start();
     setInkPalette(JSON.parse(palette()));
     setSymbolCatalogue(JSON.parse(symbols()));
-    setCalloutSource((tip, at, chars, shape, height) => JSON.parse(callout(tip[0], tip[1], at[0], at[1], chars, shape, height)));
+    setCalloutSource((tips, at, chars, shape, height) => JSON.parse(callout(JSON.stringify(tips), at[0], at[1], chars, shape, height)));
     setFillSource(engine);
   });
   return ready;
@@ -314,12 +315,33 @@ const rawEngine = {
   /** Every kind of area fill, with what it means. */
   fills: (): FillDef[] => JSON.parse(fills()),
   /** The marks that fill an outline (metres), seeded by the stroke's id. */
-  fillMarks: (kind: string, curve: [number, number][], id: string, amount = 1, length = 1): Marks => JSON.parse(fill_marks(kind, JSON.stringify(curve), id, amount, length)),
+  fillMarks: (kind: string, curve: [number, number][], id: string, amount = 1, length = 1, angle = 0): Marks => JSON.parse(fill_marks(kind, JSON.stringify(curve), id, amount, length, angle)),
   /** The drawing's scale, the N of 1:N. */
   drawingScale: (): number => drawing_scale(),
   setDrawingScale: (n: number): string => set_drawing_scale(n),
   /** The line patterns a line can be given, on paper in millimetres. */
   linetypes: (): { dot_mm: number; types: { key: string; pattern: number[] }[] } => JSON.parse(linetypes()),
+  /** The motifs, linetypes and fills the cave can pick from: the built-in ones and its own (`own`). */
+  patternLibrary: (): PatternLibrary => JSON.parse(pattern_library()),
+  /** A drawing (any size and place) as a motif called `name`; a string starting `error:` says why not. Nothing is saved. */
+  motifFromDrawing: (name: string, prims: Prim[]): Motif | string => {
+    const r = motif_from_drawing(name, JSON.stringify(prims));
+    return r.startsWith('error:') ? r : JSON.parse(r);
+  },
+  /** Saves a pattern of `kind` as one undoable edit: `ok` or `error: ...`. */
+  savePattern: (kind: PatternKind, def: Motif | LineDef | PatternFillDef): string => save_pattern(kind, JSON.stringify(def)),
+  /** Removes one of the cave's own patterns: `ok` or `error: ...`. */
+  removePattern: (kind: PatternKind, name: string): string => remove_pattern(kind, name),
+  /** Checks a definition without saving it: `ok` or `error: ...` in plain words. */
+  checkPattern: (kind: 'line' | 'fill', def: LineDef | PatternFillDef): string => check_pattern(kind, JSON.stringify(def)),
+  /** The marks of a linetype laid along a path (metres) at a drawing scale. */
+  linePatternMarks: (def: LineDef, path: [number, number][], scale: number): PatternMarks => JSON.parse(line_pattern_marks(JSON.stringify(def), JSON.stringify(path), scale)),
+  /** The marks of the library's linetype called `name` along a path at a drawing scale (empty for an unknown name). */
+  linePatternMarksNamed: (name: string, path: [number, number][], scale: number): PatternMarks => JSON.parse(line_pattern_marks_named(name, JSON.stringify(path), scale)),
+  /** The marks of the library's fill called `name` inside an outline, seeded by `id`, at a drawing scale (empty for an unknown name). */
+  fillPatternMarksNamed: (name: string, outline: [number, number][], id: string, amount: number, scale: number, angle = 0): PatternMarks => JSON.parse(fill_pattern_marks_named(name, JSON.stringify(outline), id, amount, scale, angle)),
+  /** The marks of a fill inside an outline (metres), seeded by `id`, at a drawing scale. */
+  fillPatternMarks: (def: PatternFillDef, outline: [number, number][], id: string, amount: number, scale: number): PatternMarks => JSON.parse(fill_pattern_marks(JSON.stringify(def), JSON.stringify(outline), id, amount, scale)),
   /** Every point symbol the palette offers, with its drawing. */
   symbols: (): SymbolDef[] => JSON.parse(symbols()),
   /** One row per station: what kind of place it is, its notes, elevation and the team's mark. */
@@ -414,7 +436,7 @@ const rawEngine = {
   /** The cross section at a station, with its sketches. */
   sectionAt: (adjusted: boolean, station: string, fillGaps: boolean, filter = '{}'): StationSection | null => JSON.parse(section_at(adjusted, station, fillGaps, filter)),
   /** Adds a stroke drawn on a station's cross section; every edit goes through the document's one edit path. */
-  addSectionSketch: (station: string, kind: string, points: [number, number][], widths: number[] | null, closed: boolean, adjusted: boolean, text = ''): string => add_section_sketch(station, kind, JSON.stringify(points), widths ? JSON.stringify(widths) : '', closed, adjusted, text),
+  addSectionSketch: (station: string, kind: string, points: [number, number][], widths: number[] | null, closed: boolean, adjusted: boolean, text = '', style = ''): string => add_section_sketch(station, kind, JSON.stringify(points), widths ? JSON.stringify(widths) : '', closed, adjusted, text, style),
   /** The cross-section sketches to show on the map. */
   mapSections: (adjusted: boolean, filter = '{}'): MapSection[] => JSON.parse(map_sections(adjusted, filter)),
   /** The profile sketches placed along their runs in 3D, for the map. */
@@ -422,8 +444,9 @@ const rawEngine = {
   /** Places a station's section sketches by hand in a view (an undoable edit). */
   placeSection: (station: string, view: 'map' | 'profile', offset: [number, number, number]): string => place_section(station, view, offset[0], offset[1], offset[2]),
   /** Adds a line of `kind` drawn in plan on the map (anchored to the survey, undoable). */
-  addMapLine: (kind: string, points: [number, number][], widths: number[] | null, closed: boolean, adjusted: boolean, text = ''): string => add_map_line(kind, JSON.stringify(points), widths ? JSON.stringify(widths) : '', closed, adjusted, text),
+  addMapLine: (kind: string, points: [number, number][], widths: number[] | null, closed: boolean, adjusted: boolean, text = '', style = ''): string => add_map_line(kind, JSON.stringify(points), widths ? JSON.stringify(widths) : '', closed, adjusted, text, style),
   /** Moves the fit points of a line already drawn (in the space it was drawn in); re-anchors it to the survey. */
+  editLeader: (id: string, points: number[][], style: string, adjusted: boolean): string => edit_leader(id, JSON.stringify(points), style, adjusted),
   editLine: (id: string, points: [number, number][], widths: number[] | null, adjusted: boolean): string => edit_line(id, JSON.stringify(points), widths ? JSON.stringify(widths) : '', adjusted),
   /** Closes or opens a line already drawn. */
   setLineClosed: (id: string, closed: boolean): string => set_line_closed(id, closed),
@@ -453,7 +476,7 @@ const rawEngine = {
   profileRuns: (adjusted: boolean): RunInfo[] => JSON.parse(profile_runs(adjusted)),
   profileBand: (run: string, adjusted: boolean): ProfileScene | null => JSON.parse(profile_band(run, adjusted)),
   /** Adds a stroke drawn on a run's band; every edit goes through the document's one edit path. */
-  addSketch: (run: string, kind: string, points: [number, number][], widths: number[] | null, closed: boolean, adjusted: boolean, text = ''): string => add_profile_sketch(run, kind, JSON.stringify(points), widths ? JSON.stringify(widths) : '', closed, adjusted, text),
+  addSketch: (run: string, kind: string, points: [number, number][], widths: number[] | null, closed: boolean, adjusted: boolean, text = '', style = ''): string => add_profile_sketch(run, kind, JSON.stringify(points), widths ? JSON.stringify(widths) : '', closed, adjusted, text, style),
   passageMesh: (adjusted: boolean, mode: 'trip' | 'depth', fillGaps: boolean, filter = '{}'): PassageBuffers => {
     const m = passage_mesh(adjusted, mode, fillGaps, filter);
     const out = { positions: m.positions, normals: m.normals, colors: m.colors, filled: m.filled };

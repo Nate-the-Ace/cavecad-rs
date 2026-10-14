@@ -5,10 +5,12 @@
 import { distanceToCurve, distanceToPolyline, insertionAt, insideCurve, nearestPoint, refit, type Pt } from './spline.ts';
 import { isFillKind } from './fills.ts';
 import { hitsStamp, isStampKind, leaderLook } from './symbols.ts';
+import { arrowAt, attachOf, nearestVertex, resolveLeaders, withArrow, withoutArrow } from './leader-edit.ts';
+import { withAttach } from './line-style-text.ts';
 
 /** How near, in pixels, a point is to a line (a symbol counts as its whole body). */
 function reach(l: { points: Pt[]; closed?: boolean; kind?: string; text?: string; style?: string }, toScreen: (p: Pt) => Pt, x: number, y: number, paperPx?: number, ornament?: OrnamentOf): number {
-  if (isStampKind(l.kind) && l.points.length >= 2) return hitsStamp(l.kind ?? '', l.text, toScreen(l.points[0]), toScreen(l.points[1]), x, y, 4, leaderLook(l.style, paperPx)) ? 0 : Infinity;
+  if (isStampKind(l.kind) && l.points.length >= 2) return hitsStamp(l.kind ?? '', l.text, toScreen(l.points[0]), toScreen(l.points[1]), x, y, 4, leaderLook(l.style, paperPx), l.points.slice(2).map(toScreen)) ? 0 : Infinity;
   let d = distanceToCurve(l.points.map(toScreen), x, y, !!l.closed);
   // a shaped line (ledge ticks, pit hachures, flowstone, slope, ...) is picked by any part of its marks, not only by the line itself
   if (ornament && d > 2) for (const line of ornament(l) ?? []) d = Math.min(d, distanceToPolyline(line.map(toScreen), x, y));
@@ -62,15 +64,22 @@ export interface Hooks<T extends EditableLine> {
   paperPx?: () => number;
   /** The marks that dress a shaped line, so it can be picked by any part of them. */
   ornament?: OrnamentOf;
+  /** A leader waiting for its next press to add or remove an arrow (`''` for none); `arrowDone` says it was used. */
+  arrowOp?: (id: string) => '' | 'add' | 'remove';
+  arrowDone?: () => void;
+  /** Saves a leader's moved points together with its style (where its arrows are fastened) as one undoable edit. */
+  commitLeader?: (id: string, points: Pt[], style: string) => void;
 }
 
 /** How close, in pixels, a press must be to a line to select it, and to a fit point to pick it up. */
 const LINE_REACH = 7;
 const HANDLE_REACH = 10;
+/** How close, in pixels, a dragged arrow tip must come to another thing's point to fasten to it. */
+const SNAP_REACH = 10;
 
 export class LineEditor<T extends EditableLine = EditableLine> {
   /** A fit point being moved: the line, which point, and the line's points as they are right now. */
-  private drag: { id: string; index: number; points: Pt[]; widths: number[] | null; stamp: boolean } | null = null;
+  private drag: { id: string; index: number; points: Pt[]; widths: number[] | null; stamp: boolean; leader: boolean } | null = null;
 
   private readonly h: Hooks<T>;
 
@@ -81,7 +90,7 @@ export class LineEditor<T extends EditableLine = EditableLine> {
   /** The lines that are switched on. */
   private shown(): T[] {
     const hide = this.h.hidden;
-    return hide ? this.h.lines().filter((l) => !hide(l.kind)) : this.h.lines();
+    return resolveLeaders(hide ? this.h.lines().filter((l) => !hide(l.kind)) : this.h.lines());
   }
 
   /** The lines to draw: the one being dragged shows its live points. */
@@ -103,10 +112,20 @@ export class LineEditor<T extends EditableLine = EditableLine> {
   /** A press at screen (`x`, `y`). Picks up a fit point of the selected line, or selects the line there. Returns true when a fit point was picked up. */
   press(x: number, y: number): boolean {
     const sel = this.selectedLine();
+    const op = sel?.kind === 'callout' ? this.h.arrowOp?.(sel.id) : '';
+    if (sel && op) {
+      const screen = sel.points.map(this.h.toScreen);
+      const spot = nearestVertex(this.shown(), sel.id, this.h.toScreen, x, y, SNAP_REACH) ?? this.h.toWorld(x, y);
+      const next = op === 'add' ? withArrow(sel.points, spot) : withoutArrow(sel.points, arrowAt(screen, x, y, HANDLE_REACH + 6));
+      if (next) this.saveLeader(sel.id, next, sel.style);
+      this.h.arrowDone?.();
+      this.h.redraw();
+      return true;
+    }
     if (sel) {
       const i = nearestPoint(sel.points.map(this.h.toScreen), x, y, HANDLE_REACH);
       if (i >= 0) {
-        this.drag = { id: sel.id, index: i, points: sel.points.map((p) => [...p] as Pt), widths: sel.widths ? [...sel.widths] : null, stamp: isStampKind(sel.kind) };
+        this.drag = { id: sel.id, index: i, points: sel.points.map((p) => [...p] as Pt), widths: sel.widths ? [...sel.widths] : null, stamp: isStampKind(sel.kind), leader: sel.kind === 'callout' };
         return true;
       }
     }
@@ -149,15 +168,24 @@ export class LineEditor<T extends EditableLine = EditableLine> {
     this.h.redraw();
   }
 
+  /** Saves a leader's points and what its arrows are now fastened to, as one edit. */
+  private saveLeader(id: string, points: Pt[], style: string | undefined) {
+    if (!this.h.commitLeader) return this.h.commit(id, points, null);
+    this.h.commitLeader(id, points, withAttach(style, attachOf(points, this.shown(), id)));
+  }
+
   /** Moves the picked-up fit point; returns true while one is being moved. */
   move(x: number, y: number): boolean {
     if (!this.drag) return false;
     const to = this.h.toWorld(x, y);
-    if (this.drag.stamp && this.drag.index === 0) {
+    if (this.drag.stamp && this.drag.index === 0 && !this.drag.leader) {
       // A symbol's insertion point carries the whole symbol, its size and turn handle with it.
       const dx = to[0] - this.drag.points[0][0];
       const dy = to[1] - this.drag.points[0][1];
       this.drag.points = this.drag.points.map((q) => [q[0] + dx, q[1] + dy] as Pt);
+    } else if (this.drag.leader && this.drag.index !== 1) {
+      // a leader's arrow snaps to another thing's point, and is then fastened to it
+      this.drag.points[this.drag.index] = nearestVertex(this.shown(), this.drag.id, this.h.toScreen, x, y, SNAP_REACH) ?? to;
     } else this.drag.points[this.drag.index] = to;
     this.h.redraw();
     return true;
@@ -168,7 +196,8 @@ export class LineEditor<T extends EditableLine = EditableLine> {
     const d = this.drag;
     if (!d) return false;
     this.drag = null;
-    this.h.commit(d.id, d.points, d.widths);
+    if (d.leader && this.h.commitLeader) this.saveLeader(d.id, d.points, this.selectedLine()?.style);
+    else this.h.commit(d.id, d.points, d.widths);
     return true;
   }
 

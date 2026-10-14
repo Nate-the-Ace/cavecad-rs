@@ -17,6 +17,7 @@ import StationsPanel from '../panels/StationsPanel.svelte';
 import SheetPanel from '../panels/SheetPanel.svelte';
 import NotebookPanel from '../panels/NotebookPanel.svelte';
 import ScansPanel from '../panels/ScansPanel.svelte';
+import PatternsPanel from '../panels/PatternsPanel.svelte';
 
 const LAYOUT_KEY = 'cavecad.layout.v1';
 
@@ -39,6 +40,7 @@ export const PANELS: Record<string, PanelDef> = {
   notebook: { title: 'Notebook', component: NotebookPanel, height: 320 },
   scans: { title: 'Scans', component: ScansPanel, width: 520 },
   sheet: { title: 'Sheet', component: SheetPanel, width: 520 },
+  patterns: { title: 'Patterns', component: PatternsPanel, width: 560 },
   console: { title: 'Console', component: ConsolePanel, height: 260 },
 };
 

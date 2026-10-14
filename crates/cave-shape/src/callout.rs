@@ -150,6 +150,76 @@ pub fn layout(tip: [f64; 2], at: [f64; 2], chars: usize, curved: bool) -> Layout
     layout_with(tip, at, chars, curved, None, false)
 }
 
+/// A leader with any number of arrows, laid out.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct MultiLayout {
+    /// Text height.
+    pub height: f64,
+    /// Which edge of the note the leaders leave from.
+    pub side: Side,
+    /// The note's box as `[x1, y1, x2, y2]`.
+    pub note: [f64; 4],
+    /// One polyline per arrow: tip, elbow, landing (more points when curved; just tip and landing when straight).
+    pub branches: Vec<Vec<[f64; 2]>>,
+    /// One arrow head per arrow: a barb, the tip, the other barb.
+    pub heads: Vec<Vec<[f64; 2]>>,
+}
+
+/// Lays out a note at `at` with an arrow to each of `tips`: the leaders all leave by the edge facing the middle of the tips and
+/// meet the note at the middle of that edge. `height` fixes the text height (otherwise a third of the way to the first tip),
+/// `straight` runs each leader straight to the note's edge instead of by an elbow, and `curved` bows them.
+pub fn layout_many(
+    tips: &[[f64; 2]],
+    at: [f64; 2],
+    chars: usize,
+    curved: bool,
+    height: Option<f64>,
+    straight: bool,
+) -> MultiLayout {
+    let first = tips.first().copied().unwrap_or(at);
+    let height = height
+        .filter(|h| h.is_finite() && *h > 0.0)
+        .unwrap_or_else(|| (at[0] - first[0]).hypot(at[1] - first[1]) / 3.0);
+    let side = side_for(tips, at[0]);
+    let b = note_box(at, chars, height, side);
+    let r = reflow(b, tips, Some(side), curved && !straight);
+    let mut branches = r.branches;
+    if straight {
+        // no elbow: from each tip directly to where the leader meets the note
+        branches = tips.iter().map(|&t| vec![t, r.landing]).collect();
+    }
+    // the barbs lie back along each leader's first stretch
+    let heads = tips
+        .iter()
+        .zip(&branches)
+        .map(|(&tip, leader)| {
+            let next = leader.get(1).copied().unwrap_or(at);
+            let (dx, dy) = (next[0] - tip[0], next[1] - tip[1]);
+            let len = dx.hypot(dy);
+            if len < 1e-12 {
+                return vec![tip];
+            }
+            let (ux, uy) = (dx / len, dy / len);
+            let barb = height * 0.7;
+            let (s, c) = (0.35_f64.sin(), 0.35_f64.cos());
+            let rot = |sx: f64| {
+                [
+                    tip[0] + barb * (ux * c - sx * s * uy),
+                    tip[1] + barb * (uy * c + sx * s * ux),
+                ]
+            };
+            vec![rot(1.0), tip, rot(-1.0)]
+        })
+        .collect();
+    MultiLayout {
+        height,
+        side,
+        note: [b.x1, b.y1, b.x2, b.y2],
+        branches,
+        heads,
+    }
+}
+
 /// Lays out a leader with its own settings: `height` fixes the text height (otherwise a third of the drag, as `layout` does),
 /// `straight` runs the leader from the tip straight to the note's edge instead of by an elbow, and `curved` bows it.
 pub fn layout_with(

@@ -7,9 +7,12 @@ import { LineSegmentsGeometry } from 'three/addons/lines/LineSegmentsGeometry.js
 import { LineMaterial } from 'three/addons/lines/LineMaterial.js';
 import type { MapSection, PassageBuffers, Pt, ProfileSketch3d, Scene, TypeStyle } from '../engine';
 import { PenGuard, isEraser, widthFor } from '../pen';
+import { arrowAt, attachOf, nearestVertex, resolveLeaders, withArrow, withoutArrow } from '../leader-edit';
+import { withAttach } from '../line-style-text';
 import { drawStamp, drawStationMarker, hitsStamp, isStampKind, leaderLook, placement } from '../symbols';
 import { drawMarks, isFillKind, marksFor } from '../fills';
-import { drawing, fillLength, parseStyle, styleFor } from '../line-style.svelte';
+import { drawing, fillLength, parseStyle, patternName, styleFor } from '../line-style.svelte';
+import { lineMarksPx, strokeMarksPx } from '../pattern-draw';
 import { dashMetres } from '../dash';
 import { affineWarp, warpGrid, type Warp } from '../scan-warp';
 import { drawHalo, type HaloLine } from '../halo';
@@ -86,8 +89,13 @@ export class CaveView {
   /** The line selected for editing (a feature id), shown with a halo and, for a map line, handles. */
   private selectedLine = '';
   /** A fit point of a map line being moved: which line, which point, and the line's points now. */
-  private lineEdit: { id: string; index: number; pts: [number, number, number][]; stamp: boolean } | null = null;
+  private lineEdit: { id: string; index: number; pts: [number, number, number][]; stamp: boolean; leader: boolean } | null = null;
   /** Called when a map line's fit points have been moved (plan metres) or a line is picked or put down. */
+  /** A leader waiting for its next press to add or remove an arrow, and the call that says it was used. */
+  arrowOp: () => { id: string; op: '' | 'add' | 'remove' } = () => ({ id: '', op: '' });
+  onArrowDone: () => void = () => {};
+  /** A leader's moved points and its style (where its arrows are fastened), saved as one edit. */
+  onLeaderEdited: (id: string, points: [number, number][], style: string) => void = () => {};
   onLineEdited: (id: string, points: [number, number][], widths: number[] | null) => void = () => {};
   onSelectLine: (id: string) => void = () => {};
   /** Called when a right click (not a right drag, which pans) asks to end the running command. */
@@ -312,11 +320,16 @@ export class CaveView {
       const edit = this.lineEdit;
       if (edit) {
         const p = this.planPoint(e.clientX, e.clientY);
-        if (p && edit.stamp && edit.index === 0) {
+        if (p && edit.stamp && edit.index === 0 && !edit.leader) {
           // A symbol's insertion point carries the whole symbol, its size and turn handle with it.
           const dx = p[0] - edit.pts[0][0];
           const dy = p[1] - edit.pts[0][1];
           edit.pts = edit.pts.map((q) => [q[0] + dx, q[1] + dy, q[2]] as [number, number, number]);
+        } else if (p && edit.leader && edit.index !== 1) {
+          // a leader's arrow snaps to another thing's point, and is then fastened to it
+          const r = canvas.getBoundingClientRect();
+          const snap = nearestVertex(this.displayMapLines(), edit.id, (q) => this.project(q) ?? [-1e9, -1e9], e.clientX - r.left, e.clientY - r.top, 10);
+          edit.pts[edit.index] = snap ? [snap[0], snap[1], snap[2]] : [p[0], p[1], edit.pts[edit.index][2]];
         } else if (p) edit.pts[edit.index] = [p[0], p[1], edit.pts[edit.index][2]];
         this.requestRender();
         return;
@@ -364,7 +377,8 @@ export class CaveView {
         this.lineEdit = null;
         this.controls.enabled = true;
         const was = this.mapLines.find((k) => k.id === edit.id);
-        this.onLineEdited(edit.id, edit.pts.map((p) => [p[0], p[1]] as [number, number]), was?.widths ?? null);
+        if (edit.leader) this.onLeaderEdited(edit.id, edit.pts.map((p) => [p[0], p[1]] as [number, number]), withAttach(was?.style, attachOf(edit.pts, this.displayMapLines(), edit.id)));
+        else this.onLineEdited(edit.id, edit.pts.map((p) => [p[0], p[1]] as [number, number]), was?.widths ?? null);
         this.requestRender();
         return;
       }
@@ -825,7 +839,7 @@ export class CaveView {
   /** The map lines to draw: the one being edited shows its live points. */
   private displayMapLines(): ProfileSketch3d[] {
     const e = this.lineEdit;
-    return this.mapLines.map((k) => (e && k.id === e.id ? { ...k, points: e.pts } : k));
+    return resolveLeaders(this.mapLines.map((k) => (e && k.id === e.id ? { ...k, points: e.pts } : k)));
   }
 
   /**
@@ -833,11 +847,11 @@ export class CaveView {
    * hatch of a fill can be clicked as well as its outline while a wall or symbol over a fill still gets the click. Null if none.
    */
   private lineAt(x: number, y: number): ProfileSketch3d | null {
-    const lines = [...this.mapLines].reverse().filter((k) => !isKindHidden(k.kind));
+    const lines = [...resolveLeaders(this.mapLines)].reverse().filter((k) => !isKindHidden(k.kind));
     const pts = (k: ProfileSketch3d) => this.screenPoints(k).filter((p): p is [number, number] => !!p);
     for (const k of lines) {
       const p = pts(k);
-      if (p.length === k.points.length && (isStampKind(k.kind) ? hitsStamp(k.kind, k.text, p[0], p[1], x, y, 4, leaderLook(k.style, ((this.pixelsPerMetreAt(k.points[0]) ?? 0) * drawing.scale) / 1000)) : distanceToCurve(p, x, y, k.closed) <= 7)) return k;
+      if (p.length === k.points.length && (isStampKind(k.kind) ? hitsStamp(k.kind, k.text, p[0], p[1], x, y, 4, leaderLook(k.style, ((this.pixelsPerMetreAt(k.points[0]) ?? 0) * drawing.scale) / 1000), p.slice(2) as [number, number][]) : distanceToCurve(p, x, y, k.closed) <= 7)) return k;
     }
     // a shaped line (ledge ticks, pit hachures, flowstone, slope, ...) is also picked by any part of its marks
     const stationsXY = (this.data?.stations ?? []).map((s) => [s.at[0], s.at[1]] as [number, number]);
@@ -877,6 +891,19 @@ export class CaveView {
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
     const sel = this.displayMapLines().find((k) => k.id === this.selectedLine);
+    const pending = this.arrowOp();
+    if (sel && sel.kind === 'callout' && pending.id === sel.id && pending.op && this.canDrawHere) {
+      const cp = this.planPoint(e.clientX, e.clientY);
+      const z = sel.points[0][2];
+      const snap = nearestVertex(this.displayMapLines(), sel.id, (q) => this.project(q) ?? [-1e9, -1e9], x, y, 10);
+      const spot: [number, number, number] | null = snap ? [snap[0], snap[1], snap[2]] : cp ? [cp[0], cp[1], z] : null;
+      const next = pending.op === 'add' ? (spot ? withArrow(sel.points, spot) : null) : withoutArrow(sel.points, arrowAt(this.screenPoints(sel).map((p) => p ?? [-1e9, -1e9]) as [number, number][], x, y, 16));
+      if (next) this.onLeaderEdited(sel.id, next.map((p) => [p[0], p[1]] as [number, number]), withAttach(sel.style, attachOf(next, this.displayMapLines(), sel.id)));
+      this.onArrowDone();
+      e.stopImmediatePropagation();
+      e.stopPropagation();
+      return;
+    }
     if (sel && this.canDrawHere) {
       const i = nearestPoint(this.screenPoints(sel).map((p) => p ?? [-1e9, -1e9]), x, y, 10);
       if (i >= 0) {
@@ -884,7 +911,7 @@ export class CaveView {
         e.stopPropagation();
         this.controls.enabled = false;
         this.canvas.setPointerCapture(e.pointerId);
-        this.lineEdit = { id: sel.id, index: i, pts: sel.points.map((p) => [...p] as [number, number, number]), stamp: isStampKind(sel.kind) };
+        this.lineEdit = { id: sel.id, index: i, pts: sel.points.map((p) => [...p] as [number, number, number]), stamp: isStampKind(sel.kind), leader: sel.kind === 'callout' };
         return;
       }
     }
@@ -955,14 +982,14 @@ export class CaveView {
     const px = this.pixelsPerMetreAt(k.points[0]);
     const right = new THREE.Vector3().setFromMatrixColumn(this.camera.matrixWorld, 0);
     right.z = 0;
-    if (!a || !px || right.lengthSq() < 1e-9) return [a, this.project(k.points[1])];
+    if (!a || !px || right.lengthSq() < 1e-9) return [a, this.project(k.points[1]), ...k.points.slice(2).map((q) => this.project(q))];
     right.normalize();
     const forward = { x: -right.y, y: right.x }; // up the screen when seen from above
     const vx = k.points[1][0] - k.points[0][0];
     const vy = k.points[1][1] - k.points[0][1];
     const sx = (vx * right.x + vy * right.y) * px;
     const sy = (vx * forward.x + vy * forward.y) * px;
-    return [a, [a[0] + sx, a[1] - sy]];
+    return [a, [a[0] + sx, a[1] - sy], ...k.points.slice(2).map((q) => this.project(q))];
   }
 
   private sectionAnchor(s: MapSection): { at: [number, number] | null; px: number | null } {
@@ -1016,11 +1043,11 @@ export class CaveView {
       const projected = this.screenPoints(k);
       if (isStampKind(k.kind)) {
         // A placed symbol: first point where it sits, second says which way is up and how big.
-        const [a, b] = projected;
+        const [a, b, ...rest] = projected;
         if (a && b) {
           g.setLineDash([]);
           g.lineWidth = Math.max(1, l.weight * 0.7);
-          if (k.id && k.id === this.selectedLine) {
+          if (k.id && k.id === this.selectedLine && k.kind !== 'callout') {
             const pl = placement(a, b);
             g.strokeStyle = `#${this.theme.accent.getHexString()}`;
             g.globalAlpha = base * 0.9;
@@ -1032,7 +1059,7 @@ export class CaveView {
             g.lineWidth = Math.max(1, l.weight * 0.7);
             g.globalAlpha = base * l.alpha;
           }
-          drawStamp(g, k.kind, a, b, k.text, leaderLook(style, ((this.pixelsPerMetreAt(k.points[0]) ?? 0) * drawing.scale) / 1000));
+          drawStamp(g, k.kind, a, b, k.text, leaderLook(style, ((this.pixelsPerMetreAt(k.points[0]) ?? 0) * drawing.scale) / 1000), rest.filter((q): q is [number, number] => !!q));
         }
         continue;
       }
@@ -1060,7 +1087,7 @@ export class CaveView {
         const plan = smooth(k.points.map((p) => [p[0], p[1]] as [number, number]), null, 10, true).pts as [number, number][];
         g.setLineDash([]);
         g.lineWidth = Math.max(1, l.weight * 0.7);
-        drawMarks(g, marksFor(k.kind, k.id, plan, parseStyle(style).density, fillLength()), (x, y) => this.project([x, y, z]) ?? [-1e5, -1e5], pts as [number, number][]);
+        drawMarks(g, marksFor(k.kind, k.id, plan, parseStyle(style).density, fillLength(), patternName(parseStyle(style).lt), parseStyle(style).angle), (x, y) => this.project([x, y, z]) ?? [-1e5, -1e5], pts as [number, number][]);
       }
       // A shaped line (ledge, pit, slope, glyphs...): its marks are made from the plan curve and drawn lifted to its height.
       let spine = true;
@@ -1089,7 +1116,14 @@ export class CaveView {
         trace(9, 0.6, []);
         g.strokeStyle = l.color;
       }
-      if (spine) trace(0, l.alpha, l.dash);
+      if (spine && l.custom && whole && pts.length >= 2) {
+        // the caver's own linetype: dashes, dots and motifs laid along the curve in pixels
+        g.setLineDash([]);
+        g.globalAlpha = base * l.alpha;
+        g.fillStyle = g.strokeStyle;
+        g.lineWidth = Math.max(1, l.weight);
+        strokeMarksPx(g, lineMarksPx(l.custom, pts as [number, number][], l.pxPerMm ?? 0));
+      } else if (spine) trace(0, l.alpha, l.dash);
     }
     g.setLineDash([]);
     g.globalAlpha = base;

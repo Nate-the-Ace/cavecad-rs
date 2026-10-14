@@ -82,6 +82,9 @@
       { name: 'Symbols', items: [{ label: 'Symbols', icon: Shapes, run: () => showPanel('symbols'), pressed: () => !!panelState.visible.symbols }] },
       { name: 'Area fill', items: [], custom: FillTools },
     ],
+    Annotation: [
+      { name: 'Notes and leaders', items: [], custom: DrawTools, props: { group: 'Annotation' } },
+    ],
     Sheets: [
       { name: 'Paper and scale', items: [], custom: SheetGroup, props: { part: 'paper' } },
       { name: 'Title block', items: [], custom: SheetGroup, props: { part: 'title' } },
@@ -89,7 +92,7 @@
       { name: 'Save', items: [], custom: SheetGroup, props: { part: 'save' } },
     ],
     View: [
-      { name: 'Panels', items: [panelItem('map', MapIcon), panelItem('profile', Activity), panelItem('section', Scissors), panelItem('symbols', Shapes), panelItem('stations', Table2), panelItem('notebook', BookOpen), panelItem('scans', ScanLine), panelItem('sheet', FileText), panelItem('console', Terminal)] },
+      { name: 'Panels', items: [panelItem('map', MapIcon), panelItem('profile', Activity), panelItem('section', Scissors), panelItem('symbols', Shapes), panelItem('patterns', Shapes), panelItem('stations', Table2), panelItem('notebook', BookOpen), panelItem('scans', ScanLine), panelItem('sheet', FileText), panelItem('console', Terminal)] },
       { name: 'Units', items: [{ label: 'Metric', icon: Ruler, run: () => setUnits('metric'), pressed: () => cave.units === 'metric' }, { label: 'Imperial', icon: Footprints, run: () => setUnits('imperial'), pressed: () => cave.units === 'imperial' }] },
       { name: 'Theme', items: [], custom: ThemeGroup },
       { name: 'Drawing scale', items: [], custom: DrawingScale },

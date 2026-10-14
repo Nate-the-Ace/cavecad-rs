@@ -2,7 +2,7 @@
 // area's hatch. Stored on the line as `linetype;scale;density` (empty for the type's look). While a slider is being dragged the
 // new value is held here and drawn at once; it is saved as one undoable edit when the slider is let go.
 
-export { ARROW_LABELS, FRAME_LABELS, LINETYPE_LABELS, PLAIN, SHAPE_LABELS, parseStyle, styleText, type LineStyle } from './line-style-text';
+export { PATTERN_PREFIX, patternName, ARROW_LABELS, FRAME_LABELS, LINETYPE_LABELS, PLAIN, SHAPE_LABELS, parseStyle, styleText, type LineStyle } from './line-style-text';
 
 /** A style being dragged: drawn for this line instead of its stored one, until it is saved. */
 export const liveStyle = $state({ id: '', style: '' });

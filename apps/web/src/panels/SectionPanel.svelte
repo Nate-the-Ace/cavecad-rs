@@ -22,7 +22,7 @@
   import { fitStroke, smooth } from '../lib/spline';
   import { drawing, liveStyle } from '../lib/line-style.svelte';
   import { tolerancePx } from '../lib/commands';
-  import { cave, changed, option, filter, wireFilter, haloFade, haloReach } from '../lib/cave.svelte';
+  import { cave, changed, option, filter, wireFilter, haloFade, haloReach, toolStyle } from '../lib/cave.svelte';
   import { drawScan } from '../lib/scan-draw';
   import { givePoint, have, scanImage, scans, waitingForPoint } from '../lib/scans.svelte';
   import { engine, loadEngine, type ScanPlacement, type SectionStation, type StationSection } from '../lib/engine';
@@ -65,6 +65,13 @@
     toScreen: (p) => toScreen(p[0], p[1]),
     toWorld: (x, y) => toWorld(x, y),
     selected: () => cave.selected,
+    arrowOp: (id) => (cave.arrowOp.id === id ? cave.arrowOp.op : ''),
+    arrowDone: () => (cave.arrowOp = { id: '', op: '' }),
+    commitLeader: (id, pts, style) => {
+      const r = engine.editLeader(id, pts, style, cave.adjusted);
+      message = r === 'ok' ? '' : r;
+      changed();
+    },
     select: (id) => (cave.selected = id),
     commit: (id, pts, widths) => {
       const r = engine.editLine(id, pts, widths, cave.adjusted);
@@ -520,7 +527,7 @@
         result = engine.editLine(pickup.line.id, joined.pts, joined.widths, cave.adjusted);
         cave.selected = '';
       } else {
-        result = engine.addSectionSketch(cave.station, cave.tool, fit.pts, fit.widths, closed, cave.adjusted);
+        result = engine.addSectionSketch(cave.station, cave.tool, fit.pts, fit.widths, closed, cave.adjusted, '', toolStyle());
       }
       message = result === 'ok' ? '' : result;
       changed();

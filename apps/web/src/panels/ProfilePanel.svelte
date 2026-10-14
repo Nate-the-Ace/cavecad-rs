@@ -7,7 +7,7 @@
   import { Maximize } from '@lucide/svelte';
   import PanelUndo from '../components/PanelUndo.svelte';
   import { looks } from '../lib/ink';
-  import { cave, changed, filter, option, setPick, setShowSections, haloFade, haloReach } from '../lib/cave.svelte';
+  import { cave, changed, filter, option, setPick, setShowSections, haloFade, haloReach, toolStyle } from '../lib/cave.svelte';
   import { defaultBandOffset, drawHandles, drawStrokes, glyphCurves, hits, leaderEnd, ornamentFor } from '../lib/section-glyph';
   import { LineEditor, endpointNear, joinFit } from '../lib/line-editor';
   import { Touches } from '../lib/touch';
@@ -63,6 +63,13 @@
     toScreen: (p) => toScreen(p[0], p[1]),
     toWorld: (x, y) => toWorld(x, y),
     selected: () => cave.selected,
+    arrowOp: (id) => (cave.arrowOp.id === id ? cave.arrowOp.op : ''),
+    arrowDone: () => (cave.arrowOp = { id: '', op: '' }),
+    commitLeader: (id, pts, style) => {
+      const r = engine.editLeader(id, pts, style, cave.adjusted);
+      message = r === 'ok' ? '' : r;
+      changed();
+    },
     select: (id) => (cave.selected = id),
     commit: (id, pts, widths) => {
       const r = engine.editLine(id, pts, widths, cave.adjusted);
@@ -621,7 +628,7 @@
         result = engine.editLine(pickup.line.id, joined.pts, joined.widths, cave.adjusted);
         cave.selected = '';
       } else {
-        result = engine.addSketch(cave.run, cave.tool, fit.pts, fit.widths, closed, cave.adjusted);
+        result = engine.addSketch(cave.run, cave.tool, fit.pts, fit.widths, closed, cave.adjusted, '', toolStyle());
       }
       message = result === 'ok' ? '' : result;
       changed();

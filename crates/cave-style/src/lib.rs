@@ -279,6 +279,17 @@ pub const PALETTE: &[Style] = &[
         0.4,
         "CAVE-FILL-BONES",
     ),
+    // A fill the caver authored in the pattern editor: which one is in the line's own style (`pat:Name`).
+    s(
+        "fill-custom",
+        "My fill",
+        Muted,
+        1.0,
+        Solid,
+        0.9,
+        0.4,
+        "CAVE-FILL-CUSTOM",
+    ),
     s(
         "underlying",
         "Underlying passage",

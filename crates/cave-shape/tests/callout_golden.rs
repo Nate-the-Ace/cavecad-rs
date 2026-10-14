@@ -1,7 +1,7 @@
 //! The callout geometry must match the old app's `CsCallout.reflow` on every case in
 //! `golden/callout.json` (made by `tools/golden/gen_callout_golden.mjs`).
 
-use cave_shape::callout::{NoteBox, Side, layout, layout_with, reflow};
+use cave_shape::callout::{NoteBox, Side, layout, layout_many, layout_with, reflow};
 use serde_json::Value;
 
 fn pt(v: &Value) -> [f64; 2] {
@@ -89,5 +89,47 @@ fn a_leader_can_have_its_own_text_height_and_run_straight() {
         layout([0.0, 0.0], [90.0, 40.0], 5, false),
         layout_with([0.0, 0.0], [90.0, 40.0], 5, false, None, false),
         "the plain layout is unchanged"
+    );
+}
+
+#[test]
+fn a_leader_can_have_several_arrows() {
+    let tips = [[0.0, 0.0], [10.0, 60.0], [-5.0, 120.0]];
+    let m = layout_many(&tips, [200.0, 60.0], 8, false, Some(12.0), false);
+    assert_eq!(m.branches.len(), 3);
+    assert_eq!(m.heads.len(), 3);
+    assert_eq!(m.height, 12.0);
+    let landing = *m.branches[0].last().unwrap();
+    for (tip, branch) in tips.iter().zip(&m.branches) {
+        assert_eq!(branch[0], *tip, "each leader starts at its own tip");
+        assert_eq!(
+            *branch.last().unwrap(),
+            landing,
+            "and they all meet the note at one point"
+        );
+    }
+    assert!(
+        m.heads
+            .iter()
+            .zip(&tips)
+            .all(|(h, t)| h.len() == 3 && h[1] == *t),
+        "an arrow head at every tip"
+    );
+    // one arrow is exactly the plain layout
+    let one = layout_many(&[[0.0, 0.0]], [90.0, 40.0], 5, false, Some(12.0), false);
+    let old = layout_with([0.0, 0.0], [90.0, 40.0], 5, false, Some(12.0), false);
+    assert_eq!(one.branches[0], old.leader);
+    assert_eq!(one.heads[0], old.head);
+    assert_eq!(one.note, old.note);
+    let straight = layout_many(&tips, [200.0, 60.0], 8, false, Some(12.0), true);
+    assert!(
+        straight.branches.iter().all(|b| b.len() == 2),
+        "straight leaders have no elbow"
+    );
+    assert!(
+        layout_many(&[], [0.0, 0.0], 3, false, None, false)
+            .branches
+            .is_empty(),
+        "no arrows, no leaders"
     );
 }

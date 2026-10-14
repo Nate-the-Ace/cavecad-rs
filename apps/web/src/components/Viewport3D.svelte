@@ -10,7 +10,7 @@
   import { engine, loadEngine, type Scene, type TypeStyle } from '../lib/engine';
   import { CaveView, type CameraState, type Projection } from '../lib/viewport/cave-view';
   import { fitPlane, heightSurface } from '../lib/plane';
-  import { cave, changed, filter, haloFade, haloReach, option, setPick, setShowSections, setShown, wireFilter } from '../lib/cave.svelte';
+  import { cave, changed, filter, haloFade, haloReach, option, setPick, setShowSections, setShown, wireFilter, toolStyle } from '../lib/cave.svelte';
   import { tolerancePx } from '../lib/commands';
   import { ViewCube } from '../lib/viewport/view-cube';
   import { onTheme } from '../lib/theme';
@@ -282,7 +282,14 @@
       if (hint !== drawHint) drawHint = hint;
     };
     v.onSelectLine = (id) => (cave.selected = id);
+    v.arrowOp = () => cave.arrowOp;
+    v.onArrowDone = () => (cave.arrowOp = { id: '', op: '' });
     v.onEndCommand = () => (cave.tool = '');
+    v.onLeaderEdited = (id, points, style) => {
+      const r = engine.editLeader(id, points, style, cave.adjusted);
+      if (r !== 'ok') engine.log('warn', 'draw', r);
+      changed();
+    };
     v.onLineEdited = (id, points, widths) => {
       const r = engine.editLine(id, points, widths, cave.adjusted);
       if (r !== 'ok') engine.log('warn', 'draw', r);
@@ -303,7 +310,7 @@
         engine.log('warn', 'draw', 'Type the text in the ribbon first.');
         return;
       }
-      const r = engine.addMapLine(cave.tool, points, widths, closed, cave.adjusted, text);
+      const r = engine.addMapLine(cave.tool, points, widths, closed, cave.adjusted, text, toolStyle());
       if (r !== 'ok') engine.log('warn', 'draw', r);
       changed();
     };

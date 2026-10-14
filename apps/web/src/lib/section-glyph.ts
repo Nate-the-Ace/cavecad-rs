@@ -3,7 +3,8 @@
 // draws it at true size beside the station, joined to it by a dashed leader, and the person drags
 // it to where they want it. The offset they leave it at is saved with the drawing.
 
-import { drawing, fillLength, parseStyle, styleFor } from './line-style.svelte';
+import { drawing, fillLength, parseStyle, patternName, styleFor } from './line-style.svelte';
+import { lineMarksPx, strokeMarksPx } from './pattern-draw';
 import type { Look } from './ink';
 import { smooth } from './spline.ts';
 import { drawStamp, isStampKind, leaderLook, placement } from './symbols.ts';
@@ -122,7 +123,7 @@ export function drawStrokes(
       g.globalAlpha = l.alpha;
       g.setLineDash([]);
       g.lineWidth = Math.max(1, l.weight * scale * 0.7);
-      if (selected && k.id === selected) {
+      if (selected && k.id === selected && k.kind !== 'callout') {
         const pl = placement(p0, p1);
         g.strokeStyle = highlightColor();
         g.globalAlpha = 0.9;
@@ -134,7 +135,7 @@ export function drawStrokes(
         g.globalAlpha = l.alpha;
         g.lineWidth = Math.max(1, l.weight * scale * 0.7);
       }
-      drawStamp(g, k.kind, p0, p1, (k as { text?: string }).text, leaderLook(style, (pxPerM * drawing.scale) / 1000));
+      drawStamp(g, k.kind, p0, p1, (k as { text?: string }).text, leaderLook(style, (pxPerM * drawing.scale) / 1000), k.points.slice(2).map((q) => to(q[0], q[1])));
       continue;
     }
     const curve = smooth(
@@ -165,9 +166,17 @@ export function drawStrokes(
       g.globalAlpha = l.alpha;
       g.setLineDash([]);
       g.lineWidth = Math.max(1, l.weight * scale * 0.7);
-      drawMarks(g, marksFor(k.kind, k.id ?? '', metres, parseStyle(style).density, fillLength()), to, curve.pts);
+      drawMarks(g, marksFor(k.kind, k.id ?? '', metres, parseStyle(style).density, fillLength(), patternName(parseStyle(style).lt), parseStyle(style).angle), to, curve.pts);
     }
-    if (orn.spine) trace(0, l.color, l.alpha, l.dash);
+    if (orn.spine && l.custom && curve.pts.length >= 2) {
+      // the caver's own linetype: dashes, dots and motifs laid along the curve in pixels
+      g.strokeStyle = l.color;
+      g.fillStyle = l.color;
+      g.globalAlpha = l.alpha;
+      g.setLineDash([]);
+      g.lineWidth = Math.max(1, l.weight * scale);
+      strokeMarksPx(g, lineMarksPx(l.custom, curve.pts as [number, number][], l.pxPerMm ?? 0));
+    } else if (orn.spine) trace(0, l.color, l.alpha, l.dash);
     if (orn.lines.length) {
       g.strokeStyle = l.color;
       g.globalAlpha = l.alpha;

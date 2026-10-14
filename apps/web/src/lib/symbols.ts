@@ -4,6 +4,8 @@
 // Drawing is plain lines and circles in the symbol's own unit space, so every canvas draws them
 // the same way. Nothing here touches the engine: the catalogue is installed once it has loaded.
 
+import { ENGINE_HEADS, frameOutline, placeHead } from './shapes.ts';
+
 export type Prim = { t: 'circle'; c: [number, number]; r: number; fill?: boolean } | { t: 'poly'; pts: [number, number][]; closed?: boolean; fill?: boolean };
 
 export interface SymbolDef {
@@ -97,26 +99,27 @@ export function needsWords(kind: string | undefined): boolean {
   return kind === 'text' || kind === 'callout';
 }
 
-/** A callout laid out: the note's box, the leader and the arrow head (all from the engine). */
+/** A leader laid out: the note's box, and for each arrow the leader line and the arrow head's barbs (all from the engine). */
 export interface CalloutLayout {
   height: number;
   side: 'left' | 'right';
   note: [number, number, number, number];
-  leader: [number, number][];
-  head: [number, number][];
+  branches: [number, number][][];
+  heads: [number, number][][];
 }
-let calloutSource: ((tip: [number, number], at: [number, number], chars: number, shape: string, height: number) => CalloutLayout) | null = null;
+type CalloutSource = (tips: [number, number][], at: [number, number], chars: number, shape: string, height: number) => CalloutLayout;
+let calloutSource: CalloutSource | null = null;
 /** Installs the engine's callout layout (call once it has loaded). */
-export function setCalloutSource(f: (tip: [number, number], at: [number, number], chars: number, shape: string, height: number) => CalloutLayout) {
+export function setCalloutSource(f: CalloutSource) {
   calloutSource = f;
 }
 
-/** A callout's layout on the canvas: dragged from the thing pointed at (`p0`) to where the note goes (`p1`). */
-function calloutLayout(p0: [number, number], p1: [number, number], text: string, o: LeaderLook): CalloutLayout | null {
-  if (!calloutSource || Math.hypot(p1[0] - p0[0], p1[1] - p0[1]) < 3) return null;
+/** A leader's layout on the canvas: the arrows point at `tips` (the first is the dragged-from point), the note goes at `at`. */
+function calloutLayout(tips: [number, number][], at: [number, number], text: string, o: LeaderLook): CalloutLayout | null {
+  if (!calloutSource || !tips.length || Math.hypot(at[0] - tips[0][0], at[1] - tips[0][1]) < 3) return null;
   // the text is a size of its own (3 mm on paper times the leader's size) when the view knows how big a paper millimetre is
   const height = o.paperPx && o.paperPx > 0 ? 3 * o.paperPx * o.size : 0;
-  return calloutSource(p0, p1, Math.max(1, text.length), o.shape || 'elbow', height);
+  return calloutSource(tips, at, Math.max(1, text.length), o.shape || 'elbow', height);
 }
 
 /** How a leader is drawn besides its line: its arrowhead, line, note frame and text size, and how big a paper millimetre is here. */
@@ -125,14 +128,16 @@ export interface LeaderLook {
   shape: string;
   frame: string;
   size: number;
+  /** The note's switches: f (fill behind it), h (outline round the letters), n (no outline on the frame). */
+  flags: string;
   paperPx?: number;
 }
 
 /** Reads a leader's look from a stored style (the part after the line's own three). */
 export function leaderLook(style: string | undefined, paperPx?: number): LeaderLook {
-  const [, , , arrow = '', shape = '', frame = '', size = '1'] = (style ?? '').split(';');
+  const [, , , arrow = '', shape = '', frame = '', size = '1', , flags = ''] = (style ?? '').split(';');
   const n = Number(size);
-  return { arrow, shape, frame, size: Number.isFinite(n) && n > 0 ? n : 1, paperPx };
+  return { arrow, shape, frame, size: Number.isFinite(n) && n > 0 ? n : 1, flags, paperPx };
 }
 
 /** Where a stamp's words go and how big: for text, at the first point, turned to the aim; for a symbol's label, to its right. */
@@ -141,55 +146,107 @@ function wordsPlacement(kind: string, pl: ReturnType<typeof placement>): { x: nu
   return { x: pl.cx + 1.3 * pl.r, y: pl.cy, size: Math.max(7, pl.r * 0.9), angle: 0 };
 }
 
-/** Draws a symbol (with its label) or a text stroke at `p0`, aimed toward `p1`. */
-export function drawStamp(g: CanvasRenderingContext2D, kind: string, p0: [number, number], p1: [number, number], text = '', leader: LeaderLook = leaderLook('')): void {
-  if (kind === 'callout') {
-    const l = calloutLayout(p0, p1, text, leader);
-    if (!l) return;
+/** A colour that shows against the stroke's: pale behind dark ink, dark behind pale ink (for a note's fill and the outline of its letters). */
+function backing(g: CanvasRenderingContext2D): string {
+  g.save();
+  g.fillStyle = typeof g.strokeStyle === 'string' ? g.strokeStyle : '#000';
+  const c = String(g.fillStyle);
+  g.restore();
+  const m = /^#([0-9a-f]{6})$/i.exec(c) ?? null;
+  const v = m ? parseInt(m[1], 16) : 0;
+  const lum = m ? (0.299 * (v >> 16) + 0.587 * ((v >> 8) & 255) + 0.114 * (v & 255)) / 255 : 0;
+  return lum > 0.55 ? '#14181d' : '#fffdf8';
+}
+
+/** Draws one arrowhead at `tip` for a leader whose line leaves it along `branch`. */
+function drawHead(g: CanvasRenderingContext2D, name: string, tip: [number, number], branch: [number, number][], barbs: [number, number][], height: number) {
+  if (name === 'none') return;
+  if (name === 'dot') {
+    g.save();
+    g.fillStyle = g.strokeStyle;
     g.beginPath();
-    l.leader.forEach((q, i) => (i === 0 ? g.moveTo(q[0], q[1]) : g.lineTo(q[0], q[1])));
-    g.stroke();
-    // the arrowhead: open barbs, a filled triangle, a dot at the tip, or nothing
-    if (leader.arrow === 'dot') {
+    g.arc(tip[0], tip[1], Math.max(2, height * 0.22), 0, Math.PI * 2);
+    g.fill();
+    g.restore();
+    return;
+  }
+  if (ENGINE_HEADS.includes(name)) {
+    g.beginPath();
+    barbs.forEach((q, i) => (i === 0 ? g.moveTo(q[0], q[1]) : g.lineTo(q[0], q[1])));
+    if (name === 'filled') {
+      g.closePath();
       g.save();
       g.fillStyle = g.strokeStyle;
-      g.beginPath();
-      g.arc(p0[0], p0[1], Math.max(2, l.height * 0.22), 0, Math.PI * 2);
       g.fill();
       g.restore();
-    } else if (leader.arrow !== 'none') {
+    }
+    g.stroke();
+    return;
+  }
+  // a library head points the way the leader arrives: from the next point of the line into the tip
+  const from = branch[1] ?? branch[0];
+  const d = Math.hypot(tip[0] - from[0], tip[1] - from[1]) || 1;
+  const parts = placeHead(name, tip, [(tip[0] - from[0]) / d, (tip[1] - from[1]) / d], Math.max(6, height * 0.6));
+  for (const part of parts ?? []) {
+    g.beginPath();
+    part.pts.forEach((q, i) => (i === 0 ? g.moveTo(q[0], q[1]) : g.lineTo(q[0], q[1])));
+    if (part.closed) g.closePath();
+    if (part.fill) {
+      g.save();
+      g.fillStyle = g.strokeStyle;
+      g.fill();
+      g.restore();
+    }
+    if (part.stroke) g.stroke();
+  }
+}
+
+/** Draws a symbol (with its label) or a text stroke at `p0`, aimed toward `p1`. A leader's `more` are the points its further arrows touch. */
+export function drawStamp(g: CanvasRenderingContext2D, kind: string, p0: [number, number], p1: [number, number], text = '', leader: LeaderLook = leaderLook(''), more: [number, number][] = []): void {
+  if (kind === 'callout') {
+    const tips = [p0, ...more];
+    const l = calloutLayout(tips, p1, text, leader);
+    if (!l) return;
+    const back = backing(g);
+    // the note's frame, behind everything else of the note
+    const pad = l.height * 0.2;
+    const [x1, y1, x2, y2] = l.note;
+    const box = frameOutline(leader.frame, [x1, Math.min(y1, y2), x2, Math.max(y1, y2)], pad);
+    if (box) {
       g.beginPath();
-      l.head.forEach((q, i) => (i === 0 ? g.moveTo(q[0], q[1]) : g.lineTo(q[0], q[1])));
-      if (leader.arrow === 'filled') {
-        g.closePath();
+      box.pts.forEach((q, i) => (i === 0 ? g.moveTo(q[0], q[1]) : g.lineTo(q[0], q[1])));
+      if (box.closed) g.closePath();
+      if (leader.flags.includes('f') && box.closed) {
         g.save();
-        g.fillStyle = g.strokeStyle;
+        g.globalAlpha *= 0.92;
+        g.fillStyle = back;
         g.fill();
         g.restore();
       }
-      g.stroke();
+      if (!leader.flags.includes('n')) g.stroke();
     }
-    // the note's frame
-    if (leader.frame === 'box' || leader.frame === 'underline') {
-      const pad = l.height * 0.2;
-      const [x1, y1, x2, y2] = l.note;
-      const top = Math.min(y1, y2);
-      const bottom = Math.max(y1, y2);
+    l.branches.forEach((branch, i) => {
       g.beginPath();
-      if (leader.frame === 'box') g.rect(x1 - pad, top - pad, x2 - x1 + 2 * pad, bottom - top + 2 * pad);
-      else {
-        g.moveTo(x1 - pad, bottom + pad * 0.5);
-        g.lineTo(x2 + pad, bottom + pad * 0.5);
-      }
+      branch.forEach((q, k) => (k === 0 ? g.moveTo(q[0], q[1]) : g.lineTo(q[0], q[1])));
       g.stroke();
-    }
+      drawHead(g, leader.arrow, tips[i], branch, l.heads[i] ?? [], l.height);
+    });
     if (text) {
+      const y = (l.note[1] + l.note[3]) / 2;
       g.save();
-      g.fillStyle = g.strokeStyle;
       g.font = `${l.height}px system-ui, sans-serif`;
       g.textBaseline = 'middle';
       g.textAlign = 'left';
-      g.fillText(text, l.note[0], (l.note[1] + l.note[3]) / 2);
+      const ink = g.strokeStyle;
+      if (leader.flags.includes('h')) {
+        // an outline round the letters keeps them readable over linework and fills
+        g.strokeStyle = back;
+        g.lineWidth = Math.max(2, l.height * 0.28);
+        g.lineJoin = 'round';
+        g.strokeText(text, l.note[0], y);
+      }
+      g.fillStyle = ink;
+      g.fillText(text, l.note[0], y);
       g.restore();
     }
     return;
@@ -209,14 +266,15 @@ export function drawStamp(g: CanvasRenderingContext2D, kind: string, p0: [number
 }
 
 /** True when the screen point is on a placed stamp: a symbol's body or label, or the words of a text stroke. */
-export function hitsStamp(kind: string, text: string | undefined, p0: [number, number], p1: [number, number], x: number, y: number, pad = 4, leader: LeaderLook = leaderLook('')): boolean {
+export function hitsStamp(kind: string, text: string | undefined, p0: [number, number], p1: [number, number], x: number, y: number, pad = 4, leader: LeaderLook = leaderLook(''), more: [number, number][] = []): boolean {
   if (kind === 'callout') {
-    const l = calloutLayout(p0, p1, text ?? '', leader);
+    const tips = [p0, ...more];
+    const l = calloutLayout(tips, p1, text ?? '', leader);
     if (!l) return Math.hypot(x - p0[0], y - p0[1]) <= pad + 6;
     const inNote = x >= l.note[0] - pad && x <= l.note[2] + pad && y >= Math.min(l.note[1], l.note[3]) - pad && y <= Math.max(l.note[1], l.note[3]) + pad;
     if (inNote) return true;
-    for (let i = 1; i < l.leader.length; i++) {
-      if (distToSegment(x, y, l.leader[i - 1], l.leader[i]) <= pad + 2) return true;
+    for (const branch of l.branches) {
+      for (let i = 1; i < branch.length; i++) if (distToSegment(x, y, branch[i - 1], branch[i]) <= pad + 2) return true;
     }
     return false;
   }

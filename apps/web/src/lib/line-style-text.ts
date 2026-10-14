@@ -17,13 +17,42 @@ export interface LineStyle {
   frame: string;
   /** A leader's text size as a multiple of the usual (3 mm on paper). */
   size: number;
+  /** Turns an area's pattern inside its boundary, in degrees (-90 to 90); the boundary does not move. */
+  angle: number;
+  /** A leader's note switches, as letters: f (a paper fill behind the note), h (an outline round the letters), n (no outline on the frame). */
+  flags: string;
+  /** Where a leader's arrows are fastened to other drawn things: `index=id#vertex` pairs, comma-separated (see `leader-edit.ts`). */
+  attach: string;
 }
 
-export const PLAIN: LineStyle = { lt: '', scale: 1, density: 1, arrow: '', shape: '', frame: '', size: 1 };
+export const PLAIN: LineStyle = { lt: '', scale: 1, density: 1, arrow: '', shape: '', frame: '', size: 1, angle: 0, flags: '', attach: '' };
 
-export const ARROW_LABELS: [string, string][] = [['', 'Arrow'], ['filled', 'Filled arrow'], ['dot', 'Dot'], ['none', 'None']];
+export const ARROW_LABELS: [string, string][] = [
+  ['', 'Open arrow'],
+  ['filled', 'Filled arrow'],
+  ['closed', 'Closed arrow'],
+  ['stealth', 'Stealth'],
+  ['diamond', 'Diamond'],
+  ['open-diamond', 'Open diamond'],
+  ['square', 'Square'],
+  ['dot', 'Dot'],
+  ['tick', 'Tick'],
+  ['bar', 'Bar'],
+  ['double', 'Double arrow'],
+  ['none', 'No head'],
+];
 export const SHAPE_LABELS: [string, string][] = [['', 'Elbow'], ['straight', 'Straight'], ['curved', 'Curved']];
-export const FRAME_LABELS: [string, string][] = [['', 'No frame'], ['box', 'Box'], ['underline', 'Underline']];
+export const FRAME_LABELS: [string, string][] = [
+  ['', 'No frame'],
+  ['box', 'Box'],
+  ['rounded', 'Rounded box'],
+  ['hexagon', 'Hexagon'],
+  ['octagon', 'Octagon'],
+  ['diamond', 'Diamond'],
+  ['ellipse', 'Ellipse'],
+  ['banner', 'Banner'],
+  ['underline', 'Underline'],
+];
 
 export const LINETYPE_LABELS: [string, string][] = [
   ['', 'The type’s own'],
@@ -37,19 +66,38 @@ export const LINETYPE_LABELS: [string, string][] = [
 /** Reads a stored style (anything unreadable is the type's look). */
 export function parseStyle(text: string | undefined): LineStyle {
   if (!text) return PLAIN;
-  const [lt = '', scale = '1', density = '1', arrow = '', shape = '', frame = '', size = '1'] = text.split(';');
+  const [lt = '', scale = '1', density = '1', arrow = '', shape = '', frame = '', size = '1', angle = '0', flags = '', attach = ''] = text.split(';');
   const num = (v: string) => {
     const n = Number(v);
     return Number.isFinite(n) && n > 0 ? n : 1;
   };
-  return { lt, scale: num(scale), density: num(density), arrow, shape, frame: frame === 'none' ? '' : frame, size: num(size) };
+  return { lt, scale: num(scale), density: num(density), arrow, shape, frame: frame === 'none' ? '' : frame, size: num(size), angle: Number.isFinite(Number(angle)) ? Number(angle) : 0, flags, attach };
 }
 
 /** Writes a style the way it is stored (empty when it is the type's look). */
 export function styleText(s: LineStyle): string {
   const plainLine = !s.lt && Math.abs(s.scale - 1) < 0.005 && Math.abs(s.density - 1) < 0.005;
   const plainLeader = !s.arrow && !s.shape && !s.frame && Math.abs(s.size - 1) < 0.005;
-  if (plainLine && plainLeader) return '';
+  const turned = Math.abs(s.angle) >= 0.05;
+  const flags = [...'fhn'].filter((c) => s.flags.includes(c)).join('');
+  if (s.attach) return `${s.lt};${s.scale.toFixed(2)};${s.density.toFixed(2)};${s.arrow};${s.shape};${s.frame};${s.size.toFixed(2)};${s.angle.toFixed(1)};${flags};${s.attach}`;
+  if (flags) return `${s.lt};${s.scale.toFixed(2)};${s.density.toFixed(2)};${s.arrow};${s.shape};${s.frame};${s.size.toFixed(2)};${s.angle.toFixed(1)};${flags}`;
+  if (plainLine && plainLeader && !turned) return '';
   const line = `${s.lt};${s.scale.toFixed(2)};${s.density.toFixed(2)}`;
-  return plainLeader ? line : `${line};${s.arrow};${s.shape};${s.frame};${s.size.toFixed(2)}`;
+  if (plainLeader && !turned) return line;
+  const full = `${line};${s.arrow};${s.shape};${s.frame};${s.size.toFixed(2)}`;
+  return turned ? `${full};${s.angle.toFixed(1)}` : full;
+}
+
+/** A style with a leader's fastenings replaced (nothing else changes). */
+export function withAttach(style: string | undefined, attach: string): string {
+  return styleText({ ...parseStyle(style), attach });
+}
+
+/** The style text of a pattern the caver authored: `pat:Name` in the linetype part (see `cave-draw::normalize_style`). */
+export const PATTERN_PREFIX = 'pat:';
+
+/** The pattern's name when `lt` (the linetype part of a style) names one of the caver's, else ''. */
+export function patternName(lt: string | undefined): string {
+  return lt && lt.startsWith(PATTERN_PREFIX) ? lt.slice(PATTERN_PREFIX.length) : '';
 }

@@ -25,6 +25,9 @@ dependencies = [
  "cave-doc",
  "cave-geom",
  "cave-id",
+ "cave-pattern",
+ "cave-symbols",
+ "serde_json",
 ]
 
 [[package]]
@@ -38,6 +41,7 @@ dependencies = [
  "cave-geom",
  "cave-id",
  "cave-notebook",
+ "cave-pattern",
  "cave-scene",
  "cave-shape",
  "cave-style",
@@ -108,6 +112,16 @@ dependencies = [
  "cave-fixture",
  "cave-id",
  "cave-survey",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "cave-pattern"
+version = "0.0.1"
+dependencies = [
+ "cave-fill",
+ "cave-symbols",
  "serde",
  "serde_json",
 ]
@@ -238,6 +252,7 @@ dependencies = [
  "cave-id",
  "cave-log",
  "cave-notebook",
+ "cave-pattern",
  "cave-scans",
  "cave-scene",
  "cave-shape",

@@ -290,6 +290,7 @@ pub fn map_profile_sketches(adjusted: bool) -> String {
 /// anchored to the survey's legs, goes through the one edit path and is undoable. Returns `ok` or
 /// `error: ...`.
 #[wasm_bindgen]
+#[allow(clippy::too_many_arguments)]
 pub fn add_map_line(
     kind: &str,
     points: &str,
@@ -297,6 +298,7 @@ pub fn add_map_line(
     closed: bool,
     adjusted: bool,
     text: &str,
+    style: &str,
 ) -> String {
     let Ok(points) = serde_json::from_str::<Vec<[f64; 2]>>(points) else {
         return "error: unreadable stroke".into();
@@ -315,6 +317,7 @@ pub fn add_map_line(
                 .map_err(|e| format!("{e:?}"))?;
         let actions = cave_draw::with_closed(actions, closed).map_err(|e| format!("{e:?}"))?;
         let actions = cave_draw::with_text(actions, id, text);
+        let actions = cave_draw::with_style(actions, id, style).map_err(|e| format!("{e:?}"))?;
         let edit = doc.edit(actions).map_err(|e| format!("{e:?}"))?;
         record_edit("map", &edit);
         Ok::<(), String>(())
@@ -333,6 +336,22 @@ pub fn add_map_line(
 /// One undoable edit. Returns `ok` or `error: ...`.
 #[wasm_bindgen]
 pub fn edit_line(id: &str, points: &str, widths: &str, adjusted: bool) -> String {
+    edit_line_with(id, points, widths, adjusted, None)
+}
+
+/// Moves a leader's points and sets its style (where its arrows are fastened) as one undoable edit. Returns `ok` or `error: ...`.
+#[wasm_bindgen]
+pub fn edit_leader(id: &str, points: &str, style: &str, adjusted: bool) -> String {
+    edit_line_with(id, points, "", adjusted, Some(style))
+}
+
+fn edit_line_with(
+    id: &str,
+    points: &str,
+    widths: &str,
+    adjusted: bool,
+    style: Option<&str>,
+) -> String {
     let Ok(points) = serde_json::from_str::<Vec<[f64; 2]>>(points) else {
         return "error: unreadable stroke".into();
     };
@@ -357,8 +376,13 @@ pub fn edit_line(id: &str, points: &str, widths: &str, adjusted: bool) -> String
             "map" => cave_scene::map_frames(doc, adjusted),
             _ => Vec::new(),
         };
-        let actions = cave_draw::edit_stroke(doc, line, &points, widths, &frames)
+        let mut actions = cave_draw::edit_stroke(doc, line, &points, widths, &frames)
             .map_err(|e| format!("{e:?}"))?;
+        if let Some(style) = style {
+            actions.extend(
+                cave_draw::set_stroke_style(doc, line, style).map_err(|e| format!("{e:?}"))?,
+            );
+        }
         let edit = doc.edit(actions).map_err(|e| format!("{e:?}"))?;
         record_edit(&scope, &edit);
         Ok::<(), String>(())
@@ -410,20 +434,14 @@ pub fn ornament(
     serde_json::json!({"spine": spine, "lines": lines}).to_string()
 }
 
-/// The drawing of a leader: dragged from `tip` to `at`, with a note of `chars` characters. `shape` is `elbow`, `straight` or
-/// `curved`; `height` is the text height in the same units as the points (0 for a third of the drag).
+/// The drawing of a leader: a note of `chars` characters at (`at_x`, `at_y`) with an arrow to each of `tips` (`[[x, y], ...]`).
+/// `shape` is `elbow`, `straight` or `curved`; `height` is the text height in the same units as the points (0 for a third of
+/// the way to the first tip). Returns `{height, side, note, branches, heads}` as JSON.
 #[wasm_bindgen]
-pub fn callout(
-    tip_x: f64,
-    tip_y: f64,
-    at_x: f64,
-    at_y: f64,
-    chars: usize,
-    shape: &str,
-    height: f64,
-) -> String {
-    let l = cave_shape::callout::layout_with(
-        [tip_x, tip_y],
+pub fn callout(tips: &str, at_x: f64, at_y: f64, chars: usize, shape: &str, height: f64) -> String {
+    let tips = serde_json::from_str::<Vec<[f64; 2]>>(tips).unwrap_or_default();
+    let l = cave_shape::callout::layout_many(
+        &tips,
         [at_x, at_y],
         chars,
         shape == "curved",
@@ -873,16 +891,19 @@ pub fn fills() -> String {
 /// `amount` is how dense (1 as authored, 2 twice as many marks); `length` is the drawing scale over 500 (1 at 1:500), so marks keep
 /// their size on paper at any scale. Returns `{lines, circles, tint}` as JSON.
 #[wasm_bindgen]
-pub fn fill_marks(kind: &str, curve: &str, id: &str, amount: f64, length: f64) -> String {
+pub fn fill_marks(
+    kind: &str,
+    curve: &str,
+    id: &str,
+    amount: f64,
+    length: f64,
+    angle: f64,
+) -> String {
     let pts = serde_json::from_str::<Vec<[f64; 2]>>(curve).unwrap_or_default();
-    serde_json::to_string(&cave_fill::marks_at(
-        kind,
-        &pts,
-        cave_fill::seed_of(id),
-        amount,
-        length,
-    ))
-    .unwrap_or_else(|_| "{}".into())
+    let marks = cave_pattern::rotated(&pts, angle, |o| {
+        cave_fill::marks_at(kind, o, cave_fill::seed_of(id), amount, length)
+    });
+    serde_json::to_string(&marks).unwrap_or_else(|_| "{}".into())
 }
 
 /// How the Draw tab groups the drawing tools (JSON array of `{name, tools}`, each tool a palette style).
@@ -932,6 +953,7 @@ pub fn place_section(station: &str, view: &str, a: f64, b: f64, c: f64) -> Strin
 /// `[across, up]` metres in the section's plane; `widths` is pen weight per point or empty. Goes
 /// through the one edit path and is undoable. Returns `ok` or `error: ...`.
 #[wasm_bindgen]
+#[allow(clippy::too_many_arguments)]
 pub fn add_section_sketch(
     station: &str,
     kind: &str,
@@ -940,6 +962,7 @@ pub fn add_section_sketch(
     closed: bool,
     adjusted: bool,
     text: &str,
+    style: &str,
 ) -> String {
     let Ok(points) = serde_json::from_str::<Vec<[f64; 2]>>(points) else {
         return "error: unreadable stroke".into();
@@ -968,6 +991,7 @@ pub fn add_section_sketch(
         .map_err(|e| format!("{e:?}"))?;
         let actions = cave_draw::with_closed(actions, closed).map_err(|e| format!("{e:?}"))?;
         let actions = cave_draw::with_text(actions, id, text);
+        let actions = cave_draw::with_style(actions, id, style).map_err(|e| format!("{e:?}"))?;
         let edit = doc.edit(actions).map_err(|e| format!("{e:?}"))?;
         record_edit("section", &edit);
         Ok::<(), String>(())
@@ -1010,6 +1034,245 @@ pub fn linetypes() -> String {
         );
     }
     serde_json::json!({"dot_mm": cave_style::DOT_MM, "types": list}).to_string()
+}
+
+// ---- Patterns the caver authors: motifs, linetypes and fills ----
+
+/// The patterns the cave can pick from: JSON `{motifs, lines, fills}`, the built-in ones and the cave's own, each with `own` true for
+/// the cave's own (those can be changed and removed).
+#[wasm_bindgen]
+pub fn pattern_library() -> String {
+    DOC.with(|d| {
+        let slot = d.borrow();
+        let own = slot
+            .as_ref()
+            .map(cave_draw::patterns::own_library)
+            .unwrap_or_default();
+        let lib = match slot.as_ref() {
+            Some(doc) => cave_draw::patterns::library(doc),
+            None => cave_pattern::builtin_library(),
+        };
+        let tag = |v: serde_json::Value, mine: bool| {
+            let mut v = v;
+            v["own"] = serde_json::Value::Bool(mine);
+            v
+        };
+        let list = |items: Vec<(serde_json::Value, bool)>| -> Vec<serde_json::Value> {
+            items.into_iter().map(|(v, m)| tag(v, m)).collect()
+        };
+        let motifs = list(
+            lib.motifs
+                .iter()
+                .map(|m| (serde_json::json!(m), own.motif(&m.name).is_some()))
+                .collect(),
+        );
+        let lines = list(
+            lib.lines
+                .iter()
+                .map(|l| (serde_json::json!(l), own.line(&l.name).is_some()))
+                .collect(),
+        );
+        let fills = list(
+            lib.fills
+                .iter()
+                .map(|f| (serde_json::json!(f), own.fill(&f.name).is_some()))
+                .collect(),
+        );
+        serde_json::json!({"motifs": motifs, "lines": lines, "fills": fills}).to_string()
+    })
+}
+
+/// Turns a drawing (JSON list of `cave-symbols` prims at any size and place) into a motif called `name`: centred, longest side 1.
+/// Returns the motif as JSON, or `error: ...`. Nothing is saved.
+#[wasm_bindgen]
+pub fn motif_from_drawing(name: &str, prims: &str) -> String {
+    let Ok(prims) = serde_json::from_str::<Vec<cave_symbols::Prim>>(prims) else {
+        return "error: that is not a drawing".into();
+    };
+    match cave_pattern::Motif::from_drawing(name, prims) {
+        Ok(m) => {
+            serde_json::to_string(&m).unwrap_or_else(|_| "error: could not write the motif".into())
+        }
+        Err(e) => format!("error: {e}"),
+    }
+}
+
+/// Saves a pattern (`kind` is `motif`, `line` or `fill`; `json` its definition) as one undoable edit. Returns `ok` or `error: ...`.
+#[wasm_bindgen]
+pub fn save_pattern(kind: &str, json: &str) -> String {
+    use cave_draw::patterns as p;
+    let result = DOC.with(|d| {
+        let mut slot = d.borrow_mut();
+        let doc = slot.as_mut().ok_or("no cave is open")?;
+        let actions = match kind {
+            p::MOTIF => p::save_motif(
+                doc,
+                &serde_json::from_str(json).map_err(|_| "that is not a motif")?,
+            ),
+            p::LINE => p::save_line(
+                doc,
+                &serde_json::from_str(json).map_err(|_| "that is not a linetype")?,
+            ),
+            p::FILL => p::save_fill(
+                doc,
+                &serde_json::from_str(json).map_err(|_| "that is not a fill")?,
+            ),
+            _ => return Err("unknown kind of pattern".to_string()),
+        }
+        .map_err(|e| e.to_string())?;
+        if actions.is_empty() {
+            return Ok(());
+        }
+        let edit = doc.edit(actions).map_err(|e| format!("{e:?}"))?;
+        record_edit("settings", &edit);
+        Ok::<(), String>(())
+    });
+    match result {
+        Ok(()) => "ok".into(),
+        Err(e) => format!("error: {e}"),
+    }
+}
+
+/// Removes one of the cave's own patterns as one undoable edit. Returns `ok` or `error: ...`.
+#[wasm_bindgen]
+pub fn remove_pattern(kind: &str, name: &str) -> String {
+    let result = DOC.with(|d| {
+        let mut slot = d.borrow_mut();
+        let doc = slot.as_mut().ok_or("no cave is open")?;
+        let actions =
+            cave_draw::patterns::remove_pattern(doc, kind, name).map_err(|e| e.to_string())?;
+        let edit = doc.edit(actions).map_err(|e| format!("{e:?}"))?;
+        record_edit("settings", &edit);
+        Ok::<(), String>(())
+    });
+    match result {
+        Ok(()) => "ok".into(),
+        Err(e) => format!("error: {e}"),
+    }
+}
+
+/// The library to lay a definition out with: the cave's, or the built-in one with no cave open.
+fn pattern_lib() -> cave_pattern::Library {
+    DOC.with(|d| match d.borrow().as_ref() {
+        Some(doc) => cave_draw::patterns::library(doc),
+        None => cave_pattern::builtin_library(),
+    })
+}
+
+/// Checks a linetype or fill definition without saving it: `ok`, or `error: ...` in plain words.
+#[wasm_bindgen]
+pub fn check_pattern(kind: &str, json: &str) -> String {
+    let lib = pattern_lib();
+    let r = match kind {
+        "line" => serde_json::from_str::<cave_pattern::LineDef>(json)
+            .map_err(|_| cave_pattern::PatternError::BadJson)
+            .and_then(|d| lib.check_line(&d)),
+        "fill" => serde_json::from_str::<cave_pattern::FillDef>(json)
+            .map_err(|_| cave_pattern::PatternError::BadJson)
+            .and_then(|d| lib.check_fill(&d)),
+        _ => Err(cave_pattern::PatternError::BadJson),
+    };
+    match r {
+        Ok(()) => "ok".into(),
+        Err(e) => format!("error: {e}"),
+    }
+}
+
+/// The marks of a linetype definition laid along a path (JSON points, metres) at a drawing scale (the N of 1:N): `{lines, circles}`.
+/// An unusable definition draws nothing.
+#[wasm_bindgen]
+pub fn line_pattern_marks(def: &str, path: &str, scale: f64) -> String {
+    let lib = pattern_lib();
+    let (Ok(def), Ok(path)) = (
+        serde_json::from_str::<cave_pattern::LineDef>(def),
+        serde_json::from_str::<Vec<[f64; 2]>>(path),
+    ) else {
+        return "{}".into();
+    };
+    if lib.check_line(&def).is_err() {
+        return "{}".into();
+    }
+    let m = cave_pattern::line_marks(
+        &def,
+        &|n| lib.motif(n).cloned(),
+        &path,
+        scale / 1000.0,
+        cave_style::DOT_MM,
+    );
+    serde_json::to_string(&m).unwrap_or_else(|_| "{}".into())
+}
+
+/// The marks of a fill definition inside an outline (JSON points, metres), seeded by `id`, at a drawing scale: `{lines, circles, tint}`.
+#[wasm_bindgen]
+pub fn fill_pattern_marks(def: &str, outline: &str, id: &str, amount: f64, scale: f64) -> String {
+    let lib = pattern_lib();
+    let (Ok(def), Ok(outline)) = (
+        serde_json::from_str::<cave_pattern::FillDef>(def),
+        serde_json::from_str::<Vec<[f64; 2]>>(outline),
+    ) else {
+        return "{}".into();
+    };
+    if lib.check_fill(&def).is_err() {
+        return "{}".into();
+    }
+    let m = cave_pattern::fill_marks(
+        &def,
+        &|n| lib.motif(n).cloned(),
+        &outline,
+        cave_fill::seed_of(id),
+        scale / 1000.0,
+        amount,
+    );
+    serde_json::to_string(&m).unwrap_or_else(|_| "{}".into())
+}
+
+/// The marks of the library's linetype called `name` along a path (JSON points) at a drawing scale: `{lines, circles}`. Nothing for a
+/// name that is not there (the viewer then draws the line plainly).
+#[wasm_bindgen]
+pub fn line_pattern_marks_named(name: &str, path: &str, scale: f64) -> String {
+    let lib = pattern_lib();
+    let (Some(def), Ok(path)) = (lib.line(name), serde_json::from_str::<Vec<[f64; 2]>>(path))
+    else {
+        return "{}".into();
+    };
+    let m = cave_pattern::line_marks(
+        def,
+        &|n| lib.motif(n).cloned(),
+        &path,
+        scale / 1000.0,
+        cave_style::DOT_MM,
+    );
+    serde_json::to_string(&m).unwrap_or_else(|_| "{}".into())
+}
+
+/// The marks of the library's fill called `name` inside an outline (JSON points), seeded by `id`, at a drawing scale: `{lines, circles, tint}`.
+#[wasm_bindgen]
+pub fn fill_pattern_marks_named(
+    name: &str,
+    outline: &str,
+    id: &str,
+    amount: f64,
+    scale: f64,
+    angle: f64,
+) -> String {
+    let lib = pattern_lib();
+    let (Some(def), Ok(outline)) = (
+        lib.fill(name),
+        serde_json::from_str::<Vec<[f64; 2]>>(outline),
+    ) else {
+        return "{}".into();
+    };
+    let m = cave_pattern::rotated(&outline, angle, |o| {
+        cave_pattern::fill_marks(
+            def,
+            &|n| lib.motif(n).cloned(),
+            o,
+            cave_fill::seed_of(id),
+            scale / 1000.0,
+            amount,
+        )
+    });
+    serde_json::to_string(&m).unwrap_or_else(|_| "{}".into())
 }
 
 /// The type palette (colour role, weight, linetype per type) as JSON, for the viewer.
@@ -1076,6 +1339,7 @@ pub fn profile_band(run: &str, adjusted: bool) -> String {
 /// drawn from. The stroke is anchored to the band's stations. Goes through the document's one edit path and
 /// is undoable. Returns `ok` or `error: ...`.
 #[wasm_bindgen]
+#[allow(clippy::too_many_arguments)]
 pub fn add_profile_sketch(
     run: &str,
     kind: &str,
@@ -1084,6 +1348,7 @@ pub fn add_profile_sketch(
     closed: bool,
     adjusted: bool,
     text: &str,
+    style: &str,
 ) -> String {
     let Ok(points) = serde_json::from_str::<Vec<[f64; 2]>>(points) else {
         return "error: unreadable stroke".into();
@@ -1102,6 +1367,7 @@ pub fn add_profile_sketch(
                 .map_err(|e| format!("{e:?}"))?;
         let actions = cave_draw::with_closed(actions, closed).map_err(|e| format!("{e:?}"))?;
         let actions = cave_draw::with_text(actions, id, text);
+        let actions = cave_draw::with_style(actions, id, style).map_err(|e| format!("{e:?}"))?;
         let edit = doc.edit(actions).map_err(|e| format!("{e:?}"))?;
         record_edit("profile", &edit);
         Ok::<(), String>(())
@@ -1310,11 +1576,12 @@ mod tests {
         assert!(sec["sketches"].as_array().unwrap().is_empty());
         assert_eq!(section_at(false, "nope", true, "{}"), "null");
         assert!(
-            add_section_sketch("nope", "wall", "[[0,0],[1,1]]", "", false, false, "")
+            add_section_sketch("nope", "wall", "[[0,0],[1,1]]", "", false, false, "", "")
                 .starts_with("error")
         );
         assert!(
-            add_section_sketch(&id, "wall", "garbage", "", false, false, "").starts_with("error")
+            add_section_sketch(&id, "wall", "garbage", "", false, false, "", "")
+                .starts_with("error")
         );
     }
 }
