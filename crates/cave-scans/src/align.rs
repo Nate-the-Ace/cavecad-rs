@@ -349,8 +349,14 @@ fn kernel(r2: f64) -> f64 {
 impl Tps {
     /// Where a scan pixel lands in the view (metres).
     pub fn at(&self, px: f64, py: f64) -> (f64, f64) {
-        let (u, v) = ((px - self.origin.0) / self.scale, (py - self.origin.1) / self.scale);
-        let (mut x, mut y) = (self.ax[0] + self.ax[1] * u + self.ax[2] * v, self.ay[0] + self.ay[1] * u + self.ay[2] * v);
+        let (u, v) = (
+            (px - self.origin.0) / self.scale,
+            (py - self.origin.1) / self.scale,
+        );
+        let (mut x, mut y) = (
+            self.ax[0] + self.ax[1] * u + self.ax[2] * v,
+            self.ay[0] + self.ay[1] * u + self.ay[2] * v,
+        );
         for (i, c) in self.centers.iter().enumerate() {
             let k = kernel((u - c.0).powi(2) + (v - c.1).powi(2));
             x += self.wx[i] * k;
@@ -388,7 +394,9 @@ pub fn rubber(pairs: &[Pair]) -> Option<Tps> {
     let mut a = vec![vec![0.0; m + 2]; m];
     for i in 0..n {
         for j in 0..n {
-            a[i][j] = kernel((centers[i].0 - centers[j].0).powi(2) + (centers[i].1 - centers[j].1).powi(2));
+            a[i][j] = kernel(
+                (centers[i].0 - centers[j].0).powi(2) + (centers[i].1 - centers[j].1).powi(2),
+            );
         }
         a[i][i] += 1e-9;
         a[i][n] = 1.0;
@@ -514,13 +522,21 @@ pub fn placements(doc: &Document, view: &str, positions: &Positions) -> Vec<Plac
                     used: pairs.len(),
                     rms: f.rms,
                     mode: al.mode,
-                    warp: if al.mode == FitMode::Rubber { rubber(&pairs) } else { None },
+                    warp: if al.mode == FitMode::Rubber {
+                        rubber(&pairs)
+                    } else {
+                        None
+                    },
                     stations: station_ids(&al),
                 });
             }
         }
     }
-    let sizes: Vec<f64> = out.iter().map(|p| pixel_size(&p.matrix)).filter(|s| s.is_finite() && *s > 0.0).collect();
+    let sizes: Vec<f64> = out
+        .iter()
+        .map(|p| pixel_size(&p.matrix))
+        .filter(|s| s.is_finite() && *s > 0.0)
+        .collect();
     if !sizes.is_empty() {
         let size = sizes.iter().sum::<f64>() / sizes.len() as f64;
         for (trip, path, mode, ((px, py), (x, y)), stations) in singles {
@@ -622,15 +638,24 @@ mod tests {
         let t = rubber(&bent).unwrap();
         for ((px, py), (x, y)) in bent {
             let (rx, ry) = t.at(px, py);
-            assert!((rx - x).abs() < 1e-6 && (ry - y).abs() < 1e-6, "({px},{py}) -> ({rx},{ry}) not ({x},{y})");
+            assert!(
+                (rx - x).abs() < 1e-6 && (ry - y).abs() < 1e-6,
+                "({px},{py}) -> ({rx},{ry}) not ({x},{y})"
+            );
         }
         // Matches that are exactly affine make a spline that is the same affine map everywhere.
         let m = [0.01, 0.002, 3.0, -0.001, -0.012, 8.0];
-        let p = pairs(m, &[(0.0, 0.0), (900.0, 30.0), (40.0, 700.0), (800.0, 650.0)]);
+        let p = pairs(
+            m,
+            &[(0.0, 0.0), (900.0, 30.0), (40.0, 700.0), (800.0, 650.0)],
+        );
         let t = rubber(&p).unwrap();
         for (px, py) in [(10.0, 10.0), (450.0, 300.0), (1200.0, -200.0)] {
             let (x, y) = t.at(px, py);
-            assert!((x - (m[0] * px + m[1] * py + m[2])).abs() < 1e-6 && (y - (m[3] * px + m[4] * py + m[5])).abs() < 1e-6);
+            assert!(
+                (x - (m[0] * px + m[1] * py + m[2])).abs() < 1e-6
+                    && (y - (m[3] * px + m[4] * py + m[5])).abs() < 1e-6
+            );
         }
         // In a line, or fewer than three: nothing to bend.
         assert!(rubber(&pairs(m, &[(0.0, 0.0), (10.0, 10.0), (20.0, 20.0)])).is_none());

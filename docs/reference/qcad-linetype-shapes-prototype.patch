@@ -1,0 +1,1302 @@
+diff --git a/cave-survey/scripts/CaveSurvey/Core/CsAll.js b/cave-survey/scripts/CaveSurvey/Core/CsAll.js
+index b59ebe98dc..3f0cdd6176 100644
+--- a/cave-survey/scripts/CaveSurvey/Core/CsAll.js
++++ b/cave-survey/scripts/CaveSurvey/Core/CsAll.js
+@@ -21,7 +21,9 @@ include(includeBasePath + "/CsUuid.js");
+ include(includeBasePath + "/CsTell.js");
+ include(includeBasePath + "/CsUnits.js");
+ include(includeBasePath + "/CsLinetype.js");
++include(includeBasePath + "/CsShapeFont.js");
+ include(includeBasePath + "/CsLinetypeStore.js");
++include(includeBasePath + "/CsShapeStore.js");
+ include(includeBasePath + "/CsCave.js");
+ include(includeBasePath + "/CsFiles.js");
+ // After CsCave: the shelf reads CsCave.SCANS/PDF when it scans a cave
+diff --git a/cave-survey/scripts/CaveSurvey/Core/CsLinetype.js b/cave-survey/scripts/CaveSurvey/Core/CsLinetype.js
+index ef95276ff1..ca1f824a09 100644
+--- a/cave-survey/scripts/CaveSurvey/Core/CsLinetype.js
++++ b/cave-survey/scripts/CaveSurvey/Core/CsLinetype.js
+@@ -124,9 +124,11 @@ CsLinetype.fromPattern = function(text) {
+         var inner = CsLinetype.splitTop(part.replace(/^\[/, "").replace(/\]$/, ""));
+         var seg = segments[segments.length - 1];
+         var name = (inner[0] || "").trim();
+-        seg.shape = name.charAt(0) !== '"';
+         seg.text = name.replace(/^"/, "").replace(/"$/, "");
+         seg.style = (inner[1] || "").trim();
++        // The engine draws any element in a .shx / .shp style as a shape,
++        // and writes its pattern string with the shape's name QUOTED.
++        seg.shape = name.charAt(0) !== '"' || /\.(shx|shp)$/i.test(seg.style);
+         for (var k = 2; k < inner.length; k++) {
+             var kv = /^\s*([SRAXY])[^=]*=\s*(.+?)\s*$/i.exec(inner[k]);
+             if (kv === null) {
+diff --git a/cave-survey/scripts/CaveSurvey/Core/CsLinetypeStore.js b/cave-survey/scripts/CaveSurvey/Core/CsLinetypeStore.js
+index 7ce56e64d8..6cd51a5fe0 100644
+--- a/cave-survey/scripts/CaveSurvey/Core/CsLinetypeStore.js
++++ b/cave-survey/scripts/CaveSurvey/Core/CsLinetypeStore.js
+@@ -189,6 +189,14 @@ CsLinetypeStore.applyToDocument = function(doc, di, model) {
+     if (problems.length > 0) {
+         return problems.join(" ");
+     }
++    var usesShapes = CsShapeFont.usedBy([model]).length > 0;
++    if (usesShapes) {
++        // the engine must know the glyphs before the pattern is parsed
++        var shapeErr = CsShapeStore.ensure();
++        if (shapeErr !== null) {
++            return shapeErr;
++        }
++    }
+     var stored = CsLinetype.toPattern(
+         CsLinetype.scaled(model, 1.0 / CsLinetypeStore.unitFactor(doc)));
+     var pat = new RLinetypePattern(doc.isMetric(), model.name, model.description || "");
+@@ -207,6 +215,10 @@ CsLinetypeStore.applyToDocument = function(doc, di, model) {
+     if (!CsLinetypeStore.hasLinetype(doc, model.name)) {
+         return "The linetype did not land in the drawing.";
+     }
++    if (usesShapes) {
++        // every shaped linetype the drawing now holds, so the file carries its glyphs
++        CsShapeStore.embed(doc, CsLinetypeStore.fromDocument(doc));
++    }
+     return null;
+ };
+ 
+diff --git a/cave-survey/scripts/CaveSurvey/Core/CsShapeFont.js b/cave-survey/scripts/CaveSurvey/Core/CsShapeFont.js
+new file mode 100644
+index 0000000000..1a7ed68f39
+--- /dev/null
++++ b/cave-survey/scripts/CaveSurvey/Core/CsShapeFont.js
+@@ -0,0 +1,348 @@
++// CsShapeFont.js -- named shapes for shaped linetypes: the pure half.
++//
++// A shaped linetype draws a NAMED GLYPH at the end of a pattern segment
++// (CsLinetype segment with shape:true; text = glyph name, style =
++// "<font>.shx"). The engine finds the glyph in a CXF font file: a glyph
++// whose [XXXX] header carries a name longer than one character goes to
++// the font's shape map (RFont.cpp), and the style's ".shx" suffix tells
++// RLinetypePattern::updateShapes to look there. So a "shape font" is just
++// a CXF file we write ourselves, in unit coordinates, drawn y-up.
++//
++// A glyph is { name, paths:[ { closed, pts:[ {x, y, b} ] } ] } where b is
++// the DXF-style bulge of the segment that STARTS at that vertex. Every
++// drawn entity (line, arc, circle, polyline) reduces to such a path, so
++// the file only ever needs PL/PLC records and no arc-sign conventions.
++//
++// No engine calls here: this file runs under node too (tests/js_unit.js).
++
++var CsShapeFont = {};
++
++/** The font file (and so the style) our shapes live in. */
++CsShapeFont.FONT = "CaveShapes";
++
++/** Shape names: letters, digits, underscore; two or more characters. */
++CsShapeFont.NAME_RE = /^[A-Za-z][A-Za-z0-9_]+$/;
++
++/** First private-use code point handed to a glyph; the code is only an
++ *  index, the NAME is what a linetype refers to. */
++CsShapeFont.CODE_BASE = 0xE000;
++
++CsShapeFont.r6 = function(v) {
++    var r = Math.round(Number(v) * 1e6) / 1e6;
++    return r === 0 ? 0 : r;
++};
++
++CsShapeFont.vertex = function(x, y, b) {
++    return { x: CsShapeFont.r6(x), y: CsShapeFont.r6(y),
++             b: CsShapeFont.r6(b || 0) };
++};
++
++CsShapeFont.path = function(points, closed) {
++    var pts = [];
++    for (var i = 0; i < points.length; i++) {
++        var p = points[i];
++        pts.push(CsShapeFont.vertex(p.x !== undefined ? p.x : p[0],
++                                    p.y !== undefined ? p.y : p[1],
++                                    p.b !== undefined ? p.b : (p[2] || 0)));
++    }
++    return { closed: !!closed, pts: pts };
++};
++
++/** A line as a two-vertex path. */
++CsShapeFont.linePath = function(x1, y1, x2, y2) {
++    return CsShapeFont.path([[x1, y1, 0], [x2, y2, 0]], false);
++};
++
++/** An arc (degrees, counter-clockwise unless reversed) as a path. */
++CsShapeFont.arcPath = function(cx, cy, r, a1, a2, reversed) {
++    var s = a1 * Math.PI / 180;
++    var e = a2 * Math.PI / 180;
++    var TAU = 2 * Math.PI;
++    var sweep = reversed ? -(((s - e) % TAU) + TAU) % TAU
++                         : (((e - s) % TAU) + TAU) % TAU;
++    if (Math.abs(sweep) < 1e-9) {
++        sweep = reversed ? -2 * Math.PI : 2 * Math.PI;
++    }
++    var bulge = Math.tan(sweep / 4);
++    return CsShapeFont.path([
++        [cx + r * Math.cos(s), cy + r * Math.sin(s), bulge],
++        [cx + r * Math.cos(s + sweep), cy + r * Math.sin(s + sweep), 0]
++    ], false);
++};
++
++/** A full circle: two half-turn bulges, closed. */
++CsShapeFont.circlePath = function(cx, cy, r) {
++    return CsShapeFont.path([[cx + r, cy, 1], [cx - r, cy, 1]], true);
++};
++
++CsShapeFont.glyph = function(name, paths) {
++    return { name: name, paths: paths || [] };
++};
++
++CsShapeFont.validName = function(name) {
++    return CsShapeFont.NAME_RE.test(String(name));
++};
++
++/** Problems with a glyph, as strings; empty when it is writable. */
++CsShapeFont.validate = function(g) {
++    var out = [];
++    if (!CsShapeFont.validName(g.name)) {
++        out.push("Shape name needs 2+ letters, digits or _ and must start with a letter.");
++    }
++    if (!g.paths || g.paths.length === 0) {
++        out.push("Shape has no geometry.");
++    } else {
++        for (var i = 0; i < g.paths.length; i++) {
++            if (g.paths[i].pts.length < 2) {
++                out.push("Shape path " + (i + 1) + " needs two points.");
++            }
++        }
++    }
++    return out;
++};
++
++/** Bounding box of a glyph's vertices (bulges ignored: a close bound). */
++CsShapeFont.bounds = function(g) {
++    var minx = Infinity, miny = Infinity, maxx = -Infinity, maxy = -Infinity;
++    for (var i = 0; i < g.paths.length; i++) {
++        for (var k = 0; k < g.paths[i].pts.length; k++) {
++            var p = g.paths[i].pts[k];
++            minx = Math.min(minx, p.x);
++            miny = Math.min(miny, p.y);
++            maxx = Math.max(maxx, p.x);
++            maxy = Math.max(maxy, p.y);
++        }
++    }
++    if (minx === Infinity) {
++        return null;
++    }
++    return { x1: minx, y1: miny, x2: maxx, y2: maxy };
++};
++
++/** Move the glyph so (bx, by) becomes its origin, and divide by scale:
++ *  "save selection as shape" picks a base point and a unit length. */
++CsShapeFont.normalize = function(g, bx, by, unit) {
++    var u = unit && unit > 0 ? unit : 1;
++    var paths = [];
++    for (var i = 0; i < g.paths.length; i++) {
++        var pts = [];
++        for (var k = 0; k < g.paths[i].pts.length; k++) {
++            var p = g.paths[i].pts[k];
++            pts.push([(p.x - bx) / u, (p.y - by) / u, p.b]);
++        }
++        paths.push(CsShapeFont.path(pts, g.paths[i].closed));
++    }
++    return CsShapeFont.glyph(g.name, paths);
++};
++
++CsShapeFont.hex4 = function(n) {
++    var s = n.toString(16).toUpperCase();
++    while (s.length < 4) {
++        s = "0" + s;
++    }
++    return s;
++};
++
++/** The shapes every drawing can use, in unit coordinates. The pattern
++ *  segment's scale sets the real size. */
++CsShapeFont.starters = function() {
++    var P = CsShapeFont.path, L = CsShapeFont.linePath, G = CsShapeFont.glyph;
++    return [
++        G("tick", [L(0, -0.5, 0, 0.5)]),
++        G("tick_up", [L(0, 0, 0, 1)]),
++        G("tick_down", [L(0, 0, 0, -1)]),
++        G("double_tick", [L(-0.2, -0.5, -0.2, 0.5), L(0.2, -0.5, 0.2, 0.5)]),
++        G("chevron", [P([[-0.4, 0.5, 0], [0, 0, 0], [-0.4, -0.5, 0]], false)]),
++        G("arrow", [L(-0.5, 0, 0.5, 0),
++                    P([[0.2, 0.3, 0], [0.5, 0, 0], [0.2, -0.3, 0]], false)]),
++        G("cross", [L(-0.4, -0.4, 0.4, 0.4), L(-0.4, 0.4, 0.4, -0.4)]),
++        G("dot_ring", [CsShapeFont.circlePath(0, 0, 0.25)]),
++        G("scallop", [P([[-0.5, 0, 1], [0.5, 0, 0]], false)])
++    ];
++};
++
++/** CXF text for a list of glyphs. */
++CsShapeFont.write = function(glyphs) {
++    var out = [
++        "# Format:            QCAD 3 Font",
++        "# Creator:           CaveCAD Linetype Maker",
++        "# Name:              " + CsShapeFont.FONT,
++        "# Encoding:          UTF-8",
++        "# LetterSpacing:     3",
++        "# WordSpacing:       6.75",
++        "# LineSpacingFactor: 1",
++        ""
++    ];
++    for (var i = 0; i < glyphs.length; i++) {
++        var g = glyphs[i];
++        out.push("[" + CsShapeFont.hex4(CsShapeFont.CODE_BASE + i) + "] " + g.name);
++        for (var j = 0; j < g.paths.length; j++) {
++            var path = g.paths[j];
++            var parts = [];
++            for (var k = 0; k < path.pts.length; k++) {
++                var p = path.pts[k];
++                parts.push(p.x, p.y, k === path.pts.length - 1 && !path.closed ? 0 : p.b);
++            }
++            out.push((path.closed ? "PLC " : "PL ") + parts.join(","));
++        }
++        out.push("");
++    }
++    return out.join("\n");
++};
++
++/** Glyphs from CXF text (our own output, or a hand-made file using the
++ *  L / A / AR / PL / PLC records). Unnamed glyphs are skipped. */
++CsShapeFont.parse = function(text) {
++    var lines = String(text).split(/\r?\n/);
++    var glyphs = [];
++    var cur = null;
++    var head = /^\[([0-9A-Fa-f]{4})\]\s*(.*)$/;
++    for (var i = 0; i < lines.length; i++) {
++        var line = lines[i].replace(/\s+$/, "");
++        if (line === "" || line.charAt(0) === "#") {
++            continue;
++        }
++        var m = head.exec(line);
++        if (m) {
++            var name = m[2].replace(/^\s+|\s+$/g, "");
++            cur = name.length > 1 ? CsShapeFont.glyph(name, []) : null;
++            if (cur) {
++                glyphs.push(cur);
++            }
++            continue;
++        }
++        if (!cur) {
++            continue;
++        }
++        var sp = line.indexOf(" ");
++        if (sp < 0) {
++            continue;
++        }
++        var code = line.substring(0, sp);
++        var n = line.substring(sp + 1).split(",").map(Number);
++        var bad = n.some(function(v) { return isNaN(v); });
++        if (bad) {
++            continue;
++        }
++        if (code === "L" && n.length === 4) {
++            cur.paths.push(CsShapeFont.linePath(n[0], n[1], n[2], n[3]));
++        } else if ((code === "A" || code === "AR") && n.length === 5) {
++            cur.paths.push(CsShapeFont.arcPath(n[0], n[1], n[2], n[3], n[4], code === "AR"));
++        } else if ((code === "PL" || code === "PLC") && n.length >= 6 && n.length % 3 === 0) {
++            var pts = [];
++            for (var k = 0; k < n.length; k += 3) {
++                pts.push([n[k], n[k + 1], n[k + 2]]);
++            }
++            cur.paths.push(CsShapeFont.path(pts, code === "PLC"));
++        }
++    }
++    return glyphs;
++};
++
++CsShapeFont.indexOf = function(glyphs, name) {
++    for (var i = 0; i < glyphs.length; i++) {
++        if (glyphs[i].name === name) {
++            return i;
++        }
++    }
++    return -1;
++};
++
++/** Replace the glyph of the same name, or append. Returns a new list. */
++CsShapeFont.upsert = function(glyphs, g) {
++    var out = glyphs.slice();
++    var i = CsShapeFont.indexOf(out, g.name);
++    if (i >= 0) {
++        out[i] = g;
++    } else {
++        out.push(g);
++    }
++    return out;
++};
++
++CsShapeFont.remove = function(glyphs, name) {
++    return glyphs.filter(function(g) { return g.name !== name; });
++};
++
++/** Starters first, then personal shapes; a personal shape of the same
++ *  name wins. */
++CsShapeFont.merged = function(personal) {
++    var out = CsShapeFont.starters();
++    for (var i = 0; i < personal.length; i++) {
++        out = CsShapeFont.upsert(out, personal[i]);
++    }
++    return out;
++};
++
++/** The style string a shape segment carries. */
++CsShapeFont.style = function() {
++    return CsShapeFont.FONT + ".shx";
++};
++
++/** Longest chunk of an embedded glyph blob (dxflib's line limit is 1023,
++ *  see LayerGroups.CHUNK for the story). */
++CsShapeFont.CHUNK = 800;
++
++/** One line, no newlines: "name;PL:x,y,b,...;PLC:...|name2;...". */
++CsShapeFont.pack = function(glyphs) {
++    return glyphs.map(function(g) {
++        var parts = [g.name];
++        g.paths.forEach(function(path) {
++            var n = [];
++            path.pts.forEach(function(p) { n.push(p.x, p.y, p.b); });
++            parts.push((path.closed ? "PLC:" : "PL:") + n.join(","));
++        });
++        return parts.join(";");
++    }).join("|");
++};
++
++CsShapeFont.unpack = function(text) {
++    var glyphs = [];
++    if (!text) {
++        return glyphs;
++    }
++    text.split("|").forEach(function(rec) {
++        var f = rec.split(";");
++        if (!CsShapeFont.validName(f[0])) {
++            return;
++        }
++        var g = CsShapeFont.glyph(f[0], []);
++        for (var i = 1; i < f.length; i++) {
++            var closed = f[i].indexOf("PLC:") === 0;
++            var n = f[i].substring(closed ? 4 : 3).split(",").map(Number);
++            if (n.length < 6 || n.length % 3 !== 0 || n.some(isNaN)) {
++                continue;
++            }
++            var pts = [];
++            for (var k = 0; k < n.length; k += 3) {
++                pts.push([n[k], n[k + 1], n[k + 2]]);
++            }
++            g.paths.push(CsShapeFont.path(pts, closed));
++        }
++        glyphs.push(g);
++    });
++    return glyphs;
++};
++
++CsShapeFont.chunks = function(text) {
++    var out = [];
++    for (var i = 0; i < text.length; i += CsShapeFont.CHUNK) {
++        out.push(text.substring(i, i + CsShapeFont.CHUNK));
++    }
++    return out;
++};
++
++/** Names of the shapes a list of linetype models draws. */
++CsShapeFont.usedBy = function(models) {
++    var seen = {};
++    var out = [];
++    models.forEach(function(m) {
++        m.segments.forEach(function(seg) {
++            if (seg.shape && seg.text !== "" && !seen[seg.text]) {
++                seen[seg.text] = true;
++                out.push(seg.text);
++            }
++        });
++    });
++    return out;
++};
+diff --git a/cave-survey/scripts/CaveSurvey/Core/CsShapeStore.js b/cave-survey/scripts/CaveSurvey/Core/CsShapeStore.js
+new file mode 100644
+index 0000000000..aa9c3fb5c4
+--- /dev/null
++++ b/cave-survey/scripts/CaveSurvey/Core/CsShapeStore.js
+@@ -0,0 +1,281 @@
++// CsShapeStore.js -- the shape library on disk, in the engine, and inside
++// a drawing: the engine half of CsShapeFont.
++//
++// ONE font file, CaveShapes.cxf, holds every shape. The personal copy
++// lives beside the custom linetypes (~/Documents/Cave/linetypes/, which
++// Drive syncs) and is registered with RFontList.addFile so a shape drawn
++// a second ago draws in a linetype now. The glyphs a drawing's shape
++// linetypes use are also embedded in that drawing (document variables,
++// chunked -- see LayerGroups.CHUNK for why) and restored on open, so a
++// cave shared with someone who lacks the shape still renders.
++//
++// Needs: CsShapeFont, CsLinetypeStore (file helpers), the engine.
++
++var CsShapeStore = {};
++
++/** Tests point the library at a scratch folder. */
++CsShapeStore.dirOverride = null;
++
++/** Document variable prefix for the embedded glyph blob. */
++CsShapeStore.VAR = "CaveCADLinetypeShapes";
++
++CsShapeStore.dir = function() {
++    if (CsShapeStore.dirOverride !== null) {
++        return CsShapeStore.dirOverride;
++    }
++    return QDir.homePath() + "/Documents/Cave/linetypes";
++};
++
++CsShapeStore.path = function() {
++    return CsShapeStore.dir() + "/" + CsShapeFont.FONT + ".cxf";
++};
++
++/** The personal glyphs (starters included once written). */
++CsShapeStore.loadPersonal = function() {
++    var text = CsLinetypeStore.readText(CsShapeStore.path());
++    return text === null ? [] : CsShapeFont.parse(text);
++};
++
++/**
++ * Where the engine reads the font from. CaveCAD finds fonts in its own
++ * folders only, so the running copy lives in the user's data folder; the
++ * Drive-synced copy beside the linetypes is the master. Tests point it at
++ * a scratch folder.
++ */
++CsShapeStore.runtimeDirOverride = null;
++
++CsShapeStore.runtimePath = function() {
++    var dir = CsShapeStore.runtimeDirOverride !== null
++        ? CsShapeStore.runtimeDirOverride
++        : String(RSettings.getDataLocation()) + "/fonts";
++    return dir + "/" + CsShapeFont.FONT + ".cxf";
++};
++
++/**
++ * Write the font (starters + the given glyphs) and make the running
++ * engine pick it up: RFontList.init() registers a new font file, and
++ * replaces one whose file changed.
++ * \return null on success, else a sentence.
++ */
++CsShapeStore.publish = function(glyphs) {
++    CsShapeStore.registered = null;
++    var text = CsShapeFont.write(CsShapeFont.merged(glyphs));
++    var err = CsLinetypeStore.writeText(CsShapeStore.path(), text);
++    if (err !== null) {
++        return err;
++    }
++    err = CsLinetypeStore.writeText(CsShapeStore.runtimePath(), text);
++    if (err !== null) {
++        return err;
++    }
++    RFontList.init();
++    var font = RFontList.get(CsShapeFont.FONT);
++    if (isNull(font) || !font.isValid()) {
++        return "CaveCAD could not load the shape font " + CsShapeStore.runtimePath() + ".";
++    }
++    CsShapeStore.registered = CsShapeStore.path();
++    return null;
++};
++
++/** The font file last registered with the engine, or null. */
++CsShapeStore.registered = null;
++
++/** Register what is on disk (before a linetype is applied or previewed);
++ *  a no-op once this session has done it for the current file. */
++CsShapeStore.ensure = function() {
++    if (CsShapeStore.registered === CsShapeStore.path()) {
++        return null;
++    }
++    return CsShapeStore.publish(CsShapeStore.loadPersonal());
++};
++
++/** Add or replace one shape in the personal library. */
++CsShapeStore.save = function(glyph) {
++    var problems = CsShapeFont.validate(glyph);
++    if (problems.length > 0) {
++        return problems.join(" ");
++    }
++    return CsShapeStore.publish(
++        CsShapeFont.upsert(CsShapeStore.loadPersonal(), glyph));
++};
++
++CsShapeStore.remove = function(name) {
++    return CsShapeStore.publish(
++        CsShapeFont.remove(CsShapeStore.loadPersonal(), name));
++};
++
++/** All shapes the library offers: starters, then personal. */
++CsShapeStore.list = function() {
++    return CsShapeFont.merged(CsShapeStore.loadPersonal());
++};
++
++/** True for a type fromEntities can turn into a path. */
++CsShapeStore.isSupported = function(entity) {
++    var t;
++    try { t = entity.getType(); } catch (e) { return false; }
++    return t === RS.EntityLine || t === RS.EntityArc ||
++        t === RS.EntityCircle || t === RS.EntityPolyline;
++};
++
++/** One entity as a CsShapeFont path, or null when unsupported. */
++CsShapeStore.pathOf = function(entity) {
++    if (isNull(entity)) {
++        return null;
++    }
++    var type = entity.getType();
++    var data = entity.getData();
++    if (type === RS.EntityLine) {
++        var s = data.getStartPoint(), e = data.getEndPoint();
++        return CsShapeFont.linePath(s.x, s.y, e.x, e.y);
++    }
++    if (type === RS.EntityArc) {
++        var c = data.getCenter();
++        return CsShapeFont.arcPath(c.x, c.y, data.getRadius(),
++            data.getStartAngle() * 180 / Math.PI,
++            data.getEndAngle() * 180 / Math.PI, data.isReversed());
++    }
++    if (type === RS.EntityCircle) {
++        var cc = data.getCenter();
++        return CsShapeFont.circlePath(cc.x, cc.y, data.getRadius());
++    }
++    if (type === RS.EntityPolyline) {
++        var pts = [];
++        var n = data.countVertices();
++        for (var i = 0; i < n; i++) {
++            var v = data.getVertexAt(i);
++            pts.push([v.x, v.y, data.getBulgeAt(i)]);
++        }
++        return CsShapeFont.path(pts, data.isClosed());
++    }
++    return null;
++};
++
++/**
++ * "Save selection as shape": the selected entities become one glyph,
++ * moved so (base.x, base.y) is the origin and divided by \c unit (the
++ * drawing length that becomes 1, so the pattern's scale means something).
++ * \return { glyph } or { error }
++ */
++CsShapeStore.fromEntities = function(doc, ids, name, base, unit) {
++    var paths = [];
++    var skipped = 0;
++    for (var i = 0; i < ids.length; i++) {
++        var p = CsShapeStore.pathOf(doc.queryEntity(ids[i]));
++        if (p === null) {
++            skipped++;
++        } else {
++            paths.push(p);
++        }
++    }
++    if (paths.length === 0) {
++        return { error: "Select lines, arcs, circles or polylines to make a shape." };
++    }
++    var g = CsShapeFont.normalize(CsShapeFont.glyph(name, paths), base.x, base.y, unit);
++    var problems = CsShapeFont.validate(g);
++    if (problems.length > 0) {
++        return { error: problems.join(" ") };
++    }
++    return { glyph: g, skipped: skipped };
++};
++
++// ---------------------------------------------------------------------
++// Embedding in a drawing
++// ---------------------------------------------------------------------
++
++/** Glyphs embedded in the drawing. */
++CsShapeStore.embedded = function(doc) {
++    var count = parseInt(doc.getVariable(CsShapeStore.VAR + "Count", 0), 10);
++    if (isNaN(count) || count <= 0) {
++        return [];
++    }
++    var text = "";
++    for (var i = 0; i < count; i++) {
++        var c = doc.getVariable(CsShapeStore.VAR + i, "");
++        text += isNull(c) ? "" : String(c);
++    }
++    return CsShapeFont.unpack(text);
++};
++
++/**
++ * Embed the glyphs the given linetype models use. Document variables are
++ * not transactional and carry no modified flag of their own: it is set
++ * here, as LayerGroups does.
++ */
++CsShapeStore.embed = function(doc, models) {
++    var names = CsShapeFont.usedBy(models);
++    var library = CsShapeStore.list();
++    var held = CsShapeStore.embedded(doc);
++    var out = [];
++    names.forEach(function(n) {
++        var i = CsShapeFont.indexOf(library, n);
++        if (i >= 0) {
++            out.push(library[i]);
++        }
++    });
++    // a shape another drawing taught this one stays while it is still used
++    held.forEach(function(g) {
++        if (names.indexOf(g.name) >= 0 && CsShapeFont.indexOf(out, g.name) < 0) {
++            out.push(g);
++        }
++    });
++
++    var previous = parseInt(doc.getVariable(CsShapeStore.VAR + "Count", 0), 10);
++    if (isNaN(previous) || previous < 0) {
++        previous = 0;
++    }
++    var chunks = CsShapeFont.chunks(CsShapeFont.pack(out));
++    for (var i2 = 0; i2 < chunks.length; i2++) {
++        doc.setVariable(CsShapeStore.VAR + i2, chunks[i2]);
++    }
++    for (var j = chunks.length; j < previous; j++) {
++        doc.removeVariable(CsShapeStore.VAR + j);
++    }
++    doc.setVariable(CsShapeStore.VAR + "Count", chunks.length);
++    doc.setModified(true);
++};
++
++/**
++ * On open: make sure every embedded glyph the library lacks is
++ * registered, before the first regeneration draws a shape linetype.
++ * The library's own shape wins a name clash.
++ * \return the names that were restored.
++ */
++CsShapeStore.restore = function(doc) {
++    var personal = CsShapeStore.loadPersonal();
++    var have = CsShapeFont.merged(personal);
++    var restored = [];
++    CsShapeStore.embedded(doc).forEach(function(g) {
++        if (CsShapeFont.indexOf(have, g.name) < 0) {
++            personal = CsShapeFont.upsert(personal, g);
++            restored.push(g.name);
++        }
++    });
++    if (restored.length > 0) {
++        CsShapeStore.publish(personal);
++    }
++    return restored;
++};
++
++/**
++ * On a drawing that came with shapes this machine lacks: register them,
++ * then re-apply the drawing's shaped linetypes so their glyphs are drawn
++ * (the engine built those patterns, empty, when the file was read).
++ * \return the names restored; empty when nothing was missing.
++ */
++CsShapeStore.restoreIfNeeded = function(doc, di) {
++    var restored = CsShapeStore.restore(doc);
++    if (restored.length === 0) {
++        return restored;
++    }
++    var models = CsLinetypeStore.fromDocument(doc);
++    for (var i = 0; i < models.length; i++) {
++        if (CsShapeFont.usedBy([models[i]]).length > 0) {
++            CsLinetypeStore.applyToDocument(doc, di, models[i]);
++        }
++    }
++    try {
++        di.regenerateScenes();
++    } catch (eRegen) {
++    }
++    return restored;
++};
+diff --git a/cave-survey/scripts/CaveSurvey/LinetypeMaker/LinetypeMaker.js b/cave-survey/scripts/CaveSurvey/LinetypeMaker/LinetypeMaker.js
+index 73a98f874f..a7920bf77a 100644
+--- a/cave-survey/scripts/CaveSurvey/LinetypeMaker/LinetypeMaker.js
++++ b/cave-survey/scripts/CaveSurvey/LinetypeMaker/LinetypeMaker.js
+@@ -113,13 +113,19 @@ LinetypeMaker.buildDock = function(appWin) {
+     w.addDash = new QPushButton(qsTr("+ Dash"));
+     w.addGap = new QPushButton(qsTr("+ Gap"));
+     w.addText = new QPushButton(qsTr("+ Text"));
++    w.addShape = new QPushButton(qsTr("+ Shape"));
++    w.addShape.toolTip = qsTr("A small drawing (tick, arrow, chevron, or one you made) repeated along the line.");
+     w.removeRow = new QPushButton(qsTr("Remove"));
+     w.upRow = new QPushButton("\u2191");
+     w.downRow = new QPushButton("\u2193");
+-    var rb = [w.addDash, w.addGap, w.addText, w.removeRow, w.upRow, w.downRow];
++    var rb = [w.addDash, w.addGap, w.addText, w.addShape, w.removeRow, w.upRow, w.downRow];
+     for (var i = 0; i < rb.length; i++) {
+         rowButtons.addWidget(rb[i], 0, 0);
+     }
++    w.saveShape = new QPushButton(qsTr("Save Selection as Shape\u2026"));
++    w.saveShape.toolTip = qsTr("Draw the mark on the map first (lines, arcs, circles, polylines), " +
++        "select it, then press this to name it and use it in any linetype.");
++    rowButtons.addWidget(w.saveShape, 0, 0);
+     layout.addLayout(rowButtons, 0);
+     var hint = new QLabel(qsTr("Shift- or Cmd-click row numbers to pick several rows: " +
+         "a change to one changes them all, and Remove / Up / Down take them all."));
+@@ -175,6 +181,8 @@ LinetypeMaker.buildDock = function(appWin) {
+     on(w.addDash.clicked, function() { LinetypeMaker.addRow(0.5, false); });
+     on(w.addGap.clicked, function() { LinetypeMaker.addRow(-0.25, false); });
+     on(w.addText.clicked, function() { LinetypeMaker.addRow(-0.5, true); });
++    on(w.addShape.clicked, function() { LinetypeMaker.addRow(-0.5, "shape"); });
++    on(w.saveShape.clicked, function() { LinetypeMaker.shapeFromSelection(); });
+     on(w.removeRow.clicked, function() { LinetypeMaker.removeRows(); });
+     on(w.upRow.clicked, function() { LinetypeMaker.moveRows(-1); });
+     on(w.downRow.clicked, function() { LinetypeMaker.moveRows(1); });
+@@ -353,6 +361,25 @@ LinetypeMaker.fontCombo = function(row, current) {
+     return combo;
+ };
+ 
++/** The shape dropdown for one shape row: starters and the caver's own. */
++LinetypeMaker.shapeCombo = function(row, current) {
++    var combo = new QComboBox();
++    var names = CsShapeStore.list().map(function(g) { return g.name; });
++    if (names.indexOf(current) < 0) {
++        names.push(current);
++    }
++    for (var i = 0; i < names.length; i++) {
++        combo.addItem(names[i]);
++    }
++    combo.setCurrentIndex(Math.max(names.indexOf(current), 0));
++    combo.toolTip = qsTr("The shape drawn at the end of this segment. " +
++        "Make your own with Save Selection as Shape.");
++    combo.activated.connect(function(index) {
++        LinetypeMaker.comboChanged(LinetypeMaker.COL.TEXT, row, String(combo.itemText(index)));
++    });
++    return combo;
++};
++
+ /** The anchor dropdown for one text row; the index maps to an anchor code. */
+ LinetypeMaker.anchorCombo = function(row, current) {
+     var combo = new QComboBox();
+@@ -414,6 +441,16 @@ LinetypeMaker.load = function(model, selectRows) {
+                 w.table.setCellWidget(r, C.ANCHOR,
+                     LinetypeMaker.anchorCombo(r, s.anchor || "custom"));
+             }
++            if (s.shape) {
++                // a shape is picked, never typed; it has no font or anchor
++                w.table.setCellWidget(r, C.TEXT, LinetypeMaker.shapeCombo(r, s.text));
++                for (var sc = C.FONT; sc <= C.ANCHOR; sc += 2) {
++                    try {
++                        w.table.item(r, sc).setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled);
++                    } catch (eShapeFlags) {
++                    }
++                }
++            }
+         }
+         try {
+             w.table.resizeColumnsToContents();
+@@ -571,6 +608,8 @@ LinetypeMaker.comboChanged = function(col, row, value) {
+     for (var i = 0; i < rows.length; i++) {
+         if (col === LinetypeMaker.COL.FONT) {
+             segs[rows[i]].style = value;
++        } else if (col === LinetypeMaker.COL.TEXT) {
++            segs[rows[i]].text = value;
+         } else {
+             segs[rows[i]].anchor = value;
+         }
+@@ -636,7 +675,12 @@ LinetypeMaker.finish = function(keepRows) {
+ LinetypeMaker.addRow = function(length, withText) {
+     var m = LinetypeMaker.w.model;
+     var s = CsLinetype.segment(length);
+-    if (withText) {
++    if (withText === "shape") {
++        s.text = "chevron";
++        s.shape = true;
++        s.style = CsShapeFont.style();
++        s.scale = LinetypeMaker.TEXT_SIZE;
++    } else if (withText) {
+         s.text = "TEXT";
+         s.style = "standard";
+         s.scale = LinetypeMaker.TEXT_SIZE;
+@@ -651,6 +695,70 @@ LinetypeMaker.addRow = function(length, withText) {
+     LinetypeMaker.finish([at]);
+ };
+ 
++/**
++ * Save Selection as Shape: the selected drawing becomes one named shape,
++ * centred on its own middle and sized so its longest side is 1 -- the
++ * segment's Size then says how big it draws along the line.
++ */
++LinetypeMaker.shapeFromSelection = function() {
++    var doc = LinetypeMaker.document();
++    if (doc === null) {
++        CsTell.warn(qsTr("Open a drawing and select the mark first."));
++        return;
++    }
++    var ids = doc.querySelectedEntities();
++    if (ids.length === 0) {
++        CsTell.warn(qsTr("Select the lines, arcs, circles or polylines of the mark first."));
++        return;
++    }
++    var box = null;
++    for (var i = 0; i < ids.length; i++) {
++        var e = doc.queryEntity(ids[i]);
++        if (isNull(e) || !CsShapeStore.isSupported(e)) {
++            continue;
++        }
++        var b = e.getBoundingBox();
++        var lo = b.getMinimum(), hi = b.getMaximum();
++        if (box === null) {
++            box = { x1: lo.x, y1: lo.y, x2: hi.x, y2: hi.y };
++        } else {
++            box.x1 = Math.min(box.x1, lo.x);
++            box.y1 = Math.min(box.y1, lo.y);
++            box.x2 = Math.max(box.x2, hi.x);
++            box.y2 = Math.max(box.y2, hi.y);
++        }
++    }
++    if (box === null) {
++        CsTell.warn(qsTr("Select lines, arcs, circles or polylines -- nothing selected can become a shape."));
++        return;
++    }
++    var unit = Math.max(box.x2 - box.x1, box.y2 - box.y1);
++    if (!(unit > 0)) {
++        CsTell.warn(qsTr("The selection has no size."));
++        return;
++    }
++    var name = CsFieldUi.nameDialog(qsTr("Save Shape"),
++        qsTr("Shape name (letters, digits and _, at least two):"), "my_shape");
++    if (name === null) {
++        return;
++    }
++    var res = CsShapeStore.fromEntities(doc, ids, name,
++        { x: (box.x1 + box.x2) / 2, y: (box.y1 + box.y2) / 2 }, unit);
++    if (res.error) {
++        CsTell.warn(res.error);
++        return;
++    }
++    var err = CsShapeStore.save(res.glyph);
++    if (err !== null) {
++        CsTell.warn(err);
++        return;
++    }
++    EAction.handleUserMessage(qsTr("Linetype Maker: shape ") + name +
++        qsTr(" saved -- add it with + Shape.") +
++        (res.skipped > 0 ? " " + res.skipped + qsTr(" item(s) were not lines, arcs, circles or polylines and were left out.") : ""));
++    LinetypeMaker.load(LinetypeMaker.w.model);
++};
++
+ /** Removes every selected row. */
+ LinetypeMaker.removeRows = function() {
+     var rows = LinetypeMaker.selectedRows();
+@@ -739,6 +847,9 @@ LinetypeMaker.previewPixmap = function(model, width, height) {
+ 
+     var engine = null;
+     try {
++        if (CsShapeFont.usedBy([model]).length > 0) {
++            CsShapeStore.ensure();
++        }
+         engine = new RLinetypePattern(true, "PREVIEW", "");
+         if (!engine.setPatternString(CsLinetype.toPattern(model))) {
+             engine = null;
+@@ -1187,4 +1298,32 @@ LinetypeMaker.init = function(basePath) {
+         warning("Linetype Maker: could not build the panel at startup (" +
+             eInit + "); the menu entry will try again.");
+     }
++
++    // A drawing that carries shapes this machine lacks gets them back
++    // when its tab comes up. The closure belongs to the application engine.
++    try {
++        RMainWindowQt.getMainWindow().getMdiArea().subWindowActivated.connect(function() {
++            LinetypeMaker.followTab();
++        });
++    } catch (eFollow) {
++        // without it, a shared drawing's shapes need Apply to Drawing once
++    }
++};
++
++/** Tab came up: restore the embedded shapes if this machine lacks them. */
++LinetypeMaker.followTab = function() {
++    try {
++        var doc = EAction.getDocument();
++        var di = EAction.getDocumentInterface();
++        if (isNull(doc) || isNull(di)) {
++            return;
++        }
++        var restored = CsShapeStore.restoreIfNeeded(doc, di);
++        if (restored.length > 0) {
++            EAction.handleUserMessage(qsTr("Linetype Maker: restored the shape(s) ") +
++                restored.join(", ") + qsTr(" this drawing carries."));
++        }
++    } catch (e) {
++        // never let a tab switch fail on a shape
++    }
+ };
+diff --git a/cave-survey/tests/js_unit.js b/cave-survey/tests/js_unit.js
+index 65de66b6d2..6a7e88fdb1 100644
+--- a/cave-survey/tests/js_unit.js
++++ b/cave-survey/tests/js_unit.js
+@@ -141,6 +141,7 @@ var CORE_FILES = [
+     "scripts/CaveSurvey/Core/CsTell.js",
+     "scripts/CaveSurvey/Core/CsUnits.js",
+     "scripts/CaveSurvey/Core/CsLinetype.js",
++    "scripts/CaveSurvey/Core/CsShapeFont.js",
+     "scripts/CaveSurvey/Core/CsCave.js",
+     "scripts/CaveSurvey/Core/CsFiles.js",
+     "scripts/CaveSurvey/Core/CsShelf.js",
+@@ -331,6 +332,9 @@ var CORE_FILES_NOT_LOADED = [
+     // Reads and writes the caver's .lin library through QFile and adds
+     // linetypes to a real RDocument. Covered by tests/linetype_maker_run.js.
+     "scripts/CaveSurvey/Core/CsLinetypeStore.js",
++    // The shape library: files, RFontList and document variables.
++    // Covered by tests/shape_linetype_run.js.
++    "scripts/CaveSurvey/Core/CsShapeStore.js",
+     // Every function takes a real RDocument and an
+     // RDocumentInterface: it writes entities through CsTrace.addCurve,
+     // CsShapeLine.dress, CsArea.create and CsSymbols.insert, which is
+@@ -39759,6 +39763,61 @@ ok(prClean, "pr engine: no text carries a coordinate or a long decimal");
+     ok(forcedLandscape.scale >= either.scale, "paper: landscape alone can need a coarser scale than the best of both");
+ })();
+ 
++// ---------------------------------------------------------------------
++// CsShapeFont -- named shapes for shaped linetypes
++// ---------------------------------------------------------------------
++(function() {
++    var st = CsShapeFont.starters();
++    ok(st.length >= 8, "ShapeFont: starter set present");
++    for (var i = 0; i < st.length; i++) {
++        eqs(CsShapeFont.validate(st[i]).length, 0, "ShapeFont: starter " + st[i].name + " valid");
++    }
++    var text = CsShapeFont.write(st);
++    var back = CsShapeFont.parse(text);
++    eqs(back.length, st.length, "ShapeFont: write/parse keeps every glyph");
++    eqs(JSON.stringify(back), JSON.stringify(st), "ShapeFont: write/parse round trip is exact");
++    ok(/^\[E000\] tick$/m.test(text), "ShapeFont: first glyph header carries code and name");
++    ok(/^PLC /m.test(text), "ShapeFont: closed path written as PLC");
++
++    var arc = CsShapeFont.arcPath(0, 0, 1, 0, 90, false);
++    near(arc.pts[0].b, Math.tan(Math.PI / 8), 1e-6, "ShapeFont: quarter arc bulge");
++    near(arc.pts[1].x, 0, 1e-6, "ShapeFont: quarter arc end x");
++    near(arc.pts[1].y, 1, 1e-6, "ShapeFont: quarter arc end y");
++    var rev = CsShapeFont.arcPath(0, 0, 1, 0, 90, true);
++    near(rev.pts[0].b, -Math.tan(3 * Math.PI / 8), 1e-6, "ShapeFont: reversed arc takes the long way, negative bulge");
++
++    var hand = CsShapeFont.parse("[E100] hook\nL 0,0,1,1\nA 0,0,1,0,90\n[0041] A\nL 0,0,1,1\n");
++    eqs(hand.length, 1, "ShapeFont: single-character glyph is not a shape");
++    eqs(hand[0].paths.length, 2, "ShapeFont: L and A records parsed");
++
++    var g = CsShapeFont.glyph("my_mark", [CsShapeFont.linePath(10, 20, 14, 20)]);
++    var n = CsShapeFont.normalize(g, 10, 20, 4);
++    eqs(n.paths[0].pts[1].x, 1, "ShapeFont: normalize divides by unit after moving to base");
++    eqs(n.paths[0].pts[0].y, 0, "ShapeFont: normalize puts base at origin");
++
++    ok(!CsShapeFont.validName("x"), "ShapeFont: one-letter name refused (engine treats it as a character)");
++    ok(!CsShapeFont.validName("9lives"), "ShapeFont: name must start with a letter");
++    ok(CsShapeFont.validName("tick_2"), "ShapeFont: underscore and digits fine");
++    ok(CsShapeFont.validate(CsShapeFont.glyph("empty", [])).length > 0, "ShapeFont: empty glyph refused");
++
++    var merged = CsShapeFont.merged([CsShapeFont.glyph("tick", [CsShapeFont.linePath(0, 0, 5, 0)])]);
++    eqs(merged.length, st.length, "ShapeFont: personal shape of a starter name replaces it");
++    eqs(merged[0].paths[0].pts[1].x, 5, "ShapeFont: personal tick wins");
++    var packed = CsShapeFont.pack(st);
++    ok(packed.indexOf("\n") < 0, "ShapeFont: packed blob is one line");
++    eqs(JSON.stringify(CsShapeFont.unpack(packed)), JSON.stringify(st), "ShapeFont: pack/unpack round trip");
++    var ch = CsShapeFont.chunks(new Array(2000).join("x"));
++    ok(ch.length === 3 && ch[0].length === 800, "ShapeFont: chunks cap at 800");
++    var lt = CsLinetype.segment(0.5); lt.text = "chevron"; lt.shape = true; lt.style = "CaveShapes.shx";
++    eqs(CsShapeFont.usedBy([{ segments: [lt, lt, CsLinetype.segment(-1)] }]).join(","), "chevron", "ShapeFont: usedBy lists each shape once");
++    var engineStyle = CsLinetype.fromPattern('A,1,["chevron",caveshapes.shx,S=3.6],-6');
++    ok(engineStyle.segments[0].shape === true && engineStyle.segments[0].text === "chevron",
++        "ShapeFont: the engine's quoted shape name still reads back as a shape");
++    ok(CsLinetype.fromPattern('A,1,["W",standard,S=1],-1').segments[0].shape === false,
++        "ShapeFont: a quoted name in a font stays text");
++    eqs(CsShapeFont.style(), "CaveShapes.shx", "ShapeFont: style string");
++})();
++
+ // ---------------------------------------------------------------------
+ // Report.
+ // ---------------------------------------------------------------------
+diff --git a/cave-survey/tests/linetype_maker_run.js b/cave-survey/tests/linetype_maker_run.js
+index 6bcdb1b09b..c397a4080b 100644
+--- a/cave-survey/tests/linetype_maker_run.js
++++ b/cave-survey/tests/linetype_maker_run.js
+@@ -27,6 +27,8 @@ function loadRepo(path) {
+ }
+ loadRepo("scripts/CaveSurvey/Core/CsLinetype.js");
+ loadRepo("scripts/CaveSurvey/Core/CsLinetypeStore.js");
++loadRepo("scripts/CaveSurvey/Core/CsShapeFont.js");
++loadRepo("scripts/CaveSurvey/Core/CsShapeStore.js");
+ 
+ var libPath = QDir.tempPath() + "/cs_lt_test/CaveCustomLinetypes.lin";
+ new QFile(libPath).remove();
+diff --git a/cave-survey/tests/run_all.sh b/cave-survey/tests/run_all.sh
+index f60ad15b42..8eefadc95b 100755
+--- a/cave-survey/tests/run_all.sh
++++ b/cave-survey/tests/run_all.sh
+@@ -920,6 +920,22 @@ else
+     echo "SKIP: CaveCAD not found at $QCAD"
+ fi
+ 
++echo
++echo "=============================================================="
++echo " 53b/55 Shaped linetypes: registered, drawn, embedded, restored"
++echo "=============================================================="
++if [ -e "$QCAD" ]; then
++    output=$("$QCAD" -no-dock-icon -no-gui -allow-multiple-instances \
++                 -autostart tests/shape_linetype_run.js "$PWD" 2>/dev/null)
++    echo "$output"
++    case "$output" in
++        *"### SHAPE LINETYPE OK"*) ;;
++        *) echo "Shaped linetypes did not pass."; status=1 ;;
++    esac
++else
++    echo "SKIP: CaveCAD not found at $QCAD"
++fi
++
+ echo
+ echo "=============================================================="
+ echo " 54/55 Therion input and equate follow a split project on disk"
+diff --git a/cave-survey/tests/shape_linetype_run.js b/cave-survey/tests/shape_linetype_run.js
+new file mode 100644
+index 0000000000..f76f03e947
+--- /dev/null
++++ b/cave-survey/tests/shape_linetype_run.js
+@@ -0,0 +1,108 @@
++/**
++ * Shaped linetypes against the real engine: a shape written to the
++ * personal font, registered while running, drawn by a linetype, embedded in
++ * the drawing and restored on a machine that lacks it.
++ */
++function fail(msg) {
++    if (typeof restoreRuntime === "function") {
++        restoreRuntime();
++    }
++    print("### SHAPE LINETYPE FAILED: " + msg);
++    QCoreApplication.exit(1);
++    throw msg;
++}
++function check(cond, msg) {
++    if (!cond) {
++        fail(msg);
++    }
++}
++function isNull(v) {
++    return v === null || v === undefined;
++}
++
++var repo = String(args[args.length - 1]);
++function loadRepo(path) {
++    var f = new QFile(repo + "/" + path);
++    check(f.open(QIODevice.ReadOnly | QIODevice.Text), "cannot read " + path);
++    var src = String(new QTextStream(f).readAll());
++    f.close();
++    (0, eval)(src.replace(/^\s*include\(.*\);\s*$/mg, ""));
++}
++loadRepo("scripts/CaveSurvey/Core/CsLinetype.js");
++loadRepo("scripts/CaveSurvey/Core/CsLinetypeStore.js");
++loadRepo("scripts/CaveSurvey/Core/CsShapeFont.js");
++loadRepo("scripts/CaveSurvey/Core/CsShapeStore.js");
++
++var dir = QDir.tempPath() + "/cs_shape_test";
++new QFile(dir + "/CaveShapes.cxf").remove();
++CsShapeStore.dirOverride = dir;
++// The engine only reads fonts from its own folders, so the running copy
++// goes to the real data folder: keep whatever is there and put it back.
++var savedRuntime = CsLinetypeStore.readText(CsShapeStore.runtimePath());
++function restoreRuntime() {
++    if (savedRuntime === null) {
++        new QFile(CsShapeStore.runtimePath()).remove();
++    } else {
++        CsLinetypeStore.writeText(CsShapeStore.runtimePath(), savedRuntime);
++    }
++}
++CsLinetypeStore.pathOverride = dir + "/CaveCustomLinetypes.lin";
++
++function shapeCount(doc, name) {
++    var lt = doc.queryLinetype(name);
++    var pat = lt.getPattern();
++    pat.updateShapes();
++    var n = 0;
++    for (var i = 0; i < pat.getNumDashes(); i++) {
++        if (pat.hasShapeAt(i)) {
++            var paths = pat.getShapeAt(i);
++            if (paths.length > 0 && paths[0].isValid() && !paths[0].isEmpty()) {
++                n++;
++            }
++        }
++    }
++    return n;
++}
++
++// ---- register a starter and a drawn shape while running ---------------
++var ensureErr = CsShapeStore.ensure(); check(ensureErr === null, "ensure: " + ensureErr);
++check(RFontList.get("CaveShapes") !== null && RFontList.get("CaveShapes") !== undefined, "font not registered");
++var mine = CsShapeFont.glyph("zig_test", [CsShapeFont.path([[0, 0, 0], [0.5, 0.5, 0], [1, 0, 0]], false)]);
++check(CsShapeStore.save(mine) === null, "save zig_test");
++check(CsShapeStore.list().some(function(g) { return g.name === "zig_test"; }), "zig_test not listed");
++
++// ---- a linetype that uses them ------------------------------------------
++var doc = new RDocument(new RMemoryStorage(), new RSpatialIndexNavel());
++var di = new RDocumentInterface(doc);
++var r = CsLinetype.fromPattern("A,1,[chevron,CaveShapes.shx,S=0.3],-0.5,[zig_test,CaveShapes.shx,S=0.3],-0.5");
++check(r.errors.length === 0, "pattern parse: " + r.errors.join(";"));
++var m = { name: "CSSHAPE", description: "shape test", segments: r.segments };
++check(CsLinetypeStore.applyToDocument(doc, di, m) === null, "apply shape linetype");
++check(shapeCount(doc, "CSSHAPE") === 2, "engine did not draw both shapes: " + shapeCount(doc, "CSSHAPE"));
++
++// ---- embed, then restore on a library that lacks the shape ---------------
++CsShapeStore.embed(doc, [m]);
++var emb = CsShapeStore.embedded(doc);
++check(emb.length === 2, "embedded " + emb.length + " glyphs, expected 2");
++check(CsShapeStore.remove("zig_test") === null, "remove zig_test");
++check(!CsShapeStore.list().some(function(g) { return g.name === "zig_test"; }), "zig_test still listed");
++var restored = CsShapeStore.restore(doc);
++check(restored.length === 1 && restored[0] === "zig_test", "restore gave " + restored.join(","));
++check(CsShapeStore.list().some(function(g) { return g.name === "zig_test"; }), "zig_test not back");
++
++// ---- save to DXF and reopen: the shapes come back, still shapes -----------
++var dxfPath = QDir.tempPath() + "/cs_shape_rt.dxf";
++check(di.exportFile(dxfPath, "DXF 2000 (*.dxf)", false), "export dxf");
++var doc2 = new RDocument(new RMemoryStorage(), new RSpatialIndexNavel());
++var di2 = new RDocumentInterface(doc2);
++di2.importFile(dxfPath);
++check(shapeCount(doc2, "CSSHAPE") === 2, "reopened drawing draws " + shapeCount(doc2, "CSSHAPE") + " shapes, expected 2");
++var back = CsLinetypeStore.fromDocument(doc2).filter(function(x) { return x.name.toUpperCase() === "CSSHAPE"; })[0];
++check(!isNull(back), "CSSHAPE missing after reopen");
++var shapes = back.segments.filter(function(x) { return x.shape; }).map(function(x) { return x.text; });
++check(shapes.join(",") === "chevron,zig_test", "reopened shape rows: " + shapes.join(","));
++check(CsShapeStore.embedded(doc2).length === 2, "glyphs did not survive the DXF");
++
++restoreRuntime();
++print("### SHAPE LINETYPE OK");
++QCoreApplication.exit(0);
+diff --git a/src/3rdparty/dxflib/src/dl_dxf.cpp b/src/3rdparty/dxflib/src/dl_dxf.cpp
+index d0f845929b..13ffb922b9 100644
+--- a/src/3rdparty/dxflib/src/dl_dxf.cpp
++++ b/src/3rdparty/dxflib/src/dl_dxf.cpp
+@@ -4157,7 +4157,7 @@ void DL_Dxf::writeLinetype(DL_WriterA& dw,
+                     dw.dxfReal(50, e.rotation);
+                     dw.dxfReal(44, e.offsetX);
+                     dw.dxfReal(45, e.offsetY);
+-                    if (e.flags & 2) {
++                    if ((e.flags & 2) || !e.text.empty()) {
+                         dw.dxfString(9, e.text);
+                     }
+                 } else {
+diff --git a/src/core/RFontList.cpp b/src/core/RFontList.cpp
+index 7e0b506dca..72499c40aa 100644
+--- a/src/core/RFontList.cpp
++++ b/src/core/RFontList.cpp
+@@ -21,9 +21,11 @@
+ 
+ #include "RS.h"
+ #include "RFontList.h"
++#include <QDateTime>
+ #include "RSettings.h"
+ 
+ RResourceList<RFont> RFontList::res;
++QMap<QString, QDateTime> RFontList::stamps;
+ 
+ /**
+  * Initializes the font list by creating empty RFont
+@@ -39,10 +41,28 @@ void RFontList::init() {
+         QString resName = fi.completeBaseName();
+ 
+         if (RS::mapContainsCaseInsensitive(res.resMap, resName)) {
++            // A script may rewrite a font file while the application runs
++            // (shape fonts for linetypes) and call init() again: a font
++            // whose file changed since it was registered is replaced. The
++            // old RFont stays allocated, linetype patterns may still hold
++            // its glyphs.
++            QMap<QString, RFont*>::iterator it = res.resMap.begin();
++            for (; it != res.resMap.end(); ++it) {
++                if (it.key().compare(resName, Qt::CaseInsensitive)!=0) {
++                    continue;
++                }
++                if (it.value()->getFileName()==fi.absoluteFilePath() &&
++                    fi.lastModified() != stamps.value(it.key())) {
++                    stamps.insert(it.key(), fi.lastModified());
++                    it.value() = new RFont(fi.absoluteFilePath());
++                }
++                break;
++            }
+             continue;
+         }
+ 
+         res.resMap.insert(resName, new RFont(fi.absoluteFilePath()));
++        stamps.insert(resName, fi.lastModified());
+     }
+ 
+     res.resSubstitutionMap.insert("txt", "standard");
+@@ -98,6 +118,7 @@ QString RFontList::getSubName(const QString& resName) {
+ }
+ 
+ void RFontList::uninit() {
++    stamps.clear();
+     res.uninit();
+ }
+ 
+diff --git a/src/core/RFontList.h b/src/core/RFontList.h
+index 0e612b0dd1..cb8380c0db 100644
+--- a/src/core/RFontList.h
++++ b/src/core/RFontList.h
+@@ -24,6 +24,7 @@
+ 
+ #include "RFont.h"
+ #include "RResourceList.h"
++#include <QDateTime>
+ 
+ /**
+  * The global list of fonts.
+@@ -44,6 +45,7 @@ public:
+ 
+ private:
+     static RResourceList<RFont> res;
++    static QMap<QString, QDateTime> stamps;
+ };
+ 
+ Q_DECLARE_METATYPE(RFontList)
+diff --git a/src/io/dxf/RDxfExporter.cpp b/src/io/dxf/RDxfExporter.cpp
+index 53bb5dca0a..f56f44434c 100644
+--- a/src/io/dxf/RDxfExporter.cpp
++++ b/src/io/dxf/RDxfExporter.cpp
+@@ -170,9 +170,14 @@ bool RDxfExporter::exportFile(const QString& fileName, const QString& nameFilter
+                 for (int i = 0; i < pat.getNumDashes(); i++) {
+                     QString st = pat.getShapeTextStyleAt(i).toLower();
+                     if (!pat.hasShapeTextAt(i) || pat.getShapeTextAt(i).isEmpty() ||
+-                        st.isEmpty() || st.endsWith(".shx") || st.endsWith(".shp")) {
++                        st.isEmpty()) {
+                         continue;
+                     }
++                    // a shape's style is named for its font, without .shx
++                    // (the STYLE record adds the suffix back)
++                    if (st.endsWith(".shx") || st.endsWith(".shp")) {
++                        st.chop(4);
++                    }
+                     if (!linetypeStyleHandles.contains(st)) {
+                         linetypeStyleHandles.insert(st, dw->reserveHandle());
+                     }
+@@ -691,16 +696,22 @@ void RDxfExporter::writeLinetype(const RLinetypePattern& lt) {
+     for (int i=0; i<numDashes; i++) {
+         dashes[i] = lt.getDashLengthAt(i);
+ 
+-        // CaveCAD: text elements. Shape elements are phase 2 and are
+-        // written as plain dashes until then.
++        // CaveCAD: text elements (flag 2) and shape elements (flag 4).
++        // A shape is named, not numbered: its name travels in code 9 as
++        // well, because the font's glyph numbers are only indexes. The
++        // shape number is a nominal 1 for readers that insist on one.
+         QString text = lt.getShapeTextAt(i);
+         QString style = lt.getShapeTextStyleAt(i).toLower();
+-        if (!lt.hasShapeTextAt(i) || text.isEmpty() ||
+-            style.endsWith(".shx") || style.endsWith(".shp")) {
++        if (!lt.hasShapeTextAt(i) || text.isEmpty()) {
+             continue;
+         }
++        bool isShape = style.endsWith(".shx") || style.endsWith(".shp");
++        if (isShape) {
++            style.chop(4);
++        }
+         DL_LinetypeElement& e = elements[i];
+-        e.flags = 2;
++        e.flags = isShape ? 4 : 2;
++        e.shapeNumber = isShape ? 1 : 0;
+         e.text = (const char*)RDxfExporter::escapeUnicode(text);
+         e.styleHandle = linetypeStyleHandles.value(style, 0);
+         e.scale = lt.hasShapeScaleAt(i) ? lt.getShapeScaleAt(i) : 1.0;
+diff --git a/src/io/dxf/RDxfImporter.cpp b/src/io/dxf/RDxfImporter.cpp
+index 084284cc95..72725fcfaa 100644
+--- a/src/io/dxf/RDxfImporter.cpp
++++ b/src/io/dxf/RDxfImporter.cpp
+@@ -338,7 +338,8 @@ void RDxfImporter::addLinetype(const DL_LinetypeData& data) {
+         if ((e.flags & (2 | 4)) == 0) {
+             continue;
+         }
+-        if (e.flags & 2) {
++        if ((e.flags & 2) || !e.text.empty()) {
++            // text, or a shape written by CaveCAD: named in code 9
+             p.setShapeTextAt(i, decode(e.text.c_str()));
+         } else {
+             p.setShapeNumberAt(i, e.shapeNumber);

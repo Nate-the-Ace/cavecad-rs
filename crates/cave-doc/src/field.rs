@@ -24,6 +24,12 @@ pub enum Kind {
     /// A scanned page the team keeps track of (which pages have been dealt with). Its id comes from
     /// its path, so two people marking the same page write to the same entity and agree.
     Scan,
+    /// A pattern the caver authored: a motif, a linetype or a fill. Its id comes from its kind and name, so two people saving the same
+    /// pattern write to the same entity and agree.
+    Pattern,
+    /// A drawing-wide setting (the drawing's scale, ...), one entity per named setting. Its id comes from its name, so two
+    /// people changing the same setting write to the same entity and agree.
+    Setting,
 }
 
 /// The type of value a field holds.
@@ -234,6 +240,9 @@ pub enum Field {
     FeatureText,
     /// A stroke anchored to stations (follows the survey when it changes).
     FeatureAnchored,
+    /// How this one line is drawn, when it differs from its type's own look: `linetype;scale;density` (see `cave-draw`).
+    /// Empty means the type's look.
+    FeatureStyle,
     /// Free-form tags.
     FeatureTags,
     /// Which symbol from the palette.
@@ -254,6 +263,16 @@ pub enum Field {
     ScanPath,
     /// The page has been dealt with (typed up, traced). Unmarked means it still needs attention.
     ScanComplete,
+    /// What the pattern is: `motif`, `line` or `fill`.
+    PatternKind,
+    /// The pattern's name, as people see it.
+    PatternName,
+    /// The pattern's definition, as JSON text (see `cave-pattern`).
+    PatternDef,
+    /// Which setting this is (`drawing-scale`, ...).
+    SettingKey,
+    /// The setting's value, as text.
+    SettingValue,
     /// The words.
     TextBody,
     /// Where the text starts.
@@ -336,6 +355,7 @@ impl Field {
             FeatureFlip => (K::Feature, V::Flag),
             FeatureText => (K::Feature, V::Text),
             FeatureAnchored => (K::Feature, V::Anchored),
+            FeatureStyle => (K::Feature, V::Text),
             FeatureTags => (K::Feature, V::Map),
             SymbolName => (K::Symbol, V::Text),
             SymbolAt => (K::Symbol, V::Point),
@@ -345,6 +365,8 @@ impl Field {
             SymbolTags => (K::Symbol, V::Map),
             ScanPath => (K::Scan, V::Text),
             ScanComplete => (K::Scan, V::Flag),
+            SettingKey | SettingValue => (K::Setting, V::Text),
+            PatternKind | PatternName | PatternDef => (K::Pattern, V::Text),
             TextTrip => (K::Text, V::Ref),
             TextBody => (K::Text, V::Text),
             TextAt => (K::Text, V::Point),

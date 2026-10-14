@@ -3,6 +3,7 @@
 // Save writes, in IndexedDB on this machine; an open cave is saved back by itself a moment after every
 // edit, so closing the page or refreshing loses nothing. Nothing is uploaded.
 import { cave, changed, markSaved, unsaved } from './cave.svelte';
+import { readOnly } from './readonly';
 import { engine, type CaveSummary } from './engine';
 
 export interface ShelfRecord {
@@ -122,6 +123,7 @@ const newId = () => (typeof crypto !== 'undefined' && 'randomUUID' in crypto ? c
  * `shelf.problem` saying why) when the browser would not keep it.
  */
 export async function storeOpenCave(source = ''): Promise<boolean> {
+  if (readOnly.on) return false; // what a student is shown is the teacher's cave: never kept here
   const summary = engine.shelfSummary();
   if (!summary) return false;
   const existing = shelf.records.find((r) => r.id === shelf.currentId) ?? (source ? shelf.records.find((r) => r.source === source) : undefined);

@@ -6,8 +6,40 @@
 mod files;
 
 use std::path::PathBuf;
+use std::sync::Mutex;
 use tauri::ipc::Response;
+use tauri::{AppHandle, Manager, State};
+use tauri_plugin_deep_link::DeepLinkExt;
 use tauri_plugin_dialog::DialogExt;
+
+/// Join links (`cavecad://join?...`) that arrived and have not been picked up by the page yet (the app can be
+/// started by a link before its page is ready to hear about it).
+#[derive(Default)]
+struct Links(Mutex<Vec<String>>);
+
+/// The links waiting for the page, handed over once.
+#[tauri::command]
+fn take_links(links: State<Links>) -> Vec<String> {
+    std::mem::take(&mut *links.0.lock().unwrap())
+}
+
+/// A join link arrived (the app was opened by it, or was already running): the window comes to the front and the page
+/// is told. Only our own scheme is accepted, and the page decides what the link means.
+fn hand_over(app: &AppHandle, urls: impl IntoIterator<Item = String>) {
+    let urls: Vec<String> = urls.into_iter().filter(|u| u.starts_with("cavecad://")).collect();
+    if urls.is_empty() {
+        return;
+    }
+    app.state::<Links>().0.lock().unwrap().extend(urls.iter().cloned());
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.unminimize();
+        let _ = window.set_focus();
+        for url in &urls {
+            let quoted = serde_json::to_string(url).unwrap_or_default();
+            let _ = window.eval(format!("window.__cavecadLink && window.__cavecadLink({quoted})"));
+        }
+    }
+}
 
 /// Asks which folder to use, and gives back its real path (`None` if the person cancelled).
 #[tauri::command]
@@ -47,14 +79,31 @@ fn reveal(root: String, rel: String) -> Result<(), String> {
 
 /// Starts the app.
 pub fn run() {
-    tauri::Builder::default()
+    let builder = tauri::Builder::default();
+    // A second launch (a link clicked while the app is open) hands its link to the app already running and goes away.
+    #[cfg(any(target_os = "macos", windows, target_os = "linux"))]
+    let builder = builder.plugin(tauri_plugin_single_instance::init(|app, args, _cwd| hand_over(app, args)));
+    builder
+        .manage(Links::default())
+        .plugin(tauri_plugin_deep_link::init())
+        .setup(|app| {
+            #[cfg(any(windows, target_os = "linux"))]
+            let _ = app.deep_link().register_all(); // lets a copy that was not installed (a portable run) take links too
+            let handle = app.handle().clone();
+            app.deep_link().on_open_url(move |event| hand_over(&handle, event.urls().into_iter().map(|u| u.to_string())));
+            if let Ok(Some(urls)) = app.deep_link().get_current() {
+                app.state::<Links>().0.lock().unwrap().extend(urls.into_iter().map(|u| u.to_string()).filter(|u| u.starts_with("cavecad://")));
+            }
+            Ok(())
+        })
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
             pick_folder,
             list_scans,
             read_scan,
-            reveal
+            reveal,
+            take_links
         ])
         .run(tauri::generate_context!())
         .expect("the CaveCAD desktop app could not start");

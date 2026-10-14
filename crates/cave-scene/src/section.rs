@@ -49,6 +49,8 @@ pub struct SectionSketch {
     pub closed: bool,
     /// Words that go with it (a symbol's label, or the text of a text stroke).
     pub text: String,
+    /// How this one line differs from its type's look: `linetype;scale;density`, empty for the type's own.
+    pub style: String,
 }
 
 /// The section at one station. Points are `[across, up]` in metres from the station.
@@ -159,6 +161,7 @@ pub fn sketches_by_station(
             widths: path.widths().map(<[f64]>::to_vec),
             closed: matches!(path, cave_geom::Path::Spline { closed: true, .. }),
             text: e.text(Field::FeatureText),
+            style: e.text(Field::FeatureStyle),
         });
     }
     out

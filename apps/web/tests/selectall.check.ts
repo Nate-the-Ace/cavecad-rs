@@ -1,0 +1,16 @@
+import { markViewUsed, registerSelectAll, selectAllInLastView } from '../src/lib/select-all.ts';
+let bad = 0;
+const ok = (c: boolean, m: string) => { if (!c) { bad++; console.log('FAIL', m); } };
+const ran: string[] = [];
+const offMap = registerSelectAll('map', () => ran.push('map'));
+registerSelectAll('profile', () => ran.push('profile'));
+ok(!selectAllInLastView(), 'no view used yet: nothing to select');
+markViewUsed('profile');
+ok(selectAllInLastView() && ran.join() === 'profile', 'goes to the view last pressed in');
+markViewUsed('map');
+selectAllInLastView();
+ok(ran.join() === 'profile,map', 'and follows the person to another view');
+offMap();
+ok(!selectAllInLastView(), 'a view that has gone takes it away');
+console.log(bad ? 'FAILED' : 'select all checks ok');
+process.exit(bad ? 1 : 0);

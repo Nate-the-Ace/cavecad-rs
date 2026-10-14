@@ -145,3 +145,110 @@ fn exporting_twice_gives_the_same_file() {
         export(&doc, &ExportOptions::default())
     );
 }
+
+/// A cave with a linetype and a fill of the caver's own, and a wall and an area that use them.
+fn with_patterns() -> Document {
+    use cave_pattern::{Element, FillDef, Layer, LineDef};
+    let mut doc = pitfall();
+    let mut ids = SeqIds::new(900);
+    let line = LineDef {
+        name: "Cave ticks".into(),
+        elements: vec![
+            Element::Dash { mm: 6.0 },
+            Element::Motif {
+                motif: "Tick up".into(),
+                size_mm: 1.6,
+                turn_deg: 0.0,
+                along_mm: -3.0,
+                across_mm: 0.0,
+            },
+            Element::Gap { mm: 2.0 },
+        ],
+    };
+    let fill = FillDef {
+        name: "Hatchy".into(),
+        layers: vec![
+            Layer::Hatch {
+                angle_deg: 30.0,
+                spacing_mm: 2.5,
+            },
+            Layer::Dots {
+                spacing_mm: 2.5,
+                dot_mm: 0.4,
+            },
+        ],
+        tint: false,
+    };
+    let a = cave_draw::patterns::save_line(&doc, &line).unwrap();
+    doc.edit(a).unwrap();
+    let a = cave_draw::patterns::save_fill(&doc, &fill).unwrap();
+    doc.edit(a).unwrap();
+    let frames = cave_scene::map_frames(&doc, true);
+    let at = frames[0].pa;
+    let p = |dx: f64, dy: f64| [at[0] + dx, at[1] + dy];
+    for (kind, pts, style) in [
+        (
+            "wall",
+            vec![p(0.0, 0.0), p(30.0, 6.0), p(60.0, -3.0)],
+            "pat:Cave ticks",
+        ),
+        (
+            "fill-custom",
+            vec![p(0.0, -10.0), p(40.0, -10.0), p(40.0, -50.0), p(0.0, -50.0)],
+            "pat:Hatchy",
+        ),
+    ] {
+        let (id, actions) = cave_draw::map_line(&doc, &mut ids, kind, &pts, None, &frames).unwrap();
+        let actions = cave_draw::with_closed(actions, kind.starts_with("fill-")).unwrap();
+        let actions = cave_draw::with_style(actions, id, style).unwrap();
+        doc.edit(actions).unwrap();
+    }
+    doc
+}
+
+#[test]
+fn a_linetype_and_a_fill_of_the_cavers_own_are_written_as_their_marks() {
+    let plain = export(&pitfall(), &ExportOptions::default());
+    let text = export(&with_patterns(), &ExportOptions::default());
+    assert!(
+        text.contains("CAVE-FILL-CUSTOM"),
+        "the custom fill has its own layer"
+    );
+    // the wall is many short pieces, not one line: far more LWPOLYLINEs than a plain cave
+    let count = |t: &str| t.matches("LWPOLYLINE").count();
+    assert!(
+        count(&text) > count(&plain) + 40,
+        "dashes, ticks and hatch lines became geometry"
+    );
+    assert!(
+        text.matches("\nCIRCLE\n").count() > plain.matches("\nCIRCLE\n").count() + 20,
+        "the fill's dots became circles"
+    );
+    // and the cave itself, with its patterns, reads back unchanged
+    let back = import(&text, ActorId(2))
+        .unwrap()
+        .document
+        .expect("the cave is inside the file");
+    assert_eq!(cave_draw::patterns::own_library(&back).lines.len(), 1);
+    assert_eq!(cave_draw::patterns::own_library(&back).fills.len(), 1);
+}
+
+#[test]
+fn a_turned_pattern_is_written_turned_inside_the_same_outline() {
+    let mut doc = with_patterns();
+    let fill_id = doc
+        .ids_of(cave_doc::Kind::Feature)
+        .into_iter()
+        .find(|id| doc.entity(*id).is_some_and(|e| e.text(Field::FeatureType) == "fill-custom"))
+        .unwrap();
+    let before = export(&doc, &ExportOptions::default());
+    let actions = cave_draw::set_stroke_style(&doc, fill_id, "pat:Hatchy;1;1;;;;1;45").unwrap();
+    doc.edit(actions).unwrap();
+    let after = export(&doc, &ExportOptions::default());
+    assert_ne!(before, after, "the pattern turned");
+    assert_eq!(
+        cave_draw::patterns::own_library(&doc).fills.len(),
+        1,
+        "turning is a property of the area, not of the fill"
+    );
+}

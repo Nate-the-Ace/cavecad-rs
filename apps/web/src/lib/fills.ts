@@ -19,7 +19,11 @@ export interface Marks {
 
 export interface FillSource {
   fills(): FillDef[];
-  fillMarks(kind: string, curve: [number, number][], id: string): Marks;
+  fillMarks(kind: string, curve: [number, number][], id: string, amount?: number, length?: number, angle?: number): Marks;
+  /** A fill the caver authored (by name), at a drawing scale; empty for an unknown name. */
+  fillPatternMarksNamed(name: string, outline: [number, number][], id: string, amount: number, scale: number, angle?: number): { lines?: [number, number][][]; circles?: [number, number, number, number][]; tint?: boolean };
+  /** Goes up on every edit, so a changed pattern is not drawn from an old layout. */
+  revision(): number;
 }
 
 let source: FillSource | null = null;
@@ -46,16 +50,23 @@ export function fillLabel(kind: string): string | undefined {
   return defs.find((d) => d.key === kind)?.label;
 }
 
+/** The drawing scale the fills' authored sizes belong to (`cave_draw::BASE_SCALE`): `length` is the drawing's scale over this. */
+const BASE_FILL_SCALE = 500;
 const cache = new Map<string, Marks>();
 const EMPTY: Marks = { lines: [], circles: [], tint: false };
 
 /** The marks for a stroke: from the cache while its outline is unchanged. `curve` is the smooth outline. */
-export function marksFor(kind: string, id: string, curve: [number, number][]): Marks {
+export function marksFor(kind: string, id: string, curve: [number, number][], amount = 1, length = 1, pattern = '', angle = 0): Marks {
   if (!source || curve.length < 3) return EMPTY;
-  const key = `${kind}|${id}|${curve.length}|${curve[0]}|${curve[curve.length >> 1]}|${curve[curve.length - 1]}`;
+  const custom = kind === 'fill-custom';
+  if (custom && !pattern) return EMPTY; // a custom fill whose pattern is not named has nothing to draw yet
+  const key = `${custom ? `${source.revision()}|${pattern}|` : ''}${kind}|${amount}|${length}|${angle}|${id}|${curve.length}|${curve[0]}|${curve[curve.length >> 1]}|${curve[curve.length - 1]}`;
   let m = cache.get(key);
   if (!m) {
-    m = source.fillMarks(kind, curve, id);
+    if (custom) {
+      const r = source.fillPatternMarksNamed(pattern, curve, id, amount, length * BASE_FILL_SCALE, angle);
+      m = { lines: r.lines ?? [], circles: r.circles ?? [], tint: !!r.tint };
+    } else m = source.fillMarks(kind, curve, id, amount, length, angle);
     if (cache.size > 400) cache.clear(); // an editing session never needs more than a few at once
     cache.set(key, m);
   }

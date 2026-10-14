@@ -1,5 +1,5 @@
 import { decodeCode, encodeCode } from '../src/lib/p2p-code.ts';
-import { Reassembler, frames } from '../src/lib/p2p-wire.ts';
+import { COMPRESS_OVER, Reassembler, decodeMessage, encodeMessage, frames } from '../src/lib/p2p-wire.ts';
 import { credentialsUrlOk, emptyRelay, normalizeServers, relayCount, staticServers } from '../src/lib/p2p-ice.ts';
 
 let bad = 0;
@@ -32,10 +32,30 @@ const a = frames('A'.repeat(30_000), 1, 10_000), b = frames('B'.repeat(20_000), 
 const got: string[] = [];
 for (const f of [a[0], b[0], a[1], b[1], a[2]]) { const m = mix.push(f); if (m) got.push(m[0] + m.length); }
 ok(got.join() === 'B20000,A30000', 'interleaved messages keep apart: ' + got.join());
-ok(new Reassembler().push('not json') === null && new Reassembler().push(JSON.stringify({ c: 1, i: 5, n: 2, d: '' })) === null, 'junk and impossible frames are dropped');
+ok(new Reassembler().push('not json') === null && new Reassembler().push('1.5.2.') === null && new Reassembler().push('x.y.z.q') === null, 'junk and impossible frames are dropped');
+ok(new Reassembler().push(JSON.stringify({ c: 1, i: 0, n: 1, d: '{"t":"old"}' })) === '{"t":"old"}', 'a frame in the older JSON envelope is still read');
+{ const m = JSON.stringify({ t: 'x', q: 'a "b" c' }); ok(frames(m, 1)[0].length === m.length + 6, 'a frame adds a six-character header to the message, with no escaping'); }
 const dropped = new Reassembler();
 dropped.push(a[0]);
 ok(dropped.push(a[2]) === null, 'a missing frame drops the message, never a guess');
+
+// Squeezing long messages: a cave's worth of operations shrinks a lot, a short message is left alone.
+{
+  const ops = JSON.stringify({ t: 'welcome', log: Array.from({ length: 800 }, (_, i) => ({ op: 'set', entity: 'e' + (i % 40), field: 'shot', value: { from: 'A' + i, to: 'A' + (i + 1), tape: 10.5 + i / 7, az: 180 } })) });
+  const packed = await encodeMessage(ops);
+  ok(packed.startsWith('~') && packed.length < ops.length / 4, `a long message is squeezed: ${ops.length} -> ${packed.length}`);
+  ok((await decodeMessage(packed)) === ops, 'and opens exactly as it went in');
+  const through = new Reassembler();
+  let whole: string | null = null;
+  for (const f of frames(packed, 3)) whole = through.push(f);
+  ok(whole === packed && (await decodeMessage(whole!)) === ops, 'squeezed text crosses the frames whole');
+  const tiny = '{"t":"presence","x":1}';
+  ok((await encodeMessage(tiny)) === tiny && (await decodeMessage(tiny)) === tiny, 'a short message is sent as it is');
+  ok(COMPRESS_OVER > 500, 'the threshold is above a presence or mirror message');
+  const noisy = JSON.stringify({ d: Array.from({ length: 400 }, () => Math.random().toString(36)).join('') });
+  const sq = await encodeMessage(noisy);
+  ok((await decodeMessage(sq)) === noisy, 'text that does not shrink still round-trips');
+}
 
 // Relay details: a provider's answer, or typed by hand.
 const metered = [

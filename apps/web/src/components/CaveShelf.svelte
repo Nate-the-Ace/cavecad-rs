@@ -6,7 +6,8 @@
   // cave, or bring one in from a file. Nothing here changes a cave except by opening it.
   import { untrack } from 'svelte';
   import { Copy, Star } from '@lucide/svelte';
-  import { joinWithCode, leaveP2p, p2p } from '../lib/p2p.svelte';
+  import { leaveP2p, p2p } from '../lib/p2p.svelte';
+  import { classroom, openLinkText } from '../lib/classroom.svelte';
   import { live, me, rename } from '../lib/sync.svelte';
   import { cave } from '../lib/cave.svelte';
   import { DEMOS } from '../lib/demos';
@@ -24,23 +25,19 @@
   let from = $state('');
   let message = $state('');
   let menu = $state<{ id: string; x: number; y: number } | null>(null);
-  /** Joining a session in progress: the host's invite code pasted, and the reply being made. */
+  /** Joining a session in progress: the host's link, pasted. */
   let joining = $state(false);
   let inviteText = $state('');
   let joinProblem = $state('');
-  let copiedReply = $state(false);
 
-  async function makeReply() {
-    joinProblem = (await joinWithCode(inviteText)) ?? '';
-  }
-
-  async function copyReply() {
-    try {
-      await navigator.clipboard.writeText(p2p.reply);
-      copiedReply = true;
-      setTimeout(() => (copiedReply = false), 1500);
-    } catch {
-      /* selectable: copy it by hand */
+  /** The link, pasted: the same page that opens when the link is opened in a browser comes up, asking for a name. */
+  function useLink() {
+    const problem = openLinkText(inviteText);
+    joinProblem = problem ?? '';
+    if (!problem) {
+      inviteText = '';
+      joining = false;
+      shelf.open = false;
     }
   }
 
@@ -162,23 +159,12 @@
     <div class="box" class:joinbox={joining} role="dialog" aria-modal="true" aria-label={joining ? 'Join a live session' : 'Caves'} tabindex="-1" onclick={(e) => e.stopPropagation()} onkeydown={key}>
       {#if joining}
         <div class="joinpage">
-          <h2>Join a session in progress</h2>
-          <p class="stats">Someone is sharing a cave live. Paste the invite code they sent you; you get a reply code to send back; when they paste it, their cave opens here and you work on it together. Nothing goes through a server.</p>
-          <label class="field">Your name <input value={me.name} maxlength="40" onchange={(e) => rename(e.currentTarget.value)} /></label>
-          <p class="step">1. Paste the host’s invite code.</p>
-          <textarea rows="3" placeholder="CAVE1-…" bind:value={inviteText} disabled={p2p.role === 'guest'} aria-label="Invite code from the host"></textarea>
-          {#if p2p.role !== 'guest'}
-            <div><button class="go" onclick={makeReply} disabled={!inviteText.trim()}>Make my reply code</button></div>
-          {:else}
-            <p class="step">2. Send this reply code back to the host.</p>
-            <div class="replybox">
-              <textarea readonly rows="3" value={p2p.reply || 'Making the code…'} aria-label="Your reply code" onfocus={(e) => e.currentTarget.select()}></textarea>
-              <button onclick={copyReply} disabled={!p2p.reply}><Copy size={13} /> {copiedReply ? 'Copied' : 'Copy'}</button>
-            </div>
-            <p class="stats" role="status">{live.status === 'live' ? 'You are in.' : p2p.waiting || 'Waiting for the host…'}</p>
-          {/if}
+          <h2>Join a live session</h2>
+          <p class="stats">Someone is sharing a cave live and sent you a link. Paste it here; then type your name and join. Their cave opens here and you work on it together, with nothing in between.</p>
+          <label class="field">Link <input bind:value={inviteText} placeholder="https://…?live=…" aria-label="Link from the host" onkeydown={(e) => e.key === 'Enter' && useLink()} /></label>
+          <div><button class="go" onclick={useLink} disabled={!inviteText.trim()}>Next</button></div>
           <label class="check"><input type="checkbox" bind:checked={p2p.following} /> Follow what the host is looking at</label>
-          <label class="check" title="A public STUN service tells each device its public address so they can find each other across networks. No cave data goes through it."><input type="checkbox" bind:checked={p2p.stun} disabled={p2p.role === 'guest'} /> Connect across the internet</label>
+          <label class="check" title="A public STUN service tells each device its public address so they can find each other across networks. No cave data goes through it."><input type="checkbox" bind:checked={p2p.stun} /> Connect across the internet</label>
           <RelaySettings />
           {#if joinProblem}<p class="err" role="alert">{joinProblem}</p>{/if}
           {#if p2p.error}<p class="err" role="alert">{p2p.error}</p>{/if}
@@ -209,7 +195,7 @@
           <button onclick={() => { shelf.open = false; cave.newDialog = true; }}>New cave…</button>
           <button onclick={importFile} title="A cave saved as a DXF file by CaveCAD">Import file…</button>
         </div>
-        <button class="join" class:sel={joining} onclick={startJoin} title="Someone is sharing a cave live: paste the invite code they sent you">Join a live session…</button>
+        <button class="join" class:sel={joining} onclick={startJoin} title="Someone is sharing a cave live: paste the link they sent you">Join a live session…</button>
       </div>
 
       <div class="detail">
@@ -281,10 +267,7 @@
   button.join.sel { background: var(--accent-bg); border-color: var(--accent); }
   .field { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); }
   .field input { font: inherit; font-size: 13px; padding: 5px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel-2); color: var(--text); }
-  .step { margin: 0; font-size: 12px; }
-  .replybox { display: flex; gap: 6px; align-items: flex-start; }
   .check { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
-  textarea { font: 11px/1.3 var(--mono, monospace); padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel-2); color: var(--text); resize: vertical; word-break: break-all; flex: 1; }
   .group { font-size: 11px; font-weight: 600; color: var(--muted); padding: 10px 6px 2px; }
   .cave { text-align: left; display: flex; flex-direction: column; gap: 1px; padding: 6px 8px; border: none; background: none; border-radius: 6px; color: var(--text); cursor: pointer; font: inherit; }
   .cave:hover { background: var(--panel-2); }
@@ -294,6 +277,7 @@
   .row { display: flex; gap: 6px; }
   .row button { flex: 1; }
   .joinbox { width: min(640px, 96vw); height: auto; max-height: 92vh; }
+  .joinpage .field input { flex: 1; min-width: 0; }
   .joinpage { flex: 1; min-width: 0; padding: 20px 24px; display: flex; flex-direction: column; gap: 10px; overflow: auto; }
   .detail { flex: 1; min-width: 0; padding: 16px 20px; display: flex; flex-direction: column; gap: 8px; }
   h2 { margin: 0; font-size: 22px; }

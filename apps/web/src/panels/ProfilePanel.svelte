@@ -1,20 +1,29 @@
 <script lang="ts">
   import { drawHalo, type HaloLine } from '../lib/halo';
   import { onMount, untrack } from 'svelte';
+  import { fitRect, registerMirror, roundRect, visibleRect, type Rect } from '../lib/classroom-mirror';
+  import { classroom } from '../lib/classroom.svelte';
   import { onTheme } from '../lib/theme';
   import { Maximize } from '@lucide/svelte';
   import PanelUndo from '../components/PanelUndo.svelte';
   import { looks } from '../lib/ink';
-  import { cave, changed, filter, option, setPick, setShowSections, haloFade, haloReach } from '../lib/cave.svelte';
-  import { defaultBandOffset, drawHandles, drawStrokes, glyphCurves, hits, leaderEnd } from '../lib/section-glyph';
+  import { markViewUsed, registerSelectAll } from '../lib/select-all';
+  import { copyGhost, copyOp, copyPress, endCopy, endPaste, pasteGhost, pasteOp, pastePlace, registerClipView, snapToSelection } from '../lib/view-clip.svelte';
+  import { paintCopy } from '../lib/copy-ghost';
+  import type { Drawn } from '../lib/clip';
+  import { openNewText, openTextEdit } from '../lib/text-edit.svelte';
+  import { openLineMenu } from '../lib/line-menu.svelte';
+  import { cave, changed, filter, option, selectedIds, selectIds, toggleSelected, setPick, setShowSections, haloFade, haloReach, toolStyle } from '../lib/cave.svelte';
+  import { defaultBandOffset, drawHandles, drawStrokes, glyphCurves, hits, leaderEnd, ornamentFor } from '../lib/section-glyph';
   import { LineEditor, endpointNear, joinFit } from '../lib/line-editor';
   import { Touches } from '../lib/touch';
   import { PenGuard, isEraser, widthFor } from '../lib/pen';
-  import { drawStationMarker, isStampKind, needsWords } from '../lib/symbols';
+  import { drawStationMarker, isStampKind, leaderLook, liveWords, needsWords, stampEditSpot, withLabelSpot } from '../lib/symbols';
   import { isFillKind } from '../lib/fills';
   import { cursorsFor, live as room, reportCursor } from '../lib/sync.svelte';
   import { drawCursor } from '../lib/presence-draw';
   import { FIT_SPACING, fitStroke, smooth } from '../lib/spline';
+  import { drawing, liveStyle } from '../lib/line-style.svelte';
   import { tolerancePx } from '../lib/commands';
   import type { BandSection } from '../lib/engine';
   import { formatLength, inUnits, metresPer, niceNumber, unitName } from '../lib/units';
@@ -41,13 +50,34 @@
   let ox = 0;
   let oy = 0;
   let frame = 0;
+  // In a class the teacher's view is mirrored: what is on show is the part of the profile in the window, so a window of
+  // another size shows the same part.
+  $effect(() =>
+    registerMirror('profile', {
+      read: () => (width > 0 && scale > 0 ? { rect: roundRect(visibleRect(scale, ox, oy, width, height)) } : undefined),
+      write: (state) => {
+        const rect = (state as { rect?: Rect }).rect;
+        if (!rect || width === 0) return;
+        ({ scale, ox, oy } = fitRect(rect, width, height));
+        schedule();
+      },
+    })
+  );
   // Drawn lines can be selected and their fit points moved, added and deleted.
   const editor = new LineEditor({
     lines: () => band?.sketches ?? [],
     toScreen: (p) => toScreen(p[0], p[1]),
     toWorld: (x, y) => toWorld(x, y),
-    selected: () => cave.selected,
-    select: (id) => (cave.selected = id),
+    selected: () => (selectedIds().length === 1 ? cave.selected : ''),
+    ids: () => selectedIds(),
+    arrowOp: (id) => (cave.arrowOp.id === id ? cave.arrowOp.op : ''),
+    arrowDone: () => (cave.arrowOp = { id: '', op: '' }),
+    commitLeader: (id, pts, style) => {
+      const r = engine.editLeader(id, pts, style, cave.adjusted);
+      message = r === 'ok' ? '' : r;
+      changed();
+    },
+    select: (id, additive) => (additive ? toggleSelected(id) : selectIds(id ? [id] : [])),
     commit: (id, pts, widths) => {
       const r = engine.editLine(id, pts, widths, cave.adjusted);
       message = r === 'ok' ? '' : r;
@@ -58,10 +88,13 @@
       changed();
     },
     redraw: () => schedule(),
+    paperPx: () => (scale * drawing.scale) / 1000,
+    ornament: (l) => ornamentFor(l.kind ?? '', l.id ?? '', smooth(l.points, null, 10, !!l.closed).pts, !!l.closed, (band?.stations ?? []).map((s) => [s.s, s.z] as [number, number])).lines,
     hidden: (kind) => !!kind && filter.hiddenTypes.includes(kind),
   });
   $effect(() => {
     void cave.selected;
+    void cave.also;
     schedule();
   });
   // the selected line is fitted again at another detail
@@ -143,6 +176,7 @@
   });
 
   function fit() {
+    if (classroom.role === 'student') return; // a student's view is the teacher's
     if (!band?.bounds || width === 0) return;
     const [s0, z0, s1, z1] = band.bounds;
     const w = Math.max(s1 - s0, 1);
@@ -153,6 +187,14 @@
     oy = (height + scale * (z0 + z1)) / 2;
     schedule();
   }
+
+  // A style being dragged in the ribbon shows at once (a redraw only: nothing is read again).
+  $effect(() => {
+    void liveStyle.style;
+    void liveStyle.id;
+    void drawing.scale; // a new drawing scale sizes dashes and fills again
+    schedule();
+  });
 
   function schedule() {
     if (!frame) frame = requestAnimationFrame(() => ((frame = 0), draw()));
@@ -254,8 +296,15 @@
     g.setLineDash([]);
     for (const l of band.legs) stroke(g, [[l[0], l[1]], [l[2], l[3]]], null, c.text, 2);
     const look = looks();
-    drawStrokes(g, editor.display(), toScreen, look, 1, cave.selected, (band?.stations ?? []).map((s) => [s.s, s.z] as [number, number]));
+    drawStrokes(g, editor.display(), toScreen, look, 1, new Set(selectedIds()), (band?.stations ?? []).map((s) => [s.s, s.z] as [number, number]));
     drawHandles(g, editor.handles(), c.accent, c.bg);
+    if (pasteOp.on && pasteOp.view === 'profile' && cursorW) {
+      paintCopy(g, null, toScreen(cursorW[0], cursorW[1]), pasteGhost('profile', cursorW), (tg, lines) => drawStrokes(tg, lines.map((l) => ({ ...l, points: l.points as [number, number][] })), toScreen, look, 1, '', (band?.stations ?? []).map((s) => [s.s, s.z] as [number, number])), true);
+    }
+    if (copyOp.on && copyOp.view === 'profile' && cursorW) {
+      const ghost = copyGhost('profile', cursorW);
+      paintCopy(g, copyOp.base ? toScreen(copyOp.base[0], copyOp.base[1]) : null, toScreen(cursorW[0], cursorW[1]), ghost?.lines ?? null, (tg, lines) => drawStrokes(tg, lines.map((l) => ({ ...l, points: l.points as [number, number][] })), toScreen, look, 1, '', (band?.stations ?? []).map((s) => [s.s, s.z] as [number, number])));
+    }
     if (pickupAt && cave.tool && !live) {
       // the end of an open line the next stroke would carry on from
       g.strokeStyle = c.accent;
@@ -286,7 +335,7 @@
         g.textAlign = 'left';
       }
     }
-    if (live && live.pts.length > 1) drawStrokes(g, [{ kind: cave.tool || 'sketch', points: live.pts, widths: live.pressure ? live.widths : null, closed: false }], toScreen, look);
+    if (live && live.pts.length > 1) drawStrokes(g, [{ kind: cave.tool || 'sketch', text: isStampKind(cave.tool) ? liveWords(cave.tool, option('label', '')) : undefined, points: live.pts, widths: live.pressure ? live.widths : null, closed: false }], toScreen, look);
     // other people's pointers in this view
     for (const o of cursorsFor('profile', cave.run)) {
       const [ox, oy] = toScreen(o.x, o.y);
@@ -339,6 +388,7 @@
   }
 
   function onDown(e: PointerEvent) {
+    markViewUsed('profile');
     canvas.setPointerCapture(e.pointerId);
     canvas.focus();
     if (e.button === 0 && cave.run && waitingForPoint(`profile:${cave.run}`)) {
@@ -383,9 +433,24 @@
       if (e.timeStamp - lastMiddle < 350) fit();
       lastMiddle = e.timeStamp;
     }
+    if (e.button === 0 && !cave.tool && pasteOp.on && pasteOp.view === 'profile') {
+      // a paste waits: the press says where it goes
+      const r = canvas.getBoundingClientRect();
+      pastePlace('profile', toWorld(e.clientX - r.left, e.clientY - r.top));
+      schedule();
+      return;
+    }
+    if (e.button === 0 && !cave.tool && copyOp.on && copyOp.view === 'profile') {
+      // the Copy command: the first press is the base point, each after drops a copy
+      const r = canvas.getBoundingClientRect();
+      const w = toWorld(e.clientX - r.left, e.clientY - r.top);
+      copyPress('profile', copyOp.base ? w : snapToSelection('profile', w, 10 / (scale || 1)));
+      schedule();
+      return;
+    }
     if (e.button === 0 && !cave.tool) {
       const r = canvas.getBoundingClientRect();
-      if (editor.press(e.clientX - r.left, e.clientY - r.top)) return;
+      if (editor.press(e.clientX - r.left, e.clientY - r.top, e.shiftKey || e.metaKey || e.ctrlKey)) return;
     }
     if (e.button === 0) {
       const rect = canvas.getBoundingClientRect();
@@ -427,11 +492,15 @@
     if (editor.eraseAt(e.clientX - r.left, e.clientY - r.top)) schedule();
   }
 
+  /** Where the pointer last was, in this view's own space (for paste and the Copy command). */
+  let cursorW: [number, number] | null = null;
   function onMove(e: PointerEvent) {
     if (e.pointerType !== 'touch') {
       // tell the others where this pointer is (rate limited; nothing happens when not sharing)
       const rr = canvas.getBoundingClientRect();
       const w = toWorld(e.clientX - rr.left, e.clientY - rr.top);
+      cursorW = w;
+      if (copyOp.on || pasteOp.on) schedule();
       reportCursor('profile', cave.run, w[0], w[1], cave.tool);
     }
     if (e.pointerType === 'pen') {
@@ -559,20 +628,37 @@
     const stroked = live;
     live = null;
     if (isStampKind(cave.tool) && stroked.pts.length === 2 && cave.run) {
-      if (needsWords(cave.tool) && !option('label', '').trim()) {
-        message = 'Type the text in the ribbon first.';
-        schedule();
-        return;
-      }
       const [p0, q] = stroked.pts;
       const a = toScreen(p0[0], p0[1]);
       const b = toScreen(q[0], q[1]);
       // Just a click: a symbol of the chosen size, pointing up.
       const p1: [number, number] = Math.hypot(a[0] - b[0], a[1] - b[1]) < 6 ? [p0[0], p0[1] + option('symbolSize', 1.5)] : q;
-      const result = engine.addSketch(cave.run, cave.tool, [p0, p1], null, false, cave.adjusted, option('label', ''));
+      if (needsWords(cave.tool) && !option('label', '').trim()) {
+        // the words are typed in place, after the click and drag that set where, how big and which way
+        const spot = stampEditSpot(cave.tool, [a, toScreen(p1[0], p1[1])], leaderLook('', (scale * drawing.scale) / 1000));
+        const r = canvas.getBoundingClientRect();
+        const tool = cave.tool;
+        const where = cave.run;
+        if (spot)
+          openNewText(r.left + spot.x, r.top + spot.y, spot.size, (words) => {
+            const made = engine.addSketch(where, tool, [p0, p1], null, false, cave.adjusted, words);
+            message = made === 'ok' ? '' : made;
+            changed();
+            schedule();
+          }, 'Type the text', spot.angle);
+        schedule();
+        return;
+      }
+      const result = engine.addSketch(cave.run, cave.tool, withLabelSpot(cave.tool, [p0, p1], option('label', '')), null, false, cave.adjusted, option('label', ''));
       message = result === 'ok' ? '' : result;
       changed();
       schedule();
+      // a leader placed without words asks for them at once
+      if (result === 'ok' && cave.tool === 'callout' && !option('label', '').trim()) {
+        const spot = stampEditSpot('callout', [a, toScreen(p1[0], p1[1])], leaderLook('', (scale * drawing.scale) / 1000));
+        const r = canvas.getBoundingClientRect();
+        if (spot) openTextEdit(engine.lastAddedId(), '', r.left + spot.x, r.top + spot.y, spot.size, 'Type the note');
+      }
       return;
     }
     if (stroked.pts.length >= 2 && cave.run) {
@@ -594,7 +680,7 @@
         result = engine.editLine(pickup.line.id, joined.pts, joined.widths, cave.adjusted);
         cave.selected = '';
       } else {
-        result = engine.addSketch(cave.run, cave.tool, fit.pts, fit.widths, closed, cave.adjusted);
+        result = engine.addSketch(cave.run, cave.tool, fit.pts, fit.widths, closed, cave.adjusted, '', toolStyle());
       }
       message = result === 'ok' ? '' : result;
       changed();
@@ -632,6 +718,13 @@
   }
 
   onMount(() => {
+    const offClip = registerClipView('profile', {
+      lines: () => (band?.sketches ?? []) as unknown as (Drawn & { id: string })[],
+      target: () => cave.run,
+      cursor: () => cursorW,
+      centre: () => (width > 0 ? toWorld(width / 2, height / 2) : null),
+    });
+    const offSelectAll = registerSelectAll('profile', () => selectIds(editor.allIds()));
     const ro = new ResizeObserver(() => {
       width = wrap.clientWidth;
       height = wrap.clientHeight;
@@ -644,6 +737,8 @@
       refresh();
     });
     return () => {
+      offSelectAll();
+      offClip();
       ro.disconnect();
       offTheme();
     };
@@ -664,12 +759,30 @@
     onclick={pickStation}
     ondblclick={(e) => {
       const r = canvas.getBoundingClientRect();
-      if (!cave.tool) editor.addPoint(e.clientX - r.left, e.clientY - r.top);
+      if (cave.tool) return;
+      // a double click on a symbol, text or leader edits its words in place; on a curve it adds a fit point
+      const w = editor.wordsAt(e.clientX - r.left, e.clientY - r.top);
+      if (w) openTextEdit(w.id, w.text, r.left + w.x, r.top + w.y, w.size, w.kind === 'text' ? 'Type the text' : w.kind === 'callout' ? 'Type the note' : 'Label', w.angle);
+      else editor.addPoint(e.clientX - r.left, e.clientY - r.top);
     }}
     onkeydown={onKey}
     oncontextmenu={(e) => {
       e.preventDefault();
-      if (cave.tool) cave.tool = ''; // a right click ends the command
+      if (pasteOp.on) {
+        endPaste(); // a right click drops a waiting paste
+        return;
+      }
+      if (copyOp.on) {
+        endCopy(); // a right click ends the Copy command
+        return;
+      }
+      if (cave.tool) {
+        cave.tool = ''; // a right click ends the command
+        return;
+      }
+      const r = canvas.getBoundingClientRect();
+      const similar = editor.contextAt(e.clientX - r.left, e.clientY - r.top);
+      if (similar) openLineMenu(e.clientX, e.clientY, similar);
     }}
   ></canvas>
   <div class="bar">

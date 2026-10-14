@@ -28,6 +28,7 @@ cave-shape = { path = "../cave-shape" }
 cave-sheet = { path = "../cave-sheet" }
 cave-symbols = { path = "../cave-symbols" }
 cave-fill = { path = "../cave-fill" }
+cave-pattern = { path = "../cave-pattern" }
 cave-id = { path = "../cave-id" }
 cave-geom = { path = "../cave-geom" }
 js-sys = "0.3"

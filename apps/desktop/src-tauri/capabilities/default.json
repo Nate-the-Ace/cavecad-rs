@@ -2,6 +2,13 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "What the main window may do: its own commands, the folder dialog and revealing a file in the file manager.",
-  "windows": ["main"],
-  "permissions": ["core:default", "dialog:default", "opener:default"]
+  "windows": [
+    "main"
+  ],
+  "permissions": [
+    "core:default",
+    "dialog:default",
+    "opener:default",
+    "deep-link:default"
+  ]
 }

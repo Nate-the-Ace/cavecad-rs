@@ -3,9 +3,11 @@
 // draws it at true size beside the station, joined to it by a dashed leader, and the person drags
 // it to where they want it. The offset they leave it at is saved with the drawing.
 
+import { drawing, fillLength, parseStyle, patternName, styleFor } from './line-style.svelte';
+import { lineMarksPx, strokeMarksPx } from './pattern-draw';
 import type { Look } from './ink';
 import { smooth } from './spline.ts';
-import { drawStamp, isStampKind, placement } from './symbols.ts';
+import { drawStamp, drawStampHalo, isStampKind, leaderLook, placement } from './symbols.ts';
 import { drawMarks, isFillKind, marksFor } from './fills.ts';
 
 /** Where shaped-line ornament comes from (the engine sets this once it has loaded). */
@@ -60,7 +62,7 @@ export function ornamentFor(kind: string, id: string, curve: [number, number][],
   return o;
 }
 
-export type Sketches = { points: [number, number][]; widths: number[] | null; closed?: boolean; text?: string }[];
+export type Sketches = { points: [number, number][]; widths: number[] | null; closed?: boolean; text?: string; style?: string }[];
 
 /** `[minU, minV, maxU, maxV]` around the strokes (zeros when empty). */
 export function sketchBounds(sketches: Sketches): [number, number, number, number] {
@@ -91,24 +93,34 @@ export function hits(sketches: Sketches, anchor: [number, number], px: number, x
   return x >= anchor[0] + b[0] * px - pad && x <= anchor[0] + b[2] * px + pad && y >= anchor[1] - b[3] * px - pad && y <= anchor[1] - b[1] * px + pad;
 }
 
+/** True when the stroke `id` is the selected one (or one of the selected ones). */
+function isChosen(selected: string | ReadonlySet<string>, id: string | undefined): boolean {
+  if (!id) return false;
+  return typeof selected === 'string' ? !!selected && selected === id : selected.has(id);
+}
+
 /** Draws strokes as smooth curves through their fit points, in the look of their kind (width scaled
  *  by pen weight), `to` mapping section metres to pixels. The stroke with id `selected` gets a halo. */
 export function drawStrokes(
   g: CanvasRenderingContext2D,
   sketches: (Sketches[number] & { kind: string; id?: string })[],
   to: (u: number, v: number) => [number, number],
-  look: (kind: string) => Look,
+  look: (kind: string, style?: string, pxPerM?: number) => Look,
   scale = 1,
-  selected = '',
+  selected: string | ReadonlySet<string> = '',
   /** The survey's stations in the strokes' own coordinates (wall glyphs go on the side away from them). */
   survey: [number, number][] = [],
 ): void {
   g.lineCap = 'round';
   g.lineJoin = 'round';
   refreshFlipped(); // shaped lines with ornament on the other side
+  const o = to(0, 0);
+  const u = to(1, 0);
+  const pxPerM = Math.hypot(u[0] - o[0], u[1] - o[1]); // how big a metre is here, for sizing patterns drawn on paper
   for (const k of sketches) {
     if (hiddenTest(k.kind)) continue; // switched off in the Show menu
-    const l = look(k.kind);
+    const style = styleFor(k.id, k.style); // what is being dragged for this line, or what it has
+    const l = look(k.kind, style, pxPerM);
     if (isStampKind(k.kind) && k.points.length >= 2) {
       // A placed symbol: its first point is where it sits, its second says which way is up and how big.
       const p0 = to(k.points[0][0], k.points[0][1]);
@@ -117,7 +129,14 @@ export function drawStrokes(
       g.globalAlpha = l.alpha;
       g.setLineDash([]);
       g.lineWidth = Math.max(1, l.weight * scale * 0.7);
-      if (selected && k.id === selected) {
+      const look = leaderLook(style, (pxPerM * drawing.scale) / 1000);
+      const more = k.points.slice(2).map((q) => to(q[0], q[1]));
+      if (isChosen(selected, k.id) && (k.kind === 'callout' || k.kind === 'text')) {
+        // a text or a leader: its lines thickened and a box round its words
+        drawStampHalo(g, k.kind, p0, p1, (k as { text?: string }).text ?? '', look, more, highlightColor());
+        g.setLineDash([]);
+        g.lineWidth = Math.max(1, l.weight * scale * 0.7);
+      } else if (isChosen(selected, k.id)) {
         const pl = placement(p0, p1);
         g.strokeStyle = highlightColor();
         g.globalAlpha = 0.9;
@@ -129,7 +148,7 @@ export function drawStrokes(
         g.globalAlpha = l.alpha;
         g.lineWidth = Math.max(1, l.weight * scale * 0.7);
       }
-      drawStamp(g, k.kind, p0, p1, (k as { text?: string }).text);
+      drawStamp(g, k.kind, p0, p1, (k as { text?: string }).text, look, more);
       continue;
     }
     const curve = smooth(
@@ -153,16 +172,37 @@ export function drawStrokes(
         g.stroke();
       }
     };
-    if (selected && k.id === selected) trace(9, highlightColor(), 0.6, []);
+    if (isChosen(selected, k.id)) {
+      trace(9, highlightColor(), 0.6, []);
+      if (isFillKind(k.kind) && curve.pts.length >= 3) {
+        // a selected area is tinted all through, not only round its edge
+        g.save();
+        g.globalAlpha = 0.16;
+        g.fillStyle = highlightColor();
+        g.beginPath();
+        curve.pts.forEach((q, i) => (i === 0 ? g.moveTo(q[0], q[1]) : g.lineTo(q[0], q[1])));
+        g.closePath();
+        g.fill();
+        g.restore();
+      }
+    }
     if (isFillKind(k.kind) && k.points.length >= 3) {
       // An area fill: its marks are made from the outline (in metres) and the stroke's id, then drawn under the outline.
       g.strokeStyle = l.color;
       g.globalAlpha = l.alpha;
       g.setLineDash([]);
       g.lineWidth = Math.max(1, l.weight * scale * 0.7);
-      drawMarks(g, marksFor(k.kind, k.id ?? '', metres), to, curve.pts);
+      drawMarks(g, marksFor(k.kind, k.id ?? '', metres, parseStyle(style).density, fillLength(), patternName(parseStyle(style).lt), parseStyle(style).angle), to, curve.pts);
     }
-    if (orn.spine) trace(0, l.color, l.alpha, l.dash);
+    if (orn.spine && l.custom && curve.pts.length >= 2) {
+      // the caver's own linetype: dashes, dots and motifs laid along the curve in pixels
+      g.strokeStyle = l.color;
+      g.fillStyle = l.color;
+      g.globalAlpha = l.alpha;
+      g.setLineDash([]);
+      g.lineWidth = Math.max(1, l.weight * scale);
+      strokeMarksPx(g, lineMarksPx(l.custom, curve.pts as [number, number][], l.pxPerMm ?? 0));
+    } else if (orn.spine) trace(0, l.color, l.alpha, l.dash);
     if (orn.lines.length) {
       g.strokeStyle = l.color;
       g.globalAlpha = l.alpha;

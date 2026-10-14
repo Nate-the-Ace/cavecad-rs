@@ -380,6 +380,8 @@ struct Stroke<'a> {
     widths: Option<&'a [f64]>,
     closed: bool,
     text: &'a str,
+    /// How this one line differs from its type's look (`linetype;scale;density`), empty for the type's own.
+    style: &'a str,
     /// The survey's stations in the stroke's coordinates (wall glyphs go away from them).
     survey: &'a [[f64; 2]],
 }
@@ -467,6 +469,38 @@ fn draw_stroke(g: &mut Geometry, doc: &Document, s: &Stroke, suffix: &str) {
         }
         return;
     }
+    if s.kind == "fill-custom" {
+        // a fill of the caver's own: the outline, and the marks of the fill the line's style names
+        let curve = cave_geom::spline::smooth(s.points, true, PER_SPAN);
+        let mut outline = curve.clone();
+        if let Some(first) = outline.first().copied() {
+            outline.push(first);
+        }
+        g.lwpolyline_suffixed(s.kind, suffix, &outline, None);
+        if let Some((name, _, density)) = cave_draw::patterns::pattern_style(s.style) {
+            let lib = cave_draw::patterns::library(doc);
+            if let Some(def) = lib.fill(&name) {
+                let paper_m = cave_draw::drawing_scale(doc) / 1000.0;
+                let marks = cave_pattern::rotated(&curve, cave_draw::style_angle(s.style), |o| {
+                    cave_pattern::fill_marks(
+                        def,
+                        &|n| lib.motif(n).cloned(),
+                        o,
+                        cave_fill::seed_of(s.id),
+                        paper_m,
+                        density,
+                    )
+                });
+                for line in &marks.lines {
+                    g.lwpolyline_suffixed(s.kind, suffix, line, None);
+                }
+                for c in &marks.circles {
+                    g.circle_suffixed(s.kind, suffix, [c[0], c[1]], c[2]);
+                }
+            }
+        }
+        return;
+    }
     if cave_fill::is_fill_key(s.kind) {
         let curve = cave_geom::spline::smooth(s.points, true, PER_SPAN);
         let mut outline = curve.clone();
@@ -474,7 +508,9 @@ fn draw_stroke(g: &mut Geometry, doc: &Document, s: &Stroke, suffix: &str) {
             outline.push(first);
         }
         g.lwpolyline_suffixed(s.kind, suffix, &outline, None);
-        let marks = cave_fill::marks(s.kind, &curve, cave_fill::seed_of(s.id));
+        let marks = cave_pattern::rotated(&curve, cave_draw::style_angle(s.style), |o| {
+            cave_fill::marks(s.kind, o, cave_fill::seed_of(s.id))
+        });
         for line in &marks.lines {
             g.lwpolyline_suffixed(s.kind, suffix, line, None);
         }
@@ -485,7 +521,38 @@ fn draw_stroke(g: &mut Geometry, doc: &Document, s: &Stroke, suffix: &str) {
     }
     let (curve, widths) = curve_with_widths(s.points, s.widths, s.closed);
     let shape = cave_shape::shape(s.kind);
-    if shape.is_none_or(|sh| !sh.hide_spine) {
+    // a line in a linetype of the caver's own: its dashes, dots and motifs as drawn marks instead of one continuous line
+    let custom = cave_draw::patterns::pattern_style(s.style).and_then(|(name, scale, _)| {
+        cave_draw::patterns::library(doc)
+            .line(&name)
+            .cloned()
+            .map(|d| (d, scale))
+    });
+    if let Some((def, scale)) = custom
+        && shape.is_none_or(|sh| !sh.hide_spine)
+    {
+        let lib = cave_draw::patterns::library(doc);
+        let mut path = curve.clone();
+        if s.closed
+            && let Some(first) = path.first().copied()
+        {
+            path.push(first);
+        }
+        let paper_m = cave_draw::drawing_scale(doc) / 1000.0 * scale;
+        let marks = cave_pattern::line_marks(
+            &def,
+            &|n| lib.motif(n).cloned(),
+            &path,
+            paper_m,
+            cave_style::DOT_MM,
+        );
+        for line in &marks.lines {
+            g.lwpolyline_suffixed(s.kind, suffix, line, None);
+        }
+        for c in &marks.circles {
+            g.circle_suffixed(s.kind, suffix, [c[0], c[1]], c[2]);
+        }
+    } else if shape.is_none_or(|sh| !sh.hide_spine) {
         let mut line = curve.clone();
         if s.closed
             && let Some(first) = line.first().copied()
@@ -565,6 +632,7 @@ fn draw_section<S: SectionLike>(
             widths: sk.widths.as_deref(),
             closed: sk.closed,
             text: &sk.text,
+            style: &sk.style,
             survey: &[base], // the passage is around the station the section was cut at
         };
         draw_stroke(g, doc, &stroke, suffix);
@@ -613,6 +681,7 @@ fn draw_map_work(g: &mut Geometry, doc: &Document, adjusted: bool, survey: &[[f6
             widths: sk.widths.as_deref(),
             closed: sk.closed,
             text: &sk.text,
+            style: &sk.style,
             survey,
         };
         draw_stroke(g, doc, &stroke, "MAP");
@@ -677,6 +746,7 @@ fn draw_profiles(g: &mut Geometry, doc: &Document, adjusted: bool, plan_min: [f6
                 widths: sk.widths.as_deref(),
                 closed: sk.closed,
                 text: &sk.text,
+                style: &sk.style,
                 survey: &band_stations,
             };
             draw_stroke(g, doc, &stroke, "PROFILE");

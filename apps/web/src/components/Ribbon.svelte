@@ -25,24 +25,29 @@
   import { shelf } from '../lib/shelf.svelte';
   import { leaveP2p, p2p } from '../lib/p2p.svelte';
   import { leave, live } from '../lib/sync.svelte';
-  import { cave, clearPick, setCompactRibbon, setPick, setUnits, option, setOption } from '../lib/cave.svelte';
+  import { classroom } from '../lib/classroom.svelte';
+  import { registerMirror } from '../lib/classroom-mirror';
+  import { cave, clearPick, selectedIds, selectIds, setCompactRibbon, setPick, setUnits, option, setOption } from '../lib/cave.svelte';
   import DrawTools from './DrawTools.svelte';
   import ThemeGroup from './ThemeGroup.svelte';
   import ContextOptions from './ContextOptions.svelte';
   import SelectionTools from './SelectionTools.svelte';
+  import CopyIcon from './CopyIcon.svelte';
+  import { copyOp, endCopy, endPaste, pasteOp, startCopy } from '../lib/view-clip.svelte';
   import CollaborateGroup from './CollaborateGroup.svelte';
   import LayoutGroup from './LayoutGroup.svelte';
   import { surveyGroups } from './survey-groups';
   import FillTools from './FillTools.svelte';
   import SheetGroup from './SheetGroup.svelte';
   import { INSPECTORS } from '../lib/inspectors';
+  import DrawingScale from './DrawingScale.svelte';
   import type { PickKind } from '../lib/cave.svelte';
   import UserMenu from './UserMenu.svelte';
-  import { symbolDef } from '../lib/symbols';
-  import { fillLabel } from '../lib/fills';
+  import { isStampKind, symbolDef } from '../lib/symbols';
+  import { fillLabel, isFillKind } from '../lib/fills';
   import { onMount, untrack } from 'svelte';
   import { PANELS, panelState, resetLayout, showPanel, surveyLayout, togglePanel, workLayout } from '../lib/workspace.svelte';
-  import { Check, Trash2, LogIn, LogOut, Users, Library, FilePlus, FileInput, FolderOpen, Save, Ruler, Footprints, Route, Waypoints, Scissors, Map as MapIcon, Terminal, LayoutDashboard, Activity, Shapes, Table2, BookOpen, ScanLine, FileText, ChevronDown, PanelTop, FileOutput, Package, Mountain, SlidersHorizontal, Crosshair, Tent, Lock } from '@lucide/svelte';
+  import { GraduationCap, Check, Trash2, LogIn, LogOut, Users, Library, FilePlus, FileInput, FolderOpen, Save, Ruler, Footprints, Route, Waypoints, Scissors, Map as MapIcon, Terminal, LayoutDashboard, Activity, Shapes, Table2, BookOpen, ScanLine, FileText, ChevronDown, PanelTop, FileOutput, Package, Mountain, SlidersHorizontal, Crosshair, Tent, Lock } from '@lucide/svelte';
 
   /**
    * The app shows the ribbon as it is. A host that is only a part of the app (the survey harness) can give its own
@@ -81,6 +86,7 @@
         items: [
           { label: 'Share', icon: Users, run: () => (p2p.dialog = true), pressed: () => live.status === 'live' && p2p.role === 'host' },
           { label: 'Join', icon: LogIn, run: () => { shelf.join = true; shelf.open = true; }, pressed: () => live.status === 'live' && p2p.role === 'guest' },
+          { label: 'Classroom', icon: GraduationCap, run: () => (classroom.dialog = true), pressed: () => classroom.role === 'teacher' },
           { label: 'Leave', icon: LogOut, run: () => { leaveP2p(); leave(); } },
         ],
       },
@@ -93,6 +99,9 @@
       { name: 'Area fill', items: [], custom: FillTools },
     ],
     Survey: surveyGroups({ inCave: surveyLayout }),
+    Annotation: [
+      { name: 'Notes and leaders', items: [], custom: DrawTools, props: { group: 'Annotation' } },
+    ],
     Sheets: [
       { name: 'Paper and scale', items: [], custom: SheetGroup, props: { part: 'paper' } },
       { name: 'Title block', items: [], custom: SheetGroup, props: { part: 'title' } },
@@ -100,9 +109,10 @@
       { name: 'Save', items: [], custom: SheetGroup, props: { part: 'save' } },
     ],
     View: [
-      { name: 'Panels', items: [panelItem('map', MapIcon), panelItem('profile', Activity), panelItem('section', Scissors), panelItem('symbols', Shapes), panelItem('stations', Table2), panelItem('notebook', BookOpen), panelItem('survey', Crosshair), panelItem('scans', ScanLine), panelItem('sheet', FileText), panelItem('console', Terminal)] },
+      { name: 'Panels', items: [panelItem('map', MapIcon), panelItem('profile', Activity), panelItem('section', Scissors), panelItem('symbols', Shapes), panelItem('patterns', Shapes), panelItem('stations', Table2), panelItem('notebook', BookOpen), panelItem('survey', Crosshair), panelItem('scans', ScanLine), panelItem('sheet', FileText), panelItem('console', Terminal)] },
       { name: 'Units', items: [{ label: 'Metric', icon: Ruler, run: () => setUnits('metric'), pressed: () => cave.units === 'metric' }, { label: 'Imperial', icon: Footprints, run: () => setUnits('imperial'), pressed: () => cave.units === 'imperial' }] },
       { name: 'Theme', items: [], custom: ThemeGroup },
+      { name: 'Drawing scale', items: [], custom: DrawingScale },
       { name: 'Rock halo', items: [{ label: 'Rock halo', icon: Mountain, run: () => setOption('halo', !option('halo', true)), pressed: () => option('halo', true) }, { label: 'Settings', icon: SlidersHorizontal, run: () => setPick('halo', 'halo'), pressed: () => cave.pick.kind === 'halo' }] },
       { name: 'Map view', items: [{ label: 'Lock view', icon: Lock, run: () => setOption('mapLock', !option('mapLock', false)), pressed: () => option('mapLock', false) }] },
       { name: 'Live editing', items: [], custom: CollaborateGroup },
@@ -118,6 +128,15 @@
 
   // A running command gets its own tab, in front, with its settings and a way to finish it.
   const CONTEXT = '\u0000command';
+  // In a class the teacher's tab is mirrored (a contextual tab is each person's own, from the tool they have).
+  $effect(() =>
+    registerMirror('ribbon', {
+      read: () => (active === CONTEXT ? undefined : active),
+      write: (tab) => {
+        if (typeof tab === 'string' && tab in tabs) active = tab;
+      },
+    })
+  );
   let toolLabels = $state<Record<string, string>>({});
   onMount(() => {
     loadEngine().then(() => (toolLabels = Object.fromEntries(engine.drawTools().map((t) => [t.key, t.label]))));
@@ -127,13 +146,22 @@
   onMount(() => {
     loadEngine().then(() => (loaded = true));
   });
-  const selection = $derived.by(() => {
+  const selections = $derived.by(() => {
     void cave.version;
-    return loaded && cave.selected && !cave.tool ? engine.lineInfo(cave.selected) : null;
+    void cave.also;
+    return loaded && !cave.tool ? selectedIds().map((id) => ({ id, info: engine.lineInfo(id) })) : [];
+  });
+  const selection = $derived(selections[0]?.info ?? null);
+  /** More than one line is selected. */
+  const several = $derived(selections.length > 1);
+  /** Every selected line is of one kind (so its settings can be edited together). */
+  const alike = $derived(selections.every((s) => s.info && s.info.kind === selection?.kind));
+  $effect(() => {
+    // Selected lines that are gone (undone, deleted elsewhere) are dropped from the selection.
+    if (loaded && !cave.tool && selections.some((s) => s.info === null)) selectIds(selections.filter((s) => s.info).map((s) => s.id));
   });
   $effect(() => {
-    // The selected line is gone (undone, deleted elsewhere): nothing is selected any more.
-    if (loaded && cave.selected && !cave.tool && selection === null) cave.selected = '';
+    if (copyOp.on && !selections.length) endCopy();
   });
   const mode = $derived(cave.tool ? 'command' : selection ? 'selection' : cave.pick.kind ? 'pick' : '');
   // one thing is picked at a time: a line, a station, or a tool
@@ -141,31 +169,44 @@
     if (cave.tool || cave.selected) clearPick();
   });
   const contextName = $derived(
-    mode === 'command' ? (toolLabels[cave.tool] ?? symbolDef(cave.tool)?.name ?? fillLabel(cave.tool) ?? cave.tool) : mode === 'pick' ? INSPECTORS[cave.pick.kind as Exclude<PickKind, ''>].title : mode === 'selection' ? `Edit ${toolLabels[selection!.kind] ?? symbolDef(selection!.kind)?.name ?? fillLabel(selection!.kind) ?? selection!.kind}` : '',
+    mode === 'command' ? (toolLabels[cave.tool] ?? symbolDef(cave.tool)?.name ?? fillLabel(cave.tool) ?? cave.tool) : mode === 'pick' ? INSPECTORS[cave.pick.kind as Exclude<PickKind, ''>].title : mode === 'selection' ? (several && !alike ? 'MULTIPLE' : `Edit ${toolLabels[selection!.kind] ?? symbolDef(selection!.kind)?.name ?? fillLabel(selection!.kind) ?? selection!.kind}${several ? ` (${selections.length})` : ''}`) : '',
   );
   const commandGroups: Group[] = [
     { name: 'Settings', items: [], custom: ContextOptions },
     { name: 'Command', items: [{ label: 'Done', icon: Check, run: () => (cave.tool = '') }] },
   ];
-  const selectionGroups: Group[] = [
-    { name: 'Line', items: [], custom: SelectionTools },
-    {
-      name: 'Command',
-      items: [
-        {
-          label: 'Delete',
-          icon: Trash2,
-          run: () => {
-            const id = cave.selected;
-            cave.selected = '';
-            if (id) engine.deleteLine(id);
-            cave.version += 1;
-          },
+  const commandGroup: Group = {
+    name: 'Command',
+    items: [
+      {
+        label: 'Delete',
+        icon: Trash2,
+        run: () => {
+          const ids = selectedIds();
+          cave.selected = '';
+          for (const id of ids) engine.deleteLine(id);
+          cave.version += 1;
         },
-        { label: 'Done', icon: Check, run: () => (cave.selected = '') },
-      ],
-    },
-  ];
+      },
+      { label: 'Copy', icon: CopyIcon, run: () => (copyOp.on ? endCopy() : startCopy()), pressed: () => copyOp.on },
+      { label: 'Done', icon: Check, run: () => { endCopy(); cave.selected = ''; } },
+    ],
+  };
+  // A selection's tab is several groups (what it is, its text format, its leader, its line style), so a narrow window folds one
+  // of them, not all of its settings at once.
+  const selectionGroups = $derived.by<Group[]>(() => {
+    const kind = selection?.kind ?? '';
+    const infos = selections.map((s) => s.info).filter((i): i is NonNullable<typeof i> => !!i);
+    const stamps = infos.length > 0 && infos.every((i) => isStampKind(i.kind));
+    const words = infos.some((i) => i.kind === 'text' || i.kind === 'callout' || !!i.text);
+    const part = (name: string, p: string): Group => ({ name, items: [], custom: SelectionTools, props: { part: p } });
+    const out: Group[] = [part(stamps ? 'Annotation' : 'Line', 'type')];
+    if (stamps && words) out.push(part('Text format', 'format'));
+    if (alike && kind === 'callout') out.push(part('Leader', 'leader'));
+    if (alike && !isStampKind(kind) && kind !== 'fill-custom') out.push(part(isFillKind(kind) ? 'Area' : 'Line style', 'style'));
+    out.push(commandGroup);
+    return out;
+  });
   // what a picked thing's tab holds comes from the inspector registered for its kind
   const pickGroups = $derived<Group[]>(cave.pick.kind ? INSPECTORS[cave.pick.kind as Exclude<PickKind, ''>].groups.map((g) => ({ name: g.name, items: [], custom: INSPECTORS[cave.pick.kind as Exclude<PickKind, ''>].component, props: { part: g.part, kind: cave.pick.kind } })) : []);
   let before = firstTab;
@@ -183,18 +224,44 @@
   // a popup under it with the group's buttons, two to a row.
   const FOLDED = 96; // width of a folded group
   let barW = $state(0);
-  let widths = $state<number[]>([]);
+  // how wide each group wants to be, by name (a selection's groups come and go, so an index would go stale)
+  let widths = $state<Record<string, number>>({});
   let openAt = $state<{ i: number; x: number; y: number } | null>(null);
   const collapsed = $derived.by(() => {
     const out = new Set<number>();
-    const room = barW - 20;
-    let total = shownGroups.reduce((n, _, i) => n + (widths[i] ?? 0), 0);
-    for (let i = shownGroups.length - 1; i >= 0 && (cave.compactRibbon || total > room); i--) {
-      const w = widths[i] ?? 0;
-      if (w <= FOLDED) continue;
-      total += FOLDED - w;
-      out.add(i);
+    const w = (i: number) => widths[shownGroups[i].name] ?? 0;
+    const foldable = (i: number) => !out.has(i) && w(i) > FOLDED;
+    if (cave.compactRibbon) {
+      shownGroups.forEach((_, i) => foldable(i) && out.add(i));
+      return out;
     }
+    // Fold as few groups as will fit, and among those the ones furthest right (the leftmost groups are the ones used most).
+    const need = shownGroups.reduce((n, _, i) => n + w(i), 0) - (barW - 20);
+    if (need <= 0) return out;
+    const can = shownGroups.map((_, i) => i).filter(foldable).slice(-14);
+    let best = -1;
+    let bestCount = Infinity;
+    let bestRight = -1;
+    for (let mask = 1; mask < 1 << can.length; mask++) {
+      let saved = 0;
+      let count = 0;
+      let right = 0;
+      for (let b = 0; b < can.length; b++) {
+        if (mask & (1 << b)) {
+          saved += w(can[b]) - FOLDED;
+          count++;
+          right += can[b];
+        }
+      }
+      if (saved >= need && (count < bestCount || (count === bestCount && right > bestRight))) {
+        best = mask;
+        bestCount = count;
+        bestRight = right;
+      }
+    }
+    // not even folding everything fits: fold everything that can be
+    const chosen = best > 0 ? can.filter((_, b) => best & (1 << b)) : can;
+    for (const i of chosen) out.add(i);
     return out;
   });
   $effect(() => {
@@ -215,6 +282,14 @@
   }
 
   function keys(e: KeyboardEvent) {
+    if (e.key === 'Escape' && pasteOp.on) {
+      endPaste(); // Escape drops a waiting paste
+      return;
+    }
+    if (e.key === 'Escape' && copyOp.on) {
+      endCopy(); // Escape finishes the Copy command first; the selection stays
+      return;
+    }
     if (e.key === 'Escape' && openAt) {
       openAt = null;
       return;
@@ -283,7 +358,7 @@
     <!-- every group at full size, unseen, so we know how wide each wants to be -->
     <div class="measure" aria-hidden="true" inert>
       {#each shownGroups as g, i (g.name)}
-        <section bind:offsetWidth={widths[i]}>
+        <section bind:offsetWidth={widths[g.name]}>
           <div class="btns">
             {#if g.custom}<g.custom {...(g.props ?? {})} measure={true} />{/if}
             {#each g.items as item}

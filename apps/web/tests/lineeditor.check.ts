@@ -1,4 +1,4 @@
-import { LineEditor, endpointNear, joinFit, type EditableLine } from '../src/lib/line-editor.ts';
+import { LineEditor, endpointNear, joinFit, topLineAt, type EditableLine } from '../src/lib/line-editor.ts';
 let bad = 0;
 const ok = (c: boolean, m: string) => { if (!c) { bad++; console.log('FAIL', m); } };
 let selected = '';
@@ -77,4 +77,39 @@ ok(w.widths!.length === w.pts.length, 'pen weights stay one per point');
   ok(saved[0].pts[0][0] === 200 && saved[0].pts[0][1] === 200 && saved[0].pts[1][0] === 240, 'moving the other handle changes only the size and turn');
   lines.pop();
 }
+// an area is selected by its hatch (anywhere inside it) as well as by its outline; a line over it still wins
+{
+  const id = (p: [number, number]) => p;
+  const fill: EditableLine = { id: 'f', kind: 'fill-sand', closed: true, points: [[0, 0], [200, 0], [200, 200], [0, 200]], widths: null };
+  const wall: EditableLine = { id: 'w', kind: 'wall', points: [[20, 100], [180, 100]], widths: null };
+  const lines = [fill, wall];
+  ok(topLineAt(lines, id, 100, 150, 7) === 0, 'a click inside the area, away from its edge, selects the fill');
+  ok(topLineAt(lines, id, 100, 101, 7) === 1, 'a click on a wall that lies over the fill selects the wall');
+  ok(topLineAt(lines, id, 1, 100, 7) === 0, 'a click on the fill\'s own edge selects it');
+  ok(topLineAt(lines, id, 400, 400, 7) === -1, 'a click outside everything selects nothing');
+  const plain: EditableLine = { id: 'p', kind: 'wall', closed: true, points: [[0, 0], [200, 0], [200, 200], [0, 200]], widths: null };
+  ok(topLineAt([plain], id, 100, 150, 7) === -1, 'a closed wall (not an area fill) is still picked by its line only, not by its inside');
+  const over = [fill, { id: 'g', kind: 'fill-clay', closed: true, points: [[50, 50], [150, 50], [150, 150], [50, 150]], widths: null } as EditableLine];
+  ok(topLineAt(over, id, 100, 100, 7) === 1, 'of two areas over each other the topmost one is picked');
+}
+// a shaped line is picked by any part of its marks, not only by the line
+{
+  const id = (p: [number, number]) => p;
+  const ledge: EditableLine = { id: 'l', kind: 'ledge', points: [[0, 100], [200, 100]], widths: null };
+  // ticks hanging 12 px below the line every 20 px
+  const ticks = () => Array.from({ length: 10 }, (_, i): [number, number][] => [[10 + i * 20, 100], [10 + i * 20, 112]]);
+  const ornament = () => ticks();
+  ok(topLineAt([ledge], id, 70, 111, 7) === -1, 'without the marks, a click on a tick misses the line');
+  ok(topLineAt([ledge], id, 70, 111, 7, undefined, ornament) === 0, 'a click on a tick end picks the line');
+  ok(topLineAt([ledge], id, 74, 108, 7, undefined, ornament) === 0, 'and so does one beside a tick');
+  ok(topLineAt([ledge], id, 70, 160, 7, undefined, ornament) === -1, 'but not one far from every mark');
+  ok(topLineAt([ledge], id, 100, 101, 7, undefined, ornament) === 0, 'the line itself still works');
+}
+// a double click on a symbol or a leader finds its words; on a plain line it does not
+lines.push({ id: 's', points: [[200, 200], [200, 180]], widths: null, kind: 'sym-pit', text: '30' }, { id: 'l', points: [[300, 300], [380, 280]], widths: null, kind: 'callout', text: 'Squeeze' });
+const sw = ed.wordsAt(201, 200);
+ok(!!sw && sw.id === 's' && sw.text === '30' && sw.x > 200, `a symbol's label is found, got ${JSON.stringify(sw)}`);
+const n = ed.wordsAt(301, 300); // (the note's own box needs the engine's layout; here the tip is what answers)
+ok(!!n && n.id === 'l' && n.text === 'Squeeze' && Math.abs(n.x - 380) < 1, `a leader's note is found, got ${JSON.stringify(n)}`);
+ok(ed.wordsAt(100, 101) === null, 'a plain line has no words to edit');
 console.log(bad ? 'FAILED' : 'line editor checks ok'); process.exit(bad ? 1 : 0);

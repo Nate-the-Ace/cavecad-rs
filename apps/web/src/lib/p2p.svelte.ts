@@ -13,9 +13,14 @@ import { relayServers } from './p2p-relay.svelte';
 import { engine } from './engine';
 import { cave, changed, markSaved } from './cave.svelte';
 import { decodeCode, encodeCode } from './p2p-code';
-import { Reassembler, frames } from './p2p-wire';
+import { Reassembler, decodeMessage, encodeMessage, frames } from './p2p-wire';
 import { addRemoteFile, fileOf, have, scans, select } from './scans.svelte';
-import { fadeCursors, live, me, myPersonId, setPeerHooks, type Person } from './sync.svelte';
+import { fadeCursors, live, me, myPersonId, roomEvents, setPeerHooks, type Person } from './sync.svelte';
+import { hostLoop, joinLoop } from './signal-handshake';
+import { configuredMailbox, mailboxConfig, type Mailbox } from './signal';
+import { desktopLink, liveLink } from './classroom-log';
+import { shareBase } from './share-base';
+import { CLASS_MESSAGES, classJoined, classLeft, classMessage, classWelcome, newClass, type ClassState, type RoomIo } from './classroom-room.mjs';
 import { flush as keepShelf, shelf } from './shelf.svelte';
 
 /** A person the host has made an invite for. */
@@ -35,6 +40,10 @@ export const p2p = $state({
   /** The host lets people in without asking. */
   auto: false,
   invites: [] as PeerInvite[],
+  /** The one link anyone can open to join this session (made with the class mailbox), or empty. */
+  link: '',
+  /** The same link in the form that opens the desktop app. */
+  appLink: '',
   /** Why the last step failed, in plain words. */
   error: '',
   /** The guest's reply code, to send back to the host. */
@@ -72,6 +81,8 @@ interface Peer {
 }
 
 const peers = new Map<string, Peer>();
+/** The class this page is teaching, when it hosts one: students are the guests, who only watch (see `classroom.svelte.ts`). */
+let cls: ClassState | null = null;
 let guestPeer: Peer | null = null;
 let timer: ReturnType<typeof setInterval> | undefined;
 let sessionId = '';
@@ -104,11 +115,14 @@ function drain(ch: RTCDataChannel): Promise<void> {
   });
 }
 
-/** Queues a message to a peer (cut into frames, in order with everything else sent to it). */
-function send(p: Peer, msg: object) {
-  const text = JSON.stringify(msg);
+/** A message turned into what goes over the wire (text, squeezed when long), once, however many people it goes to. */
+const prepare = (msg: object): Promise<string> => encodeMessage(JSON.stringify(msg));
+
+/** Queues an already prepared message to a peer (cut into frames, in order with everything else sent to it). */
+function sendPrepared(p: Peer, prepared: Promise<string>) {
   p.tail = p.tail
     .then(async () => {
+      const text = await prepared;
       const ch = p.ch;
       if (!ch || ch.readyState !== 'open') return;
       for (const f of frames(text, ++p.seq)) {
@@ -117,6 +131,11 @@ function send(p: Peer, msg: object) {
       }
     })
     .catch(() => undefined);
+}
+
+/** Queues a message to a peer. */
+function send(p: Peer, msg: object) {
+  sendPrepared(p, prepare(msg));
 }
 
 /** Queues a page's bytes to a peer, between a header and a trailer, in order. */
@@ -139,22 +158,81 @@ function sendFile(p: Peer, path: string, file: File) {
 const admitted = () => [...peers.values()].filter((p) => p.person && p.ch?.readyState === 'open');
 
 function toAll(msg: object, except?: Peer) {
-  for (const p of admitted()) if (p !== except) send(p, msg);
+  const prepared = prepare(msg); // stringified (and squeezed) once for everyone
+  for (const p of admitted()) if (p !== except) sendPrepared(p, prepared);
 }
 
 // ---- connections ---------------------------------------------------------------------------------
 
+/**
+ * Waits until the connection has found the ways it can be reached, so they can all go into the code. It does not wait
+ * for the browser to say it is finished (which can take the full five seconds when a server is slow): once the kinds of
+ * address that were asked for have turned up (a public one from the STUN lookup, one through the relay) and nothing
+ * new has come for a moment, that is enough. The five seconds stays as the limit.
+ */
 function gathered(pc: RTCPeerConnection): Promise<void> {
   return new Promise((resolve) => {
     if (pc.iceGatheringState === 'complete') return resolve();
+    const urls = (pc.getConfiguration().iceServers ?? []).flatMap((s) => (Array.isArray(s.urls) ? s.urls : [s.urls]));
+    const wantPublic = urls.some((u) => /^stuns?:/i.test(u));
+    const wantRelay = urls.some((u) => /^turns?:/i.test(u));
+    const seen = { any: false, srflx: false, relay: false };
+    let quiet: ReturnType<typeof setTimeout> | undefined;
     const done = () => {
       pc.removeEventListener('icegatheringstatechange', check);
+      pc.removeEventListener('icecandidate', onCandidate);
+      clearTimeout(quiet);
       clearTimeout(t);
       resolve();
     };
     const check = () => pc.iceGatheringState === 'complete' && done();
+    const onCandidate = (e: RTCPeerConnectionIceEvent) => {
+      if (!e.candidate) return done(); // the browser says it is finished
+      seen.any = true;
+      if (e.candidate.type === 'srflx') seen.srflx = true;
+      if (e.candidate.type === 'relay') seen.relay = true;
+      clearTimeout(quiet);
+      if (seen.any && (!wantPublic || seen.srflx) && (!wantRelay || seen.relay)) quiet = setTimeout(done, 350);
+    };
     const t = setTimeout(done, GATHER_MS); // whatever was found by now is enough to try
     pc.addEventListener('icegatheringstatechange', check);
+    pc.addEventListener('icecandidate', onCandidate);
+  });
+}
+
+/**
+ * Writes how a connection went into the Console, with the time of each step, and (once it is up) which kind of path it
+ * took: `host` (straight across the local network), `srflx` (through the router's public address) or `relay` (through the
+ * relay server). A connection that takes long shows where: waiting for addresses, for the other side, or for a path to work.
+ */
+function watchConnection(pc: RTCPeerConnection, id: string) {
+  const t0 = performance.now();
+  const say = (what: string) => engine.log('info', 'connect', `${id.slice(0, 5)} +${((performance.now() - t0) / 1000).toFixed(1)}s ${what}`);
+  say('made');
+  pc.addEventListener('icegatheringstatechange', () => say(`finding addresses: ${pc.iceGatheringState}`));
+  pc.addEventListener('iceconnectionstatechange', () => say(`connection checks: ${pc.iceConnectionState}`));
+  pc.addEventListener('connectionstatechange', async () => {
+    say(`connection: ${pc.connectionState}`);
+    if (pc.connectionState !== 'connected') return;
+    try {
+      const stats = await pc.getStats();
+      let pair: RTCStats | undefined;
+      stats.forEach((r) => {
+        const x = r as RTCStats & { type: string; state?: string; nominated?: boolean; selected?: boolean };
+        if (x.type === 'candidate-pair' && (x.nominated || x.selected) && x.state === 'succeeded') pair = x;
+      });
+      const p = pair as unknown as { localCandidateId: string; remoteCandidateId: string } | undefined;
+      if (p) {
+        const kind = (cid: string) => (stats.get(cid) as { candidateType?: string } | undefined)?.candidateType ?? '?';
+        say(`path: this device ${kind(p.localCandidateId)}, the other ${kind(p.remoteCandidateId)}`);
+      }
+    } catch {
+      /* the path is a nicety to report */
+    }
+  });
+  pc.addEventListener('icecandidateerror', (e) => {
+    const x = e as RTCPeerConnectionIceErrorEvent;
+    say(`address lookup problem (${x.url || 'a server'}): ${x.errorText || x.errorCode}`);
   });
 }
 
@@ -162,6 +240,7 @@ async function newPeer(id: string): Promise<Peer> {
   const pc = new RTCPeerConnection({ iceServers: await iceServers() });
   const peer: Peer = { id, pc, ch: null, person: null, name: '', color: '', reasm: new Reassembler(), tail: Promise.resolve(), seq: 0, incoming: null };
   peers.set(id, peer);
+  watchConnection(pc, id);
   return peer;
 }
 
@@ -177,18 +256,39 @@ function wire(peer: Peer, ch: RTCDataChannel, role: 'host' | 'guest') {
     const inv = p2p.invites.find((i) => i.id === peer.id);
     if (inv && inv.state === 'connecting') inv.state = 'connected';
   };
+  // Messages are handled in the order they arrived. A squeezed one takes a moment to open; anything that arrives
+  // meanwhile (including the pieces of a scan page, which belong to the message before them) waits its turn.
+  let pending = 0;
+  let queue: Promise<void> = Promise.resolve();
+  const inOrder = (work: () => void | Promise<void>) => {
+    if (pending === 0) {
+      let r: void | Promise<void>;
+      try {
+        r = work();
+      } catch {
+        return; // a message that does not parse is ignored
+      }
+      if (!r) return; // done at once
+      pending++;
+      queue = r.catch(() => undefined).then(() => void pending--);
+      return;
+    }
+    pending++;
+    queue = queue.then(work).catch(() => undefined).then(() => void pending--);
+  };
   ch.onmessage = (ev) => {
     if (typeof ev.data === 'string') {
       const whole = peer.reasm.push(ev.data);
       if (whole === null) return;
-      try {
-        handle(peer, JSON.parse(whole), role);
-      } catch {
-        /* a message that does not parse is ignored */
-      }
-    } else if (peer.incoming) {
-      peer.incoming.parts.push(ev.data as ArrayBuffer);
-      peer.incoming.got += (ev.data as ArrayBuffer).byteLength;
+      const squeezed = whole.charCodeAt(0) === 126; // "~"
+      inOrder(squeezed ? async () => handle(peer, JSON.parse(await decodeMessage(whole)), role) : () => handle(peer, JSON.parse(whole), role));
+    } else {
+      const chunk = ev.data as ArrayBuffer;
+      inOrder(() => {
+        if (!peer.incoming) return;
+        peer.incoming.parts.push(chunk);
+        peer.incoming.got += chunk.byteLength;
+      });
     }
   };
   ch.onclose = () => closed(peer, role);
@@ -206,6 +306,7 @@ function closed(peer: Peer, role: 'host' | 'guest') {
     const inv = p2p.invites.find((i) => i.id === peer.id);
     if (inv) inv.state = 'closed';
     if (peer.person) {
+      if (cls) classLeft(cls, peer.person.id, classIo(peer), { name: peer.person.name, role: 'student' });
       announce();
       engine.log('info', 'share', `${peer.name || 'Someone'} left the session`);
     }
@@ -218,12 +319,13 @@ function closed(peer: Peer, role: 'host' | 'guest') {
     p2p.role = 'none';
     p2p.reply = '';
     p2p.waiting = '';
-    p2p.error = 'The host’s connection ended. Your copy of the cave is kept here; join again with new codes and the two copies merge.';
+    roomEvents.left(); // a class with no teacher any more: this device may look around on its own
+    p2p.error = 'The host’s connection ended. Your copy of the cave is kept here; open the host’s link again to join and the two copies merge.';
   }
 }
 
 function announce() {
-  const list: Person[] = [{ id: myPersonId, name: me.name.trim() || 'Host', color: me.color }, ...admitted().map((p) => p.person!)];
+  const list: Person[] = [{ id: myPersonId, name: me.name.trim() || 'Host', color: me.color, ...(cls ? { role: 'teacher' as const } : {}) }, ...admitted().map((p) => (cls ? { ...p.person!, role: 'student' as const } : p.person!))];
   live.people = list;
   toAll({ t: 'peers', people: list, owner: myPersonId });
 }
@@ -306,12 +408,13 @@ function hostHears(peer: Peer, m: Msg) {
     const admit = () => {
       peer.person = { id: String(m.id ?? peer.id).slice(0, 40), name: peer.name, color: peer.color };
       if (inv) inv.state = 'connected';
-      if (rejoin) {
+      if (rejoin && !cls) {
         engine.syncApply(JSON.stringify(rejoin)); // what that guest made while away
         changed();
       }
-      send(peer, { t: 'welcome', merge: !!rejoin, log: JSON.parse(engine.syncSnapshot()), caveName: cave.name, host: { id: myPersonId, name: me.name, color: me.color } });
+      send(peer, { t: 'welcome', merge: !!rejoin, log: JSON.parse(engine.syncSnapshot()), caveName: cave.name, host: { id: myPersonId, name: me.name, color: me.color }, ...(cls ? { class: classWelcome(cls, 'student') } : {}) });
       announce();
+      if (cls) classJoined(cls, { id: peer.person.id, name: peer.person.name, role: 'student' }, classIo(peer));
       sendView(peer);
       engine.log('info', 'share', `${peer.name} joined the session`);
     };
@@ -322,6 +425,13 @@ function hostHears(peer: Peer, m: Msg) {
     }
   } else if (!peer.person) {
     return; // nothing is taken from someone who has not been let in
+  } else if (cls && m.t === 'ops') {
+    send(peer, { t: 'denied', what: 'edit', message: 'Only the teacher can change the cave in a class.' }); // students only watch
+  } else if (cls && CLASS_MESSAGES.includes(m.t)) {
+    classMessage(cls, { id: peer.person.id, name: peer.person.name, role: 'student' }, m as { t: string }, classIo(peer));
+  } else if (cls && m.t === 'presence') {
+    // What a student does is for the teacher to see, not for the other students.
+    live.cursors[peer.person.id] = { id: peer.person.id, view: String(m.view ?? ''), ctx: String(m.ctx ?? ''), x: Number(m.x), y: Number(m.y), tool: String(m.tool ?? ''), seen: Date.now() };
   } else if (m.t === 'ops' && Array.isArray(m.ops)) {
     engine.syncApply(JSON.stringify(m.ops));
     changed();
@@ -335,7 +445,12 @@ function hostHears(peer: Peer, m: Msg) {
 
 function guestHears(peer: Peer, m: Msg) {
   if (m.t === 'welcome') {
-    if (m.merge) {
+    // A class the host is teaching: this device only watches (the class refuses a welcome it does not want).
+    if (roomEvents.welcome(m as unknown as Record<string, unknown>) === false) {
+      leaveP2p();
+      return;
+    }
+    if (m.merge && !(m as { class?: unknown }).class) {
       engine.syncApply(JSON.stringify(m.log ?? []));
     } else {
       const r = engine.syncLoad(JSON.stringify(m.log ?? []));
@@ -377,6 +492,8 @@ function guestHears(peer: Peer, m: Msg) {
     changed();
   } else if (m.t === 'presence' && m.id && m.id !== myPersonId) {
     live.cursors[m.id] = { id: m.id, view: String(m.view ?? ''), ctx: String(m.ctx ?? ''), x: Number(m.x), y: Number(m.y), tool: String(m.tool ?? ''), seen: Date.now() };
+  } else if (m.t === 'chat' || m.t === 'hands' || m.t === 'mirror' || m.t === 'ended' || m.t === 'denied' || m.t === 'log') {
+    roomEvents.message(m as unknown as Record<string, unknown>);
   } else if (m.t === 'view') {
     followHost(m);
   } else if (m.t === 'refused') {
@@ -474,8 +591,11 @@ function scanBeat() {
   }
   const now = Date.now();
   for (const [path, at] of wantedAt) if (now - at > 30_000) (wanted.delete(path), wantedAt.delete(path)); // asked and nothing came: ask again
-  for (const path of linked) {
+  // Pages are asked for a couple at a time, the one on show first, so a page someone is looking at does not wait behind a whole folder.
+  const order = [scans.selected, ...linked.filter((p) => p !== scans.selected)].filter((p) => p && linked.includes(p));
+  for (const path of order) {
     if (have(path) || wanted.has(path)) continue;
+    if (wanted.size >= 2) break;
     const from = p2p.role === 'host' ? admitted().find((q) => q.has?.has(path)) : guestPeer;
     if (!from) continue;
     wanted.add(path);
@@ -520,9 +640,61 @@ export function startHosting(): boolean {
   return true;
 }
 
+/** How a class's rules reach the people in this session. `from` is the guest a message came from, or null for the teacher's own page. */
+function classIo(from: Peer | null): RoomIo {
+  return {
+    members: () => [{ id: myPersonId, name: me.name.trim() || 'Teacher', role: 'teacher' }, ...admitted().map((p) => ({ id: p.person!.id, name: p.person!.name, role: 'student' }))],
+    send: (id, msg) => {
+      if (id === myPersonId) roomEvents.message(msg as Record<string, unknown>);
+      else {
+        const p = admitted().find((q) => q.person!.id === id);
+        if (p) send(p, msg);
+      }
+    },
+    all: (msg) => {
+      toAll(msg);
+      roomEvents.message(msg as Record<string, unknown>);
+    },
+    others: (msg) => {
+      toAll(msg, from ?? undefined);
+      if (from) roomEvents.message(msg as Record<string, unknown>);
+    },
+  };
+}
+
+/**
+ * Starts sharing the open cave as a class: this page is the teacher, and everyone let in is a student who only
+ * watches (their edits are refused here). Students join like any guest, with invite and reply codes, and are let in
+ * without asking. Returns false (and says why in `p2p.error`) when it cannot start.
+ */
+export function startClassHosting(name: string, options: { private?: boolean } = {}): boolean {
+  if (p2p.role !== 'none') {
+    p2p.error = 'Stop sharing first: a class starts a session of its own.';
+    return false;
+  }
+  if (!startHosting()) return false;
+  cls = newClass(name, undefined, options);
+  p2p.auto = true;
+  announce();
+  return roomEvents.welcome({ class: classWelcome(cls, 'teacher'), owner: true }) !== false;
+}
+
+/** Sends a class message: the teacher's page applies it (and passes it on); a student's goes to the teacher. */
+export function sendClass(msg: { t: string } & Record<string, unknown>): boolean {
+  if (p2p.role === 'host' && cls) {
+    classMessage(cls, { id: myPersonId, name: me.name.trim() || 'Teacher', role: 'teacher' }, msg, classIo(null));
+    return true;
+  }
+  if (p2p.role === 'guest' && guestPeer && live.status === 'live') {
+    send(guestPeer, msg);
+    return true;
+  }
+  return false;
+}
+
 /** Makes an invite: the text to send to one person. */
-export async function makeInvite(): Promise<void> {
-  if (p2p.role !== 'host' && !startHosting()) return;
+export async function makeInvite(): Promise<string | null> {
+  if (p2p.role !== 'host' && !startHosting()) return null;
   const id = rid();
   const peer = await newPeer(id);
   const ch = peer.pc.createDataChannel('cave', { ordered: true });
@@ -541,7 +713,77 @@ export async function makeInvite(): Promise<void> {
     p2p.invites = p2p.invites.filter((i) => i.id !== id);
     peers.delete(id);
     p2p.error = 'Could not make an invite code.';
+    return null;
   }
+  return id;
+}
+
+let stopSignal: (() => void) | null = null;
+
+/**
+ * The teacher's page starts letting students in through a class link: anyone who opens the link is given an invite of
+ * their own, through the mailbox, and their reply comes back the same way. Needs a class already started
+ * (`startClassHosting`). The link is stopped when sharing stops.
+ */
+export function openSessionLink(session: string, box: Mailbox) {
+  stopSignal?.();
+  stopSignal = hostLoop(box, session, {
+    offer: async () => {
+      const t0 = performance.now();
+      engine.log('info', 'connect', 'host: a hello arrived; making an offer');
+      const id = await makeInvite();
+      engine.log('info', 'connect', `host: offer ready after ${((performance.now() - t0) / 1000).toFixed(1)}s`);
+      const code = id ? p2p.invites.find((i) => i.id === id)?.code : '';
+      return id && code ? { id, code } : null;
+    },
+    reply: (id, code) => (engine.log('info', 'connect', 'host: the answer arrived; connecting'), takeReply(id, code)),
+    trouble: (message) => (p2p.error = message),
+  });
+}
+
+/** Another name for the same thing, kept for the classroom's own code. */
+export const openClassLink = openSessionLink;
+
+/**
+ * Makes one link for the session this page hosts (starting to host first when it is not): anyone who opens it
+ * is introduced to this page through the class mailbox, then connects directly. Whether they are let in at
+ * once or asked about first is the same `auto` choice as for codes; whether they edit or only watch is the
+ * session's (a class makes them watch). Returns the link, or null with the reason in `p2p.error`.
+ */
+export function startLinkSharing(): string | null {
+  const box = configuredMailbox();
+  if (!box) {
+    p2p.error = 'This copy of CaveCAD has no class mailbox, so it cannot make a link. Enter the mailbox below to make one.';
+    return null;
+  }
+  if (p2p.role !== 'host' && !startHosting()) return null;
+  const session = crypto.randomUUID().replace(/-/g, '').slice(0, 20);
+  openSessionLink(session, box);
+  const config = mailboxConfig();
+  p2p.link = liveLink(shareBase(), session, config?.source === 'local' ? config : undefined);
+  p2p.appLink = desktopLink(session, config?.source === 'local' ? config : undefined);
+  p2p.error = '';
+  return p2p.link;
+}
+
+/** A student's page joins the class a link named, through the mailbox. Gives back a sentence when it cannot. */
+export async function joinViaLink(session: string, box: Mailbox): Promise<string | null> {
+  const t0 = performance.now();
+  const took = () => `+${((performance.now() - t0) / 1000).toFixed(1)}s`;
+  engine.log('info', 'connect', `join: leaving a hello in the mailbox`);
+  p2p.waiting = 'Looking for the host…';
+  const problem = await joinLoop(box, session, {
+    answer: async (offer) => {
+      engine.log('info', 'connect', `join ${took()} the host's offer arrived; making an answer`);
+      p2p.waiting = 'Found the host. Setting up the connection…';
+      const problem = await joinWithCode(offer);
+      engine.log('info', 'connect', `join ${took()} answer ${problem ? 'failed' : 'ready, leaving it in the mailbox'}`);
+      return problem ? { error: problem } : { code: p2p.reply };
+    },
+  });
+  engine.log('info', 'connect', `join ${took()} ${problem ? `stopped: ${problem}` : 'answer left; waiting for the connection to open'}`);
+  if (!problem) p2p.waiting = 'Connecting to the host…';
+  return problem;
 }
 
 /** The host pastes a guest's reply code to finish connecting them. */
@@ -643,12 +885,16 @@ export async function joinWithCode(text: string): Promise<string | null> {
   }
   live.status = 'connecting';
   live.room = 'peer session';
-  p2p.waiting = 'Send the reply code below to the host. It connects by itself when they paste it.';
+  p2p.waiting = 'Connecting to the host…';
   return null;
 }
 
 /** Leaves the session (the cave stays open here as it is). */
 export function leaveP2p() {
+  stopSignal?.();
+  stopSignal = null;
+  p2p.link = '';
+  p2p.appLink = '';
   clearTimeout(viewTimer);
   stopTimer();
   for (const p of peers.values()) {
@@ -665,6 +911,9 @@ export function leaveP2p() {
   wantedAt.clear();
   relayTo.clear();
   guestPeer = null;
+  const hadClass = cls !== null || live.people.some((p) => p.role);
+  cls = null;
+  if (hadClass) roomEvents.left();
   if (p2p.role !== 'none') {
     live.status = 'off';
     live.people = [];

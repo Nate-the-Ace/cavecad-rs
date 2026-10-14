@@ -1,0 +1,737 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Object snap demo</title>
+<style>
+  :root { --bg:#14181d; --fg:#d7dde4; --dim:#7b8794; --panel:#1d232a; --line:#2c353f; --acc:#ffd400; --grn:#4fd17a; --cy:#4fc3f7; }
+  * { box-sizing: border-box; }
+  html, body { margin:0; height:100%; background:var(--bg); color:var(--fg); font:13px/1.4 -apple-system, system-ui, sans-serif; overflow:hidden; }
+  #wrap { position:fixed; inset:0 0 34px 0; }
+  canvas { display:block; width:100%; height:100%; cursor:none; }
+  #help { position:fixed; top:10px; left:10px; width:290px; background:rgba(29,35,42,.92); border:1px solid var(--line); border-radius:8px; padding:10px 12px; max-height:calc(100% - 60px); overflow:auto; }
+  #help h1 { font-size:13px; margin:0 0 6px; }
+  #help ul { margin:0; padding-left:16px; color:var(--dim); }
+  #help li { margin:3px 0; }
+  #help b { color:var(--fg); font-weight:600; }
+  #help kbd { background:#2a323b; border:1px solid #3a4550; border-radius:3px; padding:0 4px; font:11px ui-monospace, monospace; color:var(--fg); }
+  #help .x { float:right; cursor:pointer; color:var(--dim); }
+  #bar { position:fixed; left:0; right:0; bottom:0; height:34px; background:var(--panel); border-top:1px solid var(--line); display:flex; align-items:center; gap:8px; padding:0 10px; }
+  #bar button { background:#2a323b; color:var(--fg); border:1px solid #3a4550; border-radius:5px; padding:3px 10px; font:inherit; cursor:pointer; }
+  #bar button.on { background:#3b3a14; border-color:var(--acc); color:var(--acc); }
+  #bar .sp { flex:1; }
+  #bar .rd { color:var(--dim); font:12px ui-monospace, monospace; }
+  #hint { color:var(--acc); }
+  .pop { position:fixed; background:var(--panel); border:1px solid #3a4550; border-radius:8px; padding:8px; box-shadow:0 8px 24px rgba(0,0,0,.5); z-index:5; }
+  #pop { bottom:40px; left:90px; width:250px; display:none; }
+  #pop label { display:flex; align-items:center; gap:6px; padding:2px 0; }
+  #pop .grid { display:grid; grid-template-columns:1fr 1fr; gap:0 10px; }
+  #pop hr { border:0; border-top:1px solid var(--line); margin:6px 0; }
+  #pop select, #pop input[type=range] { width:100%; }
+  #menu { display:none; min-width:210px; padding:4px; }
+  #menu .it { display:flex; align-items:center; gap:8px; padding:3px 8px; border-radius:4px; cursor:pointer; }
+  #menu .it:hover { background:#2f3944; }
+  #menu .it canvas { width:20px; height:20px; cursor:default; }
+  #menu .sep { border-top:1px solid var(--line); margin:3px 0; }
+  #dist { position:fixed; display:none; z-index:6; background:var(--panel); border:1px solid var(--acc); border-radius:4px; padding:2px 4px; }
+  #dist input { width:90px; background:transparent; border:0; color:var(--fg); font:12px ui-monospace, monospace; outline:none; }
+</style>
+</head>
+<body>
+<div id="wrap"><canvas id="cv"></canvas></div>
+
+<div id="help">
+  <span class="x" onclick="this.parentNode.style.display='none'">hide</span>
+  <h1>Object snap demo (2D top view)</h1>
+  <ul>
+    <li>Click to draw a <b>wall</b>. <kbd>Enter</kbd> or double-click ends it. Drawn walls become snappable.</li>
+    <li><b>Shift+right-click</b> (or Ctrl+right-click, or long-press) opens the <b>one-pick override menu</b>. The next click uses only that snap. A miss does nothing.</li>
+    <li><kbd>F3</kbd> running snaps. <kbd>F10</kbd> tracking (polar + hover-acquire). <kbd>Tab</kbd> cycles candidates.</li>
+    <li><b>Extension</b>: turn it on (running or override), hover a line/arc/spline end ~0.3 s: a <b>+</b> appears and a dotted line runs on. Hover two ends to snap to where they cross.</li>
+    <li><b>Temporary Track Point</b>: menu, then click a point (snaps), then move along the guides. Chain more from the menu.</li>
+    <li><b>Parallel</b>: draw a first point, enable Parallel, hover a line ~0.3 s.</li>
+    <li>With a guide locked, <b>type a number</b> then <kbd>Enter</kbd> for an exact distance. <b>From</b>: pick base, type <code>dx,dy</code>.</li>
+    <li>Plain right-click or <kbd>Esc</kbd> cancels. <kbd>Backspace</kbd> removes the last point. Wheel zooms, <kbd>Space</kbd>+drag or middle-drag pans.</li>
+    <li>Real engine does this in Rust through the 3D camera; this page only tests the feel.</li>
+  </ul>
+</div>
+
+<div id="bar">
+  <button id="bSnap" title="F3">Snap</button>
+  <button id="bPop" title="Snap settings">&#9662;</button>
+  <button id="bTrack" title="F10">Track</button>
+  <button id="bMenu" title="Same as Shift+right-click">Override&hellip;</button>
+  <button id="bFit">Fit</button>
+  <button id="bHelp">Help</button>
+  <button id="bClear">Clear walls</button>
+  <span id="hint"></span>
+  <span class="sp"></span>
+  <span class="rd" id="rd"></span>
+</div>
+
+<div id="pop" class="pop"></div>
+<div id="menu" class="pop"></div>
+<div id="dist"><input id="distIn" autocomplete="off"></div>
+
+<script>
+'use strict';
+const TAU = Math.PI * 2;
+const cv = document.getElementById('cv'), ctx = cv.getContext('2d');
+const $ = (id) => document.getElementById(id);
+
+/* ---------------- modes ---------------- */
+const MODES = [
+  { id:'end',  label:'Endpoint',               tier:0, def:true  },
+  { id:'mid',  label:'Midpoint',               tier:0, def:true  },
+  { id:'cen',  label:'Center',                 tier:0, def:true  },
+  { id:'gce',  label:'Geometric Center',       tier:0, def:false },
+  { id:'qua',  label:'Quadrant',               tier:0, def:true  },
+  { id:'ins',  label:'Insertion',              tier:0, def:true  },
+  { id:'nod',  label:'Node',                   tier:0, def:false },
+  { id:'sta',  label:'Station',                tier:0, def:true  },
+  { id:'int',  label:'Intersection',           tier:1, def:true  },
+  { id:'app',  label:'Apparent Intersection',  tier:1, def:false },
+  { id:'eint', label:'Extended Intersection',  tier:1, def:false, overrideOnly:true },
+  { id:'ext',  label:'Extension',              tier:1, def:false },
+  { id:'per',  label:'Perpendicular',          tier:1, def:false },
+  { id:'tan',  label:'Tangent',                tier:1, def:false },
+  { id:'par',  label:'Parallel',               tier:1, def:false },
+  { id:'nea',  label:'Nearest',                tier:2, def:false },
+];
+const MODE = Object.fromEntries(MODES.map((m, i) => [m.id, { ...m, order:i }]));
+const MENU = [
+  ['from','From'], ['tt','Temporary Track Point'], ['m2p','Mid Between 2 Points'], '-',
+  'end','mid','cen','gce','qua','ins','nod','sta', '-',
+  'int','app','eint','ext','per','tan','par','nea', '-',
+  ['none','None (one free pick)'], ['settings','Snap Settings...'],
+];
+const LABEL = { from:'From', tt:'Temporary Track Point', m2p:'Mid Between 2 Points', none:'None' };
+for (const m of MODES) LABEL[m.id] = m.label;
+
+/* ---------------- settings ---------------- */
+const S = { snapOn:true, trackOn:true, run:{}, marker:true, tooltip:true, magnet:true, aperture:10, polar:45 };
+for (const m of MODES) S.run[m.id] = m.def && !m.overrideOnly;
+try { const o = JSON.parse(localStorage.getItem('osnap-demo') || 'null'); if (o) { Object.assign(S, o); S.run = { ...Object.fromEntries(MODES.map(m => [m.id, false])), ...o.run }; } } catch (e) {}
+function save() { try { localStorage.setItem('osnap-demo', JSON.stringify(S)); } catch (e) {} }
+
+/* ---------------- vector helpers ---------------- */
+const sub = (a, b) => [a[0]-b[0], a[1]-b[1]], add = (a, b) => [a[0]+b[0], a[1]+b[1]], mul = (a, k) => [a[0]*k, a[1]*k];
+const dot = (a, b) => a[0]*b[0]+a[1]*b[1], cross = (a, b) => a[0]*b[1]-a[1]*b[0], len = (a) => Math.hypot(a[0], a[1]);
+const unit = (a) => { const l = len(a) || 1; return [a[0]/l, a[1]/l]; };
+const nrm = (a) => ((a % TAU) + TAU) % TAU;
+const angOf = (p) => Math.atan2(p[1], p[0]);
+
+/* ---------------- geometry ---------------- */
+// curve: {k:'seg',a,b} | {k:'arc',c,r,a0,sweep}  (arc is counter-clockwise from a0, sweep in (0, 2pi])
+function arcFromBulge(p, q, b) {
+  const th = 4 * Math.atan(b), ch = sub(q, p), d = len(ch), mid = mul(add(p, q), .5);
+  const left = [-ch[1] / d, ch[0] / d], off = (d / 2) / Math.tan(th / 2), c = add(mid, mul(left, off));
+  let a0 = angOf(sub(p, c)), sweep = th;
+  if (sweep < 0) { a0 += sweep; sweep = -sweep; }
+  return { k:'arc', c, r: len(sub(p, c)), a0: nrm(a0), sweep };
+}
+const inArc = (A, ang) => nrm(ang - A.a0) <= A.sweep + 1e-9;
+const arcPt = (A, ang) => [A.c[0] + A.r * Math.cos(ang), A.c[1] + A.r * Math.sin(ang)];
+
+function lineLine(a, b, c, d, ext) {
+  const r = sub(b, a), s = sub(d, c), den = cross(r, s);
+  if (Math.abs(den) < 1e-12) return [];
+  const t = cross(sub(c, a), s) / den, u = cross(sub(c, a), r) / den, e = 1e-9;
+  if (!ext && (t < -e || t > 1 + e || u < -e || u > 1 + e)) return [];
+  return [add(a, mul(r, t))];
+}
+function lineCircle(a, b, c, r, ext) {
+  const d = sub(b, a), f = sub(a, c), A = dot(d, d), B = 2 * dot(f, d), C = dot(f, f) - r * r, disc = B * B - 4 * A * C;
+  if (disc < 0 || A === 0) return [];
+  const sq = Math.sqrt(disc), ts = [(-B - sq) / (2 * A), (-B + sq) / (2 * A)], e = 1e-9;
+  return ts.filter(t => ext || (t >= -e && t <= 1 + e)).map(t => add(a, mul(d, t)));
+}
+function circleCircle(c0, r0, c1, r1) {
+  const dv = sub(c1, c0), d = len(dv);
+  if (d < 1e-12 || d > r0 + r1 || d < Math.abs(r0 - r1)) return [];
+  const a = (r0*r0 - r1*r1 + d*d) / (2*d), h = Math.sqrt(Math.max(0, r0*r0 - a*a)), p = add(c0, mul(dv, a / d)), n = [-dv[1] / d, dv[0] / d];
+  return [add(p, mul(n, h)), add(p, mul(n, -h))];
+}
+function intersect(A, B, ext) {
+  let pts;
+  if (A.k === 'seg' && B.k === 'seg') return lineLine(A.a, A.b, B.a, B.b, ext);
+  if (A.k === 'seg' && B.k === 'arc') { pts = lineCircle(A.a, A.b, B.c, B.r, ext); return ext ? pts : pts.filter(p => inArc(B, angOf(sub(p, B.c)))); }
+  if (A.k === 'arc' && B.k === 'seg') return intersect(B, A, ext);
+  pts = circleCircle(A.c, A.r, B.c, B.r);
+  return ext ? pts : pts.filter(p => inArc(A, angOf(sub(p, A.c))) && inArc(B, angOf(sub(p, B.c))));
+}
+function nearestOn(cv_, p) {
+  if (cv_.k === 'seg') {
+    const d = sub(cv_.b, cv_.a), l2 = dot(d, d), t = l2 ? Math.max(0, Math.min(1, dot(sub(p, cv_.a), d) / l2)) : 0;
+    return add(cv_.a, mul(d, t));
+  }
+  const ang = angOf(sub(p, cv_.c));
+  if (inArc(cv_, ang)) return arcPt(cv_, ang);
+  const e0 = arcPt(cv_, cv_.a0), e1 = arcPt(cv_, cv_.a0 + cv_.sweep);
+  return len(sub(p, e0)) < len(sub(p, e1)) ? e0 : e1;
+}
+// free-end extension guide for a curve end: seg end `at` heading `dir`, or the rest of the circle
+function extGuideSeg(at, dir) { return { k:'line', p:at, d:unit(dir), one:true, kind:'ext' }; }
+function extGuideArc(A, atEnd) {
+  const sw = Math.min(Math.PI, TAU - A.sweep);
+  return { k:'arc', c:A.c, r:A.r, a0: atEnd ? nrm(A.a0 + A.sweep) : nrm(A.a0 - sw), sweep: sw, kind:'ext' };
+}
+
+/* ---------------- scene ---------------- */
+let nextId = 1;
+const objs = [];       // {id,type,name,pts:[{x,y,b}], closed, curves:[], ...}
+function addObj(o) { o.id = nextId++; objs.push(o); buildCurves(o); return o; }
+function buildCurves(o) {
+  o.curves = [];
+  if (o.type === 'poly' || o.type === 'leg') {
+    const n = o.pts.length, last = o.closed ? n : n - 1;
+    for (let i = 0; i < last; i++) {
+      const p = o.pts[i], q = o.pts[(i + 1) % n], pa = [p.x, p.y], qa = [q.x, q.y];
+      const c = p.b ? { ...arcFromBulge(pa, qa, p.b), p:pa, q:qa } : { k:'seg', a:pa, b:qa };
+      c.obj = o; c.i = i; o.curves.push(c);
+    }
+  } else if (o.type === 'circle') {
+    o.curves.push({ k:'arc', c:o.c, r:o.r, a0:0, sweep:TAU, obj:o, circle:true });
+  } else if (o.type === 'arc') {
+    o.curves.push({ ...arcFromBulge(o.p, o.q, o.b), obj:o, p:o.p, q:o.q });
+  } else if (o.type === 'spline') {
+    const P = o.fit, pts = [];
+    for (let i = 0; i < P.length - 1; i++) {
+      const p0 = P[Math.max(0, i - 1)], p1 = P[i], p2 = P[i + 1], p3 = P[Math.min(P.length - 1, i + 2)];
+      for (let s = 0; s < 16; s++) {
+        const t = s / 16, t2 = t * t, t3 = t2 * t;
+        pts.push([0, 1].map(k => .5 * ((2 * p1[k]) + (-p0[k] + p2[k]) * t + (2 * p0[k] - 5 * p1[k] + 4 * p2[k] - p3[k]) * t2 + (-p0[k] + 3 * p1[k] - 3 * p2[k] + p3[k]) * t3)));
+      }
+    }
+    pts.push(P[P.length - 1]); o.flat = pts;
+    for (let i = 0; i < pts.length - 1; i++) o.curves.push({ k:'seg', a:pts[i], b:pts[i + 1], obj:o, i, spl:true });
+    let L = 0; const cum = [0];
+    for (let i = 0; i < pts.length - 1; i++) { L += len(sub(pts[i + 1], pts[i])); cum.push(L); }
+    let j = 0; while (cum[j + 1] < L / 2) j++;
+    const f = (L / 2 - cum[j]) / (cum[j + 1] - cum[j]); o.midPt = add(pts[j], mul(sub(pts[j + 1], pts[j]), f));
+  }
+}
+function P(o) { return o.pts.map(p => [p.x, p.y]); }
+function polyObj(name, arr, extra) { return addObj({ type:'poly', name, pts:arr.map(a => ({ x:a[0], y:a[1], b:a[2] || 0 })), ...extra }); }
+
+// walls and survey, in metres
+polyObj('Left wall', [[-13,3],[-8,2.2],[-3,2.8,-0.35],[2,2.4],[8,3.4],[13,3]]);
+polyObj('Right wall', [[-13,-3],[-7,-2.5],[-1,-3.4],[5,-2.2,0.4],[9,-2.8],[13,-2.2]]);
+polyObj('Crack', [[-6,-9],[6,9]]);
+polyObj('Room', [[-16,6],[-10,6],[-10,11],[-16,11]], { closed:true });
+addObj({ type:'circle', name:'Shaft', c:[14,-8], r:3 });
+addObj({ type:'arc', name:'Dome', p:[-4,-7], q:[3,-12], b:0.55 });
+addObj({ type:'spline', name:'Flowstone edge', fit:[[-14,-10],[-10,-7],[-8,-11],[-2,-10],[2,-6],[8,-8]] });
+const stationPts = [[-12,0.3],[-6,-0.4],[0,0.5],[6,-0.3],[12,0.2]];
+addObj({ type:'leg', name:'Survey', pts:stationPts.map(p => ({ x:p[0], y:p[1], b:0 })) });
+stationPts.forEach((p, i) => addObj({ type:'station', name:'Station S' + i, p }));
+[[-4,9],[3,10],[9,8.5]].forEach((p, i) => addObj({ type:'symbol', name:'Symbol ' + (i + 1), p }));
+[[16,3],[16,5.5]].forEach((p, i) => addObj({ type:'node', name:'Point ' + (i + 1), p }));
+let walls = 0;
+
+/* ---------------- view ---------------- */
+const V = { k:24, ox:0, oy:0 };
+function resize() {
+  const r = cv.getBoundingClientRect(), d = devicePixelRatio || 1;
+  cv.width = r.width * d; cv.height = r.height * d; ctx.setTransform(d, 0, 0, d, 0, 0); V.w = r.width; V.h = r.height; draw();
+}
+function fit() { V.k = Math.min(V.w / 44, V.h / 32); V.ox = V.w / 2 + 5 * V.k; V.oy = V.h / 2; }
+const toS = (p) => [V.ox + p[0] * V.k, V.oy - p[1] * V.k];
+const toW = (x, y) => [(x - V.ox) / V.k, (V.oy - y) / V.k];
+
+/* ---------------- pick session ---------------- */
+const st = {
+  pts: [],            // wall in progress
+  override: null,     // one-pick override
+  tt: [],             // temporary track points
+  ttPending: false,
+  m2p: null, from: null,
+  acq: [],            // acquired points [{p, g?}]
+  parDir: null,
+  mouse: [0, 0], res: null, tab: 0, tabAnchor: null,
+  hoverKey: null, hoverT: null, flash: 0, spaceDown: false, pan: null, field: null, cursorLock: null,
+};
+const lastPt = () => st.pts.length ? st.pts[st.pts.length - 1] : null;
+function resetPick() { st.override = null; st.tt = []; st.ttPending = false; st.m2p = null; st.from = null; st.acq = []; st.parDir = null; st.tab = 0; hideField(); }
+
+/* ---------------- snap engine ---------------- */
+const META = ['tt', 'm2p', 'from'];
+const realOv = () => st.override && !META.includes(st.override) && st.override !== 'none' ? st.override : null;
+function candidates(cw) {
+  const ov = st.override, cs = [], last = lastPt();
+  const running = S.snapOn ? new Set(MODES.filter(m => S.run[m.id]).map(m => m.id)) : new Set();
+  const active = realOv() ? new Set([ov]) : (ov === 'none' ? new Set() : running);
+  const on = (id) => active.has(id);
+  const extOn = on('ext'), parOn = on('par');
+  const add_ = (mode, p, extra) => cs.push({ mode, p, tier:MODE[mode].tier, ...extra });
+  const curves = objs.flatMap(o => o.curves);
+
+  for (const o of objs) {
+    if (o.type === 'station' && on('sta')) add_('sta', o.p, { src:o });
+    if (o.type === 'symbol' && on('ins')) add_('ins', o.p, { src:o });
+    if (o.type === 'node' && on('nod')) add_('nod', o.p, { src:o });
+    if (o.type === 'poly' || o.type === 'leg') {
+      const pts = P(o), n = pts.length;
+      if (on('end') || extOn) pts.forEach((p, i) => {
+        const free = !o.closed && (i === 0 || i === n - 1);
+        let g = null;
+        if (free) {
+          const c = i === 0 ? o.curves[0] : o.curves[o.curves.length - 1];
+          g = c.k === 'seg' ? extGuideSeg(p, i === 0 ? sub(c.a, c.b) : sub(c.b, c.a)) : extGuideArc(c, i !== 0 && true);
+          if (c.k === 'arc') g = extGuideArc(c, (nrm(angOf(sub(p, c.c)) - c.a0) > c.sweep / 2));
+        }
+        if (on('end') || (extOn && free)) add_('end', p, { src:o, g, endOnly: !on('end') });
+      });
+      if (on('mid')) o.curves.forEach(c => {
+        const m = c.k === 'seg' ? mul(add(c.a, c.b), .5) : arcPt(c, c.a0 + c.sweep / 2);
+        add_('mid', m, { src:o });
+      });
+      if (on('cen')) o.curves.forEach(c => { if (c.k === 'arc') add_('cen', c.c, { src:o, via:[c] }); });
+      if (on('qua')) o.curves.forEach(c => { if (c.k === 'arc') for (let q = 0; q < 4; q++) if (inArc(c, q * Math.PI / 2)) add_('qua', arcPt(c, q * Math.PI / 2), { src:o }); });
+      if (on('gce') && o.closed) {
+        let A = 0, cx = 0, cy = 0;
+        for (let i = 0; i < n; i++) { const p = pts[i], q = pts[(i + 1) % n], w = cross(p, q); A += w; cx += (p[0] + q[0]) * w; cy += (p[1] + q[1]) * w; }
+        A /= 2; add_('gce', [cx / (6 * A), cy / (6 * A)], { src:o, via:o.curves });
+      }
+    }
+    if (o.type === 'circle') {
+      if (on('cen')) add_('cen', o.c, { src:o, via:o.curves });
+      if (on('qua')) for (let q = 0; q < 4; q++) add_('qua', arcPt(o.curves[0], q * Math.PI / 2), { src:o });
+    }
+    if (o.type === 'arc') {
+      const c = o.curves[0];
+      const ends = [o.p, o.q];
+      ends.forEach((p, i) => {
+        const g = extGuideArc(c, nrm(angOf(sub(p, c.c)) - c.a0) > c.sweep / 2);
+        if (on('end') || extOn) add_('end', p, { src:o, g, endOnly: !on('end') });
+      });
+      if (on('mid')) add_('mid', arcPt(c, c.a0 + c.sweep / 2), { src:o });
+      if (on('cen')) add_('cen', c.c, { src:o, via:[c] });
+      if (on('qua')) for (let q = 0; q < 4; q++) if (inArc(c, q * Math.PI / 2)) add_('qua', arcPt(c, q * Math.PI / 2), { src:o });
+    }
+    if (o.type === 'spline') {
+      const f = o.flat, n = f.length;
+      if (on('end') || extOn) [0, 1].forEach(i => {
+        const p = i ? f[n - 1] : f[0], dir = i ? sub(f[n - 1], f[n - 2]) : sub(f[0], f[1]);
+        if (on('end') || extOn) add_('end', p, { src:o, g:extGuideSeg(p, dir), endOnly: !on('end') });
+      });
+      if (on('mid')) add_('mid', o.midPt, { src:o });
+    }
+  }
+  {
+    for (const id of ['int', 'app', 'eint']) {
+      if (!on(id)) continue;
+      const e = id === 'eint';
+      for (let i = 0; i < curves.length; i++) for (let j = i + 1; j < curves.length; j++) {
+        const a = curves[i], b = curves[j]; if (a.obj === b.obj && !e && Math.abs(i - j) < 2 && !a.circle) continue;
+        for (const p of intersect(a, b, e)) add_(id, p, { src:a.obj, src2:b.obj });
+      }
+    }
+  }
+  if (on('nea')) curves.forEach(c => add_('nea', nearestOn(c, cw), { src:c.obj }));
+  if (last && on('per')) curves.forEach(c => {
+    if (c.k === 'seg') { const d = sub(c.b, c.a), l2 = dot(d, d), t = dot(sub(last, c.a), d) / l2; if (t >= 0 && t <= 1) add_('per', add(c.a, mul(d, t)), { src:c.obj }); }
+    else { const dv = unit(sub(last, c.c)); for (const s of [1, -1]) { const a = angOf(mul(dv, s)); if (inArc(c, a)) add_('per', arcPt(c, a), { src:c.obj }); } }
+  });
+  if (last && on('tan')) curves.forEach(c => {
+    if (c.k !== 'arc') return;
+    const dv = sub(last, c.c), d = len(dv); if (d <= c.r + 1e-9) return;
+    const base = angOf(dv), da = Math.acos(c.r / d);
+    for (const s of [1, -1]) { const a = base + s * da; if (inArc(c, a)) add_('tan', arcPt(c, a), { src:c.obj }); }
+  });
+  return { cs, active, extOn, parOn };
+}
+
+function buildGuides(active, extOn, parOn, acqEnds) {
+  const gs = [], last = lastPt(), ang = (S.polar) * Math.PI / 180;
+  const lineSet = (p, kind) => { for (let a = 0; a < Math.PI - 1e-9; a += ang) gs.push({ k:'line', p, d:[Math.cos(a), Math.sin(a)], one:false, kind }); };
+  const free = !realOv() && st.override !== 'none';
+  for (const t of st.tt) lineSet(t, 'track');
+  if (free && S.trackOn) {
+    for (const a of st.acq) lineSet(a.pt, 'track');
+    if (last) lineSet(last, 'polar');
+  }
+  if (extOn) for (const a of st.acq) if (a.g) gs.push(a.g);
+  if (parOn && last && st.parDir) gs.push({ k:'line', p:last, d:st.parDir, one:false, kind:'par' });
+  return gs;
+}
+const guideCurve = (g) => g.k === 'arc' ? { k:'arc', c:g.c, r:g.r, a0:g.a0, sweep:g.sweep } :
+  { k:'seg', a: g.one ? g.p : add(g.p, mul(g.d, -1e5)), b: add(g.p, mul(g.d, 1e5)) };
+
+function compute(mx, my) {
+  const cw = toW(mx, my), ap = S.aperture;
+  const { cs, active, extOn, parOn } = candidates(cw);
+  const ov = st.override;
+  // Center and Geometric Center fire when the cursor is ON the object (as in AutoCAD), or near the point itself
+  const dist = (c) => { let d = len(sub(toS(c.p), [mx, my])); if (c.via) for (const v of c.via) d = Math.min(d, len(sub(toS(nearestOn(v, cw)), [mx, my]))); return d; };
+  let list = cs.filter(c => !(c.endOnly && !ov)).map(c => ({ ...c, d: dist(c) })).filter(c => c.d <= ap);
+  // guides
+  const guides = buildGuides(active, extOn, parOn);
+  const gcands = [];
+  const curves = objs.flatMap(o => o.curves);
+  guides.forEach((g, gi) => {
+    let p, t, dir;
+    if (g.k === 'line') { t = dot(sub(cw, g.p), g.d); if (g.one && t < 0) return; p = add(g.p, mul(g.d, t)); dir = t < 0 ? mul(g.d, -1) : g.d; }
+    else { const a = angOf(sub(cw, g.c)); const A = { k:'arc', c:g.c, r:g.r, a0:g.a0, sweep:g.sweep }; if (!inArc(A, a)) return; p = arcPt(A, a); }
+    const d = len(sub(toS(p), [mx, my]));
+    if (d <= ap * 1.4) gcands.push({ mode:'guide', gk:g.kind, p, tier:1.5, d, g, lock: g.k === 'line' ? { o:g.p, dir, t:Math.abs(t) } : null });
+    // guide x object
+    if (g.kind !== 'par' || true) for (const c of curves) for (const q of intersect(guideCurve(g), c, false)) {
+      const dd = len(sub(toS(q), [mx, my])); if (dd <= ap) gcands.push({ mode:'gint', p:q, tier:1, d:dd, g, src:c.obj, label: g.kind === 'ext' ? 'Extension x object' : 'Intersection' });
+    }
+  });
+  // guide x guide
+  for (let i = 0; i < guides.length; i++) for (let j = i + 1; j < guides.length; j++) {
+    const a = guides[i], b = guides[j]; if (a.k === 'line' && b.k === 'line' && a.p === b.p) continue;
+    for (const q of intersect(guideCurve(a), guideCurve(b), false)) {
+      const dd = len(sub(toS(q), [mx, my]));
+      if (dd <= ap * 1.4) gcands.push({ mode:'ggint', p:q, tier:0.5, d:dd * .6, g:a, g2:b, label: (a.kind === 'ext' || b.kind === 'ext') ? 'Extended Intersection' : 'Intersection' });
+    }
+  }
+  const gOk = st.override === 'none' ? false : !realOv() || ov === 'ext' || ov === 'par';
+  if (gOk) list = list.concat(gcands.filter(c => !(c.g && c.g.kind === 'ext') || extOn).filter(c => !(c.g && c.g.kind === 'par') || parOn));
+  // dedupe near-identical
+  const seen = new Set(), out = [];
+  const rank = (m) => ['sta', 'ins', 'nod'].includes(m) ? -1 : MODE[m] ? MODE[m].order : 99;
+  list.sort((a, b) => a.tier - b.tier || Math.round(a.d / 1.5) - Math.round(b.d / 1.5) || rank(a.mode) - rank(b.mode) || a.d - b.d);
+  for (const c of list) { const k = c.mode + Math.round(c.p[0] * 1e4) + ',' + Math.round(c.p[1] * 1e4); if (!seen.has(k)) { seen.add(k); out.push(c); } }
+  const idx = out.length ? st.tab % out.length : 0;
+  return { cw, list:out, best: out[idx] || null, guides, ov, active };
+}
+
+/* ---------------- labels ---------------- */
+function degs(v) { return (Math.atan2(v[1], v[0]) * 180 / Math.PI + 360) % 360; }
+function candText(c, res) {
+  if (c.mode === 'guide') {
+    const nm = { track:'Track', polar:'Polar', ext:'Extension', par:'Parallel' }[c.gk];
+    return c.lock ? nm + ': ' + c.lock.t.toFixed(2) + ' < ' + Math.round(degs(c.lock.dir)) + '°' : nm;
+  }
+  if (c.mode === 'gint' || c.mode === 'ggint') return c.label;
+  return MODE[c.mode].label + (c.src && c.src.name ? '  ·  ' + c.src.name : '');
+}
+
+/* ---------------- drawing ---------------- */
+function glyph(g, mode, x, y, s, col) {
+  g.save(); g.strokeStyle = col || '#ffd400'; g.fillStyle = col || '#ffd400'; g.lineWidth = 2; g.lineJoin = 'miter';
+  const R = s;
+  g.beginPath();
+  switch (mode) {
+    case 'end': g.rect(x - R, y - R, 2 * R, 2 * R); break;
+    case 'mid': g.moveTo(x, y - R); g.lineTo(x + R, y + R * .8); g.lineTo(x - R, y + R * .8); g.closePath(); break;
+    case 'cen': g.arc(x, y, R, 0, TAU); break;
+    case 'gce': g.arc(x, y, R, 0, TAU); g.moveTo(x - R, y); g.lineTo(x + R, y); break;
+    case 'qua': g.moveTo(x, y - R); g.lineTo(x + R, y); g.lineTo(x, y + R); g.lineTo(x - R, y); g.closePath(); break;
+    case 'int': case 'gint': case 'ggint': case 'eint': g.moveTo(x - R, y - R); g.lineTo(x + R, y + R); g.moveTo(x + R, y - R); g.lineTo(x - R, y + R); if (mode === 'eint' || mode === 'ggint') { g.moveTo(x + R * 1.5 + 1.2, y); g.arc(x + R * 1.5, y, 1.2, 0, TAU); } break;
+    case 'app': g.moveTo(x - R, y - R); g.lineTo(x + R, y + R); g.moveTo(x + R, y - R); g.lineTo(x - R, y + R); g.rect(x - R, y - R, 2 * R, 2 * R); break;
+    case 'ext': for (const dx of [-R, 0, R]) { g.moveTo(x + dx + 1.6, y); g.arc(x + dx, y, 1.6, 0, TAU); } break;
+    case 'per': g.moveTo(x - R, y + R); g.lineTo(x + R, y + R); g.moveTo(x - R * .6, y + R); g.lineTo(x - R * .6, y - R); g.moveTo(x - R * .6, y + R * .1); g.lineTo(x + R * .1, y + R * .1); g.lineTo(x + R * .1, y + R); break;
+    case 'tan': g.arc(x, y, R * .8, 0, TAU); g.moveTo(x - R * 1.1, y - R * .8); g.lineTo(x + R * 1.1, y - R * .8); break;
+    case 'par': g.moveTo(x - R, y + R * .3); g.lineTo(x + R * .3, y - R); g.moveTo(x - R * .3, y + R); g.lineTo(x + R, y - R * .3); break;
+    case 'nea': g.moveTo(x - R, y - R); g.lineTo(x + R, y - R); g.lineTo(x - R, y + R); g.lineTo(x + R, y + R); g.closePath(); break;
+    case 'ins': g.rect(x - R, y - R * .2, R * 1.4, R * 1.2); g.rect(x - R * .4, y - R, R * 1.4, R * 1.2); break;
+    case 'nod': g.arc(x, y, R * .8, 0, TAU); g.moveTo(x - R, y - R); g.lineTo(x + R, y + R); g.moveTo(x + R, y - R); g.lineTo(x - R, y + R); break;
+    case 'sta': g.arc(x, y, R, 0, TAU); g.moveTo(x + 1.5, y); g.arc(x, y, 1.5, 0, TAU); break;
+    case 'guide': g.moveTo(x - R * .6, y - R * .6); g.lineTo(x + R * .6, y + R * .6); g.moveTo(x + R * .6, y - R * .6); g.lineTo(x - R * .6, y + R * .6); break;
+    default: g.rect(x - R, y - R, 2 * R, 2 * R);
+  }
+  g.stroke(); g.restore();
+}
+function strokeCurve(c) {
+  if (c.k === 'seg') { const a = toS(c.a), b = toS(c.b); ctx.moveTo(a[0], a[1]); ctx.lineTo(b[0], b[1]); }
+  else { const o = toS(c.c); ctx.moveTo(o[0] + c.r * V.k * Math.cos(-c.a0), o[1] + c.r * V.k * Math.sin(-c.a0)); ctx.arc(o[0], o[1], c.r * V.k, -c.a0, -(c.a0 + c.sweep), true); }
+}
+function drawGuide(g, strong) {
+  ctx.save(); ctx.beginPath();
+  ctx.strokeStyle = g.kind === 'ext' ? '#ffd400' : g.kind === 'par' ? '#ff8a65' : '#4fd17a';
+  ctx.globalAlpha = strong ? .95 : .4; ctx.lineWidth = 1; ctx.setLineDash(g.kind === 'ext' ? [2, 4] : [6, 4]);
+  if (g.k === 'line') {
+    const a = toS(g.one ? g.p : add(g.p, mul(g.d, -300))), b = toS(add(g.p, mul(g.d, 300))); ctx.moveTo(a[0], a[1]); ctx.lineTo(b[0], b[1]);
+  } else strokeCurve(g);
+  ctx.stroke(); ctx.restore();
+}
+function draw() {
+  const W = V.w, H = V.h; ctx.clearRect(0, 0, W, H); ctx.fillStyle = '#14181d'; ctx.fillRect(0, 0, W, H);
+  // grid
+  ctx.strokeStyle = '#1c232a'; ctx.lineWidth = 1; ctx.beginPath();
+  const g0 = toW(0, H), g1 = toW(W, 0);
+  for (let x = Math.ceil(g0[0]); x <= g1[0]; x++) { const s = toS([x, 0]); ctx.moveTo(s[0], 0); ctx.lineTo(s[0], H); }
+  for (let y = Math.ceil(g0[1]); y <= g1[1]; y++) { const s = toS([0, y]); ctx.moveTo(0, s[1]); ctx.lineTo(W, s[1]); }
+  ctx.stroke();
+  // objects
+  for (const o of objs) {
+    ctx.beginPath(); ctx.lineWidth = 1.6;
+    const col = o.drawn ? '#4fc3f7' : o.type === 'leg' ? '#7b8fa6' : o.type === 'spline' ? '#c792ea' : o.name === 'Crack' ? '#ef9a9a' : '#cfd8dc';
+    ctx.strokeStyle = col; ctx.fillStyle = col;
+    if (o.type === 'station') { const s = toS(o.p); ctx.arc(s[0], s[1], 4, 0, TAU); ctx.fill(); ctx.font = '11px sans-serif'; ctx.fillText(o.name.replace('Station ', ''), s[0] + 7, s[1] - 7); continue; }
+    if (o.type === 'symbol') { const s = toS(o.p); glyph(ctx, 'ins', s[0], s[1], 5, '#8bc34a'); continue; }
+    if (o.type === 'node') { const s = toS(o.p); ctx.arc(s[0], s[1], 2.5, 0, TAU); ctx.fill(); continue; }
+    if (o.type === 'leg') ctx.setLineDash([5, 3]);
+    o.curves.forEach(strokeCurve);
+    ctx.stroke(); ctx.setLineDash([]);
+  }
+  // acquired points
+  for (const a of st.acq) { const s = toS(a.pt); ctx.strokeStyle = '#ffd400'; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.moveTo(s[0] - 5, s[1]); ctx.lineTo(s[0] + 5, s[1]); ctx.moveTo(s[0], s[1] - 5); ctx.lineTo(s[0], s[1] + 5); ctx.stroke(); }
+  for (const t of st.tt) { const s = toS(t); ctx.strokeStyle = '#4fd17a'; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(s[0] - 6, s[1]); ctx.lineTo(s[0] + 6, s[1]); ctx.moveTo(s[0], s[1] - 6); ctx.lineTo(s[0], s[1] + 6); ctx.stroke(); }
+  if (st.from) { const s = toS(st.from); ctx.strokeStyle = '#4fd17a'; ctx.beginPath(); ctx.arc(s[0], s[1], 5, 0, TAU); ctx.stroke(); }
+  if (st.m2p) { const s = toS(st.m2p); ctx.strokeStyle = '#4fd17a'; ctx.beginPath(); ctx.arc(s[0], s[1], 5, 0, TAU); ctx.stroke(); }
+  const r = st.res, mx = st.mouse[0], my = st.mouse[1];
+  // wall in progress
+  if (st.pts.length) {
+    ctx.strokeStyle = '#4fc3f7'; ctx.lineWidth = 1.6; ctx.beginPath();
+    st.pts.forEach((p, i) => { const s = toS(p); i ? ctx.lineTo(s[0], s[1]) : ctx.moveTo(s[0], s[1]); });
+    const tip = r ? tipPoint(r) : toW(mx, my), s = toS(tip); ctx.lineTo(s[0], s[1]); ctx.stroke();
+  }
+  if (r) {
+    for (const g of r.guides) drawGuide(g, r.best && (r.best.g === g || r.best.g2 === g));
+    // other candidates as faint markers (helps see what Tab will cycle)
+    r.list.forEach(c => { if (c !== r.best && c.mode !== 'guide') { const s = toS(c.p); glyph(ctx, c.mode, s[0], s[1], 5, 'rgba(255,212,0,.35)'); } });
+    let cx = mx, cy = my;
+    if (r.best) {
+      const s = toS(r.best.p);
+      // the magnet only pulls the crosshair when the snap point is already inside the aperture; a snap found from the object (Center from the circle's edge) leaves the cursor where it is and just shows its glyph
+      if (S.magnet && Math.hypot(s[0] - mx, s[1] - my) <= S.aperture) { cx = s[0]; cy = s[1]; }
+      if (S.marker) glyph(ctx, r.best.mode === 'guide' ? 'guide' : r.best.mode, s[0], s[1], 7);
+      if (S.tooltip) {
+        const t = candText(r.best, r) + (r.list.length > 1 ? '   [Tab ' + ((st.tab % r.list.length) + 1) + '/' + r.list.length + ']' : '');
+        ctx.font = '12px sans-serif'; const w = ctx.measureText(t).width + 12;
+        const tx = Math.min(s[0] + 14, V.w - w - 6), ty = s[1] + 18;
+        ctx.fillStyle = '#fffbe0'; ctx.strokeStyle = '#555'; ctx.lineWidth = 1; ctx.beginPath(); ctx.rect(tx, ty, w, 20); ctx.fill(); ctx.stroke();
+        ctx.fillStyle = '#222'; ctx.fillText(t, tx + 6, ty + 14);
+      }
+    } else if (realOv()) {
+      ctx.font = '12px sans-serif'; ctx.fillStyle = '#ff8a65'; ctx.fillText('No ' + LABEL[r.ov] + ' here', mx + 16, my + 22);
+    }
+    // Mid Between 2 Points: ghost of where the pick will land, following the cursor
+    const gh = m2pGhost(r);
+    if (gh) {
+      const a = toS(st.m2p), q = toS(gh.q), m = toS(gh.mid);
+      ctx.save(); ctx.strokeStyle = 'rgba(79,209,122,.8)'; ctx.lineWidth = 1; ctx.setLineDash([4, 4]); ctx.beginPath(); ctx.moveTo(a[0], a[1]); ctx.lineTo(q[0], q[1]); ctx.stroke(); ctx.restore();
+      ctx.save(); ctx.globalAlpha = .6; glyph(ctx, 'mid', m[0], m[1], 7, '#4fd17a'); ctx.restore();
+      if (S.tooltip) {
+        const t = 'Mid Between 2 Points', w = ctx.measureText(t).width + 12; ctx.font = '12px sans-serif';
+        const tx = Math.min(m[0] + 14, V.w - w - 6), ty = m[1] + 18;
+        ctx.fillStyle = '#e8fff0'; ctx.strokeStyle = '#555'; ctx.beginPath(); ctx.rect(tx, ty, ctx.measureText(t).width + 12, 20); ctx.fill(); ctx.stroke();
+        ctx.fillStyle = '#222'; ctx.fillText(t, tx + 6, ty + 14);
+      }
+    }
+    // crosshair + aperture
+    ctx.strokeStyle = '#e0e6ec'; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(cx - 14, cy); ctx.lineTo(cx + 14, cy); ctx.moveTo(cx, cy - 14); ctx.lineTo(cx, cy + 14); ctx.stroke();
+    if (S.snapOn || st.override) { ctx.strokeStyle = 'rgba(224,230,236,.55)'; ctx.strokeRect(cx - S.aperture, cy - S.aperture, 2 * S.aperture, 2 * S.aperture); }
+  }
+  if (st.flash > Date.now()) { ctx.fillStyle = '#ff8a65'; ctx.font = '13px sans-serif'; ctx.fillText('No snap found: pick ignored', mx + 16, my - 14); }
+  $('bSnap').classList.toggle('on', S.snapOn); $('bTrack').classList.toggle('on', S.trackOn);
+  const hints = [];
+  if (st.override) hints.push('Override: ' + LABEL[st.override]);
+  if (st.ttPending) hints.push('click the point to track from');
+  if (st.m2p) hints.push('pick the 2nd point');
+  if (st.from) hints.push('type dx,dy then Enter');
+  if (st.tt.length) hints.push('tracking from ' + st.tt.length + ' point' + (st.tt.length > 1 ? 's' : ''));
+  if (st.acq.length) hints.push(st.acq.length + ' acquired');
+  if (st.parDir) hints.push('parallel acquired');
+  $('hint').textContent = hints.join(' · ');
+  const w = toW(mx, my); $('rd').textContent = w[0].toFixed(2) + ', ' + w[1].toFixed(2) + ' m';
+}
+function m2pGhost(r) {
+  if (st.override !== 'm2p' || !st.m2p) return null;
+  const q = r.best ? r.best.p : r.cw;
+  return { q, mid: mul(add(st.m2p, q), .5) };
+}
+function tipPoint(r) {
+  const gh = m2pGhost(r); if (gh) return gh.mid;
+  if (r.best) return r.best.p;
+  return r.cw;
+}
+
+/* ---------------- input ---------------- */
+function update(mx, my) {
+  st.mouse = [mx, my];
+  if (!st.tabAnchor || Math.hypot(st.tabAnchor[0] - mx, st.tabAnchor[1] - my) > 3) { st.tab = 0; st.tabAnchor = [mx, my]; }
+  st.res = compute(mx, my);
+  const b = st.res.best;
+  st.cursorLock = b && b.lock ? b.lock : null;
+  // hover acquisition
+  const tracking = realOv() ? (st.res.active.has('ext') || st.res.active.has('par')) : (st.override !== 'none' && S.trackOn);
+  const probe = st.res.list.find(c => c.tier === 0) || null;
+  let key = null;
+  if (tracking && probe) key = 'pt' + probe.p.map(v => v.toFixed(3)).join(',');
+  else if (st.res.active.has('par') && lastPt()) {
+    const c = objs.flatMap(o => o.curves).filter(c => c.k === 'seg').map(c => ({ c, d:len(sub(toS(nearestOn(c, st.res.cw)), [mx, my])) })).filter(x => x.d <= S.aperture).sort((a, b) => a.d - b.d)[0];
+    if (c) key = 'par' + c.c.obj.id + ':' + c.c.i;
+    st.parProbe = c ? c.c : null;
+  }
+  if (key !== st.hoverKey) {
+    clearTimeout(st.hoverT); st.hoverKey = key;
+    if (key) st.hoverT = setTimeout(() => acquire(probe, key), 350);
+  }
+  draw();
+}
+function acquire(probe, key) {
+  if (key.startsWith('par')) {
+    const c = st.parProbe; if (!c) return; const d = unit(sub(c.b, c.a));
+    st.parDir = st.parDir && Math.abs(cross(st.parDir, d)) < 1e-6 ? null : d;
+  } else {
+    const k = probe.p.map(v => v.toFixed(3)).join(',');
+    const i = st.acq.findIndex(a => a.pt.map(v => v.toFixed(3)).join(',') === k);
+    if (i >= 0) st.acq.splice(i, 1);
+    else st.acq.push({ pt:probe.p, g:probe.g || null });
+  }
+  update(st.mouse[0], st.mouse[1]);
+}
+function flash() { st.flash = Date.now() + 1100; draw(); setTimeout(draw, 1150); }
+
+function commitPoint(p) {
+  st.pts.push(p); resetPick(); update(st.mouse[0], st.mouse[1]);
+}
+function pick() {
+  const r = st.res; if (!r) return;
+  const ov = st.override;
+  if (ov === 'from') {
+    if (!st.from) { if (!r.best) return flash(); st.from = r.best.p; showField(true); update(st.mouse[0], st.mouse[1]); }
+    return;
+  }
+  let p = r.best ? r.best.p : null;
+  if (!p) { if (realOv()) return flash(); p = r.cw; }
+  if (ov === 'tt' && st.ttPending) { st.tt.push(p); st.ttPending = false; st.override = null; update(st.mouse[0], st.mouse[1]); return; }
+  if (ov === 'm2p') {
+    if (!st.m2p) { st.m2p = p; update(st.mouse[0], st.mouse[1]); return; }
+    return commitPoint(mul(add(st.m2p, p), .5));
+  }
+  commitPoint(p);
+}
+function finishWall() {
+  if (st.pts.length >= 2) {
+    const o = addObj({ type:'poly', name:'Wall ' + (++walls), pts:st.pts.map(p => ({ x:p[0], y:p[1], b:0 })), drawn:true });
+  }
+  st.pts = []; resetPick(); update(st.mouse[0], st.mouse[1]);
+}
+function cancel() {
+  if (st.override || st.tt.length || st.m2p || st.from || st.acq.length || st.parDir) { resetPick(); }
+  else if (st.pts.length) { st.pts = []; }
+  hideMenu(); update(st.mouse[0], st.mouse[1]);
+}
+
+cv.addEventListener('mousemove', (e) => {
+  const r = cv.getBoundingClientRect();
+  if (st.pan) { V.ox = st.pan.ox + (e.clientX - st.pan.x); V.oy = st.pan.oy + (e.clientY - st.pan.y); }
+  clearTimeout(st.lp);
+  update(e.clientX - r.left, e.clientY - r.top);
+});
+cv.addEventListener('mouseleave', () => { st.res = null; draw(); });
+cv.addEventListener('mousedown', (e) => {
+  hideMenu(); document.activeElement && document.activeElement.blur && document.activeElement.blur();
+  if (e.button === 1 || (e.button === 0 && st.spaceDown)) { st.pan = { x:e.clientX, y:e.clientY, ox:V.ox, oy:V.oy }; e.preventDefault(); return; }
+  if (e.button === 0) {
+    const r = cv.getBoundingClientRect(), x = e.clientX - r.left, y = e.clientY - r.top;
+    update(x, y);
+    st.lp = setTimeout(() => { st.lpFired = true; openMenu(e.clientX, e.clientY); }, 650); st.lpFired = false;
+  }
+});
+window.addEventListener('mouseup', (e) => {
+  if (st.pan) { st.pan = null; return; }
+  clearTimeout(st.lp);
+  if (e.target !== cv || e.button !== 0) return;
+  if (st.lpFired) { st.lpFired = false; return; }
+  if (e.detail >= 2 && st.pts.length >= 2) { st.pts.pop(); finishWall(); return; }
+  pick();
+});
+cv.addEventListener('contextmenu', (e) => {
+  e.preventDefault();
+  if (e.shiftKey || e.ctrlKey) openMenu(e.clientX, e.clientY);
+  else { st.pts.length >= 2 ? finishWall() : cancel(); }
+});
+cv.addEventListener('wheel', (e) => {
+  e.preventDefault(); const r = cv.getBoundingClientRect(), x = e.clientX - r.left, y = e.clientY - r.top, w = toW(x, y), f = Math.exp(-e.deltaY * 0.0015);
+  V.k = Math.max(4, Math.min(400, V.k * f)); V.ox = x - w[0] * V.k; V.oy = y + w[1] * V.k; update(x, y);
+}, { passive:false });
+window.addEventListener('keydown', (e) => {
+  if (e.target === $('distIn')) {
+    if (e.key === 'Enter') { commitField(); e.preventDefault(); } else if (e.key === 'Escape') { hideField(); }
+    return;
+  }
+  if (e.key === ' ') { st.spaceDown = true; e.preventDefault(); }
+  else if (e.key === 'F3') { S.snapOn = !S.snapOn; save(); update(...st.mouse); e.preventDefault(); }
+  else if (e.key === 'F10') { S.trackOn = !S.trackOn; save(); update(...st.mouse); e.preventDefault(); }
+  else if (e.key === 'Tab') { st.tab++; draw(); e.preventDefault(); }
+  else if (e.key === 'Escape') cancel();
+  else if (e.key === 'Enter') { if (st.pts.length >= 2) finishWall(); }
+  else if (e.key === 'Backspace') { if (st.pts.length) { st.pts.pop(); update(...st.mouse); } }
+  else if (/^[0-9.\-]$/.test(e.key) && (st.cursorLock || st.from) && !e.metaKey && !e.ctrlKey) { showField(!!st.from, e.key); e.preventDefault(); }
+});
+window.addEventListener('keyup', (e) => { if (e.key === ' ') st.spaceDown = false; });
+window.addEventListener('resize', resize);
+
+/* distance / offset field */
+function showField(isFrom, first) {
+  const f = $('dist'), i = $('distIn'); f.style.display = 'block';
+  f.style.left = (cv.getBoundingClientRect().left + st.mouse[0] + 18) + 'px'; f.style.top = (st.mouse[1] + 18) + 'px';
+  i.placeholder = isFrom ? 'dx,dy' : 'distance'; i.value = first || ''; i.dataset.from = isFrom ? '1' : '';
+  st.fieldLock = st.cursorLock; i.focus();
+}
+function hideField() { $('dist').style.display = 'none'; $('distIn').blur(); }
+function commitField() {
+  const i = $('distIn'), v = i.value.trim();
+  if (i.dataset.from) {
+    const m = v.split(/[ ,]+/).map(Number);
+    if (m.length === 2 && m.every(isFinite) && st.from) return (hideField(), commitPoint(add(st.from, m)));
+  } else {
+    const d = Number(v), L = st.fieldLock;
+    if (isFinite(d) && L) return (hideField(), commitPoint(add(L.o, mul(L.dir, d))));
+  }
+  hideField();
+}
+
+/* override menu */
+function mk(mode) { const c = document.createElement('canvas'); c.width = c.height = 40; const g = c.getContext('2d'); g.scale(2, 2); glyph(g, mode, 10, 10, 6); return c; }
+function openMenu(x, y) {
+  const m = $('menu'); m.innerHTML = '';
+  for (const it of MENU) {
+    if (it === '-') { const s = document.createElement('div'); s.className = 'sep'; m.appendChild(s); continue; }
+    const id = Array.isArray(it) ? it[0] : it, label = Array.isArray(it) ? it[1] : LABEL[it];
+    const row = document.createElement('div'); row.className = 'it';
+    row.appendChild(mk(MODE[id] ? id : id === 'tt' ? 'guide' : id === 'm2p' ? 'mid' : id === 'from' ? 'end' : 'nea'));
+    const sp = document.createElement('span'); sp.textContent = label; row.appendChild(sp);
+    row.addEventListener('mousedown', (ev) => ev.stopPropagation());
+    row.addEventListener('click', () => { hideMenu(); chooseOverride(id); });
+    m.appendChild(row);
+  }
+  m.style.display = 'block'; const w = m.offsetWidth, h = m.offsetHeight;
+  m.style.left = Math.min(x, innerWidth - w - 6) + 'px'; m.style.top = Math.min(y, innerHeight - h - 6) + 'px';
+}
+function hideMenu() { $('menu').style.display = 'none'; }
+function chooseOverride(id) {
+  if (id === 'settings') { $('pop').style.display = 'block'; return; }
+  if (id === 'tt') { st.override = 'tt'; st.ttPending = true; }
+  else st.override = id;
+  if (id === 'none') st.override = 'none';
+  update(...st.mouse);
+}
+window.addEventListener('mousedown', (e) => { if (!$('menu').contains(e.target) && e.target.id !== 'bMenu') hideMenu(); });
+
+/* settings popover */
+function buildPop() {
+  const p = $('pop'); p.innerHTML = '<b>Running snaps</b><div class="grid" id="pg"></div><hr>' +
+    '<label><input type="checkbox" id="sMarker"> Marker</label><label><input type="checkbox" id="sTip"> Tooltip</label><label><input type="checkbox" id="sMag"> Magnet</label>' +
+    '<label>Aperture <span id="apv"></span> px</label><input type="range" id="sAp" min="4" max="30">' +
+    '<label>Polar increment</label><select id="sPol"><option>15</option><option>30</option><option>45</option><option>90</option></select>';
+  for (const m of MODES.filter(m => !m.overrideOnly)) {
+    const l = document.createElement('label'); l.innerHTML = '<input type="checkbox"> ' + m.label.replace(' Intersection', ' Int.').replace('Apparent', 'Apparent');
+    const c = l.firstChild; c.checked = !!S.run[m.id]; c.onchange = () => { S.run[m.id] = c.checked; save(); update(...st.mouse); }; $('pg').appendChild(l);
+  }
+  const bind = (id, key, num) => { const el = $(id); if (el.type === 'checkbox') { el.checked = S[key]; el.onchange = () => { S[key] = el.checked; save(); draw(); }; } else { el.value = S[key]; el.oninput = () => { S[key] = Number(el.value); $('apv').textContent = S.aperture; save(); update(...st.mouse); }; } };
+  bind('sMarker', 'marker'); bind('sTip', 'tooltip'); bind('sMag', 'magnet'); bind('sAp', 'aperture'); bind('sPol', 'polar'); $('apv').textContent = S.aperture;
+}
+$('bSnap').onclick = () => { S.snapOn = !S.snapOn; save(); update(...st.mouse); };
+$('bTrack').onclick = () => { S.trackOn = !S.trackOn; save(); update(...st.mouse); };
+$('bPop').onclick = () => { const p = $('pop'); p.style.display = p.style.display === 'block' ? 'none' : 'block'; };
+$('bMenu').onclick = (e) => { const r = e.target.getBoundingClientRect(); openMenu(r.left, r.top - 420); };
+$('bHelp').onclick = () => { const h = $('help'); h.style.display = h.style.display === 'none' ? 'block' : 'none'; };
+$('bFit').onclick = () => { fit(); draw(); };
+$('bClear').onclick = () => { for (let i = objs.length - 1; i >= 0; i--) if (objs[i].drawn) objs.splice(i, 1); walls = 0; st.pts = []; resetPick(); draw(); };
+
+if (innerWidth < 900) $('help').style.display = 'none';
+buildPop(); resize(); fit(); draw();
+window.__osnap = { st, S, objs, compute, update, V, toS, toW };
+</script>
+</body>
+</html>

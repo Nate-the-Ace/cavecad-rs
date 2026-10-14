@@ -67,6 +67,18 @@ impl Linetype {
         }
     }
 
+    /// The pattern on paper, in millimetres: a positive length is a dash, a negative one a gap, zero a dot (drawn this long:
+    /// `DOT_MM`). Sized on paper so a printed map looks alike at 1:500 and 1:2000: the drawing's scale turns it into metres.
+    pub const fn paper_mm(self) -> &'static [f64] {
+        match self {
+            Linetype::Solid => &[],
+            Linetype::Dashed => &[2.0, -1.2],
+            Linetype::LongDash => &[4.8, -1.0],
+            Linetype::Sparse => &[1.2, -3.4],
+            Linetype::DashDot => &[2.8, -1.2, 0.0, -1.2],
+        }
+    }
+
     /// The pattern in metres: a positive length is a dash, a negative one a gap, zero a dot.
     pub fn pattern(self) -> &'static [f64] {
         match self {
@@ -78,6 +90,9 @@ impl Linetype {
         }
     }
 }
+
+/// How long a dot in a pattern is drawn, in millimetres on paper.
+pub const DOT_MM: f64 = 0.4;
 
 /// How one type looks.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize)]
@@ -92,6 +107,8 @@ pub struct Style {
     pub weight: f64,
     /// Line pattern.
     pub linetype: Linetype,
+    /// The same pattern on paper, in millimetres (`Linetype::paper_mm`), for the viewer.
+    pub pattern: &'static [f64],
     /// How opaque it is, 0 to 1.
     pub opacity: f64,
     /// Opacity when another passage lies over it (it is also drawn dashed then).
@@ -117,6 +134,7 @@ const fn s(
         ink,
         weight,
         linetype,
+        pattern: linetype.paper_mm(),
         opacity,
         under_opacity,
         layer,
@@ -261,6 +279,17 @@ pub const PALETTE: &[Style] = &[
         0.4,
         "CAVE-FILL-BONES",
     ),
+    // A fill the caver authored in the pattern editor: which one is in the line's own style (`pat:Name`).
+    s(
+        "fill-custom",
+        "My fill",
+        Muted,
+        1.0,
+        Solid,
+        0.9,
+        0.4,
+        "CAVE-FILL-CUSTOM",
+    ),
     s(
         "underlying",
         "Underlying passage",
@@ -354,7 +383,7 @@ pub const PALETTE: &[Style] = &[
     s("text", "Text", Text, 1.4, Solid, 1.0, 0.4, "CAVE-TEXT"),
     s(
         "callout",
-        "Callout",
+        "Leader",
         Text,
         1.2,
         Solid,
@@ -529,10 +558,9 @@ pub const TOOL_GROUPS: &[(&str, &[&str])] = &[
             "rimstone",
             "slope",
             "sketch",
-            "text",
-            "callout",
         ],
     ),
+    ("Annotation", &["text", "callout"]),
     (
         "Passage lines",
         &["presumed", "narrow", "dripline", "glyphs"],

@@ -50,6 +50,7 @@
   type Line = EditableLine & { kind: string; closed: boolean; text: string; flip: boolean };
   const lines = $derived.by<Line[]>(() => {
     const out: Line[] = [];
+    if (!sketch.ready) return out; // placing a stroke asks the engine, which may not be loaded yet
     for (const s of sketch.paneStrokes(pane)) {
       const points = engine.sketchPlace(stations, s);
       if (points) out.push({ id: s.id, points, widths: s.widths, closed: s.closed, kind: s.kind, text: s.text, flip: s.flip });
@@ -168,7 +169,8 @@
 
   function draw() {
     const { w, h } = view.size;
-    if (!canvas || w === 0) return;
+    // Drawn lines ask the engine (which of them are flipped), so nothing is drawn before it is loaded.
+    if (!canvas || w === 0 || !sketch.ready) return;
     const dpr = window.devicePixelRatio || 1;
     canvas.width = Math.round(w * dpr);
     canvas.height = Math.round(h * dpr);

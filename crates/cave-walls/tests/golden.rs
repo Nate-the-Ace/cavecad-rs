@@ -25,7 +25,7 @@ fn check(file: &str) {
         stations: &stations,
         legs: &r.legs,
         readings: &ex.readings,
-        lruds: &ex.lruds,
+        lruds: &ex.last_arrival_lruds,
         start_lruds: &ex.start_lruds,
         splays: &ex.splays,
     });
@@ -98,4 +98,31 @@ fn plumbline_pit_walls_match_the_old_walls() {
 #[test]
 fn stairstep_walls_match_the_old_walls() {
     check("StairstepCave.json");
+}
+
+/// A loop closing on a junction arrives from the other side, facing the other way: the station's
+/// walls must keep the first arrival's bearing (the shot the station panel edits), not swap sides.
+#[test]
+fn a_junction_keeps_the_walls_of_its_first_arrival() {
+    let dir = format!(
+        "{}/../cave-survey/tests/golden/FingerprintCave.json",
+        env!("CARGO_MANIFEST_DIR")
+    );
+    let text = std::fs::read_to_string(dir).unwrap();
+    let doc = cave_fixture::from_shot_list(&text, ActorId(1)).unwrap();
+    let ex = extract(&doc);
+    let a6 = ex
+        .lruds
+        .iter()
+        .find(|(id, _)| {
+            doc.entity(**id)
+                .is_some_and(|e| e.text(Field::StationLabel) == "A6")
+        })
+        .map(|(_, l)| l)
+        .unwrap();
+    assert_eq!(
+        a6.azimuth,
+        Some(77.5),
+        "faces A5 to A6, not U4 to A6 (311.5)"
+    );
 }

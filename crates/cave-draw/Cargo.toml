@@ -8,6 +8,11 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+serde_json = { version = "1", features = ["float_roundtrip"] }
 cave-id = { path = "../cave-id" }
 cave-doc = { path = "../cave-doc" }
 cave-geom = { path = "../cave-geom" }
+cave-pattern = { path = "../cave-pattern" }
+
+[dev-dependencies]
+cave-symbols = { path = "../cave-symbols" }

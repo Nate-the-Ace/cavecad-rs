@@ -3,12 +3,18 @@
   import { Home, Maximize, Box, Square, Palette, Eye, Library, Lock, LockOpen } from '@lucide/svelte';
   import PanelUndo from './PanelUndo.svelte';
   import { shelf } from '../lib/shelf.svelte';
-  import { isSymbolKind, needsWords, symbolDef } from '../lib/symbols';
+  import { isSymbolKind, needsWords, symbolDef, withLabelSpot } from '../lib/symbols';
+  import { registerMirror } from '../lib/classroom-mirror';
+  import { drawing, liveStyle } from '../lib/line-style.svelte';
   import { cursorsFor, live as room, reportCursor } from '../lib/sync.svelte';
   import { engine, loadEngine, type Scene, type TypeStyle } from '../lib/engine';
-  import { CaveView, type Projection } from '../lib/viewport/cave-view';
+  import { CaveView, type CameraState, type Projection } from '../lib/viewport/cave-view';
   import { fitPlane, heightSurface } from '../lib/plane';
-  import { cave, changed, filter, haloFade, haloReach, option, setOption, setPick, setShowSections, setShown, wireFilter } from '../lib/cave.svelte';
+  import { markViewUsed, registerSelectAll } from '../lib/select-all';
+  import { copyGhost, copyOp, copyPress, endCopy, endPaste, pasteGhost, pasteOp, pastePlace, registerClipView } from '../lib/view-clip.svelte';
+  import { openNewText, openTextEdit } from '../lib/text-edit.svelte';
+  import { openLineMenu } from '../lib/line-menu.svelte';
+  import { cave, changed, filter, haloFade, haloReach, option, setOption, selectedIds, selectIds, toggleSelected, setPick, setShowSections, setShown, wireFilter, toolStyle } from '../lib/cave.svelte';
   import { tolerancePx } from '../lib/commands';
   import { ViewCube } from '../lib/viewport/view-cube';
   import { onTheme } from '../lib/theme';
@@ -139,10 +145,36 @@
     untrack(() => view?.setRemoteCursors(list));
   });
 
+  // A new drawing scale sizes the dashes and fills again.
+  $effect(() => {
+    void drawing.scale;
+    view?.refreshDrawing();
+  });
+
+  // A style being dragged in the ribbon shows at once.
+  $effect(() => {
+    void liveStyle.style;
+    void liveStyle.id;
+    view?.requestRender();
+  });
+
+  // The Copy command on the map: running, and its base point.
+  $effect(() => {
+    const on = copyOp.on && copyOp.view === 'map';
+    const base = copyOp.base ? ([copyOp.base[0], copyOp.base[1]] as [number, number]) : null;
+    view?.setCopy(on, base);
+  });
+  $effect(() => {
+    const pasting = pasteOp.on && pasteOp.view === 'map';
+    view?.setPaste(pasting);
+  });
+
   // The selected line gets a halo and, on the map, handles; Delete removes a selected map line.
   $effect(() => {
-    const id = cave.selected;
-    view?.setSelectedLine(id);
+    const ids = selectedIds();
+    void cave.also;
+    view?.setSelectedLine(ids.length === 1 ? ids[0] : '');
+    view?.setSelectedLines(ids);
   });
   /** Opens or closes the Show menu; opening re-reads what the cave has, so what was just drawn is listed. */
   function openMenu() {
@@ -159,12 +191,13 @@
       if ((e.shiftKey ? engine.redo('map') : engine.undo('map'))) changed();
       return;
     }
-    if ((e.key === 'Delete' || e.key === 'Backspace') && cave.selected && view?.hasMapLine(cave.selected)) {
+    if ((e.key === 'Delete' || e.key === 'Backspace') && cave.selected && selectedIds().some((id) => view?.hasMapLine(id))) {
       e.preventDefault();
-      engine.deleteLine(cave.selected);
+      const ids = selectedIds().filter((id) => view?.hasMapLine(id));
       cave.selected = '';
+      for (const id of ids) engine.deleteLine(id);
       changed();
-    } else if (e.key === 'Escape' && cave.selected) {
+    } else if (e.key === 'Escape' && cave.selected && !copyOp.on) {
       cave.selected = '';
     }
   }
@@ -175,7 +208,9 @@
     const pressure = option('pressure', true);
     const close = option('close', false);
     const finger = option('finger', true);
-    view?.setDrawOptions({ tolerancePx: tol, pressure, close, finger, symbolSize: option('symbolSize', 1.5), label: option('label', '') });
+    const symbolSize = option('symbolSize', 1.5);
+    const label = option('label', '');
+    view?.setDrawOptions({ tolerancePx: tol, pressure, close, finger, symbolSize, label });
   });
 
   // The picked drawing tool: drawing on the map goes to its plan, from the Top or Bottom view.
@@ -266,6 +301,13 @@
   }
 
   onMount(() => {
+    const offSelectAll = registerSelectAll('map', () => selectIds(view?.mapLineIds() ?? []));
+    const offClip = registerClipView('map', {
+      lines: () => (view?.ownedMapLines() ?? []).map((k) => ({ id: k.id, kind: k.kind, points: k.points, widths: k.widths, closed: k.closed, text: k.text, style: k.style })),
+      target: () => '',
+      cursor: () => view?.lastPlanPoint() ?? null,
+      centre: () => view?.centreXY() ?? null,
+    });
     const v = new CaveView(gl, overlay);
     const cube = new ViewCube(cubeHost, (dir) => v.snapTo(dir), (da, dp) => v.orbitBy(da, dp));
     v.onRender = (camera, target) => {
@@ -273,8 +315,26 @@
       const hint = cave.tool && !v.canDrawHere ? 'Snap to the Top view to draw on the map' : '';
       if (hint !== drawHint) drawHint = hint;
     };
-    v.onSelectLine = (id) => (cave.selected = id);
+    v.onSelectLine = (id, additive) => (additive && id ? toggleSelected(id) : selectIds(id ? [id] : []));
+    v.onLineMenu = (x, y, id, similar) => {
+      if (!selectedIds().includes(id)) selectIds([id]);
+      openLineMenu(x, y, () => similar);
+    };
+    v.onEditText = (id, text, kind, x, y, size, angle) => openTextEdit(id, text, x, y, size, kind === 'text' ? 'Type the text' : kind === 'callout' ? 'Type the note' : 'Label', angle);
+    v.copyLines = (cursor) => copyGhost('map', cursor)?.lines ?? null;
+    v.onCopyPress = (p) => copyPress('map', p);
+    v.onEndCopy = () => endCopy();
+    v.pasteLines = (cursor) => pasteGhost('map', cursor);
+    v.onPastePress = (p) => pastePlace('map', p);
+    v.onEndPaste = () => endPaste();
+    v.arrowOp = () => cave.arrowOp;
+    v.onArrowDone = () => (cave.arrowOp = { id: '', op: '' });
     v.onEndCommand = () => (cave.tool = '');
+    v.onLeaderEdited = (id, points, style) => {
+      const r = engine.editLeader(id, points, style, cave.adjusted);
+      if (r !== 'ok') engine.log('warn', 'draw', r);
+      changed();
+    };
     v.onLineEdited = (id, points, widths) => {
       const r = engine.editLine(id, points, widths, cave.adjusted);
       if (r !== 'ok') engine.log('warn', 'draw', r);
@@ -292,12 +352,23 @@
         return;
       }
       if (needsWords(cave.tool) && !text.trim()) {
-        engine.log('warn', 'draw', 'Type the text in the ribbon first.');
+        // the words are typed in place, after the click and drag that set where, how big and which way
+        const spot = view?.wordsSpotAtPlan(cave.tool, points);
+        const tool = cave.tool;
+        const style = toolStyle();
+        if (spot)
+          openNewText(spot.x, spot.y, spot.size, (words) => {
+            const made = engine.addMapLine(tool, points, widths, closed, cave.adjusted, words, style);
+            if (made !== 'ok') engine.log('warn', 'draw', made);
+            changed();
+          }, 'Type the text', spot.angle);
         return;
       }
-      const r = engine.addMapLine(cave.tool, points, widths, closed, cave.adjusted, text);
+      const r = engine.addMapLine(cave.tool, withLabelSpot(cave.tool, points, text), widths, closed, cave.adjusted, text, toolStyle());
       if (r !== 'ok') engine.log('warn', 'draw', r);
       changed();
+      // a leader placed without words asks for them at once
+      if (r === 'ok' && cave.tool === 'callout' && !text.trim()) view?.editWordsAtPlan(engine.lastAddedId(), 'callout', '', points);
     };
     let palmLogged = 0;
     v.onPalm = (why) => {
@@ -315,6 +386,7 @@
     };
     v.shadingFor = (dir, persp) => engine.shading(cave.adjusted, dir, persp, wireFilter());
     view = v;
+    const unmirror = registerMirror('map', { read: () => v.getCamera(), write: (c) => v.setCamera(c as CameraState) });
     if (import.meta.env.DEV) (window as unknown as { __view: CaveView }).__view = v; // for tests
     setActiveView(v);
 
@@ -329,6 +401,9 @@
     });
 
     return () => {
+      offSelectAll();
+      offClip();
+      unmirror();
       ro.disconnect();
       offTheme();
       cube.dispose();
@@ -339,7 +414,7 @@
 </script>
 
 <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-<div class="vp" role="application" aria-label="Map" bind:this={wrap} tabindex="-1" onkeydown={onKey}>
+<div class="vp" role="application" aria-label="Map" bind:this={wrap} tabindex="-1" onkeydown={onKey} onpointerdowncapture={() => markViewUsed('map')}>
   <canvas bind:this={gl} onpointerdown={onDown} onpointerup={onUp}></canvas>
   <canvas bind:this={overlay} class="overlay"></canvas>
   <div class="bar">

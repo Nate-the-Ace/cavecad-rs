@@ -35,3 +35,16 @@ export const typeOf = (path: string): string => TYPES[path.slice(path.lastIndexO
 
 /** The last part of a path, whichever way it is written. */
 export const baseName = (path: string): string => path.replace(/[\\/]+$/, '').split(/[\\/]/).pop() || path;
+
+/**
+ * Join links that open the desktop app (`cavecad://join?...`) reach the page here: the ones that started the app before
+ * the page was ready, and each one that arrives while it runs. Does nothing in a browser.
+ */
+export function listenForLinks(onLink: (url: string) => void): void {
+  if (!isDesktop()) return;
+  (window as unknown as { __cavecadLink?: (u: string) => void }).__cavecadLink = (url) => {
+    onLink(url);
+    void call<string[]>('take_links').catch(() => undefined); // it has been seen: the waiting copy is not needed
+  };
+  void call<string[]>('take_links').then((urls) => urls.forEach(onLink)).catch(() => undefined);
+}

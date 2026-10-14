@@ -85,6 +85,11 @@ export const cave = $state({
   pick: { kind: '' as PickKind, id: '' },
   /** The line (a feature id) selected for editing, or empty. Its fit points show as handles in the view it was drawn in. */
   selected: '',
+  /** More lines selected with it (a multiple selection), valid only while `selected` is still `alsoOf`. */
+  also: [] as string[],
+  alsoOf: '',
+  /** A leader waiting to gain or lose an arrow at the next press in a view (`add` touches the pressed spot, `remove` takes the arrow pressed on). */
+  arrowOp: { id: '', op: '' as '' | 'add' | 'remove' },
   /** Whether cross-section sketches are drawn beside their stations, per view, and whether profile
    *  sketches are drawn along their runs on the map (view settings). */
   showSections: savedSections(),
@@ -183,6 +188,12 @@ export const haloReach = () => option('haloReach', 6);
 export const haloFade = () => option('haloFade', 0.5);
 
 /** Picks a drawing tool; picking the one already active puts it down. */
+/** The style a new stroke of the armed tool starts with: `pat:Name` for a fill of the caver's own, else none. */
+export function toolStyle(): string {
+  const name = String(cave.options.customFill ?? '');
+  return cave.tool === 'fill-custom' && name ? `pat:${name}` : '';
+}
+
 export function setTool(key: string) {
   cave.tool = cave.tool === key ? '' : key;
 }
@@ -232,3 +243,23 @@ export function changed() {
 
 // Dev-only handle for tests and debugging in the browser console.
 if (import.meta.env.DEV) (window as unknown as { __cave: unknown }).__cave = { cave, changed };
+
+/** Every selected line (feature id), the first being `cave.selected`. Empty when nothing is selected. */
+export function selectedIds(): string[] {
+  if (!cave.selected) return [];
+  return cave.alsoOf === cave.selected ? [cave.selected, ...cave.also.filter((i) => i !== cave.selected)] : [cave.selected];
+}
+
+/** Selects exactly these lines (none clears the selection). */
+export function selectIds(ids: string[]) {
+  const unique = [...new Set(ids.filter(Boolean))];
+  cave.selected = unique[0] ?? '';
+  cave.alsoOf = cave.selected;
+  cave.also = unique.slice(1);
+}
+
+/** Adds a line to the selection, or takes it out if it is already in. */
+export function toggleSelected(id: string) {
+  const now = selectedIds();
+  selectIds(now.includes(id) ? now.filter((i) => i !== id) : [...now, id]);
+}

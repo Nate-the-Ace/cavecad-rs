@@ -17,6 +17,8 @@ pub use station_survey::{
     set_station_benchmark, set_station_walls, set_walls_at, shot_now, walls_at, walls_source,
 };
 
+pub mod patterns;
+
 use cave_doc::{Action, AnchorError, Document, Field, Frame, Kind, Value, anchor_stroke};
 use cave_geom::{Path, Point};
 use cave_id::{Id, IdSource};
@@ -43,6 +45,8 @@ pub enum DrawError {
     BadStroke,
     /// There is no usable stretch of survey (or station) to anchor the stroke to.
     NoStations,
+    /// A line style that is not `linetype;scale;density`.
+    BadStyle,
 }
 
 impl From<AnchorError> for DrawError {
@@ -379,6 +383,20 @@ pub fn with_text(mut actions: Vec<Action>, id: Id, text: &str) -> Vec<Action> {
     actions
 }
 
+/// Adds a line style (see `normalize_style`) to a new stroke's actions, so the stroke and its look are one edit. Empty adds nothing;
+/// a style that cannot be read is refused.
+pub fn with_style(mut actions: Vec<Action>, id: Id, style: &str) -> Result<Vec<Action>, DrawError> {
+    let style = normalize_style(style).ok_or(DrawError::BadStyle)?;
+    if !style.is_empty() {
+        actions.push(Action::Set {
+            id,
+            field: Field::FeatureStyle,
+            value: Value::Text(style),
+        });
+    }
+    Ok(actions)
+}
+
 /// The longest text a stroke carries.
 pub const MAX_TEXT: usize = 200;
 
@@ -389,6 +407,246 @@ pub fn set_stroke_text(doc: &Document, id: Id, text: &str) -> Result<Vec<Action>
         id,
         field: Field::FeatureText,
         value: Value::Text(text.trim().chars().take(MAX_TEXT).collect()),
+    }])
+}
+
+/// The scale the fills' authored sizes belong to: at 1:500 an area fills exactly as it was authored.
+pub const BASE_SCALE: f64 = 500.0;
+/// The scale a drawing has until it is set.
+pub const DEFAULT_SCALE: f64 = 500.0;
+/// The range a drawing scale may take (1:N).
+pub const SCALE_RANGE: (f64, f64) = (10.0, 100_000.0);
+
+/// The id of a named drawing-wide setting.
+pub fn setting_id(key: &str) -> Id {
+    Id::from_name(&format!("setting:{key}"))
+}
+
+/// The drawing's scale as the N of 1:N (`DEFAULT_SCALE` until one is set). Patterns and fills are sized on paper at this scale.
+pub fn drawing_scale(doc: &Document) -> f64 {
+    doc.entity(setting_id("drawing-scale"))
+        .map(|e| e.text(Field::SettingValue))
+        .and_then(|t| t.trim().parse::<f64>().ok())
+        .filter(|n| n.is_finite() && *n >= SCALE_RANGE.0 && *n <= SCALE_RANGE.1)
+        .unwrap_or(DEFAULT_SCALE)
+}
+
+/// Actions that set the drawing's scale to 1:`n` (held to `SCALE_RANGE`; whole numbers are written without decimals).
+pub fn set_drawing_scale(doc: &Document, n: f64) -> Result<Vec<Action>, DrawError> {
+    if !n.is_finite() {
+        return Err(DrawError::BadStroke);
+    }
+    let n = n.clamp(SCALE_RANGE.0, SCALE_RANGE.1);
+    let text = if (n - n.round()).abs() < 1e-9 {
+        format!("{}", n.round() as i64)
+    } else {
+        format!("{n:.2}")
+    };
+    let id = setting_id("drawing-scale");
+    let mut actions = Vec::new();
+    if doc.entity(id).is_none() {
+        actions.push(Action::Create {
+            id,
+            kind: Kind::Setting,
+        });
+        actions.push(Action::Set {
+            id,
+            field: Field::SettingKey,
+            value: Value::Text("drawing-scale".into()),
+        });
+    }
+    if doc
+        .entity(id)
+        .is_none_or(|e| e.text(Field::SettingValue) != text)
+    {
+        actions.push(Action::Set {
+            id,
+            field: Field::SettingValue,
+            value: Value::Text(text),
+        });
+    }
+    Ok(actions)
+}
+
+/// The line patterns a single line may be given, besides its type's own (empty).
+pub const LINETYPE_CHOICES: &[&str] = &["", "solid", "dashed", "longdash", "sparse", "dashdot"];
+
+/// How a leader's arrow, line and note are drawn, besides what any line has.
+pub const ARROWS: &[&str] = &[
+    "",
+    "arrow",
+    "filled",
+    "dot",
+    "none",
+    "closed",
+    "stealth",
+    "diamond",
+    "open-diamond",
+    "square",
+    "tick",
+    "bar",
+    "double",
+];
+/// The shapes of a leader's line.
+pub const SHAPES: &[&str] = &["", "elbow", "straight", "curved"];
+/// The frames a leader's note may have.
+pub const FRAMES: &[&str] = &[
+    "",
+    "none",
+    "box",
+    "underline",
+    "rounded",
+    "hexagon",
+    "octagon",
+    "diamond",
+    "ellipse",
+    "banner",
+];
+/// The switches a note may have, written as letters in alphabetical order: `b` bold, `f` a paper-coloured fill behind the note,
+/// `h` an outline round the text's letters, `i` italic, `n` no outline on the frame, `u` underlined.
+pub const NOTE_FLAGS: &str = "bfhinu";
+/// The type faces a note may have besides the usual one (empty).
+pub const FONTS: &[&str] = &["", "serif", "mono"];
+/// How a note's words sit against the point they are placed at (`left` is the usual, written as empty).
+pub const ALIGNS: &[&str] = &["", "left", "center", "right"];
+
+/// A line's own style, as `linetype;scale;density`, and for a leader also `;arrow;shape;frame;size` (empty for none), then for notes
+/// `;angle;flags;attach;font;colour;align`. Anything
+/// unreadable gives `None`; numbers are held to a sensible range and written in a fixed form, so equal styles are equal text.
+pub fn normalize_style(text: &str) -> Option<String> {
+    let t = text.trim();
+    if t.is_empty() {
+        return Some(String::new());
+    }
+    let mut parts = t.split(';');
+    let first = parts.next()?.trim();
+    // `pat:Name` is a pattern the caver authored (a linetype, or for a custom fill, the fill); its name keeps its case
+    let lt = match first.get(..4).filter(|p| p.eq_ignore_ascii_case("pat:")) {
+        Some(_) => {
+            let name = &first[4..];
+            if !cave_pattern::valid_name(name) {
+                return None;
+            }
+            format!("pat:{name}")
+        }
+        None => first.to_ascii_lowercase(),
+    };
+    if !lt.starts_with("pat:") && !LINETYPE_CHOICES.contains(&lt.as_str()) {
+        return None;
+    }
+    let num = |s: Option<&str>| -> Option<f64> {
+        let v = s.map_or(Some(1.0), |s| s.trim().parse::<f64>().ok())?;
+        v.is_finite().then_some(v)
+    };
+    let scale = num(parts.next())?.clamp(0.2, 6.0);
+    let density = num(parts.next())?.clamp(0.2, 4.0);
+    let mut pick = |choices: &[&str]| -> Option<String> {
+        let v = parts.next().map_or("", str::trim).to_ascii_lowercase();
+        choices.contains(&v.as_str()).then_some(v)
+    };
+    let arrow = pick(ARROWS)?;
+    let shape = pick(SHAPES)?;
+    let frame = pick(FRAMES)?;
+    let size = num(parts.next())?.clamp(0.4, 4.0);
+    // an area's pattern angle, in degrees, wrapped to -90..90 (a hatch turned half a circle looks the same)
+    let angle = match parts.next() {
+        None => 0.0,
+        Some(a) => {
+            let v = a.trim().parse::<f64>().ok().filter(|v| v.is_finite())?;
+            let wrapped = (v + 90.0).rem_euclid(180.0) - 90.0;
+            if wrapped.abs() < 0.05 { 0.0 } else { wrapped }
+        }
+    };
+    let flags = match parts.next() {
+        None => String::new(),
+        Some(f) => {
+            let f = f.trim().to_ascii_lowercase();
+            if !f.chars().all(|c| NOTE_FLAGS.contains(c)) {
+                return None;
+            }
+            NOTE_FLAGS.chars().filter(|c| f.contains(*c)).collect()
+        }
+    };
+    // where a leader's arrows are fastened to other drawn things: `index=id#vertex` pairs, comma-separated
+    let attach = match parts.next() {
+        None => String::new(),
+        Some(a) => {
+            let a = a.trim();
+            let fine = |c: char| c.is_ascii_alphanumeric() || "=#,-:_".contains(c);
+            if a.len() > 600 || !a.chars().all(fine) {
+                return None;
+            }
+            a.to_string()
+        }
+    };
+    // the words' look: type face, colour (`#rrggbb`) and how they sit against their point
+    let choose = |v: Option<&str>, choices: &[&str]| -> Option<String> {
+        let v = v.map_or("", str::trim).to_ascii_lowercase();
+        choices.contains(&v.as_str()).then_some(v)
+    };
+    let font = choose(parts.next(), FONTS)?;
+    let color = match parts.next() {
+        None => String::new(),
+        Some(c) => {
+            let c = c.trim().to_ascii_lowercase();
+            let hex =
+                c.len() == 7 && c.starts_with('#') && c[1..].chars().all(|d| d.is_ascii_hexdigit());
+            if !c.is_empty() && !hex {
+                return None;
+            }
+            c
+        }
+    };
+    let align = match choose(parts.next(), ALIGNS)?.as_str() {
+        "left" => String::new(),
+        other => other.to_string(),
+    };
+    if parts.next().is_some() {
+        return None;
+    }
+    let plain_line = lt.is_empty() && (scale - 1.0).abs() < 0.005 && (density - 1.0).abs() < 0.005;
+    let plain_leader =
+        arrow.is_empty() && shape.is_empty() && frame.is_empty() && (size - 1.0).abs() < 0.005;
+    let turned = angle != 0.0;
+    let head = format!("{lt};{scale:.2};{density:.2}");
+    let leader = format!("{arrow};{shape};{frame};{size:.2}");
+    Some(
+        if !font.is_empty() || !color.is_empty() || !align.is_empty() {
+            format!("{head};{leader};{angle:.1};{flags};{attach};{font};{color};{align}")
+        } else if !attach.is_empty() {
+            format!("{head};{leader};{angle:.1};{flags};{attach}")
+        } else if !flags.is_empty() {
+            format!("{head};{leader};{angle:.1};{flags}")
+        } else if turned {
+            format!("{head};{leader};{angle:.1}")
+        } else if !plain_leader {
+            format!("{head};{leader}")
+        } else if !plain_line {
+            head
+        } else {
+            String::new()
+        },
+    )
+}
+
+/// The angle (degrees) a line's style turns an area's pattern by; 0 when it names none.
+pub fn style_angle(style: &str) -> f64 {
+    style
+        .split(';')
+        .nth(7)
+        .and_then(|a| a.trim().parse::<f64>().ok())
+        .filter(|a| a.is_finite())
+        .unwrap_or(0.0)
+}
+
+/// Actions that set how this one line is drawn (its linetype, scale and fill density), apart from its type's look.
+pub fn set_stroke_style(doc: &Document, id: Id, style: &str) -> Result<Vec<Action>, DrawError> {
+    drawn_in(doc, id).ok_or(DrawError::NoStations)?;
+    let style = normalize_style(style).ok_or(DrawError::BadStyle)?;
+    Ok(vec![Action::Set {
+        id,
+        field: Field::FeatureStyle,
+        value: Value::Text(style),
     }])
 }
 
@@ -495,6 +753,49 @@ pub fn place_section(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_pattern_angle_is_kept_wrapped_and_dropped_when_zero() {
+        assert_eq!(
+            super::normalize_style(";1;1;;;;1;30").as_deref(),
+            Some(";1.00;1.00;;;;1.00;30.0")
+        );
+        assert_eq!(super::style_angle(";1.00;1.00;;;;1.00;30.0"), 30.0);
+        assert_eq!(
+            super::normalize_style(";1;1;;;;1;120").as_deref(),
+            Some(";1.00;1.00;;;;1.00;-60.0")
+        );
+        assert_eq!(super::normalize_style(";1;1;;;;1;0").as_deref(), Some(""));
+        assert_eq!(super::normalize_style(";1;1;;;;1;nope"), None);
+        // a leader's library shapes and its note switches (kept in alphabetical order, nothing else accepted)
+        assert_eq!(
+            super::normalize_style(";1;1;stealth;;hexagon;1;0;nf").as_deref(),
+            Some(";1.00;1.00;stealth;;hexagon;1.00;0.0;fn")
+        );
+        assert_eq!(super::normalize_style(";1;1;;;;1;0;x"), None);
+        // a note's look: bold italic, serif, a colour, centred
+        assert_eq!(
+            super::normalize_style(";1;1;;;;1.5;0;iub;;Serif;#E8590C;center").as_deref(),
+            Some(";1.00;1.00;;;;1.50;0.0;biu;;serif;#e8590c;center")
+        );
+        assert_eq!(
+            super::normalize_style(";1;1;;;;1;0;;;comic").as_deref(),
+            None
+        );
+        assert_eq!(super::normalize_style(";1;1;;;;1;0;;;;red"), None);
+        assert_eq!(
+            super::normalize_style(";1;1;;;;1;0;;;;;left").as_deref(),
+            Some("")
+        );
+        // arrows fastened to other things
+        assert_eq!(
+            super::normalize_style(";1;1;;;;1;0;;0=ab12#3,2=cd#0").as_deref(),
+            Some(";1.00;1.00;;;;1.00;0.0;;0=ab12#3,2=cd#0")
+        );
+        assert_eq!(super::normalize_style(";1;1;;;;1;0;;0=a b"), None);
+        assert_eq!(super::normalize_style(";1;1;comet;;;1"), None);
+        assert_eq!(super::style_angle("dashed;1.00;1.00"), 0.0);
+    }
+
     use super::*;
     use cave_doc::{ActorId, History, Issue, validate};
     use cave_id::SeqIds;
@@ -1069,5 +1370,100 @@ mod tests {
         assert!(with_closed(actions, true).is_err());
         assert!(set_stroke_kind(&doc, sec, "").is_err());
         assert!(validate(&doc).is_empty());
+    }
+
+    #[test]
+    fn a_lines_own_style_is_checked_and_written_one_way() {
+        assert_eq!(normalize_style(""), Some(String::new()));
+        assert_eq!(
+            normalize_style(" ; 1 ; 1 "),
+            Some(String::new()),
+            "all defaults means none"
+        );
+        assert_eq!(
+            normalize_style("Dashed;1.5;1"),
+            Some("dashed;1.50;1.00".into())
+        );
+        assert_eq!(
+            normalize_style(";2;0.5"),
+            Some(";2.00;0.50".into()),
+            "the type's own pattern, scaled"
+        );
+        assert_eq!(
+            normalize_style("sparse"),
+            Some("sparse;1.00;1.00".into()),
+            "scale and density are optional"
+        );
+        assert_eq!(
+            normalize_style("dashed;99;99"),
+            Some("dashed;6.00;4.00".into()),
+            "held to a range"
+        );
+        assert_eq!(normalize_style("zigzag;1;1"), None);
+        assert_eq!(normalize_style("dashed;x;1"), None);
+        assert_eq!(normalize_style("dashed;1;1;1"), None);
+        assert_eq!(normalize_style("dashed;NaN;1"), None);
+    }
+
+    #[test]
+    fn the_drawing_scale_is_a_setting_everyone_agrees_on() {
+        use cave_doc::{ActorId, Document};
+        let mut doc = Document::new(ActorId(1));
+        assert_eq!(drawing_scale(&doc), DEFAULT_SCALE, "500 until set");
+        doc.edit(set_drawing_scale(&doc, 1000.0).unwrap()).unwrap();
+        assert_eq!(drawing_scale(&doc), 1000.0);
+        assert!(
+            set_drawing_scale(&doc, 1000.0).unwrap().is_empty(),
+            "setting it to what it is writes nothing"
+        );
+        doc.edit(set_drawing_scale(&doc, 2.0).unwrap()).unwrap();
+        assert_eq!(drawing_scale(&doc), SCALE_RANGE.0, "held to a range");
+        assert!(set_drawing_scale(&doc, f64::NAN).is_err());
+        // another copy that applies the same operations arrives at the same scale
+        let mut other = Document::new(ActorId(2));
+        for op in doc.snapshot() {
+            other.apply(&op).unwrap();
+        }
+        assert_eq!(drawing_scale(&other), SCALE_RANGE.0);
+        assert_eq!(
+            setting_id("drawing-scale"),
+            setting_id("drawing-scale"),
+            "the id comes from the name"
+        );
+    }
+
+    #[test]
+    fn a_leaders_own_settings_are_checked_and_written_one_way() {
+        assert_eq!(
+            normalize_style(";1;1;dot;straight;box;1.5"),
+            Some(";1.00;1.00;dot;straight;box;1.50".into())
+        );
+        assert_eq!(
+            normalize_style(";1;1;;;;1"),
+            Some(String::new()),
+            "all defaults means none"
+        );
+        assert_eq!(
+            normalize_style("dashed;2;1;;;;1"),
+            Some("dashed;2.00;1.00".into()),
+            "only the line part when the leader part is plain"
+        );
+        assert_eq!(
+            normalize_style(";1;1;;curved;;1"),
+            Some(";1.00;1.00;;curved;;1.00".into())
+        );
+        assert_eq!(
+            normalize_style(";1;1;;;;99"),
+            Some(";1.00;1.00;;;;4.00".into()),
+            "size held to a range"
+        );
+        assert_eq!(normalize_style(";1;1;spear;;;1"), None);
+        assert_eq!(normalize_style(";1;1;;wiggly;;1"), None);
+        assert_eq!(normalize_style(";1;1;;;fancy;1"), None);
+        assert_eq!(
+            normalize_style(";1;1;;;;1;1;1"),
+            None,
+            "too many parts (the eighth is the pattern angle)"
+        );
     }
 }

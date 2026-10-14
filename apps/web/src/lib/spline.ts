@@ -93,6 +93,26 @@ export function nearestPoint(pts: Pt[], x: number, y: number, radius: number): n
   return best;
 }
 
+/** True when (`x`, `y`) is inside the closed curve through `pts` (the smooth curve, not just the fit points). */
+export function insideCurve(pts: Pt[], x: number, y: number): boolean {
+  if (pts.length < 3) return false;
+  const c = smooth(pts, null, 8, true).pts;
+  let inside = false;
+  for (let i = 0, j = c.length - 1; i < c.length; j = i++) {
+    const [xi, yi] = c[i];
+    const [xj, yj] = c[j];
+    if (yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) inside = !inside;
+  }
+  return inside;
+}
+
+/** Distance from (`x`, `y`) to the straight segments joining `pts` in order (no smoothing: for a line that is already traced). */
+export function distanceToPolyline(pts: Pt[], x: number, y: number): number {
+  let d = Infinity;
+  for (let i = 1; i < pts.length; i++) d = Math.min(d, segmentDistance([x, y], pts[i - 1], pts[i]));
+  return d;
+}
+
 /** Distance from (`x`, `y`) to the curve through `pts`. */
 export function distanceToCurve(pts: Pt[], x: number, y: number, closed = false): number {
   const c = smooth(pts, null, 10, closed).pts;

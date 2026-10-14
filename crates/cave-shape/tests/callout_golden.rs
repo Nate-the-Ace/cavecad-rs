@@ -1,7 +1,7 @@
 //! The callout geometry must match the old app's `CsCallout.reflow` on every case in
 //! `golden/callout.json` (made by `tools/golden/gen_callout_golden.mjs`).
 
-use cave_shape::callout::{NoteBox, Side, reflow};
+use cave_shape::callout::{NoteBox, Side, layout, layout_many, layout_with, reflow};
 use serde_json::Value;
 
 fn pt(v: &Value) -> [f64; 2] {
@@ -64,4 +64,72 @@ fn note_grows_away_from_the_arrow() {
     assert!(l.x1 == 10.0 && l.x2 > 10.0);
     let r = cave_shape::callout::note_box([10.0, 5.0], 10, 2.0, Side::Right);
     assert!(r.x2 == 10.0 && r.x1 < 10.0);
+}
+
+#[test]
+fn a_leader_can_have_its_own_text_height_and_run_straight() {
+    let auto = layout([0.0, 0.0], [90.0, 0.0], 5, false);
+    assert!(
+        (auto.height - 30.0).abs() < 1e-9,
+        "by default a third of the drag"
+    );
+    let fixed = layout_with([0.0, 0.0], [90.0, 0.0], 5, false, Some(12.0), false);
+    assert_eq!(fixed.height, 12.0, "or what the leader says");
+    assert_eq!(fixed.leader.len(), 3, "tip, elbow, landing");
+    let straight = layout_with([0.0, 0.0], [90.0, 40.0], 5, false, Some(12.0), true);
+    assert_eq!(straight.leader.len(), 2, "straight has no elbow");
+    assert_eq!(straight.leader[0], [0.0, 0.0]);
+    assert_eq!(
+        straight.leader[1][0], straight.note[0],
+        "and ends on the note's edge"
+    );
+    let curved = layout_with([0.0, 0.0], [90.0, 40.0], 5, true, Some(12.0), false);
+    assert!(curved.leader.len() > 3, "a curved one is traced in pieces");
+    assert_eq!(
+        layout([0.0, 0.0], [90.0, 40.0], 5, false),
+        layout_with([0.0, 0.0], [90.0, 40.0], 5, false, None, false),
+        "the plain layout is unchanged"
+    );
+}
+
+#[test]
+fn a_leader_can_have_several_arrows() {
+    let tips = [[0.0, 0.0], [10.0, 60.0], [-5.0, 120.0]];
+    let m = layout_many(&tips, [200.0, 60.0], 8, false, Some(12.0), false);
+    assert_eq!(m.branches.len(), 3);
+    assert_eq!(m.heads.len(), 3);
+    assert_eq!(m.height, 12.0);
+    let landing = *m.branches[0].last().unwrap();
+    for (tip, branch) in tips.iter().zip(&m.branches) {
+        assert_eq!(branch[0], *tip, "each leader starts at its own tip");
+        assert_eq!(
+            *branch.last().unwrap(),
+            landing,
+            "and they all meet the note at one point"
+        );
+    }
+    assert!(
+        m.heads
+            .iter()
+            .zip(&tips)
+            .all(|(h, t)| h.len() == 3 && h[1] == *t),
+        "an arrow head at every tip"
+    );
+    // one arrow is exactly the plain layout
+    let one = layout_many(&[[0.0, 0.0]], [90.0, 40.0], 5, false, Some(12.0), false);
+    let old = layout_with([0.0, 0.0], [90.0, 40.0], 5, false, Some(12.0), false);
+    assert_eq!(one.branches[0], old.leader);
+    assert_eq!(one.heads[0], old.head);
+    assert_eq!(one.note, old.note);
+    let straight = layout_many(&tips, [200.0, 60.0], 8, false, Some(12.0), true);
+    assert!(
+        straight.branches.iter().all(|b| b.len() == 2),
+        "straight leaders have no elbow"
+    );
+    assert!(
+        layout_many(&[], [0.0, 0.0], 3, false, None, false)
+            .branches
+            .is_empty(),
+        "no arrows, no leaders"
+    );
 }

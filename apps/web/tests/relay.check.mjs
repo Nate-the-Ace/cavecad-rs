@@ -87,13 +87,13 @@ const token = made.made;
 const nobody = await client();
 nobody.send({ t: 'join', room: 'private', id: 'n1' });
 eq((await nobody.next('error')).message.includes('invite'), true, 'a room with invites turns away people without one');
-const sam = await client();
-sam.send({ t: 'join', room: 'private', id: 'sam1', name: 'Sam', invite: token });
-eq((await sam.next('welcome')).owner, false, 'an invite lets one person in');
+const samOld = await client();
+samOld.send({ t: 'join', room: 'private', id: 'sam1', name: 'Sam', invite: token });
+eq((await samOld.next('welcome')).owner, false, 'an invite lets one person in');
 const second = await client();
 second.send({ t: 'join', room: 'private', id: 'two1', invite: token });
 eq((await second.next('error')).message.includes('already used'), true, 'a one-person invite is used up');
-sam.ws.close();
+samOld.ws.close();
 await new Promise((r) => setTimeout(r, 100));
 const samAgain = await client();
 samAgain.send({ t: 'join', room: 'private', id: 'sam1', invite: token });
@@ -112,6 +112,142 @@ const owner2 = await client();
 owner2.send({ t: 'join', room: 'private', id: 'o1', ownerKey: wo.ownerKey });
 eq((await owner2.next('welcome')).owner, true, 'the owner comes back with its key, even into a locked room');
 
-for (const x of [a, b, c, other, stranger, nobody, sam, second, samAgain, late, owner2]) x.ws.close();
+
+// ---- a classroom: one teacher, students who only watch -------------------------------------------
+import { mkdtempSync, readFileSync, readdirSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { createRelay } from '../scripts/sync-relay.mjs';
+const logDir = mkdtempSync(join(tmpdir(), 'class-'));
+const http2 = createServer();
+const relay2 = attachRelay(http2, createRelay({ logDir }));
+await new Promise((r) => http2.listen(0, r));
+const url2 = `ws://127.0.0.1:${http2.address().port}/sync`;
+const client2 = () =>
+  new Promise((resolve) => {
+    const ws = new WebSocket(url2);
+    const got = [];
+    const waiters = [];
+    ws.on('message', (d) => {
+      got.push(JSON.parse(String(d)));
+      waiters.splice(0).forEach((w) => w());
+    });
+    const next = async (t) => {
+      for (;;) {
+        const i = got.findIndex((m) => m.t === t);
+        if (i >= 0) return got.splice(i, 1)[0];
+        await new Promise((r) => waiters.push(r));
+      }
+    };
+    const quiet = async (t, ms = 150) => await Promise.race([next(t).then(() => false), new Promise((r) => setTimeout(() => r(true), ms))]);
+    ws.on('open', () => resolve({ ws, next, quiet, send: (m) => ws.send(JSON.stringify(m)) }));
+  });
+const pause = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// a student's link never starts a class
+const early = await client2();
+early.send({ t: 'join', room: 'Caving 101', id: 'e1', name: 'Early', joinOnly: true });
+eq((await early.next('error')).message.includes('not started'), true, 'a student cannot start a class by being first');
+eq(relay2.rooms.size, 0, 'and no room was made');
+
+const teacher = await client2();
+teacher.send({ t: 'join', room: 'Caving 101', id: 't1', name: 'Dr. Lee', color: '#3b82f6', mode: 'class' });
+const wt = await teacher.next('welcome');
+eq([wt.owner, wt.seed, wt.class.role], [true, true, 'teacher'], 'the first in starts the class as its teacher, and seeds the cave');
+
+// no cave shared yet: nobody can come in to watch nothing
+teacher.send({ t: 'invite', label: 'class', hours: 8, uses: 0 });
+const link = (await teacher.next('invites')).made;
+const tooSoon = await client2();
+tooSoon.send({ t: 'join', room: 'Caving 101', id: 'x1', name: 'Quick', invite: link, joinOnly: true });
+eq((await tooSoon.next('error')).message.includes('not shared a cave'), true, 'students wait until the teacher has shared the cave');
+teacher.send({ t: 'ops', ops: [{ n: 1 }] });
+await pause(50);
+
+const sam = await client2();
+sam.send({ t: 'join', room: 'Caving 101', id: 's1', name: 'Sam', invite: link, joinOnly: true });
+const ws1 = await sam.next('welcome');
+eq([ws1.owner, ws1.class.role, ws1.log], [false, 'student', [{ n: 1 }]], 'a student gets the cave and is told they are a student');
+const kim = await client2();
+kim.send({ t: 'join', room: 'Caving 101', id: 's2', name: 'Kim', invite: link, joinOnly: true });
+await kim.next('welcome');
+let pe = { people: [] };
+while (pe.people.length < 3) pe = await teacher.next('peers');
+eq(pe.people.map((p) => p.role), ['teacher', 'student', 'student'], 'the roster says who teaches and who watches');
+
+// students cannot change the cave, or the teacher's view
+sam.send({ t: 'ops', ops: [{ n: 99 }] });
+eq((await sam.next('denied')).what, 'edit', "a student's edit is refused");
+eq(await kim.quiet('ops'), true, 'and does not reach the others');
+sam.send({ t: 'mirror', state: { tab: 'Draw' } });
+eq((await sam.next('denied')).what, 'view', 'a student cannot steer the view');
+teacher.send({ t: 'ops', ops: [{ n: 2 }] });
+eq((await sam.next('ops')).ops, [{ n: 2 }], "the teacher's edits reach every student");
+
+// the teacher's view goes to every student, and to a latecomer first
+teacher.send({ t: 'mirror', state: { tab: 'Draw', trip: 'T1' } });
+eq((await sam.next('mirror')).state, { tab: 'Draw', trip: 'T1' }, "the teacher's view reaches a student");
+await kim.next('mirror');
+const lena = await client2();
+lena.send({ t: 'join', room: 'Caving 101', id: 's3', name: 'Lena', invite: link, joinOnly: true });
+eq(JSON.parse((await lena.next('welcome')).class.mirror), { tab: 'Draw', trip: 'T1' }, "a latecomer is given the teacher's current view");
+
+// pointers: students are seen by the teacher, not by each other
+sam.send({ t: 'presence', view: 'map', ctx: '', x: 1, y: 2, tool: '' });
+eq((await teacher.next('presence')).id, 's1', "the teacher sees a student's pointer");
+eq(await kim.quiet('presence'), true, 'other students do not');
+teacher.send({ t: 'presence', view: 'map', ctx: '', x: 5, y: 6, tool: '' });
+eq((await sam.next('presence')).id, 't1', "students see the teacher's pointer");
+
+// hands and chat
+sam.send({ t: 'hand', up: true });
+eq((await teacher.next('hands')).hands.map((h) => h.id), ['s1'], 'a raised hand shows to the teacher');
+eq((await kim.next('hands')).hands.length, 1, 'and to the class');
+await pause(5);
+kim.send({ t: 'hand', up: true });
+let queue = await teacher.next('hands');
+while (queue.hands.length < 2) queue = await teacher.next('hands');
+eq(queue.hands.map((h) => h.id), ['s1', 's2'], 'hands queue in the order they went up');
+sam.send({ t: 'hand', up: true, who: 's2' });
+await pause(60);
+kim.send({ t: 'say', text: '  Why is   the survey\n closing 2% off?  ' });
+let said = await teacher.next('chat');
+while (said.entry.kind !== 'say') said = await teacher.next('chat');
+eq([said.entry.name, said.entry.role, said.entry.text], ['Kim', 'student', 'Why is the survey closing 2% off?'], 'a question reaches the teacher, tidied and stamped with who asked');
+sam.send({ t: 'say', text: 'one' });
+sam.send({ t: 'say', text: 'two' });
+eq((await sam.next('denied')).what, 'chat', 'chat is rate limited for students');
+teacher.send({ t: 'hand', up: false, who: 's2' });
+let after2 = await kim.next('hands');
+while (after2.hands.some((h) => h.id === 's2')) after2 = await kim.next('hands');
+eq(after2.hands.map((h) => h.id), ['s1'], 'the teacher calls on a student and their hand goes down');
+await pause(60);
+
+// the transcript is logged, to the teacher on request and to a file on the server
+teacher.send({ t: 'getlog' });
+const full = await teacher.next('log');
+const texts = full.entries.map((e) => `${e.name}: ${e.text}`);
+eq(texts.includes('Sam: raised a hand') && texts.includes('Kim: was called on') && texts.includes('Kim: Why is the survey closing 2% off?'), true, 'the transcript has the hands and the questions');
+eq(full.entries.every((e, i) => e.n === i + 1 && typeof e.at === 'number'), true, 'in order, each with a number and a time');
+sam.send({ t: 'getlog' });
+eq(await sam.quiet('log'), true, 'students cannot ask for the log');
+const files = readdirSync(logDir);
+eq(files.length, 1, 'one log file for the class');
+eq(readFileSync(join(logDir, files[0]), 'utf8').trim().split('\n').length, full.entries.length, 'the file has every entry');
+
+// a student who comes in later is given what was said, and the end of the class stops chat
+const mo = await client2();
+mo.send({ t: 'join', room: 'Caving 101', id: 's4', name: 'Moe', invite: link, joinOnly: true });
+eq((await mo.next('welcome')).class.chat.some((e) => e.text === 'Why is the survey closing 2% off?'), true, 'a latecomer is given the earlier chat');
+teacher.send({ t: 'end' });
+await sam.next('ended');
+await pause(900);
+sam.send({ t: 'say', text: 'hello?' });
+eq((await sam.next('denied')).message, 'The class has ended.', 'nothing more is said after the class ends');
+
+for (const x of [early, teacher, tooSoon, sam, kim, lena, mo]) x.ws.close();
+http2.close();
+
+for (const x of [a, b, c, other, stranger, nobody, samOld, second, samAgain, late, owner2]) x.ws.close();
 http.close();
 console.log('relay checks ok');
