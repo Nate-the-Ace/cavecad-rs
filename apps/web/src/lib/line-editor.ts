@@ -4,7 +4,7 @@
 // world and screen relate; this decides what a press, a drag and a key do.
 import { distanceToCurve, distanceToPolyline, insertionAt, insideCurve, nearestPoint, refit, type Pt } from './spline.ts';
 import { isFillKind } from './fills.ts';
-import { hitsStamp, isStampKind, leaderLook } from './symbols.ts';
+import { hitsLabelNote, hitsStamp, isStampKind, leaderLook } from './symbols.ts';
 import { arrowAt, attachOf, nearestVertex, resolveLeaders, withArrow, withoutArrow } from './leader-edit.ts';
 import { withAttach } from './line-style-text.ts';
 
@@ -128,6 +128,14 @@ export class LineEditor<T extends EditableLine = EditableLine> {
         this.drag = { id: sel.id, index: i, points: sel.points.map((p) => [...p] as Pt), widths: sel.widths ? [...sel.widths] : null, stamp: isStampKind(sel.kind), leader: sel.kind === 'callout' };
         return true;
       }
+    }
+    // a symbol's label note is picked up where it sits, selected or not
+    for (const k of [...this.shown()].reverse()) {
+      if (!k.text || k.points.length < 3 || !hitsLabelNote(k.kind, k.text, this.h.toScreen(k.points[0]) as [number, number], this.h.toScreen(k.points[1]) as [number, number], this.h.toScreen(k.points[2]) as [number, number], x, y)) continue;
+      this.h.select(k.id);
+      this.drag = { id: k.id, index: 2, points: k.points.map((p) => [...p] as Pt), widths: k.widths ? [...k.widths] : null, stamp: true, leader: false };
+      this.h.redraw();
+      return true;
     }
     const lines = this.shown();
     const hit = topLineAt(lines, this.h.toScreen, x, y, LINE_REACH, this.h.paperPx?.(), this.h.ornament);

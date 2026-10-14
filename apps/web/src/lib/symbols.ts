@@ -94,9 +94,9 @@ export function isStampKind(kind: string | undefined): boolean {
   return isSymbolKind(kind) || kind === 'text' || kind === 'callout';
 }
 
-/** True for a type that is nothing without its words (text, a callout). */
+/** True for a type that is nothing without its words (text). A leader's note may be left empty. */
 export function needsWords(kind: string | undefined): boolean {
-  return kind === 'text' || kind === 'callout';
+  return kind === 'text';
 }
 
 /** A leader laid out: the note's box, and for each arrow the leader line and the arrow head's barbs (all from the engine). */
@@ -213,6 +213,13 @@ function labelLeader(kind: string, text: string, more: [number, number][]): bool
 /** True when the note is clear enough of the symbol to need a leader line to it. */
 function noteIsFar(pl: ReturnType<typeof placement>, note: [number, number]): boolean {
   return Math.hypot(note[0] - pl.cx, note[1] - pl.cy) > 2.6 * Math.max(pl.r, 8);
+}
+
+/** True when screen (`x`, `y`) is on the words of a symbol's label note (so a press there can pick the note up, selected or not). */
+export function hitsLabelNote(kind: string | undefined, text: string | undefined, p0: [number, number], p1: [number, number], note: [number, number] | undefined, x: number, y: number, pad = 5): boolean {
+  if (!kind || !isSymbolKind(kind) || !text || !note) return false;
+  const size = wordsPlacement(kind, placement(p0, p1)).size;
+  return x >= note[0] - pad && x <= note[0] + text.length * size * 0.6 + pad && Math.abs(y - note[1]) <= size * 0.6 + pad;
 }
 
 /** The points of a new symbol with its label's note spot added (to the right of it, where the label has always sat), so the label is a draggable leader from the start. */

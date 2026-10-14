@@ -9,7 +9,7 @@ import type { MapSection, PassageBuffers, Pt, ProfileSketch3d, Scene, TypeStyle 
 import { PenGuard, isEraser, widthFor } from '../pen';
 import { arrowAt, attachOf, nearestVertex, resolveLeaders, withArrow, withoutArrow } from '../leader-edit';
 import { withAttach } from '../line-style-text';
-import { drawStamp, drawStationMarker, hitsStamp, isStampKind, leaderLook, placement } from '../symbols';
+import { drawStamp, drawStationMarker, hitsLabelNote, hitsStamp, isStampKind, leaderLook, placement } from '../symbols';
 import { drawMarks, isFillKind, marksFor } from '../fills';
 import { drawing, fillLength, parseStyle, patternName, styleFor } from '../line-style.svelte';
 import { lineMarksPx, strokeMarksPx } from '../pattern-draw';
@@ -912,6 +912,22 @@ export class CaveView {
         this.controls.enabled = false;
         this.canvas.setPointerCapture(e.pointerId);
         this.lineEdit = { id: sel.id, index: i, pts: sel.points.map((p) => [...p] as [number, number, number]), stamp: isStampKind(sel.kind), leader: sel.kind === 'callout' };
+        return;
+      }
+    }
+    if (this.canDrawHere) {
+      // a symbol's label note is picked up where it sits, selected or not
+      for (const k of [...resolveLeaders(this.mapLines)].reverse()) {
+        if (!k.text || k.points.length < 3 || isKindHidden(k.kind)) continue;
+        const p = this.screenPoints(k);
+        if (p.length < 3 || !p[0] || !p[1] || !p[2]) continue;
+        if (!hitsLabelNote(k.kind, k.text, p[0], p[1], p[2], x, y)) continue;
+        e.stopImmediatePropagation();
+        e.stopPropagation();
+        this.controls.enabled = false;
+        this.canvas.setPointerCapture(e.pointerId);
+        this.onSelectLine(k.id);
+        this.lineEdit = { id: k.id, index: 2, pts: k.points.map((q) => [...q] as [number, number, number]), stamp: true, leader: false };
         return;
       }
     }

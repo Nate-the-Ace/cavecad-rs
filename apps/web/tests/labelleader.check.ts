@@ -12,3 +12,11 @@ ok(hitsStamp('sym-pit', '30', [0, 0], [0, 10], 50, 0, 4, undefined, [[100, 0]]),
 ok(!hitsStamp('sym-pit', '30', [0, 0], [0, 10], 50, 40, 4, undefined, [[100, 0]]), 'away from everything');
 console.log(bad ? 'FAILED' : 'label leader checks ok');
 process.exit(bad ? 1 : 0);
+import { hitsLabelNote, needsWords } from '../src/lib/symbols.ts';
+let bad2 = 0;
+const ok2 = (c: boolean, m: string) => { if (!c) { bad2++; console.log('FAIL', m); } };
+ok2(hitsLabelNote('sym-pit', '30', [0, 0], [0, 10], [60, 0], 62, 0), 'a press on the note words picks it up');
+ok2(!hitsLabelNote('sym-pit', '30', [0, 0], [0, 10], [60, 0], 62, 40), 'not away from it');
+ok2(!hitsLabelNote('sym-pit', '', [0, 0], [0, 10], [60, 0], 62, 0), 'no words, no note');
+ok2(!needsWords('callout') && needsWords('text'), 'a leader may be empty, text may not');
+if (bad2) process.exit(1);
