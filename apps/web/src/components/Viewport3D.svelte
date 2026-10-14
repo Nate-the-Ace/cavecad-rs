@@ -3,7 +3,7 @@
   import { Home, Maximize, Box, Square, Palette, Eye, Library } from '@lucide/svelte';
   import PanelUndo from './PanelUndo.svelte';
   import { shelf } from '../lib/shelf.svelte';
-  import { isSymbolKind, needsWords, symbolDef } from '../lib/symbols';
+  import { isSymbolKind, needsWords, symbolDef, withLabelSpot } from '../lib/symbols';
   import { registerMirror } from '../lib/classroom-mirror';
   import { drawing, liveStyle } from '../lib/line-style.svelte';
   import { cursorsFor, live as room, reportCursor } from '../lib/sync.svelte';
@@ -310,7 +310,7 @@
         engine.log('warn', 'draw', 'Type the text in the ribbon first.');
         return;
       }
-      const r = engine.addMapLine(cave.tool, points, widths, closed, cave.adjusted, text, toolStyle());
+      const r = engine.addMapLine(cave.tool, withLabelSpot(cave.tool, points, text), widths, closed, cave.adjusted, text, toolStyle());
       if (r !== 'ok') engine.log('warn', 'draw', r);
       changed();
     };

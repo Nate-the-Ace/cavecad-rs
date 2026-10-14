@@ -15,7 +15,7 @@
   import { LineEditor, endpointNear, joinFit } from '../lib/line-editor';
   import { Touches } from '../lib/touch';
   import { PenGuard, isEraser, widthFor } from '../lib/pen';
-  import { drawStationMarker, isStampKind, needsWords } from '../lib/symbols';
+  import { drawStationMarker, isStampKind, needsWords, withLabelSpot } from '../lib/symbols';
   import { isFillKind } from '../lib/fills';
   import { cursorsFor, live as room, reportCursor } from '../lib/sync.svelte';
   import { drawCursor } from '../lib/presence-draw';
@@ -502,7 +502,7 @@
       const b = toScreen(q[0], q[1]);
       // Just a click: a symbol of the chosen size, pointing up.
       const p1: [number, number] = Math.hypot(a[0] - b[0], a[1] - b[1]) < 6 ? [p0[0], p0[1] + option('symbolSize', 1.5)] : q;
-      const result = engine.addSectionSketch(cave.station, cave.tool, [p0, p1], null, false, cave.adjusted, option('label', ''));
+      const result = engine.addSectionSketch(cave.station, cave.tool, withLabelSpot(cave.tool, [p0, p1], option('label', '')), null, false, cave.adjusted, option('label', ''));
       message = result === 'ok' ? '' : result;
       changed();
       schedule();

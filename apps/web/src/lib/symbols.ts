@@ -115,11 +115,11 @@ export function setCalloutSource(f: CalloutSource) {
 }
 
 /** A leader's layout on the canvas: the arrows point at `tips` (the first is the dragged-from point), the note goes at `at`. */
-function calloutLayout(tips: [number, number][], at: [number, number], text: string, o: LeaderLook): CalloutLayout | null {
+function calloutLayout(tips: [number, number][], at: [number, number], text: string, o: LeaderLook, height?: number): CalloutLayout | null {
   if (!calloutSource || !tips.length || Math.hypot(at[0] - tips[0][0], at[1] - tips[0][1]) < 3) return null;
   // the text is a size of its own (3 mm on paper times the leader's size) when the view knows how big a paper millimetre is
-  const height = o.paperPx && o.paperPx > 0 ? 3 * o.paperPx * o.size : 0;
-  return calloutSource(tips, at, Math.max(1, text.length), o.shape || 'elbow', height);
+  const h = height ?? (o.paperPx && o.paperPx > 0 ? 3 * o.paperPx * o.size : 0);
+  return calloutSource(tips, at, Math.max(1, text.length), o.shape || 'elbow', h);
 }
 
 /** How a leader is drawn besides its line: its arrowhead, line, note frame and text size, and how big a paper millimetre is here. */
@@ -201,11 +201,55 @@ function drawHead(g: CanvasRenderingContext2D, name: string, tip: [number, numbe
   }
 }
 
+
+/** A symbol's label is a leader's note: a third point says where the note sits, and the leader to the symbol shows once the note is pulled clear of it. */
+const LABEL_LOOK: LeaderLook = { ...leaderLook(''), arrow: 'none', frame: 'none' };
+
+/** True when a symbol carries its label as a leader note (words and a note point). */
+function labelLeader(kind: string, text: string, more: [number, number][]): boolean {
+  return isSymbolKind(kind) && !!text && more.length > 0;
+}
+
+/** True when the note is clear enough of the symbol to need a leader line to it. */
+function noteIsFar(pl: ReturnType<typeof placement>, note: [number, number]): boolean {
+  return Math.hypot(note[0] - pl.cx, note[1] - pl.cy) > 2.6 * Math.max(pl.r, 8);
+}
+
+/** The points of a new symbol with its label's note spot added (to the right of it, where the label has always sat), so the label is a draggable leader from the start. */
+export function withLabelSpot<T extends number[]>(kind: string, points: T[], text: string): T[] {
+  if (!isSymbolKind(kind) || !text.trim() || points.length !== 2) return points;
+  const r = Math.hypot(points[1][0] - points[0][0], points[1][1] - points[0][1]);
+  return [...points, [points[0][0] + 1.3 * r, points[0][1], ...points[0].slice(2)] as T];
+}
+
 /** Draws a symbol (with its label) or a text stroke at `p0`, aimed toward `p1`. A leader's `more` are the points its further arrows touch. */
 export function drawStamp(g: CanvasRenderingContext2D, kind: string, p0: [number, number], p1: [number, number], text = '', leader: LeaderLook = leaderLook(''), more: [number, number][] = []): void {
+  let labelHeight: number | undefined;
+  const labelled = labelLeader(kind, text, more);
+  if (labelled) {
+    // the label is a leader's note: just words beside the symbol until pulled away, then a leader (no arrowhead) back to it
+    drawSymbol(g, kind, p0, p1);
+    const pl = placement(p0, p1);
+    const w = wordsPlacement(kind, pl);
+    const note = more[0];
+    if (!noteIsFar(pl, note)) {
+      g.save();
+      g.fillStyle = g.strokeStyle;
+      g.font = `${w.size}px system-ui, sans-serif`;
+      g.textBaseline = 'middle';
+      g.fillText(text, note[0], note[1]);
+      g.restore();
+      return;
+    }
+    kind = 'callout';
+    leader = LABEL_LOOK;
+    more = [];
+    p1 = note;
+    labelHeight = w.size;
+  }
   if (kind === 'callout') {
     const tips = [p0, ...more];
-    const l = calloutLayout(tips, p1, text, leader);
+    const l = calloutLayout(tips, p1, text, leader, labelHeight);
     if (!l) return;
     const back = backing(g);
     // the note's frame, behind everything else of the note
@@ -281,6 +325,12 @@ export function hitsStamp(kind: string, text: string | undefined, p0: [number, n
   const pl = placement(p0, p1);
   if (!text) return hitsSymbol(p0, p1, x, y, pad);
   const w = wordsPlacement(kind, pl);
+  if (labelLeader(kind, text, more)) {
+    const note = more[0];
+    const inWords = x >= note[0] - pad && x <= note[0] + text.length * w.size * 0.6 + pad && Math.abs(y - note[1]) <= w.size * 0.6 + pad;
+    if (inWords || hitsSymbol(p0, p1, x, y, pad)) return true;
+    return noteIsFar(pl, note) && distToSegment(x, y, p0, note) <= pad + 2;
+  }
   // the words' box in their own frame: along the baseline and across it
   const dx = x - w.x;
   const dy = y - w.y;
