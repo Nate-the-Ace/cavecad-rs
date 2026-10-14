@@ -14,9 +14,8 @@ section from the document, Undo last shot takes a whole shot back in one step, a
 `survey-run.ts`, `survey-writer.ts` or `sketch-geometry.ts`, read the Rust crate instead** (`cave-instrument`,
 `cave-session`, `cave-sketch`). The open decision "single-edit shot in `cave-notebook`" is done.
 Still NOT done: Web Bluetooth against a device, the Map beside these panels in the real app (the harness cannot show
-it), `surveyLayout()` and the lock/layout edits to existing app files in the real app, and merging with `main`
-(which has moved 39 commits since this branch was made; eight files conflict: `package.json`, `Ribbon.svelte`,
-`Viewport3D.svelte`, `cave-view.ts`, `workspace.svelte.ts`, `ProfilePanel.svelte`, `SectionPanel.svelte`, `DESIGN.md`).
+it), `surveyLayout()` and the lock/layout edits to existing app files in the real app, and putting this branch on `main`
+(`main` has been merged INTO this branch, commit `e6b87c5`, so it is a fast-forward; `main` itself is untouched).
 
 ## What was checked, and how
 
