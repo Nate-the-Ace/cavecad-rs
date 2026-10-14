@@ -9,6 +9,7 @@ import type { MapSection, PassageBuffers, Pt, ProfileSketch3d, Scene, TypeStyle 
 import { PenGuard, isEraser, widthFor } from '../pen';
 import { drawStamp, drawStationMarker, hitsStamp, isStampKind, placement } from '../symbols';
 import { drawMarks, isFillKind, marksFor } from '../fills';
+import { parseStyle, styleFor } from '../line-style.svelte';
 import { affineWarp, warpGrid, type Warp } from '../scan-warp';
 import { drawHalo, type HaloLine } from '../halo';
 import { isKindHidden, ornamentFor, refreshFlipped } from '../section-glyph';
@@ -858,12 +859,13 @@ export class CaveView {
   }
 
   private pressLine(e: PointerEvent) {
-    if (this.drawTool || !this.canDrawHere || e.button !== 0 || this.fingers.size > 1) return;
+    // Selecting a line works from any angle (its settings are edited in the ribbon); only moving its fit points needs the top view.
+    if (this.drawTool || e.button !== 0 || this.fingers.size > 1) return;
     const rect = this.canvas.getBoundingClientRect();
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
     const sel = this.displayMapLines().find((k) => k.id === this.selectedLine);
-    if (sel) {
+    if (sel && this.canDrawHere) {
       const i = nearestPoint(this.screenPoints(sel).map((p) => p ?? [-1e9, -1e9]), x, y, 10);
       if (i >= 0) {
         e.stopImmediatePropagation();
@@ -994,7 +996,8 @@ export class CaveView {
     g.lineJoin = 'round';
     for (const k of lines) {
       if (isKindHidden(k.kind)) continue; // switched off in the Show menu
-      const l = look(k.kind);
+      const style = styleFor(k.id, k.style);
+      const l = look(k.kind, style);
       g.strokeStyle = l.color;
       g.globalAlpha = base * l.alpha;
       g.setLineDash(l.dash);
@@ -1045,7 +1048,7 @@ export class CaveView {
         const plan = smooth(k.points.map((p) => [p[0], p[1]] as [number, number]), null, 10, true).pts as [number, number][];
         g.setLineDash([]);
         g.lineWidth = Math.max(1, l.weight * 0.7);
-        drawMarks(g, marksFor(k.kind, k.id, plan), (x, y) => this.project([x, y, z]) ?? [-1e5, -1e5], pts as [number, number][]);
+        drawMarks(g, marksFor(k.kind, k.id, plan, parseStyle(style).density), (x, y) => this.project([x, y, z]) ?? [-1e5, -1e5], pts as [number, number][]);
       }
       // A shaped line (ledge, pit, slope, glyphs...): its marks are made from the plan curve and drawn lifted to its height.
       let spine = true;

@@ -3,6 +3,7 @@
 // draws it at true size beside the station, joined to it by a dashed leader, and the person drags
 // it to where they want it. The offset they leave it at is saved with the drawing.
 
+import { parseStyle, styleFor } from './line-style.svelte';
 import type { Look } from './ink';
 import { smooth } from './spline.ts';
 import { drawStamp, isStampKind, placement } from './symbols.ts';
@@ -60,7 +61,7 @@ export function ornamentFor(kind: string, id: string, curve: [number, number][],
   return o;
 }
 
-export type Sketches = { points: [number, number][]; widths: number[] | null; closed?: boolean; text?: string }[];
+export type Sketches = { points: [number, number][]; widths: number[] | null; closed?: boolean; text?: string; style?: string }[];
 
 /** `[minU, minV, maxU, maxV]` around the strokes (zeros when empty). */
 export function sketchBounds(sketches: Sketches): [number, number, number, number] {
@@ -97,7 +98,7 @@ export function drawStrokes(
   g: CanvasRenderingContext2D,
   sketches: (Sketches[number] & { kind: string; id?: string })[],
   to: (u: number, v: number) => [number, number],
-  look: (kind: string) => Look,
+  look: (kind: string, style?: string) => Look,
   scale = 1,
   selected = '',
   /** The survey's stations in the strokes' own coordinates (wall glyphs go on the side away from them). */
@@ -108,7 +109,8 @@ export function drawStrokes(
   refreshFlipped(); // shaped lines with ornament on the other side
   for (const k of sketches) {
     if (hiddenTest(k.kind)) continue; // switched off in the Show menu
-    const l = look(k.kind);
+    const style = styleFor(k.id, k.style); // what is being dragged for this line, or what it has
+    const l = look(k.kind, style);
     if (isStampKind(k.kind) && k.points.length >= 2) {
       // A placed symbol: its first point is where it sits, its second says which way is up and how big.
       const p0 = to(k.points[0][0], k.points[0][1]);
@@ -160,7 +162,7 @@ export function drawStrokes(
       g.globalAlpha = l.alpha;
       g.setLineDash([]);
       g.lineWidth = Math.max(1, l.weight * scale * 0.7);
-      drawMarks(g, marksFor(k.kind, k.id ?? '', metres), to, curve.pts);
+      drawMarks(g, marksFor(k.kind, k.id ?? '', metres, parseStyle(style).density), to, curve.pts);
     }
     if (orn.spine) trace(0, l.color, l.alpha, l.dash);
     if (orn.lines.length) {

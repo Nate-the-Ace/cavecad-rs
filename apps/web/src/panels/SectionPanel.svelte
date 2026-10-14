@@ -20,6 +20,7 @@
   import { cursorsFor, live as room, reportCursor } from '../lib/sync.svelte';
   import { drawCursor } from '../lib/presence-draw';
   import { fitStroke, smooth } from '../lib/spline';
+  import { liveStyle } from '../lib/line-style.svelte';
   import { tolerancePx } from '../lib/commands';
   import { cave, changed, option, filter, wireFilter, haloFade, haloReach } from '../lib/cave.svelte';
   import { drawScan } from '../lib/scan-draw';
@@ -163,6 +164,13 @@
     oy = top + (height - top - 48) / 2;
     schedule();
   }
+
+  // A style being dragged in the ribbon shows at once (a redraw only: nothing is read again).
+  $effect(() => {
+    void liveStyle.style;
+    void liveStyle.id;
+    schedule();
+  });
 
   function schedule() {
     if (!frame) frame = requestAnimationFrame(() => ((frame = 0), draw()));

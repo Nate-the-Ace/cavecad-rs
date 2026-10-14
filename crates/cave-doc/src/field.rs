@@ -234,6 +234,9 @@ pub enum Field {
     FeatureText,
     /// A stroke anchored to stations (follows the survey when it changes).
     FeatureAnchored,
+    /// How this one line is drawn, when it differs from its type's own look: `linetype;scale;density` (see `cave-draw`).
+    /// Empty means the type's look.
+    FeatureStyle,
     /// Free-form tags.
     FeatureTags,
     /// Which symbol from the palette.
@@ -336,6 +339,7 @@ impl Field {
             FeatureFlip => (K::Feature, V::Flag),
             FeatureText => (K::Feature, V::Text),
             FeatureAnchored => (K::Feature, V::Anchored),
+            FeatureStyle => (K::Feature, V::Text),
             FeatureTags => (K::Feature, V::Map),
             SymbolName => (K::Symbol, V::Text),
             SymbolAt => (K::Symbol, V::Point),

@@ -55,6 +55,8 @@ pub struct Sketch {
     pub closed: bool,
     /// Words that go with it (a symbol's label, or the text of a text stroke).
     pub text: String,
+    /// How this one line differs from its type's look: `linetype;scale;density`, empty for the type's own.
+    pub style: String,
 }
 
 /// A station's cross-section sketches as the band shows them, next to the station.
@@ -242,6 +244,7 @@ pub fn profile_scene(doc: &Document, key: &str, use_adjustment: bool) -> Option<
                 widths: anchored.widths.clone(),
                 closed: anchored.closed,
                 text: e.text(Field::FeatureText),
+                style: e.text(Field::FeatureStyle),
             })
         })
         .collect();
@@ -335,6 +338,8 @@ pub struct Sketch3d {
     pub closed: bool,
     /// Words that go with it (a symbol's label, or the text of a text stroke).
     pub text: String,
+    /// How this one line differs from its type's look: `linetype;scale;density`, empty for the type's own.
+    pub style: String,
 }
 
 /// Every profile sketch placed along its run in 3D, so the Map can show it where it belongs: each
@@ -412,6 +417,7 @@ pub fn profile_sketches_3d(doc: &Document, use_adjustment: bool) -> Vec<Sketch3d
                 widths: anchored.widths.clone(),
                 closed: anchored.closed,
                 text: e.text(Field::FeatureText),
+                style: e.text(Field::FeatureStyle),
             });
         }
     }

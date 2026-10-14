@@ -513,6 +513,15 @@ pub fn set_line_text(id: &str, text: &str) -> String {
     change_line(id, |doc, line| cave_draw::set_stroke_text(doc, line, text))
 }
 
+/// Sets how one line is drawn, apart from its type's look: `linetype;scale;density` (`dashed;1.50;1.00`; empty for the
+/// type's own). One undoable edit. Returns `ok` or `error: ...`.
+#[wasm_bindgen]
+pub fn set_line_style(id: &str, style: &str) -> String {
+    change_line(id, |doc, line| {
+        cave_draw::set_stroke_style(doc, line, style)
+    })
+}
+
 /// Changes what a line already drawn is (`wall`, `ledge`, ...). One undoable edit. Returns `ok`
 /// or `error: ...`.
 #[wasm_bindgen]
@@ -568,7 +577,7 @@ pub fn line_info(id: &str) -> String {
                 (_, cave_doc::Value::Anchored(Some(a))) => a.closed,
                 _ => false,
             };
-            Some(serde_json::json!({"kind": e.text(cave_doc::Field::FeatureType), "view": view, "closed": closed, "flip": e.flag(cave_doc::Field::FeatureFlip), "text": e.text(cave_doc::Field::FeatureText)}))
+            Some(serde_json::json!({"kind": e.text(cave_doc::Field::FeatureType), "view": view, "closed": closed, "flip": e.flag(cave_doc::Field::FeatureFlip), "text": e.text(cave_doc::Field::FeatureText), "style": e.text(cave_doc::Field::FeatureStyle)}))
         });
         info.map_or_else(|| "null".to_string(), |v| v.to_string())
     })
@@ -816,12 +825,17 @@ pub fn fills() -> String {
 
 /// The marks that fill an outline: `kind` is a fill type, `curve` the outline as `[[x, y], ...]` in
 /// metres, `id` the stroke's id (it seeds the scatter, so every device draws the same marks).
-/// Returns `{lines, circles, tint}` as JSON.
+/// `amount` is how dense (1 as authored, 2 twice as many marks). Returns `{lines, circles, tint}` as JSON.
 #[wasm_bindgen]
-pub fn fill_marks(kind: &str, curve: &str, id: &str) -> String {
+pub fn fill_marks(kind: &str, curve: &str, id: &str, amount: f64) -> String {
     let pts = serde_json::from_str::<Vec<[f64; 2]>>(curve).unwrap_or_default();
-    serde_json::to_string(&cave_fill::marks(kind, &pts, cave_fill::seed_of(id)))
-        .unwrap_or_else(|_| "{}".into())
+    serde_json::to_string(&cave_fill::marks_with(
+        kind,
+        &pts,
+        cave_fill::seed_of(id),
+        amount,
+    ))
+    .unwrap_or_else(|_| "{}".into())
 }
 
 /// How the Draw tab groups the drawing tools (JSON array of `{name, tools}`, each tool a palette style).
@@ -1818,11 +1832,14 @@ pub fn shelf_summarize(dxf: &str) -> String {
 /// What the shelf shows about a cave kept in CaveCAD's own format (its ops as JSON), without opening it.
 #[wasm_bindgen]
 pub fn shelf_summarize_native(ops: &str) -> String {
-    let doc = serde_json::from_str::<Vec<cave_doc::Op>>(ops).ok().and_then(|ops| {
-        let mut doc = Document::new(ActorId(1));
-        ops.iter().all(|op| doc.apply(op).is_ok()).then_some(doc)
-    });
-    serde_json::to_string(&doc.as_ref().map(cave_shelf::summarize)).unwrap_or_else(|_| "null".into())
+    let doc = serde_json::from_str::<Vec<cave_doc::Op>>(ops)
+        .ok()
+        .and_then(|ops| {
+            let mut doc = Document::new(ActorId(1));
+            ops.iter().all(|op| doc.apply(op).is_ok()).then_some(doc)
+        });
+    serde_json::to_string(&doc.as_ref().map(cave_shelf::summarize))
+        .unwrap_or_else(|_| "null".into())
 }
 
 /// What the shelf shows about a sample cave given as shot-list JSON, without opening it.

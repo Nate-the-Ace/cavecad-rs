@@ -486,6 +486,17 @@ pub const MAX_MARKS: usize = 6000;
 /// the stroke's id so the same stroke always fills the same way. Empty for an unknown type or a
 /// degenerate outline.
 pub fn marks(key: &str, outline: &[[f64; 2]], seed: u64) -> Marks {
+    marks_with(key, outline, seed, 1.0)
+}
+
+/// Like `marks`, with the fill made `amount` times as dense (1 is the pattern as authored; 2 puts twice as many marks, or hatch
+/// lines, in the same area; 0.5 half as many). Clamped to a sensible range.
+pub fn marks_with(key: &str, outline: &[[f64; 2]], seed: u64, amount: f64) -> Marks {
+    let amount = if amount.is_finite() {
+        amount.clamp(0.1, 6.0)
+    } else {
+        1.0
+    };
     let Some(f) = fill(key) else {
         return Marks::default();
     };
@@ -500,7 +511,7 @@ pub fn marks(key: &str, outline: &[[f64; 2]], seed: u64) -> Marks {
         Pattern::Outline => {}
         Pattern::Solid => out.tint = true,
         Pattern::Hatch { angle, spacing } => {
-            let mut sp = spacing;
+            let mut sp = spacing / amount;
             // keep the line count reasonable on a huge outline
             let (lo, hi) = bounds(&poly);
             let span = (hi[0] - lo[0]).hypot(hi[1] - lo[1]);
@@ -513,7 +524,7 @@ pub fn marks(key: &str, outline: &[[f64; 2]], seed: u64) -> Marks {
                 .collect();
         }
         Pattern::Dots { spacing } => {
-            let mut sp = spacing;
+            let mut sp = spacing / amount.sqrt();
             let a = area(&poly);
             while a / (sp * sp) > MAX_MARKS as f64 {
                 sp *= 1.5;
@@ -535,6 +546,7 @@ pub fn marks(key: &str, outline: &[[f64; 2]], seed: u64) -> Marks {
         } => {
             let a = area(&poly);
             // thin out a huge area so the marks stay under the cap
+            let density = density * amount;
             let wanted = (a / 100.0) * density;
             let density_mul = if wanted > MAX_MARKS as f64 {
                 MAX_MARKS as f64 / wanted
@@ -657,6 +669,29 @@ mod tests {
         assert_eq!(marks("fill-bedrock", &o, 1), Marks::default());
         assert_eq!(marks("fill-nothing", &o, 1), Marks::default());
         assert_eq!(marks("fill-sand", &o[..2], 1), Marks::default());
+    }
+
+    #[test]
+    fn amount_makes_a_fill_denser_or_sparser() {
+        let o = square(6.0); // small enough that the cap on marks is not what is counted
+        let count = |k: &str, a: f64| {
+            let m = marks_with(k, &o, 5, a);
+            m.lines.len() + m.circles.len()
+        };
+        for k in ["fill-sand", "fill-sump", "fill-flowstone"] {
+            let (half, one, two) = (count(k, 0.5), count(k, 1.0), count(k, 2.0));
+            assert!(half < one && one < two, "{k}: {half} < {one} < {two}");
+        }
+        assert_eq!(
+            marks_with("fill-sand", &o, 5, 1.0),
+            marks("fill-sand", &o, 5),
+            "1 is the pattern as authored"
+        );
+        assert_eq!(
+            count("fill-sand", f64::NAN),
+            count("fill-sand", 1.0),
+            "nonsense means as authored"
+        );
     }
 
     #[test]

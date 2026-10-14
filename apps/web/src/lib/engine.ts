@@ -1,5 +1,5 @@
 // Loads the Rust engine (WASM) once and re-exports the few calls the UI uses.
-import init, { start, log, console_events, console_clear, engine_version, open_demo, scene, profile_runs, profile_band, add_profile_sketch, undo, redo, edit_state, passage_mesh, shading, palette, open_dxf, save_dxf, section_stations, section_at, add_section_sketch, map_sections, place_section, map_profile_sketches, add_map_line, map_lines, draw_tools, edit_line, delete_line, set_line_closed, set_line_kind, line_info, set_line_flip, set_line_text, ornament, callout, sheet_options, sheet_plan, flipped_lines, revision, station_rows, set_station_mark, station_detail, shot_detail, set_shot, set_station_walls, set_station_note, set_station_benchmark, symbols, fills, fill_marks, draw_tool_groups, sync_outbox, sync_apply, sync_snapshot, sync_load, notebook_trips, notebook_page, notebook_set_reading, notebook_set_walls, notebook_set_note, notebook_set_trip_field, notebook_set_declination, notebook_add_shot, notebook_remove_shot, notebook_rename_station, notebook_new_trip, scan_links, scan_link, scan_unlink, scan_placements, scan_alignment, scan_add_anchor, scan_remove_anchor, scan_set_mode, scan_trim, scan_set_trim, scan_view_stations, new_cave, scan_completed, scan_set_complete, shelf_summary, shelf_summarize, shelf_summarize_demo, shelf_summarize_native } from '../wasm/cave_wasm.js';
+import init, { start, log, console_events, console_clear, engine_version, open_demo, scene, profile_runs, profile_band, add_profile_sketch, undo, redo, edit_state, passage_mesh, shading, palette, open_dxf, save_dxf, section_stations, section_at, add_section_sketch, map_sections, place_section, map_profile_sketches, add_map_line, map_lines, draw_tools, edit_line, delete_line, set_line_closed, set_line_kind, line_info, set_line_flip, set_line_style, set_line_text, ornament, callout, sheet_options, sheet_plan, flipped_lines, revision, station_rows, set_station_mark, station_detail, shot_detail, set_shot, set_station_walls, set_station_note, set_station_benchmark, symbols, fills, fill_marks, draw_tool_groups, sync_outbox, sync_apply, sync_snapshot, sync_load, notebook_trips, notebook_page, notebook_set_reading, notebook_set_walls, notebook_set_note, notebook_set_trip_field, notebook_set_declination, notebook_add_shot, notebook_remove_shot, notebook_rename_station, notebook_new_trip, scan_links, scan_link, scan_unlink, scan_placements, scan_alignment, scan_add_anchor, scan_remove_anchor, scan_set_mode, scan_trim, scan_set_trim, scan_view_stations, new_cave, scan_completed, scan_set_complete, shelf_summary, shelf_summarize, shelf_summarize_demo, shelf_summarize_native } from '../wasm/cave_wasm.js';
 
 import { setInkPalette } from './ink';
 import { setOrnamentSource } from './section-glyph';
@@ -140,7 +140,7 @@ export interface ProfileScene {
   floor: [number, number][][];
   /** Near-level splays as [s, z] ticks. */
   flat: [number, number][];
-  sketches: { id: string; kind: string; points: [number, number][]; widths: number[] | null; closed: boolean; text?: string }[];
+  sketches: { id: string; kind: string; points: [number, number][]; widths: number[] | null; closed: boolean; text?: string; style?: string }[];
   /** Cross-section sketches of the stations on this band. */
   sections: BandSection[];
   /** Sketches that cannot be placed because a station they hang on is not on this band. */
@@ -175,7 +175,7 @@ export interface MapSection {
   label: string;
   /** The station in the map's metres. */
   at: Pt;
-  sketches: { id: string; kind: string; points: [number, number][]; widths: number[] | null; closed: boolean; text?: string }[];
+  sketches: { id: string; kind: string; points: [number, number][]; widths: number[] | null; closed: boolean; text?: string; style?: string }[];
   /** Offset from the station placed by hand (east, north, up), or null until placed. */
   placement: Pt | null;
 }
@@ -183,6 +183,7 @@ export interface MapSection {
 export interface ProfileSketch3d {
   /** Words that go with it (a symbol's label, or the text of a text stroke). */
   text?: string;
+  style?: string;
   id: string;
   closed: boolean;
   kind: string;
@@ -196,7 +197,7 @@ export interface BandSection {
   label: string;
   s: number;
   z: number;
-  sketches: { id: string; kind: string; points: [number, number][]; widths: number[] | null; closed: boolean; text?: string }[];
+  sketches: { id: string; kind: string; points: [number, number][]; widths: number[] | null; closed: boolean; text?: string; style?: string }[];
   /** Offset (along the band, elevation) placed by hand, or null until placed. */
   placement: [number, number] | null;
 }
@@ -218,6 +219,7 @@ export interface SectionSketch {
   points: [number, number][];
   widths: number[] | null;
   text?: string;
+  style?: string;
 }
 /** The cross section at one station. Points are [across, up] in metres from the station. */
 export interface StationSection {
@@ -310,7 +312,7 @@ const rawEngine = {
   /** Every kind of area fill, with what it means. */
   fills: (): FillDef[] => JSON.parse(fills()),
   /** The marks that fill an outline (metres), seeded by the stroke's id. */
-  fillMarks: (kind: string, curve: [number, number][], id: string): Marks => JSON.parse(fill_marks(kind, JSON.stringify(curve), id)),
+  fillMarks: (kind: string, curve: [number, number][], id: string, amount = 1): Marks => JSON.parse(fill_marks(kind, JSON.stringify(curve), id, amount)),
   /** Every point symbol the palette offers, with its drawing. */
   symbols: (): SymbolDef[] => JSON.parse(symbols()),
   /** One row per station: what kind of place it is, its notes, elevation and the team's mark. */
@@ -422,6 +424,7 @@ const rawEngine = {
   setLineKind: (id: string, kind: string): string => set_line_kind(id, kind),
   /** What a drawn line is, or null when the id is not a drawn line. */
   setLineText: (id: string, text: string): string => set_line_text(id, text),
+  setLineStyle: (id: string, style: string): string => set_line_style(id, style),
   setLineFlip: (id: string, flip: boolean): string => set_line_flip(id, flip),
   /** The papers and plot scales a sheet offers. */
   sheetOptions: (): SheetOptions => JSON.parse(sheet_options()),
@@ -429,7 +432,7 @@ const rawEngine = {
   sheetPlan: (width: number, height: number, p: SheetSetup): SheetPlan => JSON.parse(sheet_plan(width, height, p.paper, p.turned, p.feetPerInch, p.name, JSON.stringify(p.lines), p.title, p.bar, p.north)),
   ornament: (kind: string, curve: [number, number][], closed: boolean, flip: boolean, id: string, survey: [number, number][]): { spine: boolean; lines: [number, number][][] } => JSON.parse(ornament(kind, JSON.stringify(curve), closed, flip, id, JSON.stringify(survey))),
   flippedLines: (): string[] => JSON.parse(flipped_lines()),
-  lineInfo: (id: string): { kind: string; view: 'profile' | 'section' | 'map'; closed: boolean; flip: boolean; text: string } | null => JSON.parse(line_info(id)),
+  lineInfo: (id: string): { kind: string; view: 'profile' | 'section' | 'map'; closed: boolean; flip: boolean; text: string; style: string } | null => JSON.parse(line_info(id)),
   /** Deletes a line drawn in a view. */
   deleteLine: (id: string): string => delete_line(id),
   /** The linework drawn in plan on the map, lifted to the passage's elevation. */

@@ -43,6 +43,8 @@ pub enum DrawError {
     BadStroke,
     /// There is no usable stretch of survey (or station) to anchor the stroke to.
     NoStations,
+    /// A line style that is not `linetype;scale;density`.
+    BadStyle,
 }
 
 impl From<AnchorError> for DrawError {
@@ -389,6 +391,47 @@ pub fn set_stroke_text(doc: &Document, id: Id, text: &str) -> Result<Vec<Action>
         id,
         field: Field::FeatureText,
         value: Value::Text(text.trim().chars().take(MAX_TEXT).collect()),
+    }])
+}
+
+/// The line patterns a single line may be given, besides its type's own (empty).
+pub const LINETYPE_CHOICES: &[&str] = &["", "solid", "dashed", "longdash", "sparse", "dashdot"];
+
+/// A line's own style, as `linetype;scale;density` (empty for none). Anything unreadable gives `None`; the scale and the
+/// density are held to a sensible range and written in a fixed form, so equal styles are equal text.
+pub fn normalize_style(text: &str) -> Option<String> {
+    let t = text.trim();
+    if t.is_empty() {
+        return Some(String::new());
+    }
+    let mut parts = t.split(';');
+    let lt = parts.next()?.trim().to_ascii_lowercase();
+    if !LINETYPE_CHOICES.contains(&lt.as_str()) {
+        return None;
+    }
+    let num = |s: Option<&str>| -> Option<f64> {
+        let v = s.map_or(Some(1.0), |s| s.trim().parse::<f64>().ok())?;
+        v.is_finite().then_some(v)
+    };
+    let scale = num(parts.next())?.clamp(0.2, 6.0);
+    let density = num(parts.next())?.clamp(0.2, 4.0);
+    if parts.next().is_some() {
+        return None;
+    }
+    if lt.is_empty() && (scale - 1.0).abs() < 0.005 && (density - 1.0).abs() < 0.005 {
+        return Some(String::new());
+    }
+    Some(format!("{lt};{scale:.2};{density:.2}"))
+}
+
+/// Actions that set how this one line is drawn (its linetype, scale and fill density), apart from its type's look.
+pub fn set_stroke_style(doc: &Document, id: Id, style: &str) -> Result<Vec<Action>, DrawError> {
+    drawn_in(doc, id).ok_or(DrawError::NoStations)?;
+    let style = normalize_style(style).ok_or(DrawError::BadStyle)?;
+    Ok(vec![Action::Set {
+        id,
+        field: Field::FeatureStyle,
+        value: Value::Text(style),
     }])
 }
 
@@ -1069,5 +1112,38 @@ mod tests {
         assert!(with_closed(actions, true).is_err());
         assert!(set_stroke_kind(&doc, sec, "").is_err());
         assert!(validate(&doc).is_empty());
+    }
+
+    #[test]
+    fn a_lines_own_style_is_checked_and_written_one_way() {
+        assert_eq!(normalize_style(""), Some(String::new()));
+        assert_eq!(
+            normalize_style(" ; 1 ; 1 "),
+            Some(String::new()),
+            "all defaults means none"
+        );
+        assert_eq!(
+            normalize_style("Dashed;1.5;1"),
+            Some("dashed;1.50;1.00".into())
+        );
+        assert_eq!(
+            normalize_style(";2;0.5"),
+            Some(";2.00;0.50".into()),
+            "the type's own pattern, scaled"
+        );
+        assert_eq!(
+            normalize_style("sparse"),
+            Some("sparse;1.00;1.00".into()),
+            "scale and density are optional"
+        );
+        assert_eq!(
+            normalize_style("dashed;99;99"),
+            Some("dashed;6.00;4.00".into()),
+            "held to a range"
+        );
+        assert_eq!(normalize_style("zigzag;1;1"), None);
+        assert_eq!(normalize_style("dashed;x;1"), None);
+        assert_eq!(normalize_style("dashed;1;1;1"), None);
+        assert_eq!(normalize_style("dashed;NaN;1"), None);
     }
 }

@@ -42,6 +42,7 @@ export const WRITES: readonly string[] = [
   'setLineKind',
   'setLineText',
   'setLineFlip',
+  'setLineStyle',
   'deleteLine',
   'addSketch',
   'undo',
