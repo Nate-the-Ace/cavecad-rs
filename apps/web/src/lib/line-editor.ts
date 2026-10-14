@@ -239,7 +239,7 @@ export class LineEditor<T extends EditableLine = EditableLine> {
   }
 
   /** The words of the stamp (symbol, text or leader) at screen (`x`, `y`), with where they start on screen: what a double click edits. Null when none. */
-  wordsAt(x: number, y: number): { id: string; text: string; kind: string; x: number; y: number; size: number } | null {
+  wordsAt(x: number, y: number): { id: string; text: string; kind: string; x: number; y: number; size: number; angle: number } | null {
     const lines = this.shown();
     const hit = topLineAt(lines, this.h.toScreen, x, y, LINE_REACH, this.h.paperPx?.(), this.h.ornament);
     if (hit < 0 || !isStampKind(lines[hit].kind)) return null;

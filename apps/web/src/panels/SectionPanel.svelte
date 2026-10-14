@@ -15,7 +15,7 @@
   import { LineEditor, endpointNear, joinFit } from '../lib/line-editor';
   import { Touches } from '../lib/touch';
   import { PenGuard, isEraser, widthFor } from '../lib/pen';
-  import { drawStationMarker, isStampKind, leaderLook, needsWords, stampEditSpot, withLabelSpot } from '../lib/symbols';
+  import { drawStationMarker, isStampKind, leaderLook, liveWords, needsWords, stampEditSpot, withLabelSpot } from '../lib/symbols';
   import { isFillKind } from '../lib/fills';
   import { cursorsFor, live as room, reportCursor } from '../lib/sync.svelte';
   import { drawCursor } from '../lib/presence-draw';
@@ -26,7 +26,7 @@
   import { copyGhost, copyOp, copyPress, endCopy, registerClipView, snapToSelection } from '../lib/view-clip.svelte';
   import { paintCopy } from '../lib/copy-ghost';
   import type { Drawn } from '../lib/clip';
-  import { openTextEdit } from '../lib/text-edit.svelte';
+  import { openNewText, openTextEdit } from '../lib/text-edit.svelte';
   import { openLineMenu } from '../lib/line-menu.svelte';
   import { cave, changed, option, selectedIds, selectIds, toggleSelected, filter, wireFilter, haloFade, haloReach, toolStyle } from '../lib/cave.svelte';
   import { drawScan } from '../lib/scan-draw';
@@ -281,7 +281,7 @@
       g.arc(pickupAt[0], pickupAt[1], 9, 0, Math.PI * 2);
       g.stroke();
     }
-    if (live && live.pts.length > 1) drawStrokes(g, [{ kind: cave.tool || 'sketch', points: live.pts, widths: live.pressure ? live.widths : null, closed: false }], toScreen, look);
+    if (live && live.pts.length > 1) drawStrokes(g, [{ kind: cave.tool || 'sketch', text: isStampKind(cave.tool) ? liveWords(cave.tool, option('label', '')) : undefined, points: live.pts, widths: live.pressure ? live.widths : null, closed: false }], toScreen, look);
     // other people's pointers in this view
     for (const o of cursorsFor('section', cave.station)) {
       const [ox, oy] = toScreen(o.x, o.y);
@@ -517,16 +517,27 @@
     const stroked = live;
     live = null;
     if (isStampKind(cave.tool) && stroked.pts.length === 2 && cave.station) {
-      if (needsWords(cave.tool) && !option('label', '').trim()) {
-        message = 'Type the text in the ribbon first.';
-        schedule();
-        return;
-      }
       const [p0, q] = stroked.pts;
       const a = toScreen(p0[0], p0[1]);
       const b = toScreen(q[0], q[1]);
       // Just a click: a symbol of the chosen size, pointing up.
       const p1: [number, number] = Math.hypot(a[0] - b[0], a[1] - b[1]) < 6 ? [p0[0], p0[1] + option('symbolSize', 1.5)] : q;
+      if (needsWords(cave.tool) && !option('label', '').trim()) {
+        // the words are typed in place, after the click and drag that set where, how big and which way
+        const spot = stampEditSpot(cave.tool, [a, toScreen(p1[0], p1[1])], leaderLook('', (scale * drawing.scale) / 1000));
+        const r = canvas.getBoundingClientRect();
+        const tool = cave.tool;
+        const where = cave.station;
+        if (spot)
+          openNewText(r.left + spot.x, r.top + spot.y, spot.size, (words) => {
+            const made = engine.addSectionSketch(where, tool, [p0, p1], null, false, cave.adjusted, words);
+            message = made === 'ok' ? '' : made;
+            changed();
+            schedule();
+          }, 'Type the text', spot.angle);
+        schedule();
+        return;
+      }
       const result = engine.addSectionSketch(cave.station, cave.tool, withLabelSpot(cave.tool, [p0, p1], option('label', '')), null, false, cave.adjusted, option('label', ''));
       message = result === 'ok' ? '' : result;
       changed();
@@ -650,7 +661,7 @@
       if (cave.tool) return;
       // a double click on a symbol, text or leader edits its words in place; on a curve it adds a fit point
       const w = editor.wordsAt(e.clientX - r.left, e.clientY - r.top);
-      if (w) openTextEdit(w.id, w.text, r.left + w.x, r.top + w.y, w.size, w.kind === 'text' ? 'Type the text' : w.kind === 'callout' ? 'Type the note' : 'Label');
+      if (w) openTextEdit(w.id, w.text, r.left + w.x, r.top + w.y, w.size, w.kind === 'text' ? 'Type the text' : w.kind === 'callout' ? 'Type the note' : 'Label', w.angle);
       else editor.addPoint(e.clientX - r.left, e.clientY - r.top);
     }}
     onkeydown={onKey}

@@ -3,7 +3,7 @@
   import { tick } from 'svelte';
   import { changed } from '../lib/cave.svelte';
   import { engine } from '../lib/engine';
-  import { closeTextEdit, textEdit } from '../lib/text-edit.svelte';
+  import { closeTextEdit, isNew, takeMakeNew, textEdit } from '../lib/text-edit.svelte';
 
   let box = $state<HTMLInputElement>();
   let done = false;
@@ -21,6 +21,14 @@
   function commit() {
     if (done || !textEdit.open) return;
     done = true;
+    if (isNew()) {
+      // words that did not exist yet: made only if something was typed
+      const make = takeMakeNew();
+      const words = textEdit.value.trim();
+      closeTextEdit();
+      if (make && words) make(words);
+      return;
+    }
     const r = engine.setLineText(textEdit.id, textEdit.value);
     if (r !== 'ok') engine.log('warn', 'text', r.replace(/^error: /, ''));
     closeTextEdit();
@@ -40,7 +48,7 @@
     maxlength="200"
     placeholder={textEdit.placeholder}
     aria-label="Edit the words"
-    style="left: {textEdit.x - 6}px; top: {textEdit.y - textEdit.size * 0.75 - 3}px; font-size: {textEdit.size}px"
+    style="left: {textEdit.x - 6}px; top: {textEdit.y - textEdit.size * 0.75 - 3}px; font-size: {textEdit.size}px; transform: rotate({textEdit.angle}rad); transform-origin: 6px {textEdit.size * 0.75 + 3}px"
     bind:value={textEdit.value}
     onkeydown={(e) => {
       e.stopPropagation();

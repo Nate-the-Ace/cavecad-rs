@@ -202,6 +202,13 @@ function drawHead(g: CanvasRenderingContext2D, name: string, tip: [number, numbe
 }
 
 
+/** The words to show while a stamp is being placed (so its size and turn can be judged): the typed ones, else "Text" for a text. */
+export function liveWords(kind: string | undefined, typed: string): string {
+  const t = typed.trim();
+  if (kind === 'text') return t || 'Text';
+  return isSymbolKind(kind) ? t : '';
+}
+
 /** A symbol's label is a leader's note: a third point says where the note sits, and the leader to the symbol shows once the note is pulled clear of it. */
 const LABEL_LOOK: LeaderLook = { ...leaderLook(''), arrow: 'none', frame: 'none' };
 
@@ -216,19 +223,19 @@ function noteIsFar(pl: ReturnType<typeof placement>, note: [number, number]): bo
 }
 
 /** Where a stamp's words are, to edit them in place: the screen point they start at, and their height in pixels. Null for a stamp with no words to edit. */
-export function stampEditSpot(kind: string, pts: [number, number][], leader: LeaderLook = leaderLook('')): { x: number; y: number; size: number } | null {
+export function stampEditSpot(kind: string, pts: [number, number][], leader: LeaderLook = leaderLook('')): { x: number; y: number; size: number; angle: number } | null {
   const [p0, p1] = pts;
   if (!p0 || !p1) return null;
   const pl = placement(p0, p1);
   if (kind === 'callout') {
     const size = leader.paperPx && leader.paperPx > 0 ? 3 * leader.paperPx * leader.size : Math.hypot(p1[0] - p0[0], p1[1] - p0[1]) / 3;
-    return { x: p1[0], y: p1[1], size };
+    return { x: p1[0], y: p1[1], size, angle: 0 };
   }
-  if (kind === 'text') return { x: pl.cx, y: pl.cy, size: Math.max(6, pl.r) };
+  if (kind === 'text') return { x: pl.cx, y: pl.cy, size: Math.max(6, pl.r), angle: Math.atan2(pl.ux, -pl.uy) };
   if (!isSymbolKind(kind)) return null;
   const w = wordsPlacement(kind, pl);
   const note = pts[2];
-  return note ? { x: note[0], y: note[1], size: w.size } : { x: w.x, y: w.y, size: w.size };
+  return note ? { x: note[0], y: note[1], size: w.size, angle: 0 } : { x: w.x, y: w.y, size: w.size, angle: 0 };
 }
 
 /** True when screen (`x`, `y`) is on the words of a symbol's label note (so a press there can pick the note up, selected or not). */

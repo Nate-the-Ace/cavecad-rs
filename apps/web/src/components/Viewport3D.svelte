@@ -12,7 +12,7 @@
   import { fitPlane, heightSurface } from '../lib/plane';
   import { markViewUsed, registerSelectAll } from '../lib/select-all';
   import { copyGhost, copyOp, copyPress, endCopy, registerClipView } from '../lib/view-clip.svelte';
-  import { openTextEdit } from '../lib/text-edit.svelte';
+  import { openNewText, openTextEdit } from '../lib/text-edit.svelte';
   import { openLineMenu } from '../lib/line-menu.svelte';
   import { cave, changed, filter, haloFade, haloReach, option, selectedIds, selectIds, toggleSelected, setPick, setShowSections, setShown, wireFilter, toolStyle } from '../lib/cave.svelte';
   import { tolerancePx } from '../lib/commands';
@@ -309,7 +309,7 @@
       if (!selectedIds().includes(id)) selectIds([id]);
       openLineMenu(x, y, () => similar);
     };
-    v.onEditText = (id, text, kind, x, y, size) => openTextEdit(id, text, x, y, size, kind === 'text' ? 'Type the text' : kind === 'callout' ? 'Type the note' : 'Label');
+    v.onEditText = (id, text, kind, x, y, size, angle) => openTextEdit(id, text, x, y, size, kind === 'text' ? 'Type the text' : kind === 'callout' ? 'Type the note' : 'Label', angle);
     v.copyLines = (cursor) => copyGhost('map', cursor)?.lines ?? null;
     v.onCopyPress = (p) => copyPress('map', p);
     v.onEndCopy = () => endCopy();
@@ -338,7 +338,16 @@
         return;
       }
       if (needsWords(cave.tool) && !text.trim()) {
-        engine.log('warn', 'draw', 'Type the text in the ribbon first.');
+        // the words are typed in place, after the click and drag that set where, how big and which way
+        const spot = view?.wordsSpotAtPlan(cave.tool, points);
+        const tool = cave.tool;
+        const style = toolStyle();
+        if (spot)
+          openNewText(spot.x, spot.y, spot.size, (words) => {
+            const made = engine.addMapLine(tool, points, widths, closed, cave.adjusted, words, style);
+            if (made !== 'ok') engine.log('warn', 'draw', made);
+            changed();
+          }, 'Type the text', spot.angle);
         return;
       }
       const r = engine.addMapLine(cave.tool, withLabelSpot(cave.tool, points, text), widths, closed, cave.adjusted, text, toolStyle());

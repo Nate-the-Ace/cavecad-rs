@@ -9,7 +9,7 @@ import type { MapSection, PassageBuffers, Pt, ProfileSketch3d, Scene, TypeStyle 
 import { PenGuard, isEraser, widthFor } from '../pen';
 import { arrowAt, attachOf, nearestVertex, resolveLeaders, withArrow, withoutArrow } from '../leader-edit';
 import { withAttach } from '../line-style-text';
-import { stampEditSpot, drawStamp, drawStationMarker, hitsLabelNote, hitsStamp, isStampKind, leaderLook, placement } from '../symbols';
+import { liveWords, stampEditSpot, drawStamp, drawStationMarker, hitsLabelNote, hitsStamp, isStampKind, leaderLook, placement } from '../symbols';
 import { paintCopy } from '../copy-ghost';
 import type { ClipLine } from '../clip';
 import { drawMarks, isFillKind, marksFor } from '../fills';
@@ -116,7 +116,7 @@ export class CaveView {
   onCopyPress: (p: [number, number]) => void = () => {};
   onEndCopy: () => void = () => {};
   /** Called to edit a stamp's words in place: its id, words, kind, and where (page pixels) and how tall they are. */
-  onEditText: (id: string, text: string, kind: string, x: number, y: number, size: number) => void = () => {};
+  onEditText: (id: string, text: string, kind: string, x: number, y: number, size: number, angle: number) => void = () => {};
   /** Where the next stroke would carry an open line on from, on screen, while a tool waits. */
   private pickupAt: [number, number] | null = null;
   /** How a drawn stroke is turned into a curve: the fit tolerance in pixels, and whether pen pressure counts. */
@@ -878,17 +878,23 @@ export class CaveView {
     const spot = stampEditSpot(k.kind, pts, leaderLook(k.style, ((this.pixelsPerMetreAt(k.points[0]) ?? 0) * drawing.scale) / 1000));
     if (!spot) return;
     const r = this.canvas.getBoundingClientRect();
-    this.onEditText(k.id, k.text ?? '', k.kind, r.left + spot.x, r.top + spot.y, spot.size);
+    this.onEditText(k.id, k.text ?? '', k.kind, r.left + spot.x, r.top + spot.y, spot.size, spot.angle);
   }
 
-  /** Opens the in-place box for a stamp just placed at these plan points (before the view has read it back). */
-  editWordsAtPlan(id: string, kind: string, text: string, plan: [number, number][]) {
+  /** Where a stamp's words start on the page (and how tall they are) for a stamp at these plan points, before the view has read it back. */
+  wordsSpotAtPlan(kind: string, plan: [number, number][]): { x: number; y: number; size: number; angle: number } | null {
     const z = this.controls.target.z;
     const pts = plan.map((p) => this.project([p[0], p[1], z])).filter((p): p is [number, number] => !!p);
     const spot = stampEditSpot(kind, pts, leaderLook('', ((this.pixelsPerMetreAt([plan[0][0], plan[0][1], z]) ?? 0) * drawing.scale) / 1000));
-    if (!spot) return;
+    if (!spot) return null;
     const r = this.canvas.getBoundingClientRect();
-    this.onEditText(id, text, kind, r.left + spot.x, r.top + spot.y, spot.size);
+    return { x: r.left + spot.x, y: r.top + spot.y, size: spot.size, angle: spot.angle };
+  }
+
+  /** Opens the in-place box for a stamp just placed at these plan points. */
+  editWordsAtPlan(id: string, kind: string, text: string, plan: [number, number][]) {
+    const spot = this.wordsSpotAtPlan(kind, plan);
+    if (spot) this.onEditText(id, text, kind, spot.x, spot.y, spot.size, spot.angle);
   }
 
   /** Where the pointer last was on the plan, or null. */
@@ -1618,7 +1624,7 @@ export class CaveView {
     }
     const live = this.liveLine;
     if (live && live.pts.length > 1) {
-      this.strokeLines(g, [{ id: '', closed: false, kind: this.drawTool || 'sketch', run: '', points: live.pts.map((p) => [p[0], p[1], live.z] as [number, number, number]), widths: live.pressure ? live.widths : null }]);
+      this.strokeLines(g, [{ id: '', closed: false, kind: this.drawTool || 'sketch', run: '', text: isStampKind(this.drawTool) ? liveWords(this.drawTool, this.drawOptions.label) : undefined, points: live.pts.map((p) => [p[0], p[1], live.z] as [number, number, number]), widths: live.pressure ? live.widths : null }]);
     }
     if (this.showSections) {
       for (const sec of this.sections) {
