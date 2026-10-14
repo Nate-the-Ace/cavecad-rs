@@ -11,11 +11,16 @@
 //! declination turns them into the true bearings the survey stores.
 
 mod edit;
+mod live;
 mod page;
 
 pub use edit::{
     EditError, Reading, TripField, add_shot, new_cave, new_trip, remove_shot, rename_station,
     set_notes, set_reading, set_trip_declination, set_trip_field, set_walls,
+};
+pub use live::{
+    Measured, Side, add_measured_shot, set_readings, set_station_wall, set_station_walls,
+    station_walls, stations_in_use, suggest_next,
 };
 pub use page::{ClosureRow, Lrud, Page, Row, RowKind, Totals, TripChoice, page, trips};
 
