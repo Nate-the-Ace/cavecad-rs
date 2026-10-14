@@ -76,6 +76,11 @@ Nearest is last. Ties break by mode order then source id, so results are determi
 | Relational | Intersection, Apparent Intersection, Extended Intersection, Extension, Perpendicular, Tangent, Nearest, Parallel |
 | Reference | From, Mid Between 2 Points, Temporary Track Point, running tracking |
 
+Center and Geometric Center fire when the cursor is **on the object** (its circumference or outline),
+as in AutoCAD, and also when it is near the centre point itself. Other point modes fire only near
+the point. The candidate's distance for ranking is the smaller of the two, so `Candidate` carries the
+source curves to measure against.
+
 Intersection and Apparent Intersection: in screen space every crossing is "apparent". Plain
 Intersection keeps only crossings where the two world points are within a small distance of each
 other in the drawing plane (or both lie on the same Z level in an oblique view); Apparent keeps all.
