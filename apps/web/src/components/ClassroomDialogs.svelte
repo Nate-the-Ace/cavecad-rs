@@ -46,7 +46,7 @@
         <button class="x" aria-label="Close" onclick={close}><X size={16} /></button>
       </div>
       <p class="note">You teach from “{cave.name || 'the open cave'}”. Students open a link and watch your screen: they see what you see, as you do it, and cannot change anything. Their pointers show to you. A raised hand and a chat let them ask questions, and every question is kept in the class&rsquo;s record.</p>
-      <label>Name of the class <input bind:value={className} placeholder="Caving 101, Truitt survey day…" maxlength="60" onkeydown={(e) => e.key === 'Enter' && start()} /></label>
+      <label>Name of the class <input bind:value={className} placeholder="Caving 101, survey day…" maxlength="60" onkeydown={(e) => e.key === 'Enter' && start()} /></label>
       <label>Your name <input bind:value={teacherName} maxlength="40" /></label>
       <p class="note">Students open one link. A small mailbox only passes their first hello; then each student's device connects straight to yours, so no server carries the class.</p>
       <label class="opt"><input type="checkbox" bind:checked={keepOff} /> <span><b>Students cannot keep the cave.</b> They can only look: saving, exporting and printing are off for them, and the cave and its scans are cleared from their computers when they leave or the class ends. Turn this off if they may keep a copy.</span></label>
