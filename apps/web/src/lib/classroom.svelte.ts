@@ -355,8 +355,9 @@ setRoomHooks({
       classroom.ended = true;
       stopMirroring();
       if (classroom.role === 'student' && classroom.private) {
-        classroom.notice = 'The class has ended. The cave will be cleared from this computer in a few seconds.';
-        setTimeout(() => classroom.role === 'student' && classroom.ended && leaveClass(), 8000);
+        // Cleared at once: the class is over, so there is nothing left to look at. The chat stays until they leave.
+        wipeStudentCave();
+        classroom.notice = 'The class has ended. The cave has been cleared from this computer.';
       }
     } else if (m.t === 'denied') {
       notify(String(m.message ?? ''));
