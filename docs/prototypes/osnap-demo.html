@@ -489,7 +489,8 @@ function draw() {
     let cx = mx, cy = my;
     if (r.best) {
       const s = toS(r.best.p);
-      if (S.magnet) { cx = s[0]; cy = s[1]; }
+      // the magnet only pulls the crosshair when the snap point is already inside the aperture; a snap found from the object (Center from the circle's edge) leaves the cursor where it is and just shows its glyph
+      if (S.magnet && Math.hypot(s[0] - mx, s[1] - my) <= S.aperture) { cx = s[0]; cy = s[1]; }
       if (S.marker) glyph(ctx, r.best.mode === 'guide' ? 'guide' : r.best.mode, s[0], s[1], 7);
       if (S.tooltip) {
         const t = candText(r.best, r) + (r.list.length > 1 ? '   [Tab ' + ((st.tab % r.list.length) + 1) + '/' + r.list.length + ']' : '');
