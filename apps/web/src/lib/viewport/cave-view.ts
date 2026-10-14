@@ -9,7 +9,8 @@ import type { MapSection, PassageBuffers, Pt, ProfileSketch3d, Scene, TypeStyle 
 import { PenGuard, isEraser, widthFor } from '../pen';
 import { drawStamp, drawStationMarker, hitsStamp, isStampKind, placement } from '../symbols';
 import { drawMarks, isFillKind, marksFor } from '../fills';
-import { parseStyle, styleFor } from '../line-style.svelte';
+import { drawing, fillLength, parseStyle, styleFor } from '../line-style.svelte';
+import { dashMetres } from '../dash';
 import { affineWarp, warpGrid, type Warp } from '../scan-warp';
 import { drawHalo, type HaloLine } from '../halo';
 import { isKindHidden, ornamentFor, refreshFlipped } from '../section-glyph';
@@ -997,7 +998,7 @@ export class CaveView {
     for (const k of lines) {
       if (isKindHidden(k.kind)) continue; // switched off in the Show menu
       const style = styleFor(k.id, k.style);
-      const l = look(k.kind, style);
+      const l = look(k.kind, style, this.pixelsPerMetreAt(k.points[0]) ?? undefined);
       g.strokeStyle = l.color;
       g.globalAlpha = base * l.alpha;
       g.setLineDash(l.dash);
@@ -1048,7 +1049,7 @@ export class CaveView {
         const plan = smooth(k.points.map((p) => [p[0], p[1]] as [number, number]), null, 10, true).pts as [number, number][];
         g.setLineDash([]);
         g.lineWidth = Math.max(1, l.weight * 0.7);
-        drawMarks(g, marksFor(k.kind, k.id, plan, parseStyle(style).density), (x, y) => this.project([x, y, z]) ?? [-1e5, -1e5], pts as [number, number][]);
+        drawMarks(g, marksFor(k.kind, k.id, plan, parseStyle(style).density, fillLength()), (x, y) => this.project([x, y, z]) ?? [-1e5, -1e5], pts as [number, number][]);
       }
       // A shaped line (ledge, pit, slope, glyphs...): its marks are made from the plan curve and drawn lifted to its height.
       let spine = true;
@@ -1291,12 +1292,15 @@ export class CaveView {
       const opacity = under ? st.under_opacity : st.opacity;
       const geo = new LineSegmentsGeometry();
       geo.setPositions(segs.flatMap((p) => p));
-      const mat = new LineMaterial({ color: this.elevationColors ? 0xffffff : inkColor(t, st.ink), linewidth: st.weight, dashed: under || st.linetype === 'dashed', transparent: opacity < 1, opacity, vertexColors: this.elevationColors, dashSize: 1, gapSize: 0.6 });
+      const mat = new LineMaterial({ color: this.elevationColors ? 0xffffff : inkColor(t, st.ink), linewidth: st.weight, dashed: under || st.pattern.length > 0, transparent: opacity < 1, opacity, vertexColors: this.elevationColors, dashSize: 1, gapSize: 0.6 });
       mat.resolution.set(this.width, this.height);
       if (this.elevationColors) geo.setColors(segs.flatMap((p) => [...shade(p[2]).toArray(), ...shade(p[5]).toArray()]));
       const mesh = new LineSegments2(geo, mat);
       mesh.computeLineDistances();
       this.content.add(mesh);
+      // the pattern on paper that this line follows: its type's, or the plain dashed one for a line running under another passage
+      mat.userData.pattern = st.pattern;
+      mat.userData.under = under;
       this.materials.push(mat);
     };
     const legs = (style: string) => s.legs.filter((l) => l.style === style).map((l) => [...l.from, ...l.to]);
@@ -1320,12 +1324,21 @@ export class CaveView {
     this.requestRender();
   }
 
+  /** The dashes of the survey's own lines are real ground lengths: the pattern on paper at the drawing's scale. */
   private updateDashes() {
-    const dash = Math.max(this.extent / 120, 0.05);
     for (const m of this.materials) {
-      m.dashSize = dash;
-      m.gapSize = dash * 0.6;
+      const own = (m.userData.pattern as number[] | undefined) ?? [];
+      const pattern = m.userData.under && !own.length ? (drawing.patterns.dashed ?? []) : own; // under another passage: plainly dashed
+      const d = dashMetres(pattern, drawing.scale, 1, drawing.dotMm);
+      m.dashSize = d?.dash ?? Math.max(this.extent / 120, 0.05);
+      m.gapSize = d?.gap ?? m.dashSize * 0.6;
     }
+  }
+
+  /** The drawing's scale changed: dashes and fills are sized again. */
+  refreshDrawing() {
+    this.updateDashes();
+    this.requestRender();
   }
 
   // ---- drawing -----------------------------------------------------------------------------

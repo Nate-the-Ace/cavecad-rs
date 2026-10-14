@@ -513,6 +513,36 @@ pub fn set_line_text(id: &str, text: &str) -> String {
     change_line(id, |doc, line| cave_draw::set_stroke_text(doc, line, text))
 }
 
+/// The drawing's scale, the N of 1:N.
+#[wasm_bindgen]
+pub fn drawing_scale() -> f64 {
+    DOC.with(|d| {
+        d.borrow()
+            .as_ref()
+            .map_or(cave_draw::DEFAULT_SCALE, cave_draw::drawing_scale)
+    })
+}
+
+/// Sets the drawing's scale to 1:`n`. One undoable edit in the settings history. Returns `ok` or `error: ...`.
+#[wasm_bindgen]
+pub fn set_drawing_scale(n: f64) -> String {
+    let result = DOC.with(|d| {
+        let mut slot = d.borrow_mut();
+        let doc = slot.as_mut().ok_or("no cave is open")?;
+        let actions = cave_draw::set_drawing_scale(doc, n).map_err(|e| format!("{e:?}"))?;
+        if actions.is_empty() {
+            return Ok(());
+        }
+        let edit = doc.edit(actions).map_err(|e| format!("{e:?}"))?;
+        record_edit("settings", &edit);
+        Ok::<(), String>(())
+    });
+    match result {
+        Ok(()) => "ok".into(),
+        Err(e) => format!("error: {e}"),
+    }
+}
+
 /// Sets how one line is drawn, apart from its type's look: `linetype;scale;density` (`dashed;1.50;1.00`; empty for the
 /// type's own). One undoable edit. Returns `ok` or `error: ...`.
 #[wasm_bindgen]
@@ -825,15 +855,17 @@ pub fn fills() -> String {
 
 /// The marks that fill an outline: `kind` is a fill type, `curve` the outline as `[[x, y], ...]` in
 /// metres, `id` the stroke's id (it seeds the scatter, so every device draws the same marks).
-/// `amount` is how dense (1 as authored, 2 twice as many marks). Returns `{lines, circles, tint}` as JSON.
+/// `amount` is how dense (1 as authored, 2 twice as many marks); `length` is the drawing scale over 500 (1 at 1:500), so marks keep
+/// their size on paper at any scale. Returns `{lines, circles, tint}` as JSON.
 #[wasm_bindgen]
-pub fn fill_marks(kind: &str, curve: &str, id: &str, amount: f64) -> String {
+pub fn fill_marks(kind: &str, curve: &str, id: &str, amount: f64, length: f64) -> String {
     let pts = serde_json::from_str::<Vec<[f64; 2]>>(curve).unwrap_or_default();
-    serde_json::to_string(&cave_fill::marks_with(
+    serde_json::to_string(&cave_fill::marks_at(
         kind,
         &pts,
         cave_fill::seed_of(id),
         amount,
+        length,
     ))
     .unwrap_or_else(|_| "{}".into())
 }
@@ -950,6 +982,19 @@ pub fn scene(adjusted: bool, filter: &str) -> String {
         };
         serde_json::to_string(&scene).unwrap_or_else(|_| "{}".to_string())
     })
+}
+
+/// The line patterns a line can be given, on paper in millimetres: `[{key, pattern}]` (`solid` has none). A positive length
+/// is a dash, a negative one a gap, zero a dot (`dot_mm` long).
+#[wasm_bindgen]
+pub fn linetypes() -> String {
+    let mut list = vec![serde_json::json!({"key": "solid", "pattern": []})];
+    for l in cave_style::LINETYPES {
+        list.push(
+            serde_json::json!({"key": format!("{l:?}").to_lowercase(), "pattern": l.paper_mm()}),
+        );
+    }
+    serde_json::json!({"dot_mm": cave_style::DOT_MM, "types": list}).to_string()
 }
 
 /// The type palette (colour role, weight, linetype per type) as JSON, for the viewer.

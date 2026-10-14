@@ -44,3 +44,21 @@ export const liveStyle = $state({ id: '', style: '' });
 export function styleFor(id: string | undefined, stored: string | undefined): string {
   return id && liveStyle.id === id ? liveStyle.style : (stored ?? '');
 }
+
+/** The drawing's scale (the N of 1:N) and the line patterns the engine knows (on paper, in millimetres). Patterns and fills are sized on paper at this scale. */
+export const drawing = $state({ scale: 500, patterns: {} as Record<string, number[]>, dotMm: 0.4 });
+
+/** What the fills' authored sizes belong to: at 1:500 an area fills exactly as it was authored. */
+export const BASE_SCALE = 500;
+
+/** The factor for the fill marks: the drawing's scale over the base one. */
+export const fillLength = (): number => drawing.scale / BASE_SCALE;
+
+/** Takes in the drawing's scale and the linetypes from the engine (call when a cave opens or changes). */
+export function readDrawing(read: { scale: number; types: { key: string; pattern: number[] }[]; dotMm: number }) {
+  if (drawing.scale !== read.scale) drawing.scale = read.scale;
+  if (!Object.keys(drawing.patterns).length) {
+    drawing.patterns = Object.fromEntries(read.types.map((t) => [t.key, t.pattern]));
+    drawing.dotMm = read.dotMm;
+  }
+}

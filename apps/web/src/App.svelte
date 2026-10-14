@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, untrack } from 'svelte';
   import Ribbon from './components/Ribbon.svelte';
   import NewCave from './components/NewCave.svelte';
   import { initWorkspace } from './lib/workspace.svelte';
@@ -15,6 +15,7 @@
   import ClassroomAlerts from './components/ClassroomAlerts.svelte';
   import { classroom, keepsCave, openJoinUrl, readClassLinkFromUrl } from './lib/classroom.svelte';
   import { listenForLinks } from './lib/desktop';
+  import { syncDrawing } from './lib/drawing';
   import { viewChanged } from './lib/p2p.svelte';
   import { scans } from './lib/scans.svelte';
   import { autosaveSoon, flush, loadShelf, shelf } from './lib/shelf.svelte';
@@ -24,6 +25,14 @@
   let info = $state<BuildInfo | null>(null);
   let failed = $state<string | null>(null);
   let host: HTMLDivElement;
+
+  // The drawing's scale (and who changed it) is read again whenever the cave changes or another opens.
+  let engineReady = $state(false);
+  $effect(() => {
+    void cave.version;
+    void cave.opened;
+    if (engineReady) untrack(syncDrawing);
+  });
 
   onMount(() => {
     const teardown = initWorkspace(host);
@@ -39,6 +48,8 @@
       try {
         await loadEngine();
         version = engine.version();
+        engineReady = true;
+        syncDrawing();
         await loadShelf();
         // A clean slate: the shelf opens first, unless someone sent an invite to a room.
         if (!cave.hasCave && shelf.startup && !live.pending && !classroom.pending) shelf.open = true;

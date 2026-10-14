@@ -30,7 +30,7 @@ export function renderSheet(dpi: number): HTMLCanvasElement {
   c.width = Math.round(plan.w * dpi);
   c.height = Math.round(plan.h * dpi);
   const g = c.getContext('2d');
-  if (g) drawSheet(g, plan, scene, lines, dpi, looks());
+  if (g) drawSheet(g, plan, scene, lines, dpi, looks({ pxPerMm: dpi / 25.4 })); // on paper, a millimetre is a millimetre whatever the ground
   return c;
 }
 

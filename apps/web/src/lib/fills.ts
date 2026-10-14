@@ -19,7 +19,7 @@ export interface Marks {
 
 export interface FillSource {
   fills(): FillDef[];
-  fillMarks(kind: string, curve: [number, number][], id: string, amount?: number): Marks;
+  fillMarks(kind: string, curve: [number, number][], id: string, amount?: number, length?: number): Marks;
 }
 
 let source: FillSource | null = null;
@@ -50,12 +50,12 @@ const cache = new Map<string, Marks>();
 const EMPTY: Marks = { lines: [], circles: [], tint: false };
 
 /** The marks for a stroke: from the cache while its outline is unchanged. `curve` is the smooth outline. */
-export function marksFor(kind: string, id: string, curve: [number, number][], amount = 1): Marks {
+export function marksFor(kind: string, id: string, curve: [number, number][], amount = 1, length = 1): Marks {
   if (!source || curve.length < 3) return EMPTY;
-  const key = `${kind}|${amount}|${id}|${curve.length}|${curve[0]}|${curve[curve.length >> 1]}|${curve[curve.length - 1]}`;
+  const key = `${kind}|${amount}|${length}|${id}|${curve.length}|${curve[0]}|${curve[curve.length >> 1]}|${curve[curve.length - 1]}`;
   let m = cache.get(key);
   if (!m) {
-    m = source.fillMarks(kind, curve, id, amount);
+    m = source.fillMarks(kind, curve, id, amount, length);
     if (cache.size > 400) cache.clear(); // an editing session never needs more than a few at once
     cache.set(key, m);
   }

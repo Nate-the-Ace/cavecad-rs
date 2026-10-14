@@ -1,5 +1,5 @@
 // Loads the Rust engine (WASM) once and re-exports the few calls the UI uses.
-import init, { start, log, console_events, console_clear, engine_version, open_demo, scene, profile_runs, profile_band, add_profile_sketch, undo, redo, edit_state, passage_mesh, shading, palette, open_dxf, save_dxf, section_stations, section_at, add_section_sketch, map_sections, place_section, map_profile_sketches, add_map_line, map_lines, draw_tools, edit_line, delete_line, set_line_closed, set_line_kind, line_info, set_line_flip, set_line_style, set_line_text, ornament, callout, sheet_options, sheet_plan, flipped_lines, revision, station_rows, set_station_mark, station_detail, shot_detail, set_shot, set_station_walls, set_station_note, set_station_benchmark, symbols, fills, fill_marks, draw_tool_groups, sync_outbox, sync_apply, sync_snapshot, sync_load, notebook_trips, notebook_page, notebook_set_reading, notebook_set_walls, notebook_set_note, notebook_set_trip_field, notebook_set_declination, notebook_add_shot, notebook_remove_shot, notebook_rename_station, notebook_new_trip, scan_links, scan_link, scan_unlink, scan_placements, scan_alignment, scan_add_anchor, scan_remove_anchor, scan_set_mode, scan_trim, scan_set_trim, scan_view_stations, new_cave, scan_completed, scan_set_complete, shelf_summary, shelf_summarize, shelf_summarize_demo, shelf_summarize_native } from '../wasm/cave_wasm.js';
+import init, { start, log, console_events, console_clear, engine_version, open_demo, scene, profile_runs, profile_band, add_profile_sketch, undo, redo, edit_state, passage_mesh, shading, palette, open_dxf, save_dxf, section_stations, section_at, add_section_sketch, map_sections, place_section, map_profile_sketches, add_map_line, map_lines, draw_tools, edit_line, delete_line, set_line_closed, set_line_kind, line_info, set_line_flip, set_line_style, drawing_scale, set_drawing_scale, linetypes, set_line_text, ornament, callout, sheet_options, sheet_plan, flipped_lines, revision, station_rows, set_station_mark, station_detail, shot_detail, set_shot, set_station_walls, set_station_note, set_station_benchmark, symbols, fills, fill_marks, draw_tool_groups, sync_outbox, sync_apply, sync_snapshot, sync_load, notebook_trips, notebook_page, notebook_set_reading, notebook_set_walls, notebook_set_note, notebook_set_trip_field, notebook_set_declination, notebook_add_shot, notebook_remove_shot, notebook_rename_station, notebook_new_trip, scan_links, scan_link, scan_unlink, scan_placements, scan_alignment, scan_add_anchor, scan_remove_anchor, scan_set_mode, scan_trim, scan_set_trim, scan_view_stations, new_cave, scan_completed, scan_set_complete, shelf_summary, shelf_summarize, shelf_summarize_demo, shelf_summarize_native } from '../wasm/cave_wasm.js';
 
 import { setInkPalette } from './ink';
 import { setOrnamentSource } from './section-glyph';
@@ -165,6 +165,8 @@ export interface TypeStyle {
   ink: 'text' | 'muted' | 'accent' | 'warn' | 'danger' | 'station' | 'geology';
   weight: number;
   linetype: 'solid' | 'dashed' | 'longdash' | 'sparse' | 'dashdot';
+  /** The same pattern on paper in millimetres (a dash positive, a gap negative, a dot zero). */
+  pattern: number[];
   opacity: number;
   under_opacity: number;
   layer: string;
@@ -312,7 +314,12 @@ const rawEngine = {
   /** Every kind of area fill, with what it means. */
   fills: (): FillDef[] => JSON.parse(fills()),
   /** The marks that fill an outline (metres), seeded by the stroke's id. */
-  fillMarks: (kind: string, curve: [number, number][], id: string, amount = 1): Marks => JSON.parse(fill_marks(kind, JSON.stringify(curve), id, amount)),
+  fillMarks: (kind: string, curve: [number, number][], id: string, amount = 1, length = 1): Marks => JSON.parse(fill_marks(kind, JSON.stringify(curve), id, amount, length)),
+  /** The drawing's scale, the N of 1:N. */
+  drawingScale: (): number => drawing_scale(),
+  setDrawingScale: (n: number): string => set_drawing_scale(n),
+  /** The line patterns a line can be given, on paper in millimetres. */
+  linetypes: (): { dot_mm: number; types: { key: string; pattern: number[] }[] } => JSON.parse(linetypes()),
   /** Every point symbol the palette offers, with its drawing. */
   symbols: (): SymbolDef[] => JSON.parse(symbols()),
   /** One row per station: what kind of place it is, its notes, elevation and the team's mark. */

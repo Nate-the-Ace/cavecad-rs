@@ -24,6 +24,9 @@ pub enum Kind {
     /// A scanned page the team keeps track of (which pages have been dealt with). Its id comes from
     /// its path, so two people marking the same page write to the same entity and agree.
     Scan,
+    /// A drawing-wide setting (the drawing's scale, ...), one entity per named setting. Its id comes from its name, so two
+    /// people changing the same setting write to the same entity and agree.
+    Setting,
 }
 
 /// The type of value a field holds.
@@ -257,6 +260,10 @@ pub enum Field {
     ScanPath,
     /// The page has been dealt with (typed up, traced). Unmarked means it still needs attention.
     ScanComplete,
+    /// Which setting this is (`drawing-scale`, ...).
+    SettingKey,
+    /// The setting's value, as text.
+    SettingValue,
     /// The words.
     TextBody,
     /// Where the text starts.
@@ -349,6 +356,7 @@ impl Field {
             SymbolTags => (K::Symbol, V::Map),
             ScanPath => (K::Scan, V::Text),
             ScanComplete => (K::Scan, V::Flag),
+            SettingKey | SettingValue => (K::Setting, V::Text),
             TextTrip => (K::Text, V::Ref),
             TextBody => (K::Text, V::Text),
             TextAt => (K::Text, V::Point),

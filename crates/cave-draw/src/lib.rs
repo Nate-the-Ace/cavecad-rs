@@ -394,6 +394,64 @@ pub fn set_stroke_text(doc: &Document, id: Id, text: &str) -> Result<Vec<Action>
     }])
 }
 
+/// The scale the fills' authored sizes belong to: at 1:500 an area fills exactly as it was authored.
+pub const BASE_SCALE: f64 = 500.0;
+/// The scale a drawing has until it is set.
+pub const DEFAULT_SCALE: f64 = 500.0;
+/// The range a drawing scale may take (1:N).
+pub const SCALE_RANGE: (f64, f64) = (10.0, 100_000.0);
+
+/// The id of a named drawing-wide setting.
+pub fn setting_id(key: &str) -> Id {
+    Id::from_name(&format!("setting:{key}"))
+}
+
+/// The drawing's scale as the N of 1:N (`DEFAULT_SCALE` until one is set). Patterns and fills are sized on paper at this scale.
+pub fn drawing_scale(doc: &Document) -> f64 {
+    doc.entity(setting_id("drawing-scale"))
+        .map(|e| e.text(Field::SettingValue))
+        .and_then(|t| t.trim().parse::<f64>().ok())
+        .filter(|n| n.is_finite() && *n >= SCALE_RANGE.0 && *n <= SCALE_RANGE.1)
+        .unwrap_or(DEFAULT_SCALE)
+}
+
+/// Actions that set the drawing's scale to 1:`n` (held to `SCALE_RANGE`; whole numbers are written without decimals).
+pub fn set_drawing_scale(doc: &Document, n: f64) -> Result<Vec<Action>, DrawError> {
+    if !n.is_finite() {
+        return Err(DrawError::BadStroke);
+    }
+    let n = n.clamp(SCALE_RANGE.0, SCALE_RANGE.1);
+    let text = if (n - n.round()).abs() < 1e-9 {
+        format!("{}", n.round() as i64)
+    } else {
+        format!("{n:.2}")
+    };
+    let id = setting_id("drawing-scale");
+    let mut actions = Vec::new();
+    if doc.entity(id).is_none() {
+        actions.push(Action::Create {
+            id,
+            kind: Kind::Setting,
+        });
+        actions.push(Action::Set {
+            id,
+            field: Field::SettingKey,
+            value: Value::Text("drawing-scale".into()),
+        });
+    }
+    if doc
+        .entity(id)
+        .is_none_or(|e| e.text(Field::SettingValue) != text)
+    {
+        actions.push(Action::Set {
+            id,
+            field: Field::SettingValue,
+            value: Value::Text(text),
+        });
+    }
+    Ok(actions)
+}
+
 /// The line patterns a single line may be given, besides its type's own (empty).
 pub const LINETYPE_CHOICES: &[&str] = &["", "solid", "dashed", "longdash", "sparse", "dashdot"];
 
@@ -1145,5 +1203,32 @@ mod tests {
         assert_eq!(normalize_style("dashed;x;1"), None);
         assert_eq!(normalize_style("dashed;1;1;1"), None);
         assert_eq!(normalize_style("dashed;NaN;1"), None);
+    }
+
+    #[test]
+    fn the_drawing_scale_is_a_setting_everyone_agrees_on() {
+        use cave_doc::{ActorId, Document};
+        let mut doc = Document::new(ActorId(1));
+        assert_eq!(drawing_scale(&doc), DEFAULT_SCALE, "500 until set");
+        doc.edit(set_drawing_scale(&doc, 1000.0).unwrap()).unwrap();
+        assert_eq!(drawing_scale(&doc), 1000.0);
+        assert!(
+            set_drawing_scale(&doc, 1000.0).unwrap().is_empty(),
+            "setting it to what it is writes nothing"
+        );
+        doc.edit(set_drawing_scale(&doc, 2.0).unwrap()).unwrap();
+        assert_eq!(drawing_scale(&doc), SCALE_RANGE.0, "held to a range");
+        assert!(set_drawing_scale(&doc, f64::NAN).is_err());
+        // another copy that applies the same operations arrives at the same scale
+        let mut other = Document::new(ActorId(2));
+        for op in doc.snapshot() {
+            other.apply(&op).unwrap();
+        }
+        assert_eq!(drawing_scale(&other), SCALE_RANGE.0);
+        assert_eq!(
+            setting_id("drawing-scale"),
+            setting_id("drawing-scale"),
+            "the id comes from the name"
+        );
     }
 }

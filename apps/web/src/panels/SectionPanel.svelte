@@ -20,7 +20,7 @@
   import { cursorsFor, live as room, reportCursor } from '../lib/sync.svelte';
   import { drawCursor } from '../lib/presence-draw';
   import { fitStroke, smooth } from '../lib/spline';
-  import { liveStyle } from '../lib/line-style.svelte';
+  import { drawing, liveStyle } from '../lib/line-style.svelte';
   import { tolerancePx } from '../lib/commands';
   import { cave, changed, option, filter, wireFilter, haloFade, haloReach } from '../lib/cave.svelte';
   import { drawScan } from '../lib/scan-draw';
@@ -169,6 +169,7 @@
   $effect(() => {
     void liveStyle.style;
     void liveStyle.id;
+    void drawing.scale; // a new drawing scale sizes dashes and fills again
     schedule();
   });
 

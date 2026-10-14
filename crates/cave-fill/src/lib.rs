@@ -489,6 +489,32 @@ pub fn marks(key: &str, outline: &[[f64; 2]], seed: u64) -> Marks {
     marks_with(key, outline, seed, 1.0)
 }
 
+/// The marks of a fill sized on paper at a drawing scale: `length` is the drawing's scale divided by the scale the patterns were
+/// authored for (so 1 at 1:500, 4 at 1:2000). A fill is laid out as it was authored on an outline `length` times smaller and
+/// then everything is made `length` times bigger, so on paper the marks keep their size and spacing at any scale. `amount` is as
+/// for `marks_with`.
+pub fn marks_at(key: &str, outline: &[[f64; 2]], seed: u64, amount: f64, length: f64) -> Marks {
+    let k = if length.is_finite() {
+        length.clamp(0.05, 200.0)
+    } else {
+        1.0
+    };
+    if (k - 1.0).abs() < 1e-9 {
+        return marks_with(key, outline, seed, amount);
+    }
+    let small: Vec<[f64; 2]> = outline.iter().map(|p| [p[0] / k, p[1] / k]).collect();
+    let mut m = marks_with(key, &small, seed, amount);
+    for line in &mut m.lines {
+        for p in line.iter_mut() {
+            *p = [p[0] * k, p[1] * k];
+        }
+    }
+    for c in &mut m.circles {
+        *c = [c[0] * k, c[1] * k, c[2] * k, c[3]];
+    }
+    m
+}
+
 /// Like `marks`, with the fill made `amount` times as dense (1 is the pattern as authored; 2 puts twice as many marks, or hatch
 /// lines, in the same area; 0.5 half as many). Clamped to a sensible range.
 pub fn marks_with(key: &str, outline: &[[f64; 2]], seed: u64, amount: f64) -> Marks {
@@ -690,6 +716,38 @@ mod tests {
         assert_eq!(
             count("fill-sand", f64::NAN),
             count("fill-sand", 1.0),
+            "nonsense means as authored"
+        );
+    }
+
+    #[test]
+    fn marks_keep_their_size_on_paper_at_any_drawing_scale() {
+        let small = square(8.0);
+        let big: Vec<[f64; 2]> = small.iter().map(|p| [p[0] * 4.0, p[1] * 4.0]).collect();
+        for key in ["fill-sand", "fill-sump", "fill-blocks"] {
+            let at500 = marks_at(key, &small, 3, 1.0, 1.0);
+            let at2000 = marks_at(key, &big, 3, 1.0, 4.0);
+            assert_eq!(
+                at500.lines.len(),
+                at2000.lines.len(),
+                "{key}: the same marks on paper"
+            );
+            assert_eq!(at500.circles.len(), at2000.circles.len(), "{key}");
+            for (a, b) in at500.circles.iter().zip(&at2000.circles) {
+                assert!(
+                    (a[2] * 4.0 - b[2]).abs() < 1e-9,
+                    "{key}: a mark is four times bigger on the ground"
+                );
+            }
+        }
+        assert_eq!(
+            marks_at("fill-sand", &small, 3, 1.0, 1.0),
+            marks("fill-sand", &small, 3),
+            "1:500 is as authored"
+        );
+        assert_eq!(
+            marks_at("fill-sand", &small, 3, 1.0, f64::NAN),
+            marks("fill-sand", &small, 3),
             "nonsense means as authored"
         );
     }

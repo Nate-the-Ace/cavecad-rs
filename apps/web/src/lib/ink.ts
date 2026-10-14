@@ -3,10 +3,8 @@
 // Map draw a wall, a ledge or a pit the same way.
 import type { TypeStyle } from './engine';
 import { isDark } from './theme';
-import { parseStyle } from './line-style.svelte';
-
-/** Dash patterns in pixels for each line type (a gap follows each dash). */
-const DASHES: Record<TypeStyle['linetype'], number[]> = { solid: [], dashed: [6, 4], longdash: [18, 4], sparse: [4, 12], dashdot: [10, 5, 2, 5] };
+import { parseStyle, drawing } from './line-style.svelte';
+import { dashPx } from './dash';
 
 let palette = new Map<string, TypeStyle>();
 
@@ -24,17 +22,22 @@ export interface Look {
   alpha: number;
 }
 
-/** A function that gives the look of any kind, with the theme's colours read once. */
-export function looks(): (kind: string, style?: string) => Look {
+/**
+ * A function that gives the look of any kind, with the theme's colours read once. The pattern is on paper, so its pixels come from
+ * `pxPerM` (how many pixels one metre of ground is where the line is) and the drawing's scale; `paper` says instead how many pixels a
+ * paper millimetre is (a printed sheet), whatever the ground.
+ */
+export function looks(paper?: { pxPerMm: number }): (kind: string, style?: string, pxPerM?: number) => Look {
   const css = getComputedStyle(document.documentElement);
   const v = (n: string) => css.getPropertyValue(n).trim();
   const inks: Record<TypeStyle['ink'], string> = { text: v('--text'), muted: v('--muted'), accent: v('--accent'), warn: v('--warn'), danger: v('--danger'), station: v('--text'), geology: isDark() ? '#e57fd0' : '#b0138a' };
-  return (kind, style) => {
+  return (kind, style, pxPerM) => {
     const st = palette.get(kind);
     const own = style ? parseStyle(style) : null;
-    // this line's own pattern, if it has one, and its scale: a longer or shorter dash and gap
-    const pattern = (own?.lt ? DASHES[own.lt as TypeStyle['linetype']] : st ? DASHES[st.linetype] : []) ?? [];
-    const dash = own && own.scale !== 1 ? pattern.map((n) => n * own.scale) : pattern;
+    // this line's own pattern, if it has one, else its type's; its scale lengthens or shortens both dash and gap
+    const pattern = own?.lt ? (drawing.patterns[own.lt] ?? []) : (st?.pattern ?? []);
+    const paperPx = paper ? paper.pxPerMm : pxPerM !== undefined ? (pxPerM * drawing.scale) / 1000 : 0;
+    const dash = dashPx(pattern, paperPx, own?.scale ?? 1, drawing.dotMm);
     if (!st) return { color: inks.text, weight: 1.8, dash, alpha: 1 };
     return { color: inks[st.ink], weight: st.weight, dash, alpha: st.opacity };
   };

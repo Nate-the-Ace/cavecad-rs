@@ -5,7 +5,7 @@
   import { shelf } from '../lib/shelf.svelte';
   import { isSymbolKind, needsWords, symbolDef } from '../lib/symbols';
   import { registerMirror } from '../lib/classroom-mirror';
-  import { liveStyle } from '../lib/line-style.svelte';
+  import { drawing, liveStyle } from '../lib/line-style.svelte';
   import { cursorsFor, live as room, reportCursor } from '../lib/sync.svelte';
   import { engine, loadEngine, type Scene, type TypeStyle } from '../lib/engine';
   import { CaveView, type CameraState, type Projection } from '../lib/viewport/cave-view';
@@ -132,6 +132,12 @@
     void room.people.length;
     const list = cursorsFor('map', '').map((o) => ({ x: o.x, y: o.y, name: o.person?.name ?? '', color: o.person?.color ?? '#888888' }));
     untrack(() => view?.setRemoteCursors(list));
+  });
+
+  // A new drawing scale sizes the dashes and fills again.
+  $effect(() => {
+    void drawing.scale;
+    view?.refreshDrawing();
   });
 
   // A style being dragged in the ribbon shows at once.

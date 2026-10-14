@@ -26,7 +26,7 @@ export function overflows(plan: SheetPlan, bounds: [number, number, number, numb
 }
 
 /** Paints the sheet at `px` pixels per inch of paper onto a canvas already sized to the paper. */
-export function drawSheet(g: CanvasRenderingContext2D, plan: SheetPlan, scene: Scene | null, lines: ProfileSketch3d[], px: number, look: (kind: string, style?: string) => Look): void {
+export function drawSheet(g: CanvasRenderingContext2D, plan: SheetPlan, scene: Scene | null, lines: ProfileSketch3d[], px: number, look: (kind: string, style?: string, pxPerM?: number) => Look): void {
   const H = plan.h * px;
   const P = (p: [number, number]): [number, number] => [p[0] * px, H - p[1] * px];
   g.save();
@@ -67,7 +67,7 @@ export function drawSheet(g: CanvasRenderingContext2D, plan: SheetPlan, scene: S
     }
     g.globalAlpha = 1;
   }
-  const printLook = (kind: string, style?: string): Look => ({ ...look(kind, style), color: ink });
+  const printLook = (kind: string, style?: string, pxPerM?: number): Look => ({ ...look(kind, style, pxPerM), color: ink });
   drawStrokes(
     g,
     lines.map((l) => ({ id: l.id, kind: l.kind, points: l.points.map((p) => [p[0], p[1]] as [number, number]), widths: l.widths, closed: l.closed, text: l.text })),

@@ -28,7 +28,8 @@
     "test:scanlocation": "node --experimental-strip-types tests/scanlocation.check.ts",
     "test:p2p": "node --experimental-strip-types tests/p2p.check.ts",
     "test:cavefile": "node --experimental-strip-types tests/cavefile.check.ts",
-    "test:plane": "node --experimental-strip-types tests/plane.check.ts"
+    "test:plane": "node --experimental-strip-types tests/plane.check.ts",
+    "test:dash": "node --experimental-strip-types tests/dash.check.ts"
   },
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "^7.3.1",
