@@ -5,6 +5,7 @@
 
 import { Bluetooth, FlaskConical, Play, Shuffle, Tent, Unplug } from '@lucide/svelte';
 import type { Group } from './Ribbon.svelte';
+import SimulatorOptions from './SimulatorOptions.svelte';
 import SurveyOptions from './SurveyOptions.svelte';
 import * as live from '../lib/survey.svelte';
 import { survey } from '../lib/survey.svelte';
@@ -26,6 +27,7 @@ export function surveyGroups(options: { inCave?: () => void } = {}): Group[] {
     { name: 'Shots', items: [], custom: SurveyOptions },
     {
       name: 'Simulator',
+      custom: SimulatorOptions,
       items: [
         { label: 'Run on its own', icon: Play, run: live.toggleRun, pressed: () => survey.running },
         { label: 'Random passage', icon: Shuffle, run: () => (survey.randomPassage = !survey.randomPassage), pressed: () => survey.randomPassage },

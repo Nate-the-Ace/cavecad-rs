@@ -96,6 +96,22 @@ export function backsightWarnings(fore: Reading, back: Reading): string[] {
   return out;
 }
 
+/** How far a leg may be from exactly reversed to be taken as the backsight of the leg before it, degrees (compass and clino each). */
+export const BACK_FIND_DEG = 25;
+
+/**
+ * True when `r` looks like the backsight of `fore`: it points back along it (the compass about 180 degrees round, the
+ * clino about opposite) and is about as long. Only the X1 can mark a leg as a backsight on the instrument; the others
+ * (SAP5, SAP6, BRIC) cannot, so after a leg with backsights switched on the surveyor's next leg is taken as its
+ * backsight if it comes back, and as the next leg if it does not (the backsight was skipped).
+ */
+export function looksLikeBack(fore: Reading, r: Reading): boolean {
+  const steep = Math.abs(fore.inclination) > PLUMB_DEG && Math.abs(r.inclination) > PLUMB_DEG;
+  if (!steep && gap(fore.azimuth, mod360(r.azimuth + 180)) > BACK_FIND_DEG) return false;
+  if (Math.abs(fore.inclination + r.inclination) > BACK_FIND_DEG) return false;
+  return Math.abs(fore.distance - r.distance) <= Math.max(1, 0.25 * fore.distance);
+}
+
 /** Decides what a reading is: the next leg, a splay, or the backsight being waited for. */
 export function decide(state: SessionState, reading: Reading): Decision {
   const checked = checkReading(reading, state.mode === 'splay' && !state.awaiting);
@@ -161,7 +177,7 @@ export function standing(state: SessionState): string {
 /** What to tell the surveyor to do next, in plain words. */
 export function nextStep(state: SessionState): string {
   if (state.mode === 'auto') {
-    if (state.awaiting) return `Backsight from ${state.to.trim()} back to ${state.from.trim()}: three shots, marked Backsight (M). Or carry on without.`;
+    if (state.awaiting) return `Backsight: shoot back from ${state.to.trim()} to ${state.from.trim()} (three shots; an X1 can mark them Backsight with M). Or carry on without.`;
     const from = state.from.trim();
     const to = state.to.trim();
     if (!from || !to) return 'Name the two stations, then shoot the leg: three close shots.';
@@ -207,6 +223,11 @@ export function decideEvent(state: SessionState, ev: Extract<LegEvent, { kind: '
     if (!target) return refuse(state, 'A backsight needs a leg before it.');
     warnings.push(...backsightWarnings(target.reading, reading));
     return { base: state, decision: { plan: { kind: 'back', shot: target.shot, reading }, reject: null, warnings } };
+  }
+  // An instrument that cannot mark a backsight: a leg that comes back along the one before is its backsight.
+  if (state.awaiting && looksLikeBack(state.awaiting.reading, reading)) {
+    warnings.push(...backsightWarnings(state.awaiting.reading, reading));
+    return { base: state, decision: { plan: { kind: 'back', shot: state.awaiting.shot, reading }, reject: null, warnings } };
   }
   const base = state.awaiting ? advance(state, taken) : state;
   const from = base.from.trim();

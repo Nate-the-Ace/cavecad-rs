@@ -1,4 +1,4 @@
-import { advance, applied, standing, backsightWarnings, checkReading, decide, nextStep, skipBack, start, withMode, type Plan, type SessionState } from '../src/lib/survey.ts';
+import { BACK_FIND_DEG, advance, applied, decideEvent, looksLikeBack, standing, backsightWarnings, checkReading, decide, nextStep, skipBack, start, withMode, type Plan, type SessionState } from '../src/lib/survey.ts';
 import { traverse } from '../src/lib/instrument/simulator.ts';
 import type { Reading } from '../src/lib/instrument/types.ts';
 
@@ -102,6 +102,30 @@ ok(legs.length === 8 && splays.length === 16, 'eight legs and two splays at each
 ok(legs.map((l) => `${l.from}-${l.to}`).join(' ') === 'A1-A2 A2-A3 A3-A4 A4-A5 A5-A6 A6-A7 A7-A8 A8-A9', 'the stations run A1 to A9 with no gaps and no repeats');
 ok(legs.every((l) => l.bs !== null && backsightWarnings(l.fs, l.bs as Reading).length === 0), 'every leg got its own backsight, and each agrees with its foresight');
 ok(splays.every((s, i) => s.from === `A${Math.floor(i / 2) + 2}`), 'splays are taken at the station the surveyor has just reached');
+
+// An instrument that cannot mark a backsight (SAP5, SAP6, BRIC): after a leg with backsights on, a leg that comes back
+// along it is its backsight; one that does not is the next leg (the backsight was skipped).
+{
+  const fore = r(10, 90, 5);
+  ok(looksLikeBack(fore, r(10.02, 270.3, -5.2)), 'a leg exactly reversed is a backsight');
+  ok(looksLikeBack(fore, r(10.5, 285, -12)), 'and one within 25 degrees of reversed, about as long');
+  ok(!looksLikeBack(fore, r(10, 90, 5)), 'a leg going the same way is not');
+  ok(!looksLikeBack(fore, r(10, 200, -5)), 'nor one turned 70 degrees');
+  ok(!looksLikeBack(fore, r(10, 270, 40)), 'nor one whose clino does not mirror');
+  ok(!looksLikeBack(fore, r(14, 270, -5)), 'nor one much longer (14 m against 10 m)');
+  ok(looksLikeBack(r(8, 10, 88), r(8.1, 200, -87)), 'on a pitch the compass is not compared');
+  ok(BACK_FIND_DEG === 25, 'the tolerance is 25 degrees');
+  const awaiting = { ...start('A1', new Set(), { mode: 'auto', backsights: true }), awaiting: { shot: 's1', reading: fore }, last: { shot: 's1', reading: fore } };
+  const leg = (rd: Reading) => ({ kind: 'leg' as const, group: 1, reading: rd, shots: 3, mark: 'none' as const, spread: { distance: 0, azimuth: 0, inclination: 0 }, flagged: false });
+  const back = decideEvent(awaiting, leg(r(10, 270, -5)), new Set());
+  ok(back.decision.plan?.kind === 'back' && back.decision.plan.shot === 's1', 'with no mark on it, a leg coming back is written as the backsight of the leg awaiting one');
+  const forward = decideEvent(awaiting, leg(r(6, 30, 2)), new Set());
+  ok(forward.decision.plan?.kind === 'leg' && forward.base.from === 'A2', 'a leg going on instead: the backsight was skipped, they have moved on and it is the next leg');
+  const marked = decideEvent(awaiting, { ...leg(r(10, 271, -5)), mark: 'backsight' }, new Set());
+  ok(marked.decision.plan?.kind === 'back', 'a leg marked backsight on an X1 still is one');
+  const nobacks = decideEvent({ ...awaiting, awaiting: null, backsights: false }, leg(r(10, 270, -5)), new Set());
+  ok(nobacks.decision.plan?.kind === 'leg', 'with nothing awaited a leg that comes back is just a leg (a switchback)');
+}
 
 if (bad) process.exit(1);
 console.log('survey ok');

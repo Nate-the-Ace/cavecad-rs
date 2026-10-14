@@ -86,3 +86,7 @@ Edits to existing app files, none exercised in the real app on this PC (no engin
 New in the app's own files: `components/Ribbon.svelte` has a Survey tab (and Home's Survey group is back to its stubs); `SurveyPanel.svelte` lost its connection buttons and toggles. None run against the real engine on this PC. Check on the laptop: the Survey tab shows, Connect opens the browser's chooser listing only the instruments by name, the Simulator and "Shoot station" fill the Notebook, Map, Profile and Cross Section, A1 has its own passage dimensions, and the panel's dock has only the shot, undo and next-station buttons.
 
 Instruments are written from their open repositories and TopoDroid (`docs/INSTRUMENTS.md`); none has been connected. With a real unit, work through the UNVERIFIED lists in `docs/INSTRUMENTS.md` and `docs/CAVWAY-X1.md`, using the capture section (Survey panel) for anything unexpected. BRIC memory download (the `LAST_TIME` write) is not built, so shots taken while the page was not connected are not fetched.
+
+## Update 2026-10-14 (night, 3): simulating each device
+
+Survey tab > Simulator: pick Cavway X1, SAP6, SAP5 or BRIC5 and a quirk, press Simulator, then Shoot station. Worth trying each on the laptop with the real Map: the log (capture section of the Survey panel) lists every frame and any note the decoder made (ignored, missed, calibration). The one heuristic to know about is `looksLikeBack` (unmarked backsights for the instruments that cannot mark one).

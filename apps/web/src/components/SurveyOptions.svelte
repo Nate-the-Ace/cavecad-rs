@@ -9,7 +9,7 @@
 
 <div class="opts">
   {#if survey.groupsLegs}
-    <p class="note" title="The X1 itself calls three or more consecutive close shots a leg; any other shot is a splay. Mark a leg Backsight with the M button on the X1.">The X1 decides: 3 close shots are a leg, 1 is a splay</p>
+    <p class="note" title="Three or more consecutive close shots are a leg; any other shot is a splay. An X1 also flags legs itself, and can mark a leg Backsight with its M button; the other instruments cannot, so a leg that comes back along the one before is taken as its backsight.">3 close shots are a leg, 1 is a splay</p>
   {:else}
     <div class="seg" role="group" aria-label="What the next shot is">
       <button class:sel={survey.state.mode === 'leg'} aria-pressed={survey.state.mode === 'leg'} onclick={() => live.setMode('leg')}>Leg</button>

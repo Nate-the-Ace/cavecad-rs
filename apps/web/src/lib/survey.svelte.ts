@@ -10,7 +10,7 @@ import { engine } from './engine';
 import { SIDES, withSide, type Lrud, type NotebookPage, type Side } from './notebook';
 import { LegAssembler, type LegEvent } from './instrument/legs';
 import { traverse } from './instrument/simulator';
-import { X1SimulatedInstrument } from './instrument/x1sim';
+import { DEVICES, SimulatedInstrument, deviceOf, type DeviceKind } from './instrument/devsim';
 import { WebBleInstrument } from './instrument/webble';
 import type { Instrument, LinkEvents, LinkStatus, Reading } from './instrument/types';
 import { advance, decide, decideEvent, nextStep, skipBack, standing, start, withMode, type Mode, type SessionState } from './survey';
@@ -30,6 +30,10 @@ export const survey = $state({
   kind: '' as LinkKind | '',
   /** The simulator is firing shots on its own. */
   running: false,
+  /** Which device the simulator pretends to be, and which quirk it has (see `DEVICES`): chosen in the Survey tab. */
+  sim: { device: 'x1' as DeviceKind, quirk: 'none' },
+  /** What the simulated quirk is meant to show, while simulating. */
+  simNote: '',
   /** Connection choices for an instrument that is not found by default (kept in the panel's capture section). */
   services: '',
   anyDevice: false,
@@ -138,7 +142,7 @@ function setWallsAt(trip: string, label: string, w: Record<Side, number>, onlyIf
 
 /** The simulator's passage at the stations of a new leg (and at the one it left, the first time). */
 function applyPassage(trip: string, entry: Entry) {
-  if (!survey.randomPassage || !(instrument instanceof X1SimulatedInstrument) || !entry.to || !entry.from) return;
+  if (!survey.randomPassage || !(instrument instanceof SimulatedInstrument) || !entry.to || !entry.from) return;
   const hint = instrument.passage();
   if (!hint) return;
   if (!setWallsAt(trip, entry.from, hint.behind, true)) engine.log('info', 'survey', `${entry.from} already has its passage dimensions, or has no line in the notebook to put them on.`);
@@ -301,14 +305,19 @@ export async function connect(kind: LinkKind, given: { services?: string[]; anyD
   survey.frames = [];
   const device = kind !== 'capture';
   if (kind === 'simulator') {
-    instrument = new X1SimulatedInstrument(events, { steps: traverse({ seed: 7, legs: 40, backsights: true, splays: 4, startSplays: true }), policy: 'third' });
+    // A fresh page starts with the splays at the first station; a survey already under way carries on from where the surveyor stands.
+    const fresh = !cave.trip || (engine.notebookPage(cave.trip)?.totals.shots ?? 0) === 0;
+    const quirk = deviceOf(survey.sim.device).quirks.find((q) => q.id === survey.sim.quirk);
+    instrument = new SimulatedInstrument(events, { kind: survey.sim.device, steps: traverse({ seed: 7, legs: 40, backsights: true, splays: 4, startSplays: fresh }), quirks: survey.sim.quirk === 'none' ? [] : [survey.sim.quirk] });
+    survey.simNote = `${deviceOf(survey.sim.device).label}${quirk && quirk.id !== 'none' ? `, ${quirk.label}: ${quirk.expect}` : ''}`;
   } else {
+    survey.simNote = '';
     instrument = new WebBleInstrument(events, { mode: kind === 'capture' ? 'capture' : 'auto', services: options.services, anyDevice: options.anyDevice });
   }
   survey.groupsLegs = device;
   survey.kind = kind;
   survey.running = false;
-  if (instrument instanceof X1SimulatedInstrument) {
+  if (instrument instanceof SimulatedInstrument) {
     instrument.wantBacksights = () => survey.state.backsights;
     instrument.onFinished = () => (survey.running = false);
     instrument.onBurst = () => settleNow(); // a station shot in one go: nothing more is coming, so what is waiting is settled
@@ -329,27 +338,31 @@ export function disconnect() {
   survey.canTakeShot = false;
   survey.kind = '';
   survey.running = false;
+  survey.simNote = '';
 }
 
 /** Fires a shot from the screen (the instrument must support it). */
 export function takeShot() {
   // The simulator shoots a whole station (leg, backsight, splays and passage) for one press; a real instrument fires one shot.
-  if (instrument instanceof X1SimulatedInstrument) instrument.takeStation();
+  if (instrument instanceof SimulatedInstrument) instrument.takeStation();
   else instrument?.takeShot();
 }
 
 /** The simulator runs on its own, a shot every `ms`, until its script is out. */
 export function autoRun(ms: number | null) {
-  if (!(instrument instanceof X1SimulatedInstrument)) return;
+  if (!(instrument instanceof SimulatedInstrument)) return;
   if (ms === null) instrument.stop();
   else instrument.auto(ms);
 }
 
 /** The simulator fires on its own, or stops (the Survey tab's Run button). */
 export function toggleRun() {
-  if (!(instrument instanceof X1SimulatedInstrument)) return;
+  if (!(instrument instanceof SimulatedInstrument)) return;
   survey.running = !survey.running;
   autoRun(survey.running ? 1200 : null);
 }
 
-export const simulating = () => instrument instanceof X1SimulatedInstrument;
+export const simulating = () => instrument instanceof SimulatedInstrument;
+
+/** The devices the simulator can be (for the Survey tab's choice). */
+export const SIM_DEVICES = DEVICES;

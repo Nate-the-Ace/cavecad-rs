@@ -113,6 +113,8 @@
       <p class="banner">This browser has no Web Bluetooth. On an iPad, open CaveCAD in the <b>Bluefy</b> browser to connect an instrument. The simulator works anywhere.</p>
     {/if}
 
+    {#if survey.simNote}<p class="simnote" role="status">Simulating: {survey.simNote}</p>{/if}
+
     <section class="reading" aria-label="Latest reading">
       {#if survey.last}
         <div class="big"><b>{dist(survey.last.distance)}</b><small>tape</small></div>
@@ -221,6 +223,7 @@
   button.go, button.shoot { background: var(--accent); border-color: var(--accent); color: var(--on-accent, #fff); }
   button.no { color: var(--danger); }
   button.shoot { font-size: 17px; font-weight: 600; min-height: 56px; width: 100%; }
+  .simnote { margin: 0; padding: 6px 10px; border: 1px dashed var(--line); border-radius: var(--radius); color: var(--muted); font-size: 12px; }
   .banner { margin: 0; padding: 8px 10px; border: 1px solid var(--warn); border-radius: var(--radius); font-size: 13px; }
   .reading { display: flex; flex-wrap: wrap; gap: 8px; min-height: 88px; align-items: stretch; }
   .notes { min-height: 3.4em; }

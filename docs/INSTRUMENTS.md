@@ -90,8 +90,40 @@ instrument pushes shots stored while the page was not connected: **not built**, 
 download from a given time is decoded (`lastTimeBytes`) but not used, so shots taken while disconnected are not fetched
 and `clear memory` is not offered; and what error codes 14 and 15 are (TopoDroid reads their value as a clino or azimuth correction).
 
+## The simulator: each device, with its quirks
+
+The Survey tab's Simulator group picks a device (Cavway X1, SAP6, SAP5, BRIC5) and a quirk. The simulated device writes
+its OWN wire format (the same encoders the tests use) and hands it to that device's real link and decoder, so framing,
+acknowledgement, repeat handling and decoding all run as for a real unit; the log (capture section) shows the frames. Picking
+another device or quirk while it runs starts a new one that carries on from the station the surveyor is at. A quirk should
+either change nothing about the survey (the logic copes) or show exactly what it is meant to:
+
+| Device | Quirk | Should show |
+|---|---|---|
+| X1 | leg flag on every shot / no leg flag | the same survey: a leg is found by closeness, with or without the flag |
+| X1 | 33-byte packets | the same survey |
+| X1 | lost acks | the same survey; every repeat is acknowledged, written once |
+| X1 | calibration shots mixed in | the same survey; acknowledged and left out, the log says so |
+| X1 | accuracy errors | the same survey, some shots with an "accuracy error" warning |
+| SAP6 | lost acks | the same survey; each repeat acknowledged again (0x55 or 0x56) |
+| SAP5 | long shots (firmware bit-16 fault) | legs past 32.768 m still read their true length |
+| SAP5 | repeated packets | the same survey |
+| BRIC5 | no error indication | the same survey (a shot waits for the next, or 400 ms) |
+| BRIC5 | missed shots | the same survey; the log says shots were missed |
+| BRIC5 | scan shots | the same survey |
+| BRIC5 | zero-length shots | the same survey; the log says one was ignored |
+| BRIC5 | instrument errors | the same survey, some shots with "the target moved" |
+| BRIC5 | repeated indications | the same survey |
+
+`tests/devsim.check.ts` runs every one and also checks that all four devices write the same survey (distances to 1 cm,
+angles to 0.05 degrees). **What it found already:** only the X1 can mark a leg as a backsight; SAP5, SAP6 and BRIC cannot,
+so after a leg with backsights on, the next leg is taken as its backsight if it comes back along the one before (within 25
+degrees and about as long: `looksLikeBack`), and as the next leg if it does not (the backsight was skipped). A real
+switchback in a cave that happens to come back that way, straight after a leg with backsights on, would be taken as a backsight:
+the usual backsight warnings (compass, clino and tape disagreeing) flag it.
+
 ## How it is tested
 
-`tests/instruments.check.ts` (BRIC and SAP5 bytes written out by hand, the links, identification), `tests/webble.check.ts`
+`tests/devsim.check.ts` (every device and quirk, and all four agreeing), `tests/instruments.check.ts` (BRIC and SAP5 bytes written out by hand, the links, identification), `tests/webble.check.ts`
 (the whole connect flow for each instrument against a stand-in for the Web Bluetooth API, including an unknown name,
 unsupported and cancelled), `tests/caveble.check.ts`, `tests/cavway.check.ts`. No instrument has been connected yet.
