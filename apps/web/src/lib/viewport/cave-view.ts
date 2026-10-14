@@ -502,8 +502,30 @@ export class CaveView {
     this.requestRender();
   }
 
-  /** Swings the camera to look from `dir` (a view-cube pick). A flat face view goes orthographic. */
+  private locked = false;
+
+  /** True while the view is locked: it cannot be turned (pan and zoom still work). */
+  get viewLocked(): boolean {
+    return this.locked;
+  }
+
+  /**
+   * Locks the view against turning, so a brush of the hand while sketching cannot rotate the map. Left drag and one
+   * finger pan instead of orbiting; two fingers and the wheel still pan and zoom; the view cube and Home do nothing.
+   * The way the view is looking stays exactly as it is.
+   */
+  setViewLocked(on: boolean) {
+    this.locked = on;
+    const c = this.controls;
+    c.enableRotate = !on;
+    c.mouseButtons.LEFT = on ? THREE.MOUSE.PAN : THREE.MOUSE.ROTATE;
+    c.touches.ONE = on ? THREE.TOUCH.PAN : THREE.TOUCH.ROTATE;
+    if (on) cancelAnimationFrame(this.anim); // a swing under way stops where it is
+  }
+
+  /** Swings the camera to look from `dir` (a view-cube pick). A flat face view goes orthographic. Does nothing while the view is locked. */
   snapTo(dir: Dir) {
+    if (this.locked) return;
     const flat = dir.filter((c) => c !== 0).length === 1;
     if (flat) this.setProjection('orthographic');
     const to = viewDirection(dir);
@@ -529,6 +551,7 @@ export class CaveView {
   /** Turns the camera around the cave: `dAzimuth` about the vertical axis, `dPolar` toward or away
    *  from straight down. Radians. Used when the view cube is dragged. */
   orbitBy(dAzimuth: number, dPolar: number) {
+    if (this.locked) return;
     cancelAnimationFrame(this.anim);
     const offset = this.cameraOffset;
     const dist = offset.length();

@@ -31,6 +31,7 @@
   import ContextOptions from './ContextOptions.svelte';
   import SelectionTools from './SelectionTools.svelte';
   import CollaborateGroup from './CollaborateGroup.svelte';
+  import LayoutGroup from './LayoutGroup.svelte';
   import FillTools from './FillTools.svelte';
   import SheetGroup from './SheetGroup.svelte';
   import { INSPECTORS } from '../lib/inspectors';
@@ -39,8 +40,8 @@
   import { symbolDef } from '../lib/symbols';
   import { fillLabel } from '../lib/fills';
   import { onMount, untrack } from 'svelte';
-  import { PANELS, panelState, resetLayout, showPanel, surveyLayout, togglePanel } from '../lib/workspace.svelte';
-  import { Check, Trash2, LogIn, LogOut, Users, Library, FilePlus, FileInput, FolderOpen, Save, Ruler, Footprints, Route, Waypoints, Scissors, Map as MapIcon, Terminal, LayoutDashboard, Activity, Shapes, Table2, BookOpen, ScanLine, FileText, ChevronDown, PanelTop, FileOutput, Package, Mountain, SlidersHorizontal, Crosshair, Tent } from '@lucide/svelte';
+  import { PANELS, panelState, resetLayout, showPanel, surveyLayout, togglePanel, workLayout } from '../lib/workspace.svelte';
+  import { Check, Trash2, LogIn, LogOut, Users, Library, FilePlus, FileInput, FolderOpen, Save, Ruler, Footprints, Route, Waypoints, Scissors, Map as MapIcon, Terminal, LayoutDashboard, Activity, Shapes, Table2, BookOpen, ScanLine, FileText, ChevronDown, PanelTop, FileOutput, Package, Mountain, SlidersHorizontal, Crosshair, Tent, Lock } from '@lucide/svelte';
 
   /**
    * The app shows the ribbon as it is. A host that is only a part of the app (the survey harness) can give its own
@@ -101,8 +102,10 @@
       { name: 'Units', items: [{ label: 'Metric', icon: Ruler, run: () => setUnits('metric'), pressed: () => cave.units === 'metric' }, { label: 'Imperial', icon: Footprints, run: () => setUnits('imperial'), pressed: () => cave.units === 'imperial' }] },
       { name: 'Theme', items: [], custom: ThemeGroup },
       { name: 'Rock halo', items: [{ label: 'Rock halo', icon: Mountain, run: () => setOption('halo', !option('halo', true)), pressed: () => option('halo', true) }, { label: 'Settings', icon: SlidersHorizontal, run: () => setPick('halo', 'halo'), pressed: () => cave.pick.kind === 'halo' }] },
+      { name: 'Map view', items: [{ label: 'Lock view', icon: Lock, run: () => setOption('mapLock', !option('mapLock', false)), pressed: () => option('mapLock', false) }] },
       { name: 'Live editing', items: [], custom: CollaborateGroup },
-      { name: 'Layout', items: [{ label: 'Reset', icon: LayoutDashboard, run: resetLayout }, { label: 'In cave', icon: Tent, run: surveyLayout }] },
+      { name: 'Layout', items: [{ label: 'Reset', icon: LayoutDashboard, run: resetLayout }, { label: 'In cave', icon: Tent, run: surveyLayout }, { label: 'Scans', icon: ScanLine, run: workLayout }] },
+      { name: 'Saved layouts', items: [], custom: LayoutGroup },
       { name: 'Ribbon settings', items: [{ label: 'Compact layout', icon: PanelTop, run: () => setCompactRibbon(!cave.compactRibbon), pressed: () => cave.compactRibbon }] },
     ],
   };

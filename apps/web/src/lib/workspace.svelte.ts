@@ -6,6 +6,8 @@ import { createDockview, themeDark, themeLight } from 'dockview-core/dist/dockvi
 import type { DockviewApi } from 'dockview-core';
 import type { Component } from 'svelte';
 import { GroupActions, SveltePanel } from './dock-parts';
+import { setOption } from './cave.svelte';
+import { setLayoutHost } from './layouts.svelte';
 import { isDark, onTheme } from './theme';
 import MapPanel from '../panels/MapPanel.svelte';
 import ConsolePanel from '../components/Console.svelte';
@@ -95,6 +97,26 @@ export function initWorkspace(el: HTMLElement): () => void {
   if (import.meta.env.DEV) (window as unknown as { __dock: DockviewApi }).__dock = a; // for tests and debugging
   if (!restore(a)) defaultLayout(a);
   refreshOpen();
+  // Saved layouts read the arrangement from this dock and put one back into it.
+  setLayoutHost({
+    capture: () => a.toJSON(),
+    has: (id) => id in PANELS,
+    apply: (layout) => {
+      const before = a.toJSON();
+      try {
+        a.fromJSON(layout as Parameters<DockviewApi['fromJSON']>[0]);
+      } catch {
+        try {
+          a.fromJSON(before);
+        } catch {
+          /* the dock keeps what it has */
+        }
+        return false;
+      }
+      refreshOpen();
+      return true;
+    },
+  });
 
   let timer: ReturnType<typeof setTimeout>;
   const layoutSub = a.onDidLayoutChange(() => {
@@ -113,6 +135,7 @@ export function initWorkspace(el: HTMLElement): () => void {
   const offTheme = onTheme((dark) => a.updateOptions({ theme: dark ? themeDark : themeLight }));
 
   return () => {
+    setLayoutHost(null);
     clearTimeout(timer);
     layoutSub.dispose();
     offTheme();
@@ -192,6 +215,7 @@ export function surveyLayout() {
   a.addPanel({ id: 'section', component: 'section', title: PANELS.section.title, position: { referencePanel: 'profile', direction: 'below' } });
   a.panels.find((p) => p.id === 'survey')?.api.setActive();
   a.getPanel('survey')?.api.setSize({ width: Math.max(340, Math.round(el0Width() * 0.3)) });
+  setOption('mapLock', true); // sketching in the cave: the map must not turn under the pen
   a.getPanel('profile')?.api.setSize({ width: Math.round(el0Width() * 0.3) });
   refreshOpen();
 }

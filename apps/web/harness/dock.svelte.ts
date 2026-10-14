@@ -6,6 +6,7 @@ import type { DockviewApi } from 'dockview-core';
 import type { Component } from 'svelte';
 import { GroupActions, SveltePanel } from '../src/lib/dock-parts';
 import { isDark, onTheme } from '../src/lib/theme';
+import { setLayoutHost } from '../src/lib/layouts.svelte';
 import SurveyPanel from '../src/panels/SurveyPanel.svelte';
 import SketchPlanPanel from '../src/panels/SketchPlanPanel.svelte';
 import SketchProfilePanel from '../src/panels/SketchProfilePanel.svelte';
@@ -80,6 +81,25 @@ export function initDock(el: HTMLElement): () => void {
   const a = api;
   if (!restore(a)) defaultLayout(a);
   refreshOpen();
+  setLayoutHost({
+    capture: () => a.toJSON(),
+    has: (id) => id in PANELS,
+    apply: (layout) => {
+      const before = a.toJSON();
+      try {
+        a.fromJSON(layout as Parameters<DockviewApi['fromJSON']>[0]);
+      } catch {
+        try {
+          a.fromJSON(before);
+        } catch {
+          /* the dock keeps what it has */
+        }
+        return false;
+      }
+      refreshOpen();
+      return true;
+    },
+  });
   let timer: ReturnType<typeof setTimeout>;
   const layoutSub = a.onDidLayoutChange(() => {
     refreshOpen();
@@ -94,6 +114,7 @@ export function initDock(el: HTMLElement): () => void {
   });
   const offTheme = onTheme((dark) => a.updateOptions({ theme: dark ? themeDark : themeLight }));
   return () => {
+    setLayoutHost(null);
     clearTimeout(timer);
     layoutSub.dispose();
     offTheme();

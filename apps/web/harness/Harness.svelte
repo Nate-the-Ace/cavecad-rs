@@ -4,9 +4,10 @@
   // that keeps the sketchpad in step with the mock notebook. The ribbon, Draw tab, options tab and Edit tab are
   // the app's own components; the Survey panel and the sketchpad panes are the real ones; the notebook is a mock.
   import { onMount, untrack } from 'svelte';
-  import { Activity, BookOpen, Crosshair, Footprints, LayoutDashboard, Map as MapIcon, Ruler, Scissors, Trash2 } from '@lucide/svelte';
+  import { Activity, BookOpen, Crosshair, Footprints, LayoutDashboard, Lock, Map as MapIcon, Ruler, Scissors, Trash2 } from '@lucide/svelte';
   import Ribbon, { type Group } from '../src/components/Ribbon.svelte';
   import DrawTools from '../src/components/DrawTools.svelte';
+  import LayoutGroup from '../src/components/LayoutGroup.svelte';
   import { cave, option, setOption, setUnits } from '../src/lib/cave.svelte';
   import { loadEngine } from '../src/lib/engine';
   import { survey } from '../src/lib/survey.svelte';
@@ -54,6 +55,8 @@
       { name: 'Sketch', items: [{ label: 'Follow survey', icon: Crosshair, run: () => setOption('followSurvey', !option('followSurvey', true)), pressed: () => option('followSurvey', true) }] },
       { name: 'Units', items: [{ label: 'Metric', icon: Ruler, run: () => setUnits('metric'), pressed: () => cave.units === 'metric' }, { label: 'Imperial', icon: Footprints, run: () => setUnits('imperial'), pressed: () => cave.units === 'imperial' }] },
       { name: 'Layout', items: [{ label: 'Reset', icon: LayoutDashboard, run: resetDock }, { label: 'New notebook', icon: Trash2, run: resetNotebook }] },
+      { name: 'Saved layouts', items: [], custom: LayoutGroup },
+      { name: 'Map view', items: [{ label: 'Lock view', icon: Lock, run: () => setOption('mapLock', !option('mapLock', false)), pressed: () => option('mapLock', false) }] },
     ],
   };
 

@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount, untrack } from 'svelte';
-  import { Home, Maximize, Box, Square, Palette, Eye, Library } from '@lucide/svelte';
+  import { Home, Maximize, Box, Square, Palette, Eye, Library, Lock, LockOpen } from '@lucide/svelte';
   import PanelUndo from './PanelUndo.svelte';
   import { shelf } from '../lib/shelf.svelte';
   import { isSymbolKind, needsWords, symbolDef } from '../lib/symbols';
@@ -8,7 +8,7 @@
   import { engine, loadEngine, type Scene, type TypeStyle } from '../lib/engine';
   import { CaveView, type Projection } from '../lib/viewport/cave-view';
   import { fitPlane, heightSurface } from '../lib/plane';
-  import { cave, changed, filter, haloFade, haloReach, option, setPick, setShowSections, setShown, wireFilter } from '../lib/cave.svelte';
+  import { cave, changed, filter, haloFade, haloReach, option, setOption, setPick, setShowSections, setShown, wireFilter } from '../lib/cave.svelte';
   import { tolerancePx } from '../lib/commands';
   import { ViewCube } from '../lib/viewport/view-cube';
   import { onTheme } from '../lib/theme';
@@ -52,6 +52,13 @@
   $effect(() => {
     const u = cave.units; // read first so the effect always tracks it
     view?.setUnits(u);
+  });
+
+  // The view lock (View tab, or the padlock beside the cube): the map cannot be turned by accident while sketching.
+  const locked = $derived(option('mapLock', false));
+  $effect(() => {
+    const on = locked; // read first so the effect always tracks it
+    view?.setViewLocked(on);
   });
 
   // Cross-section sketches sit beside their stations and follow every edit, filter and toggle.
@@ -300,6 +307,7 @@
     };
     v.onProjection = (p) => (projection = p);
     v.setUnits(cave.units);
+    v.setViewLocked(option('mapLock', false));
     v.onSectionPlaced = (id, offset) => {
       const r = engine.placeSection(id, 'map', offset);
       if (r !== 'ok') engine.log('warn', 'section', r);
@@ -373,10 +381,13 @@
     <button class:on={depthColor} title="Colour by elevation" onclick={() => ((depthColor = !depthColor), view?.setElevationColors(depthColor), loadPassage())}><Palette size={15} /></button>
     {#if drawHint}<span class="status">{drawHint}</span>{:else if status}<span class="status">{status}</span>{/if}
   </div>
-  <div class="cube">
+  <div class="cube" class:locked>
     <div bind:this={cubeHost}></div>
     <div class="cubebar">
-      <button title="Home view" onclick={() => view?.home()}><Home size={15} /></button>
+      <button class:on={locked} aria-pressed={locked} title={locked ? 'The view is locked: it cannot be turned. Pan and zoom still work. Click to unlock.' : 'Lock the view so it cannot be turned by accident while you sketch'} onclick={() => setOption('mapLock', !locked)}>
+        {#if locked}<Lock size={15} />{:else}<LockOpen size={15} />{/if}
+      </button>
+      <button title="Home view" disabled={locked} onclick={() => view?.home()}><Home size={15} /></button>
       <button title="Fit to cave" onclick={() => view?.fit()}><Maximize size={15} /></button>
       <button title={projection === 'perspective' ? 'Switch to orthographic' : 'Switch to perspective'} onclick={() => view?.setProjection(projection === 'perspective' ? 'orthographic' : 'perspective')}>
         {#if projection === 'perspective'}<Box size={15} />{:else}<Square size={15} />{/if}
@@ -392,6 +403,7 @@
   .bar { position: absolute; top: 8px; left: 8px; max-width: calc(100% - 160px); flex-wrap: wrap; display: flex; gap: 6px 10px; align-items: center; padding: 6px 8px; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); font-size: 12px; }
   .cube { position: absolute; top: 8px; right: 8px; display: flex; flex-direction: column; align-items: center; }
   .cubebar { display: flex; gap: 4px; margin-top: 2px; }
+  .cube.locked > :first-child { opacity: 0.45; } /* the cube shows which way the view faces but no longer turns it */
   button { font: inherit; padding: 3px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--text); cursor: pointer; display: inline-grid; place-items: center; }
   button.caves { display: inline-flex; gap: 5px; align-items: center; font-weight: 600; }
   button:disabled { opacity: 0.4; cursor: default; }
