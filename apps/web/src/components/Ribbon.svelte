@@ -196,14 +196,39 @@
   let openAt = $state<{ i: number; x: number; y: number } | null>(null);
   const collapsed = $derived.by(() => {
     const out = new Set<number>();
-    const room = barW - 20;
-    let total = shownGroups.reduce((n, _, i) => n + (widths[i] ?? 0), 0);
-    for (let i = shownGroups.length - 1; i >= 0 && (cave.compactRibbon || total > room); i--) {
-      const w = widths[i] ?? 0;
-      if (w <= FOLDED) continue;
-      total += FOLDED - w;
-      out.add(i);
+    const w = (i: number) => widths[i] ?? 0;
+    const foldable = (i: number) => !out.has(i) && w(i) > FOLDED;
+    if (cave.compactRibbon) {
+      shownGroups.forEach((_, i) => foldable(i) && out.add(i));
+      return out;
     }
+    // Fold as few groups as will fit, and among those the ones furthest right (the leftmost groups are the ones used most).
+    const need = shownGroups.reduce((n, _, i) => n + w(i), 0) - (barW - 20);
+    if (need <= 0) return out;
+    const can = shownGroups.map((_, i) => i).filter(foldable).slice(-14);
+    let best = -1;
+    let bestCount = Infinity;
+    let bestRight = -1;
+    for (let mask = 1; mask < 1 << can.length; mask++) {
+      let saved = 0;
+      let count = 0;
+      let right = 0;
+      for (let b = 0; b < can.length; b++) {
+        if (mask & (1 << b)) {
+          saved += w(can[b]) - FOLDED;
+          count++;
+          right += can[b];
+        }
+      }
+      if (saved >= need && (count < bestCount || (count === bestCount && right > bestRight))) {
+        best = mask;
+        bestCount = count;
+        bestRight = right;
+      }
+    }
+    // not even folding everything fits: fold everything that can be
+    const chosen = best > 0 ? can.filter((_, b) => best & (1 << b)) : can;
+    for (const i of chosen) out.add(i);
     return out;
   });
   $effect(() => {
