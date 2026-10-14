@@ -2,13 +2,25 @@
 // double-click to add a fit point, Delete to remove the line. One implementation for every view
 // that draws on a canvas (Profile, Cross Section). The view says where its lines are and how
 // world and screen relate; this decides what a press, a drag and a key do.
-import { distanceToCurve, insertionAt, nearestPoint, refit, type Pt } from './spline.ts';
+import { distanceToCurve, insertionAt, insideCurve, nearestPoint, refit, type Pt } from './spline.ts';
+import { isFillKind } from './fills.ts';
 import { hitsStamp, isStampKind } from './symbols.ts';
 
 /** How near, in pixels, a point is to a line (a symbol counts as its whole body). */
 function reach(l: { points: Pt[]; closed?: boolean; kind?: string; text?: string }, toScreen: (p: Pt) => Pt, x: number, y: number): number {
   if (isStampKind(l.kind) && l.points.length >= 2) return hitsStamp(l.kind ?? '', l.text, toScreen(l.points[0]), toScreen(l.points[1]), x, y) ? 0 : Infinity;
   return distanceToCurve(l.points.map(toScreen), x, y, !!l.closed);
+}
+
+/**
+ * The topmost line at a point: a line, symbol or area's edge within reach first (topmost wins), then any area the point is
+ * inside, so the hatch of a fill can be clicked as well as its outline, while a click on a wall or symbol that lies over a
+ * fill still gets the wall or symbol. Returns the index, or -1.
+ */
+export function topLineAt<T extends { points: Pt[]; closed?: boolean; kind?: string; text?: string }>(lines: T[], toScreen: (p: Pt) => Pt, x: number, y: number, reachPx: number): number {
+  for (let i = lines.length - 1; i >= 0; i--) if (reach(lines[i], toScreen, x, y) <= reachPx) return i;
+  for (let i = lines.length - 1; i >= 0; i--) if (isFillKind(lines[i].kind) && lines[i].points.length >= 3 && insideCurve(lines[i].points.map(toScreen), x, y)) return i;
+  return -1;
 }
 
 export interface EditableLine {
@@ -87,12 +99,11 @@ export class LineEditor<T extends EditableLine = EditableLine> {
       }
     }
     const lines = this.shown();
-    for (let i = lines.length - 1; i >= 0; i--) {
-      if (reach(lines[i], this.h.toScreen, x, y) <= LINE_REACH) {
-        this.h.select(lines[i].id);
-        this.h.redraw();
-        return false;
-      }
+    const hit = topLineAt(lines, this.h.toScreen, x, y, LINE_REACH);
+    if (hit >= 0) {
+      this.h.select(lines[hit].id);
+      this.h.redraw();
+      return false;
     }
     if (this.h.selected()) this.h.select('');
     this.h.redraw();
@@ -102,15 +113,12 @@ export class LineEditor<T extends EditableLine = EditableLine> {
   /** The eraser passing screen (`x`, `y`): deletes the topmost line there (one undoable edit). Returns true if it did. */
   eraseAt(x: number, y: number): boolean {
     const lines = this.shown();
-    for (let i = lines.length - 1; i >= 0; i--) {
-      if (reach(lines[i], this.h.toScreen, x, y) <= LINE_REACH) {
-        if (this.h.selected() === lines[i].id) this.h.select('');
-        this.h.remove(lines[i].id);
-        this.h.redraw();
-        return true;
-      }
-    }
-    return false;
+    const hit = topLineAt(lines, this.h.toScreen, x, y, LINE_REACH);
+    if (hit < 0) return false;
+    if (this.h.selected() === lines[hit].id) this.h.select('');
+    this.h.remove(lines[hit].id);
+    this.h.redraw();
+    return true;
   }
 
   /** Fits a drawn line again at another curve detail (1 to 10), as one edit. Returns true if it changed. */

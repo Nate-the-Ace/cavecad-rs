@@ -14,7 +14,7 @@ import { drawHalo, type HaloLine } from '../halo';
 import { isKindHidden, ornamentFor, refreshFlipped } from '../section-glyph';
 import { drawCursor } from '../presence-draw';
 import { defaultMapOffset, drawHandles, drawStrokes, glyphCurves, hits, leaderEnd } from '../section-glyph';
-import { distanceToCurve, fitStroke, nearestPoint, refit, smooth } from '../spline';
+import { distanceToCurve, fitStroke, insideCurve, nearestPoint, refit, smooth } from '../spline';
 import { PICKUP_REACH, joinFit } from '../line-editor';
 import { looks } from '../ink';
 import { elevationColor, inkColor, readTheme, type ViewTheme } from './theme';
@@ -826,20 +826,34 @@ export class CaveView {
     return this.mapLines.map((k) => (e && k.id === e.id ? { ...k, points: e.pts } : k));
   }
 
+  /**
+   * The map line at a screen point: an edge or symbol within reach first (topmost wins), then an area the point is inside, so the
+   * hatch of a fill can be clicked as well as its outline while a wall or symbol over a fill still gets the click. Null if none.
+   */
+  private lineAt(x: number, y: number): ProfileSketch3d | null {
+    const lines = [...this.mapLines].reverse().filter((k) => !isKindHidden(k.kind));
+    const pts = (k: ProfileSketch3d) => this.screenPoints(k).filter((p): p is [number, number] => !!p);
+    for (const k of lines) {
+      const p = pts(k);
+      if (p.length === k.points.length && (isStampKind(k.kind) ? hitsStamp(k.kind, k.text, p[0], p[1], x, y) : distanceToCurve(p, x, y, k.closed) <= 7)) return k;
+    }
+    for (const k of lines) {
+      const p = pts(k);
+      if (isFillKind(k.kind) && p.length === k.points.length && insideCurve(p, x, y)) return k;
+    }
+    return null;
+  }
+
   /** A press in the Top or Bottom view with no tool: pick up a fit point of the selected map line, or select the line there. */
   private eraseAt(e: PointerEvent) {
     const rect = this.canvas.getBoundingClientRect();
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
-    for (const k of [...this.mapLines].reverse()) {
-      if (isKindHidden(k.kind)) continue;
-      const pts = this.screenPoints(k).filter((p): p is [number, number] => !!p);
-      if (pts.length === k.points.length && (isStampKind(k.kind) ? hitsStamp(k.kind, k.text, pts[0], pts[1], x, y) : distanceToCurve(pts, x, y, k.closed) <= 7)) {
-        this.mapLines = this.mapLines.filter((m) => m.id !== k.id);
-        this.onLineErased(k.id);
-        this.requestRender();
-        return;
-      }
+    const k = this.lineAt(x, y);
+    if (k) {
+      this.mapLines = this.mapLines.filter((m) => m.id !== k.id);
+      this.onLineErased(k.id);
+      this.requestRender();
     }
   }
 
@@ -848,7 +862,6 @@ export class CaveView {
     const rect = this.canvas.getBoundingClientRect();
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
-    const screen = (k: ProfileSketch3d) => this.screenPoints(k).filter((p): p is [number, number] => !!p);
     const sel = this.displayMapLines().find((k) => k.id === this.selectedLine);
     if (sel) {
       const i = nearestPoint(this.screenPoints(sel).map((p) => p ?? [-1e9, -1e9]), x, y, 10);
@@ -861,13 +874,10 @@ export class CaveView {
         return;
       }
     }
-    for (const k of [...this.mapLines].reverse()) {
-      if (isKindHidden(k.kind)) continue;
-      const pts = screen(k);
-      if (pts.length === k.points.length && (isStampKind(k.kind) ? hitsStamp(k.kind, k.text, pts[0], pts[1], x, y) : distanceToCurve(pts, x, y, k.closed) <= 7)) {
-        this.onSelectLine(k.id);
-        return;
-      }
+    const k = this.lineAt(x, y);
+    if (k) {
+      this.onSelectLine(k.id);
+      return;
     }
     if (this.selectedLine && this.hasMapLine(this.selectedLine)) this.onSelectLine('');
   }

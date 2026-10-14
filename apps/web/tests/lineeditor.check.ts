@@ -1,4 +1,4 @@
-import { LineEditor, endpointNear, joinFit, type EditableLine } from '../src/lib/line-editor.ts';
+import { LineEditor, endpointNear, joinFit, topLineAt, type EditableLine } from '../src/lib/line-editor.ts';
 let bad = 0;
 const ok = (c: boolean, m: string) => { if (!c) { bad++; console.log('FAIL', m); } };
 let selected = '';
@@ -76,5 +76,20 @@ ok(w.widths!.length === w.pts.length, 'pen weights stay one per point');
   ed.release();
   ok(saved[0].pts[0][0] === 200 && saved[0].pts[0][1] === 200 && saved[0].pts[1][0] === 240, 'moving the other handle changes only the size and turn');
   lines.pop();
+}
+// an area is selected by its hatch (anywhere inside it) as well as by its outline; a line over it still wins
+{
+  const id = (p: [number, number]) => p;
+  const fill: EditableLine = { id: 'f', kind: 'fill-sand', closed: true, points: [[0, 0], [200, 0], [200, 200], [0, 200]], widths: null };
+  const wall: EditableLine = { id: 'w', kind: 'wall', points: [[20, 100], [180, 100]], widths: null };
+  const lines = [fill, wall];
+  ok(topLineAt(lines, id, 100, 150, 7) === 0, 'a click inside the area, away from its edge, selects the fill');
+  ok(topLineAt(lines, id, 100, 101, 7) === 1, 'a click on a wall that lies over the fill selects the wall');
+  ok(topLineAt(lines, id, 1, 100, 7) === 0, 'a click on the fill\'s own edge selects it');
+  ok(topLineAt(lines, id, 400, 400, 7) === -1, 'a click outside everything selects nothing');
+  const plain: EditableLine = { id: 'p', kind: 'wall', closed: true, points: [[0, 0], [200, 0], [200, 200], [0, 200]], widths: null };
+  ok(topLineAt([plain], id, 100, 150, 7) === -1, 'a closed wall (not an area fill) is still picked by its line only, not by its inside');
+  const over = [fill, { id: 'g', kind: 'fill-clay', closed: true, points: [[50, 50], [150, 50], [150, 150], [50, 150]], widths: null } as EditableLine];
+  ok(topLineAt(over, id, 100, 100, 7) === 1, 'of two areas over each other the topmost one is picked');
 }
 console.log(bad ? 'FAILED' : 'line editor checks ok'); process.exit(bad ? 1 : 0);
