@@ -12,8 +12,10 @@
 // Every hand and every line said is logged by the relay (in memory, and to a file on the server if it keeps
 // one) and the teacher can download the whole transcript. A class lives on the room relay (the dev or Docker
 // server's /sync), so it needs that server; the serverless peer sessions are for working together.
+import { engine } from './engine';
 import { cave, changed, filter } from './cave.svelte';
 import { applyMirror, captureMirror, forgetMirror, registerMirror } from './classroom-mirror';
+import { clearScans } from './scans.svelte';
 import { classLink, desktopLink, liveLink, mergeEntries, readClassLink, readJoinLink, readLiveLink, transcript, transcriptName, type ChatEntry, type Hand } from './classroom-log';
 import { readOnly } from './readonly';
 import { shelf } from './shelf.svelte';
@@ -35,6 +37,8 @@ export const classroom = $state({
   /** Everything said and every hand, in order. */
   /** The same link as one that opens the desktop app. */
   appLink: '',
+  /** Students may not keep the cave (set by the teacher when the class starts). */
+  private: true,
   chat: [] as ChatEntry[],
   /** Things the teacher should notice now: a hand going up, a line with an emoji in it. They show as cards on the screen. */
   alerts: [] as { id: number; kind: 'hand' | 'emoji'; whoId: string; who: string; text: string }[],
@@ -206,7 +210,7 @@ let unblock: (() => void) | null = null;
 // ---- starting and joining ------------------------------------------------------------------------
 
 /** The teacher starts a class from the open cave. */
-export function startClass(className: string, teacherName: string, via: 'relay' | 'link' = 'link') {
+export function startClass(className: string, teacherName: string, via: 'relay' | 'link' = 'link', options: { private?: boolean } = {}) {
   const name = className.trim();
   if (!name) return void (classroom.error = 'Give the class a name.');
   if (!cave.hasCave) return void (classroom.error = 'Open or start a cave first: there is nothing to teach from yet.');
@@ -221,7 +225,7 @@ export function startClass(className: string, teacherName: string, via: 'relay' 
     classroom.transport = 'p2p';
     classroom.link = '';
     intent = 'teacher';
-    if (!startClassHosting(name)) {
+    if (!startClassHosting(name, options)) {
       intent = '';
       classroom.error = p2p.error || 'Could not start the class.';
       return;
@@ -275,6 +279,7 @@ function fail(why: string): false {
 
 interface ClassWelcome {
   role: 'teacher' | 'student';
+  private?: boolean;
   name: string;
   started: number;
   ended: boolean;
@@ -312,6 +317,8 @@ setRoomHooks({
     if (c.role === 'student') {
       // Only watching: the engine refuses writes, the page ignores the mouse and keys, and the teacher's view is put on.
       readOnly.on = true;
+      classroom.private = c.private !== false; // a class from an older build is private too
+      readOnly.noKeep = classroom.private;
       cave.hasCave = true;
       cave.name = c.name;
       shelf.open = false;
@@ -347,6 +354,10 @@ setRoomHooks({
     } else if (m.t === 'ended') {
       classroom.ended = true;
       stopMirroring();
+      if (classroom.role === 'student' && classroom.private) {
+        classroom.notice = 'The class has ended. The cave will be cleared from this computer in a few seconds.';
+        setTimeout(() => classroom.role === 'student' && classroom.ended && leaveClass(), 8000);
+      }
     } else if (m.t === 'denied') {
       notify(String(m.message ?? ''));
     } else if (m.t === 'log') {
@@ -354,11 +365,15 @@ setRoomHooks({
     }
   },
   left: () => {
+    const wasStudent = classroom.role === 'student';
     stopMirroring();
     unblock?.();
     unblock = null;
     readOnly.on = false;
+    const clear = wasStudent && readOnly.noKeep;
+    readOnly.noKeep = false;
     forgetMirror();
+    if (clear) wipeStudentCave();
     intent = '';
     classroom.role = 'none';
     classroom.ended = false;
@@ -410,6 +425,33 @@ export function downloadLog() {
 /** Leaves the class (a student stops watching; a teacher closes the room on this device). The cave stays as it is. */
 export function leaveClass() {
   leave();
+}
+
+/**
+ * A student's page held the teacher's cave only to look at it. When they leave (or the class ends, or the connection drops) it is
+ * all let go: the cave, its scan pages, what was on show and where the teacher was looking, so nothing of it stays on this
+ * computer. What is left is a clean page, as at the start.
+ */
+function wipeStudentCave() {
+  try {
+    engine.syncLoad('[]'); // an empty cave in place of the teacher's
+  } catch {
+    /* the engine was not running: nothing is held */
+  }
+  clearScans();
+  cave.hasCave = false;
+  cave.name = '';
+  cave.fileName = '';
+  cave.trip = '';
+  cave.run = '';
+  cave.station = '';
+  cave.selected = '';
+  cave.tool = '';
+  cave.pick = { kind: '', id: '' };
+  filter.hiddenTrips = [];
+  shelf.currentId = '';
+  cave.opened += 1; // every view reads the empty cave
+  changed();
 }
 
 function save(text: string, fileName: string) {

@@ -530,6 +530,18 @@ export function setRealRoot(name: string, path: string) {
   }
 }
 
+/** Lets go of every page held in memory and forgets the folder (a student leaving a class: the teacher's pages must not stay). */
+export function clearScans() {
+  for (const u of mapUrls.values()) URL.revokeObjectURL(u);
+  mapUrls.clear();
+  files.clear();
+  images.clear();
+  scans.paths = [];
+  scans.selected = '';
+  scans.folder = '';
+  scans.message = '';
+}
+
 /** A page by its path, for sending to someone else. */
 export const fileOf = (path: string): File | undefined => files.get(path);
 

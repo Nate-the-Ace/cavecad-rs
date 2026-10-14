@@ -189,6 +189,13 @@ ok(a === '{"v":2}', 'a part that is gone is not written to');
   ok(!room.chat.some((e) => e.name === 'Late'), 'nothing is recorded after the class has ended');
 }
 
+// a class is private (students may not keep the cave) unless the teacher says otherwise
+{
+  ok(classWelcome(newClass('A'), 'student').private === true, 'a class is private by default');
+  ok(classWelcome(newClass('B', undefined, { private: false }), 'student').private === false, 'and the teacher can allow keeping a copy');
+  ok(classWelcome(newClass('C', undefined, { private: true }), 'teacher').private === true, 'the setting reaches the teacher too');
+}
+
 readOnly.on = false;
 if (bad) process.exit(1);
 console.log('classroom ok');

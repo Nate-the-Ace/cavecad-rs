@@ -25,7 +25,9 @@
     const t = setInterval(() => (waited = Math.round((Date.now() - t0) / 1000)), 500);
     return () => clearInterval(t);
   });
-  const start = () => startClass(className, teacherName, 'link');
+  // The cave is only shown to students: by default none of it stays on their computers.
+  let keepOff = $state(true);
+  const start = () => startClass(className, teacherName, 'link', { private: keepOff });
   // The class mailbox (CaveCAD's Apps Script): built into this copy, or typed in and kept on this machine.
   let hasMailbox = $state(!!mailboxConfig());
   const needMailbox = $derived(!hasMailbox);
@@ -47,6 +49,7 @@
       <label>Name of the class <input bind:value={className} placeholder="Caving 101, Truitt survey day…" maxlength="60" onkeydown={(e) => e.key === 'Enter' && start()} /></label>
       <label>Your name <input bind:value={teacherName} maxlength="40" /></label>
       <p class="note">Students open one link. A small mailbox only passes their first hello; then each student's device connects straight to yours, so no server carries the class.</p>
+      <label class="opt"><input type="checkbox" bind:checked={keepOff} /> <span><b>Students cannot keep the cave.</b> They can only look: saving, exporting and printing are off for them, and the cave and its scans are cleared from their computers when they leave or the class ends. Turn this off if they may keep a copy.</span></label>
       <MailboxSettings onsave={() => (hasMailbox = !!mailboxConfig())} />
       {#if !cave.hasCave}<p class="err">Open or start a cave first: there is nothing to teach from yet.</p>{/if}
       {#if why}<p class="err" role="alert">{why}</p>{/if}
@@ -90,6 +93,8 @@
   .fine { font-size: 11px; }
   label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); }
   input { font: inherit; font-size: 14px; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--field); color: var(--text); }
+  .opt { flex-direction: row; align-items: flex-start; gap: 6px; font-size: 12px; color: var(--text); }
+  .opt input { margin-top: 2px; }
   .err { margin: 0; color: var(--danger); font-size: 12px; }
   .row { display: flex; justify-content: flex-end; gap: 8px; }
   button { font: inherit; font-size: 13px; padding: 6px 14px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel-2); color: var(--text); cursor: pointer; }

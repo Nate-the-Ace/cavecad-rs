@@ -667,13 +667,13 @@ function classIo(from: Peer | null): RoomIo {
  * watches (their edits are refused here). Students join like any guest, with invite and reply codes, and are let in
  * without asking. Returns false (and says why in `p2p.error`) when it cannot start.
  */
-export function startClassHosting(name: string): boolean {
+export function startClassHosting(name: string, options: { private?: boolean } = {}): boolean {
   if (p2p.role !== 'none') {
     p2p.error = 'Stop sharing first: a class starts a session of its own.';
     return false;
   }
   if (!startHosting()) return false;
-  cls = newClass(name);
+  cls = newClass(name, undefined, options);
   p2p.auto = true;
   announce();
   return roomEvents.welcome({ class: classWelcome(cls, 'teacher'), owner: true }) !== false;

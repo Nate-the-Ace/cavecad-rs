@@ -102,7 +102,12 @@ export const READS: readonly string[] = [
 ];
 
 /** Whether the engine refuses writes, and what it says. Set by the classroom for students. */
-export const readOnly = { on: false, why: 'This is a class: only the teacher can change the cave.' };
+export const readOnly = {
+  on: false,
+  /** The teacher asked that the cave not be kept: saving, exporting and printing are off, and it is cleared when the student leaves. */
+  noKeep: false,
+  why: 'This is a class: only the teacher can change the cave.',
+};
 
 const writes = new Set(WRITES);
 

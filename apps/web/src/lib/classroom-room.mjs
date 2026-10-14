@@ -24,9 +24,10 @@ const BACKLOG = 300;
  * it to a file; a page has no file and leaves it out).
  * @param {string} name
  * @param {(entry: object) => void} [onRecord]
+ * @param {{ private?: boolean }} [options] `private` (the default): students may not keep the cave: it is cleared from their computers when they leave
  */
-export function newClass(name, onRecord) {
-  return { name, started: Date.now(), ended: false, seq: 0, chat: [], hands: new Map(), mirror: '', lastSay: new Map(), onRecord: onRecord ?? null };
+export function newClass(name, onRecord, options = {}) {
+  return { name, private: options.private !== false, started: Date.now(), ended: false, seq: 0, chat: [], hands: new Map(), mirror: '', lastSay: new Map(), onRecord: onRecord ?? null };
 }
 
 /** Appends one entry to the record. Returns it. */
@@ -47,7 +48,7 @@ export const handsOf = (cls) => [...cls.hands].map(([id, h]) => ({ id, name: h.n
 
 /** What a person who joins is given with the welcome. */
 export function classWelcome(cls, role) {
-  return { role, name: cls.name, started: cls.started, ended: cls.ended, chat: cls.chat.slice(-BACKLOG), hands: handsOf(cls), mirror: cls.mirror };
+  return { role, name: cls.name, private: cls.private, started: cls.started, ended: cls.ended, chat: cls.chat.slice(-BACKLOG), hands: handsOf(cls), mirror: cls.mirror };
 }
 
 /**
