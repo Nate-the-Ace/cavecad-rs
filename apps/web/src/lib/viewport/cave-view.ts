@@ -9,7 +9,7 @@ import type { MapSection, PassageBuffers, Pt, ProfileSketch3d, Scene, TypeStyle 
 import { PenGuard, isEraser, widthFor } from '../pen';
 import { arrowAt, attachOf, nearestVertex, resolveLeaders, withArrow, withoutArrow } from '../leader-edit';
 import { withAttach } from '../line-style-text';
-import { drawStamp, drawStationMarker, hitsLabelNote, hitsStamp, isStampKind, leaderLook, placement } from '../symbols';
+import { stampEditSpot, drawStamp, drawStationMarker, hitsLabelNote, hitsStamp, isStampKind, leaderLook, placement } from '../symbols';
 import { paintCopy } from '../copy-ghost';
 import type { ClipLine } from '../clip';
 import { drawMarks, isFillKind, marksFor } from '../fills';
@@ -115,6 +115,8 @@ export class CaveView {
   copyLines: (cursor: [number, number]) => ClipLine[] | null = () => null;
   onCopyPress: (p: [number, number]) => void = () => {};
   onEndCopy: () => void = () => {};
+  /** Called to edit a stamp's words in place: its id, words, kind, and where (page pixels) and how tall they are. */
+  onEditText: (id: string, text: string, kind: string, x: number, y: number, size: number) => void = () => {};
   /** Where the next stroke would carry an open line on from, on screen, while a tool waits. */
   private pickupAt: [number, number] | null = null;
   /** How a drawn stroke is turned into a curve: the fit tolerance in pixels, and whether pen pressure counts. */
@@ -292,6 +294,13 @@ export class CaveView {
       if (k) this.onLineMenu(e.clientX, e.clientY, k.id, this.mapLines.filter((m) => m.kind === k.kind && !isKindHidden(m.kind)).map((m) => m.id));
     });
     canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+    // A double click on a symbol, a text or a leader edits its words in place.
+    canvas.addEventListener('dblclick', (e) => {
+      if (this.drawTool || this.copyOn || e.button !== 0) return;
+      const rect = canvas.getBoundingClientRect();
+      const k = this.lineAt(e.clientX - rect.left, e.clientY - rect.top);
+      if (k && isStampKind(k.kind)) this.editWordsOf(k);
+    });
     // A section can be dragged by hand: this runs before the orbit controls see the press.
     canvas.addEventListener(
       'pointerdown',
@@ -861,6 +870,25 @@ export class CaveView {
   /** The lines drawn on the map itself (not profile sketches shown on it), as copies of what the view holds. */
   ownedMapLines(): ProfileSketch3d[] {
     return this.mapLines.filter((k) => this.hasMapLine(k.id));
+  }
+
+  /** Opens the in-place box on a stamp's words. */
+  private editWordsOf(k: ProfileSketch3d) {
+    const pts = this.screenPoints(k).filter((p): p is [number, number] => !!p);
+    const spot = stampEditSpot(k.kind, pts, leaderLook(k.style, ((this.pixelsPerMetreAt(k.points[0]) ?? 0) * drawing.scale) / 1000));
+    if (!spot) return;
+    const r = this.canvas.getBoundingClientRect();
+    this.onEditText(k.id, k.text ?? '', k.kind, r.left + spot.x, r.top + spot.y, spot.size);
+  }
+
+  /** Opens the in-place box for a stamp just placed at these plan points (before the view has read it back). */
+  editWordsAtPlan(id: string, kind: string, text: string, plan: [number, number][]) {
+    const z = this.controls.target.z;
+    const pts = plan.map((p) => this.project([p[0], p[1], z])).filter((p): p is [number, number] => !!p);
+    const spot = stampEditSpot(kind, pts, leaderLook('', ((this.pixelsPerMetreAt([plan[0][0], plan[0][1], z]) ?? 0) * drawing.scale) / 1000));
+    if (!spot) return;
+    const r = this.canvas.getBoundingClientRect();
+    this.onEditText(id, text, kind, r.left + spot.x, r.top + spot.y, spot.size);
   }
 
   /** Where the pointer last was on the plan, or null. */

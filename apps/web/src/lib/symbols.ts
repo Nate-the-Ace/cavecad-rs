@@ -215,6 +215,22 @@ function noteIsFar(pl: ReturnType<typeof placement>, note: [number, number]): bo
   return Math.hypot(note[0] - pl.cx, note[1] - pl.cy) > 2.6 * Math.max(pl.r, 8);
 }
 
+/** Where a stamp's words are, to edit them in place: the screen point they start at, and their height in pixels. Null for a stamp with no words to edit. */
+export function stampEditSpot(kind: string, pts: [number, number][], leader: LeaderLook = leaderLook('')): { x: number; y: number; size: number } | null {
+  const [p0, p1] = pts;
+  if (!p0 || !p1) return null;
+  const pl = placement(p0, p1);
+  if (kind === 'callout') {
+    const size = leader.paperPx && leader.paperPx > 0 ? 3 * leader.paperPx * leader.size : Math.hypot(p1[0] - p0[0], p1[1] - p0[1]) / 3;
+    return { x: p1[0], y: p1[1], size };
+  }
+  if (kind === 'text') return { x: pl.cx, y: pl.cy, size: Math.max(6, pl.r) };
+  if (!isSymbolKind(kind)) return null;
+  const w = wordsPlacement(kind, pl);
+  const note = pts[2];
+  return note ? { x: note[0], y: note[1], size: w.size } : { x: w.x, y: w.y, size: w.size };
+}
+
 /** True when screen (`x`, `y`) is on the words of a symbol's label note (so a press there can pick the note up, selected or not). */
 export function hitsLabelNote(kind: string | undefined, text: string | undefined, p0: [number, number], p1: [number, number], note: [number, number] | undefined, x: number, y: number, pad = 5): boolean {
   if (!kind || !isSymbolKind(kind) || !text || !note) return false;

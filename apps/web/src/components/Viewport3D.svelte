@@ -12,6 +12,7 @@
   import { fitPlane, heightSurface } from '../lib/plane';
   import { markViewUsed, registerSelectAll } from '../lib/select-all';
   import { copyGhost, copyOp, copyPress, endCopy, registerClipView } from '../lib/view-clip.svelte';
+  import { openTextEdit } from '../lib/text-edit.svelte';
   import { openLineMenu } from '../lib/line-menu.svelte';
   import { cave, changed, filter, haloFade, haloReach, option, selectedIds, selectIds, toggleSelected, setPick, setShowSections, setShown, wireFilter, toolStyle } from '../lib/cave.svelte';
   import { tolerancePx } from '../lib/commands';
@@ -308,6 +309,7 @@
       if (!selectedIds().includes(id)) selectIds([id]);
       openLineMenu(x, y, () => similar);
     };
+    v.onEditText = (id, text, kind, x, y, size) => openTextEdit(id, text, x, y, size, kind === 'text' ? 'Type the text' : kind === 'callout' ? 'Type the note' : 'Label');
     v.copyLines = (cursor) => copyGhost('map', cursor)?.lines ?? null;
     v.onCopyPress = (p) => copyPress('map', p);
     v.onEndCopy = () => endCopy();
@@ -342,6 +344,8 @@
       const r = engine.addMapLine(cave.tool, withLabelSpot(cave.tool, points, text), widths, closed, cave.adjusted, text, toolStyle());
       if (r !== 'ok') engine.log('warn', 'draw', r);
       changed();
+      // a leader placed without words asks for them at once
+      if (r === 'ok' && cave.tool === 'callout' && !text.trim()) view?.editWordsAtPlan(engine.lastAddedId(), 'callout', '', points);
     };
     let palmLogged = 0;
     v.onPalm = (why) => {

@@ -21,6 +21,8 @@ thread_local! {
     /// One undo history per panel (`profile`, `section`, `map`), so a panel's Undo and Redo only
     /// touch what was done in that panel.
     static HISTORY: RefCell<HashMap<String, History>> = RefCell::new(HashMap::new());
+    /// The line most recently added with `add_map_line`, `add_profile_sketch` or `add_section_sketch`.
+    static LAST_ADDED: RefCell<String> = const { RefCell::new(String::new()) };
 }
 
 fn console() -> &'static LogBuffer {
@@ -320,6 +322,7 @@ pub fn add_map_line(
         let actions = cave_draw::with_style(actions, id, style).map_err(|e| format!("{e:?}"))?;
         let edit = doc.edit(actions).map_err(|e| format!("{e:?}"))?;
         record_edit("map", &edit);
+        LAST_ADDED.with(|l| *l.borrow_mut() = id.to_string());
         Ok::<(), String>(())
     });
     match result {
@@ -994,6 +997,7 @@ pub fn add_section_sketch(
         let actions = cave_draw::with_style(actions, id, style).map_err(|e| format!("{e:?}"))?;
         let edit = doc.edit(actions).map_err(|e| format!("{e:?}"))?;
         record_edit("section", &edit);
+        LAST_ADDED.with(|l| *l.borrow_mut() = id.to_string());
         Ok::<(), String>(())
     });
     match result {
@@ -1003,6 +1007,12 @@ pub fn add_section_sketch(
         }
         Err(e) => format!("error: {e}"),
     }
+}
+
+/// The id of the line most recently added by `add_map_line`, `add_profile_sketch` or `add_section_sketch` (empty before any).
+#[wasm_bindgen]
+pub fn last_added_id() -> String {
+    LAST_ADDED.with(|l| l.borrow().clone())
 }
 
 /// Pastes several drawn lines into one view as ONE undoable edit. `view` is `map`, `profile` or `section`;
@@ -1451,6 +1461,7 @@ pub fn add_profile_sketch(
         let actions = cave_draw::with_style(actions, id, style).map_err(|e| format!("{e:?}"))?;
         let edit = doc.edit(actions).map_err(|e| format!("{e:?}"))?;
         record_edit("profile", &edit);
+        LAST_ADDED.with(|l| *l.borrow_mut() = id.to_string());
         Ok::<(), String>(())
     });
     match result {

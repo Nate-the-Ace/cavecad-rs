@@ -2,6 +2,7 @@
   import { selectAllInLastView } from './lib/select-all';
   import { copyEvent, deleteSelection, pasteEvent } from './lib/view-clip.svelte';
   import LineMenu from './components/LineMenu.svelte';
+  import TextEditor from './components/TextEditor.svelte';
   import { onMount, untrack } from 'svelte';
   import Ribbon from './components/Ribbon.svelte';
   import NewCave from './components/NewCave.svelte';
@@ -140,6 +141,7 @@
   <ClassroomDialogs />
   <ClassroomAlerts />
   <LineMenu />
+  <TextEditor />
   {#if info?.error}
     <div class="banner">Rust build failed. The page is showing the last good build.<pre>{info.error}</pre></div>
   {/if}

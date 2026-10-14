@@ -105,4 +105,11 @@ ok(w.widths!.length === w.pts.length, 'pen weights stay one per point');
   ok(topLineAt([ledge], id, 70, 160, 7, undefined, ornament) === -1, 'but not one far from every mark');
   ok(topLineAt([ledge], id, 100, 101, 7, undefined, ornament) === 0, 'the line itself still works');
 }
+// a double click on a symbol or a leader finds its words; on a plain line it does not
+lines.push({ id: 's', points: [[200, 200], [200, 180]], widths: null, kind: 'sym-pit', text: '30' }, { id: 'l', points: [[300, 300], [380, 280]], widths: null, kind: 'callout', text: 'Squeeze' });
+const sw = ed.wordsAt(201, 200);
+ok(!!sw && sw.id === 's' && sw.text === '30' && sw.x > 200, `a symbol's label is found, got ${JSON.stringify(sw)}`);
+const n = ed.wordsAt(301, 300); // (the note's own box needs the engine's layout; here the tip is what answers)
+ok(!!n && n.id === 'l' && n.text === 'Squeeze' && Math.abs(n.x - 380) < 1, `a leader's note is found, got ${JSON.stringify(n)}`);
+ok(ed.wordsAt(100, 101) === null, 'a plain line has no words to edit');
 console.log(bad ? 'FAILED' : 'line editor checks ok'); process.exit(bad ? 1 : 0);

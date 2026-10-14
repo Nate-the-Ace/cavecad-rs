@@ -4,7 +4,7 @@
 // world and screen relate; this decides what a press, a drag and a key do.
 import { distanceToCurve, distanceToPolyline, insertionAt, insideCurve, nearestPoint, refit, type Pt } from './spline.ts';
 import { isFillKind } from './fills.ts';
-import { hitsLabelNote, hitsStamp, isStampKind, leaderLook } from './symbols.ts';
+import { hitsLabelNote, hitsStamp, isStampKind, leaderLook, stampEditSpot } from './symbols.ts';
 import { arrowAt, attachOf, nearestVertex, resolveLeaders, withArrow, withoutArrow } from './leader-edit.ts';
 import { withAttach } from './line-style-text.ts';
 
@@ -236,6 +236,16 @@ export class LineEditor<T extends EditableLine = EditableLine> {
     if (!now.includes(line.id)) this.h.select(line.id);
     this.h.redraw();
     return () => lines.filter((k) => k.kind === line.kind).map((k) => k.id);
+  }
+
+  /** The words of the stamp (symbol, text or leader) at screen (`x`, `y`), with where they start on screen: what a double click edits. Null when none. */
+  wordsAt(x: number, y: number): { id: string; text: string; kind: string; x: number; y: number; size: number } | null {
+    const lines = this.shown();
+    const hit = topLineAt(lines, this.h.toScreen, x, y, LINE_REACH, this.h.paperPx?.(), this.h.ornament);
+    if (hit < 0 || !isStampKind(lines[hit].kind)) return null;
+    const l = lines[hit];
+    const spot = stampEditSpot(l.kind ?? '', l.points.map((p) => this.h.toScreen(p) as [number, number]), leaderLook(l.style, this.h.paperPx?.()));
+    return spot ? { id: l.id, text: l.text ?? '', kind: l.kind ?? '', ...spot } : null;
   }
 
   /** The ids of every line drawn in this view that is switched on (what Select All picks). */

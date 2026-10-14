@@ -11,13 +11,14 @@
   import { copyGhost, copyOp, copyPress, endCopy, registerClipView, snapToSelection } from '../lib/view-clip.svelte';
   import { paintCopy } from '../lib/copy-ghost';
   import type { Drawn } from '../lib/clip';
+  import { openTextEdit } from '../lib/text-edit.svelte';
   import { openLineMenu } from '../lib/line-menu.svelte';
   import { cave, changed, filter, option, selectedIds, selectIds, toggleSelected, setPick, setShowSections, haloFade, haloReach, toolStyle } from '../lib/cave.svelte';
   import { defaultBandOffset, drawHandles, drawStrokes, glyphCurves, hits, leaderEnd, ornamentFor } from '../lib/section-glyph';
   import { LineEditor, endpointNear, joinFit } from '../lib/line-editor';
   import { Touches } from '../lib/touch';
   import { PenGuard, isEraser, widthFor } from '../lib/pen';
-  import { drawStationMarker, isStampKind, needsWords, withLabelSpot } from '../lib/symbols';
+  import { drawStationMarker, isStampKind, leaderLook, needsWords, stampEditSpot, withLabelSpot } from '../lib/symbols';
   import { isFillKind } from '../lib/fills';
   import { cursorsFor, live as room, reportCursor } from '../lib/sync.svelte';
   import { drawCursor } from '../lib/presence-draw';
@@ -631,6 +632,12 @@
       message = result === 'ok' ? '' : result;
       changed();
       schedule();
+      // a leader placed without words asks for them at once
+      if (result === 'ok' && cave.tool === 'callout' && !option('label', '').trim()) {
+        const spot = stampEditSpot('callout', [a, toScreen(p1[0], p1[1])], leaderLook('', (scale * drawing.scale) / 1000));
+        const r = canvas.getBoundingClientRect();
+        if (spot) openTextEdit(engine.lastAddedId(), '', r.left + spot.x, r.top + spot.y, spot.size, 'Type the note');
+      }
       return;
     }
     if (stroked.pts.length >= 2 && cave.run) {
@@ -731,7 +738,11 @@
     onclick={pickStation}
     ondblclick={(e) => {
       const r = canvas.getBoundingClientRect();
-      if (!cave.tool) editor.addPoint(e.clientX - r.left, e.clientY - r.top);
+      if (cave.tool) return;
+      // a double click on a symbol, text or leader edits its words in place; on a curve it adds a fit point
+      const w = editor.wordsAt(e.clientX - r.left, e.clientY - r.top);
+      if (w) openTextEdit(w.id, w.text, r.left + w.x, r.top + w.y, w.size, w.kind === 'text' ? 'Type the text' : w.kind === 'callout' ? 'Type the note' : 'Label');
+      else editor.addPoint(e.clientX - r.left, e.clientY - r.top);
     }}
     onkeydown={onKey}
     oncontextmenu={(e) => {
