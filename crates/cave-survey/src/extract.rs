@@ -101,12 +101,15 @@ pub struct Extracted {
     pub splays: Vec<Splay>,
     /// What was read on each leg (by shot), for bearings and pitch tests.
     pub readings: HashMap<Id, Reading>,
-    /// Walls measured at each station, from the last shot arriving there.
+    /// Walls measured at each station, from the first shot arriving there that measured any.
     pub lruds: HashMap<Id, StationLrud>,
     /// Walls typed on a trip's opening row, for stations no shot arrives at.
     pub start_lruds: HashMap<Id, StationLrud>,
+    /// The old app's choice: the LAST shot arriving at each station that measured walls. Kept only so
+    /// the parity tests against the old app still run; the plan walls use `lruds`.
+    pub last_arrival_lruds: HashMap<Id, StationLrud>,
     /// The walls on the FIRST shot arriving at each station, even if that shot recorded none (the
-    /// 3D passage uses this reading; `lruds` is the last shot with evidence, which the plan walls use).
+    /// 3D passage uses this reading).
     pub first_arrival_lruds: HashMap<Id, StationLrud>,
     /// Which trip (by order, 0 first) each station belongs to: the trip of the first shot arriving
     /// there, else the first leaving it.
@@ -135,6 +138,7 @@ pub fn extract(doc: &Document) -> Extracted {
     let mut readings: HashMap<Id, Reading> = HashMap::new();
     let mut lruds: HashMap<Id, StationLrud> = HashMap::new();
     let mut first_arrival_lruds: HashMap<Id, StationLrud> = HashMap::new();
+    let mut last_arrival_lruds: HashMap<Id, StationLrud> = HashMap::new();
     // (trip, from, to) of every non-splay shot in survey order, excluded ones too.
     let mut trip_marks: Vec<(Option<Id>, Option<Id>, Option<Id>)> = Vec::new();
     let mut arrived: std::collections::HashSet<Id> = std::collections::HashSet::new();
@@ -190,7 +194,7 @@ pub fn extract(doc: &Document) -> Extracted {
             }
             continue;
         }
-        // Walls: LRUD belongs to the TO station of the last non-splay shot arriving there.
+        // Walls: LRUD belongs to the TO station of the first non-splay shot arriving there that measured walls.
         let (from_station, to_station) = (station(Field::ShotFrom), station(Field::ShotTo));
         if !seen_first {
             seen_first = true;
@@ -229,8 +233,12 @@ pub fn extract(doc: &Document) -> Extracted {
                     reading.azimuth
                 },
             };
+            // The first arrival that measured walls keeps the station: it is the shot the station
+            // panel and the section edit, and a later arrival from the other side (a loop closing
+            // on a junction) faces the other way, which would swap the walls left for right.
             if lrud.has_evidence() {
-                lruds.insert(t, lrud);
+                last_arrival_lruds.insert(t, lrud.clone());
+                lruds.entry(t).or_insert(lrud);
             }
         }
         let (Some(from), Some(to)) = (from_station, to_station) else {
@@ -345,6 +353,7 @@ pub fn extract(doc: &Document) -> Extracted {
         lruds,
         start_lruds,
         first_arrival_lruds,
+        last_arrival_lruds,
         station_trip,
         skipped,
     }
