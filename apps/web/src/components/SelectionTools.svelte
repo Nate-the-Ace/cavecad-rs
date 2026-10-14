@@ -10,6 +10,10 @@
   import { copyOp } from '../lib/view-clip.svelte';
   import { ALIGN_LABELS, ARROW_LABELS, FONT_LABELS, FRAME_LABELS, LINETYPE_LABELS, PATTERN_PREFIX, SHAPE_LABELS, liveStyle, parseStyle, styleText, withFlag, type LineStyle } from '../lib/line-style.svelte';
 
+  // Which part of the selection's settings this group of the tab shows (the ribbon folds a part at a time, not all of it at once).
+  let { part = 'all' }: { part?: 'all' | 'type' | 'format' | 'leader' | 'style' } = $props();
+  const show = (p: string) => part === 'all' || part === p;
+
   let tools = $state<TypeStyle[]>([]);
   onMount(() => {
     loadEngine().then(() => (tools = engine.drawTools()));
@@ -172,17 +176,20 @@
 {/snippet}
 
 <div class="sel">
-  {#if copying}
+  {#if copying && show('type')}
     <span class="tip copy" role="status">{copyOp.base ? 'Click to drop copies' : 'Pick a base point'}</span>
   {/if}
   {#if multi && !alike}
+    {#if show('type')}
     <div class="curve">
       <span class="tip many">{ids.length} items of different kinds are selected.</span>
       <button class="small" onclick={resetStyle} title="Back to what each one's type gives it">Reset style</button>
       {#if message}<span class="msg" role="status">{message}</span>{/if}
     </div>
-    {#if hasWords && infos.every((i) => isStampKind(i.kind))}{@render textFormat()}{/if}
+    {/if}
+    {#if show('format') && hasWords && infos.every((i) => isStampKind(i.kind))}{@render textFormat()}{/if}
   {:else}
+  {#if show('type')}
   {#if isFill && info}
     <div class="curve">
       <select class="kind" value={info.kind} aria-label="What the area is" onchange={(e) => each((id) => engine.setLineKind(id, e.currentTarget.value))}>
@@ -236,10 +243,11 @@
     {/if}
     {#if message}<span class="msg" role="status">{message}</span>{/if}
   </div>
-  {#if info && isSymbol && hasWords}
+  {/if}
+  {#if show('format') && info && isSymbol && hasWords}
     {@render textFormat()}
   {/if}
-  {#if info && isLeader}
+  {#if show('leader') && info && isLeader}
     <div class="style" role="group" aria-label="Leader">
       <select class="kind" value={various('arrow') ? '' : style.arrow} aria-label="Arrowhead" title="The end of the leader at the thing it points to" onchange={(e) => (draft({ arrow: e.currentTarget.value }), keep())}>
         {#if various('arrow')}<option value="" disabled selected>VARIOUS</option>{/if}{#each ARROW_LABELS as [key, label]}<option value={key}>{label}</option>{/each}
@@ -259,7 +267,8 @@
       {/if}
       <button class="small" onclick={resetStyle} disabled={!infos.some((i) => i.style) && liveStyle.id !== cave.selected}>Reset</button>
     </div>
-  {:else if info && !isSymbol && !isCustomFill}
+  {/if}
+  {#if show('style') && info && !isSymbol && !isCustomFill}
     <div class="style" role="group" aria-label="Line style">
       <select class="kind" value={various('lt') ? '' : style.lt} aria-label="Linetype" title="The pattern of this line: its type's own, or another" onchange={(e) => (draft({ lt: e.currentTarget.value }), keep())}>
         {#if various('lt')}<option value="" disabled selected>VARIOUS</option>{/if}
@@ -298,7 +307,11 @@
   .kind { font: inherit; font-size: 13px; height: 26px; padding: 0 6px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel-2); color: var(--text); }
   .detail { display: flex; flex-direction: column; gap: 2px; font-size: 11px; color: var(--muted); justify-content: center; height: calc(var(--ribbon-body) - 1px); }
   .detail input { width: 110px; }
-  .style { display: flex; align-items: center; gap: 8px; }
+  /* a setting group is two rows high (so it is about half as wide); its sliders carry their label on the same line */
+  .style { display: grid; grid-auto-flow: column; grid-template-rows: repeat(2, 26px); gap: 4px 10px; align-content: center; justify-items: start; height: var(--ribbon-body); }
+  .style .detail { flex-direction: row; align-items: center; gap: 6px; height: 26px; }
+  .style .detail input { width: 84px; }
+  .style .small { height: 26px; padding: 0 9px; }
   .style b { color: var(--text); font-weight: 600; }
   .small { font: inherit; font-size: 12px; padding: 3px 9px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel-2); color: var(--text); cursor: pointer; }
   .small.on { background: var(--accent); color: #fff; border-color: var(--accent); }

@@ -20,8 +20,8 @@
   import DrawingScale from './DrawingScale.svelte';
   import type { PickKind } from '../lib/cave.svelte';
   import UserMenu from './UserMenu.svelte';
-  import { symbolDef } from '../lib/symbols';
-  import { fillLabel } from '../lib/fills';
+  import { isStampKind, symbolDef } from '../lib/symbols';
+  import { fillLabel, isFillKind } from '../lib/fills';
   import { onMount } from 'svelte';
   import { PANELS, panelState, resetLayout, showPanel, togglePanel } from '../lib/workspace.svelte';
   import { GraduationCap, Check, Trash2, LogIn, LogOut, Users, Library, FilePlus, FileInput, FolderOpen, Save, Ruler, Footprints, Route, Waypoints, Scissors, Map as MapIcon, Terminal, LayoutDashboard, Activity, Shapes, Table2, BookOpen, ScanLine, FileText, ChevronDown, PanelTop, FileOutput, Package, Mountain, SlidersHorizontal } from '@lucide/svelte';
@@ -155,26 +155,38 @@
     { name: 'Settings', items: [], custom: ContextOptions },
     { name: 'Command', items: [{ label: 'Done', icon: Check, run: () => (cave.tool = '') }] },
   ];
-  const selectionGroups: Group[] = [
-    { name: 'Line', items: [], custom: SelectionTools },
-    {
-      name: 'Command',
-      items: [
-        {
-          label: 'Delete',
-          icon: Trash2,
-          run: () => {
-            const ids = selectedIds();
-            cave.selected = '';
-            for (const id of ids) engine.deleteLine(id);
-            cave.version += 1;
-          },
+  const commandGroup: Group = {
+    name: 'Command',
+    items: [
+      {
+        label: 'Delete',
+        icon: Trash2,
+        run: () => {
+          const ids = selectedIds();
+          cave.selected = '';
+          for (const id of ids) engine.deleteLine(id);
+          cave.version += 1;
         },
-        { label: 'Copy', icon: CopyIcon, run: () => (copyOp.on ? endCopy() : startCopy()), pressed: () => copyOp.on },
-        { label: 'Done', icon: Check, run: () => { endCopy(); cave.selected = ''; } },
-      ],
-    },
-  ];
+      },
+      { label: 'Copy', icon: CopyIcon, run: () => (copyOp.on ? endCopy() : startCopy()), pressed: () => copyOp.on },
+      { label: 'Done', icon: Check, run: () => { endCopy(); cave.selected = ''; } },
+    ],
+  };
+  // A selection's tab is several groups (what it is, its text format, its leader, its line style), so a narrow window folds one
+  // of them, not all of its settings at once.
+  const selectionGroups = $derived.by<Group[]>(() => {
+    const kind = selection?.kind ?? '';
+    const infos = selections.map((s) => s.info).filter((i): i is NonNullable<typeof i> => !!i);
+    const stamps = infos.length > 0 && infos.every((i) => isStampKind(i.kind));
+    const words = infos.some((i) => i.kind === 'text' || i.kind === 'callout' || !!i.text);
+    const part = (name: string, p: string): Group => ({ name, items: [], custom: SelectionTools, props: { part: p } });
+    const out: Group[] = [part(stamps ? 'Annotation' : 'Line', 'type')];
+    if (stamps && words) out.push(part('Text format', 'format'));
+    if (alike && kind === 'callout') out.push(part('Leader', 'leader'));
+    if (alike && !isStampKind(kind) && kind !== 'fill-custom') out.push(part(isFillKind(kind) ? 'Area' : 'Line style', 'style'));
+    out.push(commandGroup);
+    return out;
+  });
   // what a picked thing's tab holds comes from the inspector registered for its kind
   const pickGroups = $derived<Group[]>(cave.pick.kind ? INSPECTORS[cave.pick.kind as Exclude<PickKind, ''>].groups.map((g) => ({ name: g.name, items: [], custom: INSPECTORS[cave.pick.kind as Exclude<PickKind, ''>].component, props: { part: g.part, kind: cave.pick.kind } })) : []);
   let before = 'Home';
@@ -192,11 +204,12 @@
   // a popup under it with the group's buttons, two to a row.
   const FOLDED = 96; // width of a folded group
   let barW = $state(0);
-  let widths = $state<number[]>([]);
+  // how wide each group wants to be, by name (a selection's groups come and go, so an index would go stale)
+  let widths = $state<Record<string, number>>({});
   let openAt = $state<{ i: number; x: number; y: number } | null>(null);
   const collapsed = $derived.by(() => {
     const out = new Set<number>();
-    const w = (i: number) => widths[i] ?? 0;
+    const w = (i: number) => widths[shownGroups[i].name] ?? 0;
     const foldable = (i: number) => !out.has(i) && w(i) > FOLDED;
     if (cave.compactRibbon) {
       shownGroups.forEach((_, i) => foldable(i) && out.add(i));
@@ -321,7 +334,7 @@
     <!-- every group at full size, unseen, so we know how wide each wants to be -->
     <div class="measure" aria-hidden="true" inert>
       {#each shownGroups as g, i (g.name)}
-        <section bind:offsetWidth={widths[i]}>
+        <section bind:offsetWidth={widths[g.name]}>
           <div class="btns">
             {#if g.custom}<g.custom {...(g.props ?? {})} measure={true} />{/if}
             {#each g.items as item}
