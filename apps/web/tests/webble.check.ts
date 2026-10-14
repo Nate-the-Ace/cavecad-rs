@@ -1,16 +1,71 @@
 // The Web Bluetooth transport against a stand-in for the browser's API: a device with services, characteristics that
-// notify and record what is written to them. Each supported instrument is "connected" and its packets sent; what
-// comes out (readings, acknowledgements, the command a Take shot writes, the status) is checked.
-import { ALL_SERVICES, WebBleInstrument } from '../src/lib/instrument/webble.ts';
-import { CAVE_BLE_SERVICE, COMMAND_CHARACTERISTIC, LEG_CHARACTERISTIC, NAME_CHARACTERISTIC, encodeLeg, hex } from '../src/lib/instrument/caveble.ts';
-import { X1_NOTIFY, X1_SERVICE, X1_WRITE, encodePacket } from '../src/lib/instrument/cavway.ts';
-import { BRIC_CONTROL, BRIC_CONTROL_SERVICE, BRIC_ERRORS, BRIC_MEASURE_SERVICE, BRIC_META, BRIC_PRIMARY, encodeShot } from '../src/lib/instrument/bric.ts';
-import { SAP5_NOTIFY, SAP5_WRITE, encodeDistoXPacket } from '../src/lib/instrument/sap5.ts';
-import type { LinkEvents, LinkStatus, Reading } from '../src/lib/instrument/types.ts';
+// notify and record what is written to them, and a stand-in for the engine (the real one is Rust: decoding, acks and
+// the notebook are tested in crates/cave-instrument and crates/cave-session). What is checked here is the transport:
+// what the chooser is asked, which characteristics are listened to, that every frame goes to the engine as the right
+// kind, that what the engine says to write is written where it belongs, and the commands Take shot writes.
+import { WebBleInstrument, allServices } from '../src/lib/instrument/webble.ts';
+import type { Catalog, Identified, InstrumentKind, LinkBridge, LinkEvents, LinkStatus, Step } from '../src/lib/survey-types.ts';
 
+// The ids, as the engine's catalog gives them.
+const X1_SERVICE = '6e400001-b5a3-f393-e0a9-e50e24dcca9e';
+const X1_WRITE = '6e400002-b5a3-f393-e0a9-e50e24dcca9e';
+const X1_NOTIFY = '6e400003-b5a3-f393-e0a9-e50e24dcca9e';
+const SAP5_NOTIFY = X1_WRITE;
+const SAP5_WRITE = X1_NOTIFY;
+const CAVE_BLE_SERVICE = '137c4435-8a64-4bcb-93f1-3792c6bdc965';
+const NAME_CHARACTERISTIC = '137c4435-8a64-4bcb-93f1-3792c6bdc966';
+const COMMAND_CHARACTERISTIC = '137c4435-8a64-4bcb-93f1-3792c6bdc967';
+const LEG_CHARACTERISTIC = '137c4435-8a64-4bcb-93f1-3792c6bdc968';
+const short = (n: number) => `0000${n.toString(16)}-0000-1000-8000-00805f9b34fb`;
+const [BRIC_MEASURE_SERVICE, BRIC_PRIMARY, BRIC_META, BRIC_ERRORS, BRIC_CONTROL_SERVICE, BRIC_CONTROL] = [0x58d0, 0x58d1, 0x58d2, 0x58d3, 0x58e0, 0x58e1].map(short);
+
+const catalog: Catalog = {
+  devices: [],
+  names: [
+    { prefix: 'CavwayX1-', kind: 'x1', label: 'Cavway X1' },
+    { prefix: 'SAP6_', kind: 'sap6', label: 'SAP6' },
+    { prefix: 'SAP5_', kind: 'sap5', label: 'SAP5' },
+    { prefix: 'BRIC4_', kind: 'bric', label: 'BRIC4' },
+    { prefix: 'BRIC5_', kind: 'bric', label: 'BRIC5' },
+    { prefix: 'BRIC5-', kind: 'bric', label: 'BRIC5' },
+    { prefix: 'DistoXBLE-', kind: 'unsupported', label: 'DistoX BLE' },
+  ],
+  x1: { service: X1_SERVICE, write: X1_WRITE, notify: X1_NOTIFY, takeShot: [0x64, 0x61, 0x74, 0x61, 0x3a, 1, 0x38, 0x0d, 0x0a] },
+  sap5: { service: X1_SERVICE, write: SAP5_WRITE, notify: SAP5_NOTIFY },
+  sap6: { service: CAVE_BLE_SERVICE, name: NAME_CHARACTERISTIC, command: COMMAND_CHARACTERISTIC, leg: LEG_CHARACTERISTIC, takeShot: [0x38] },
+  bric: { measureService: BRIC_MEASURE_SERVICE, primary: BRIC_PRIMARY, meta: BRIC_META, errors: BRIC_ERRORS, controlService: BRIC_CONTROL_SERVICE, control: BRIC_CONTROL, takeShot: [115, 104, 111, 116], batteryService: short(0x180f), deviceInfoService: short(0x180a), settleMs: 15 },
+};
+
+const hex = (b: ArrayLike<number>) => Array.from(b, (x) => x.toString(16).padStart(2, '0')).join(' ');
 let bad = 0;
 const ok = (c: boolean, m: string) => { if (!c) { bad++; console.log('FAIL', m); } };
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+const step = (extra: Partial<Step> = {}): Step => ({ frames: [], sends: [], snapshot: null, error: null, ok: true, settle_ms: null, sim_left: false, sim_note: null, ...extra });
+
+/** A stand-in for the engine: tells instruments apart by name, records what it is given, answers as configured. */
+class FakeBridge implements LinkBridge {
+  connects: string[] = [];
+  frames: { kind: string; hex: string }[] = [];
+  flushes = 0;
+  /** What to answer a frame with, by kind. */
+  answer: Record<string, () => Step> = {};
+  catalog() { return catalog; }
+  identify(name: string, services: string[]): { identified: Identified | null; nordicUart: boolean } {
+    const n = catalog.names.find((x) => name.startsWith(x.prefix));
+    if (n) return { identified: { kind: n.kind as InstrumentKind, label: n.label, how: 'name' }, nordicUart: false };
+    const has = (u: string) => services.some((s) => s.toLowerCase() === u);
+    if (has(CAVE_BLE_SERVICE)) return { identified: { kind: 'sap6', label: 'SAP6', how: 'service' }, nordicUart: false };
+    if (has(BRIC_MEASURE_SERVICE)) return { identified: { kind: 'bric', label: 'BRIC', how: 'service' }, nordicUart: false };
+    return { identified: null, nordicUart: has(X1_SERVICE) };
+  }
+  connect(kind: string) { this.connects.push(kind); return step(); }
+  frame(kind: string, bytes: Uint8Array) {
+    this.frames.push({ kind, hex: hex(bytes) });
+    return (this.answer[kind] ?? step)();
+  }
+  flushLink() { this.flushes += 1; return step(); }
+}
 
 class FakeChar {
   uuid: string;
@@ -81,12 +136,13 @@ function install(device: FakeDevice | Error) {
     value: { bluetooth: { requestDevice: async (o: unknown) => { lastOptions = o; if (device instanceof Error) throw device; return device; } } },
   });
 }
-function rig(opts: ConstructorParameters<typeof WebBleInstrument>[1] = { mode: 'auto' }) {
-  const readings: Reading[] = [];
+function rig(opts: ConstructorParameters<typeof WebBleInstrument>[2] = { mode: 'auto' }) {
   const frames: string[] = [];
+  const steps: Step[] = [];
   const statuses: { s: LinkStatus; d: string }[] = [];
-  const ev: LinkEvents = { status: (s, d = '') => statuses.push({ s, d }), frame: (h) => frames.push(h), reading: (r) => readings.push(r) };
-  return { readings, frames, statuses, inst: new WebBleInstrument(ev, opts) };
+  const ev: LinkEvents = { status: (s, d = '') => statuses.push({ s, d }), frame: (h) => frames.push(h), step: (st) => steps.push(st) };
+  const bridge = new FakeBridge();
+  return { frames, steps, statuses, bridge, inst: new WebBleInstrument(ev, bridge, opts) };
 }
 const char = (d: FakeDevice, service: string, uuid: string) => d.services.find((s) => s.uuid === service)!.chars.find((c) => c.uuid === uuid)!;
 
@@ -98,7 +154,7 @@ const char = (d: FakeDevice, service: string, uuid: string) => d.services.find((
   const o = lastOptions as { filters: { namePrefix?: string; services?: string[] }[]; optionalServices: string[] };
   ok(Array.isArray(o.filters) && ['CavwayX1-', 'SAP6_', 'SAP5_', 'BRIC4_', 'BRIC5_'].every((p) => o.filters.some((f) => f.namePrefix === p)), 'the chooser offers the instruments by the names they advertise');
   ok(o.filters.some((f) => f.services?.[0] === CAVE_BLE_SERVICE) && o.filters.some((f) => f.services?.[0] === BRIC_MEASURE_SERVICE), 'and by the services only one of them has');
-  ok(ALL_SERVICES.every((s) => o.optionalServices.includes(s)), 'every service the instruments use is named, or the browser would not let the page reach it');
+  ok(allServices(catalog).every((s) => o.optionalServices.includes(s)), 'every service the instruments use is named, or the browser would not let the page reach it');
   const any = rig({ mode: 'auto', anyDevice: true });
   install(x1());
   await any.inst.connect();
@@ -109,15 +165,18 @@ const char = (d: FakeDevice, service: string, uuid: string) => d.services.find((
 {
   const dev = x1();
   const r = rig();
+  r.bridge.answer.frame = () => step({ sends: [[0x64, 0x61, 0x74, 0x61, 0x3a, 1, 0xff, 0x0d, 0x0a]] });
   install(dev);
   await r.inst.connect();
-  ok(r.inst.kind === 'x1' && r.inst.canTakeShot && r.inst.groupsLegs && r.inst.name === 'Cavway X1 CavwayX1-0042', 'a CavwayX1- device is the X1: it can be told to fire, and its name is shown');
+  ok(r.inst.kind === 'x1' && r.inst.canTakeShot && r.inst.name === 'Cavway X1 CavwayX1-0042', 'a CavwayX1- device is the X1: it can be told to fire, and its name is shown');
+  ok(r.bridge.connects.join() === 'x1', 'the engine is told it is an X1, once');
   ok(r.statuses.at(-1)?.s === 'connected' && char(dev, X1_SERVICE, X1_NOTIFY).notifying, 'it is connected and notifications are on');
-  char(dev, X1_SERVICE, X1_NOTIFY).send(encodePacket({ distance: 4.25, azimuth: 120, inclination: 5, leg: false, time: 7 }));
+  char(dev, X1_SERVICE, X1_NOTIFY).send(Uint8Array.from([1, 2, 3]));
   await sleep(40);
-  ok(r.readings.length === 1 && r.readings[0].distance === 4.25 && r.readings[0].source === 'x1', 'a packet becomes a reading');
+  ok(r.bridge.frames.length === 1 && r.bridge.frames[0].kind === 'frame' && r.bridge.frames[0].hex === '01 02 03', 'a packet goes to the engine as it came');
+  ok(r.steps.length >= 2, 'and the engine\'s answer reaches the store');
   const w = char(dev, X1_SERVICE, X1_WRITE).written;
-  ok(w.length === 1 && hex(w[0].bytes) === '64 61 74 61 3a 01 ff 0d 0a' && !w[0].response, 'and is acknowledged on the write characteristic, framed, without a response');
+  ok(w.length === 1 && hex(w[0].bytes) === '64 61 74 61 3a 01 ff 0d 0a' && !w[0].response, 'what the engine says to write is written on the write characteristic, without a response');
   r.inst.takeShot();
   await sleep(250);
   ok(hex(char(dev, X1_SERVICE, X1_WRITE).written.at(-1)!.bytes) === '64 61 74 61 3a 01 38 0d 0a', 'Take shot writes the framed laser trigger');
@@ -129,10 +188,10 @@ const char = (d: FakeDevice, service: string, uuid: string) => d.services.find((
   const r = rig();
   install(dev);
   await r.inst.connect();
-  ok(r.inst.kind === 'sap5' && !r.inst.canTakeShot && r.inst.name === 'SAP5 SAP5_9f', 'a SAP5_ device is the SAP5; it is not known to be told to fire');
-  char(dev, X1_SERVICE, SAP5_NOTIFY).send(encodeDistoXPacket({ distance: 6.5, azimuth: 200, inclination: -4, seq: 1 }));
+  ok(r.inst.kind === 'sap5' && !r.inst.canTakeShot && r.inst.name === 'SAP5 SAP5_9f' && r.bridge.connects.join() === 'sap5', 'a SAP5_ device is the SAP5; it is not known to be told to fire');
+  char(dev, X1_SERVICE, SAP5_NOTIFY).send(Uint8Array.from([1, 0, 0, 0, 0, 0, 0, 0]));
   await sleep(30);
-  ok(r.readings.length === 1 && r.readings[0].distance === 6.5 && r.readings[0].source === 'sap5', 'its 8-byte packet becomes a reading');
+  ok(r.bridge.frames.length === 1 && r.bridge.frames[0].kind === 'frame', 'its 8-byte packet goes to the engine');
   ok(char(dev, X1_SERVICE, SAP5_NOTIFY).written.length === 0 && char(dev, X1_SERVICE, SAP5_WRITE).written.length === 0, 'nothing is written to it');
   r.inst.takeShot();
   await sleep(150);
@@ -143,14 +202,15 @@ const char = (d: FakeDevice, service: string, uuid: string) => d.services.find((
 {
   const dev = sap6();
   const r = rig();
+  r.bridge.answer.frame = () => step({ sends: [[0x56]] });
   install(dev);
   await r.inst.connect();
-  ok(r.inst.kind === 'sap6' && r.inst.canTakeShot && r.inst.name === 'SAP6 SAP6_9f', 'a SAP6_ device is the SAP6');
+  ok(r.inst.kind === 'sap6' && r.inst.canTakeShot && r.inst.name === 'SAP6 SAP6_9f' && r.bridge.connects.join() === 'sap6', 'a SAP6_ device is the SAP6');
   ok(r.frames.includes('protocol: SAP6'), 'the protocol name it reports is logged');
-  char(dev, CAVE_BLE_SERVICE, LEG_CHARACTERISTIC).send(encodeLeg({ seq: 1, azimuth: 90, inclination: -5, roll: 0, distance: 3.5 }));
+  char(dev, CAVE_BLE_SERVICE, LEG_CHARACTERISTIC).send(Uint8Array.from([1, 9, 9]));
   await sleep(40);
-  ok(r.readings.length === 1 && r.readings[0].distance === 3.5 && r.readings[0].source === 'sap6', 'a leg frame becomes a reading');
-  ok(hex(char(dev, CAVE_BLE_SERVICE, COMMAND_CHARACTERISTIC).written[0].bytes) === '56', 'and is acknowledged with 0x56 (0x55 plus its sequence bit 1)');
+  ok(r.bridge.frames.length === 1, 'a leg frame goes to the engine');
+  ok(hex(char(dev, CAVE_BLE_SERVICE, COMMAND_CHARACTERISTIC).written[0].bytes) === '56', 'and what the engine answers is written to the command characteristic');
   r.inst.takeShot();
   await sleep(250);
   ok(hex(char(dev, CAVE_BLE_SERVICE, COMMAND_CHARACTERISTIC).written.at(-1)!.bytes) === '38', 'Take shot writes 0x38');
@@ -160,17 +220,24 @@ const char = (d: FakeDevice, service: string, uuid: string) => d.services.find((
 {
   const dev = bric('BRIC4_07');
   const r = rig();
+  r.bridge.answer.primary = () => step({ settle_ms: catalog.bric.settleMs });
+  r.bridge.answer.meta = () => step({ settle_ms: catalog.bric.settleMs });
   install(dev);
   await r.inst.connect();
-  ok(r.inst.kind === 'bric' && r.inst.canTakeShot && r.inst.name === 'BRIC4 BRIC4_07', 'a BRIC4_ device is a BRIC4');
+  ok(r.inst.kind === 'bric' && r.inst.canTakeShot && r.inst.name === 'BRIC4 BRIC4_07' && r.bridge.connects.join() === 'bric', 'a BRIC4_ device is a BRIC4');
   const chars = [BRIC_PRIMARY, BRIC_META, BRIC_ERRORS].map((u) => char(dev, BRIC_MEASURE_SERVICE, u));
   ok(chars.every((c) => c.notifying), 'indications are turned on for the primary, meta and error characteristics');
-  const shot = encodeShot({ distance: 8.5, azimuth: 33, inclination: 2, index: 4, roll: 7 });
-  chars[0].send(shot.primary);
-  chars[1].send(shot.meta);
-  chars[2].send(shot.errors);
-  await sleep(20);
-  ok(r.readings.length === 1 && r.readings[0].distance === 8.5 && r.readings[0].roll === 7 && r.readings[0].source === 'bric', 'three indications make a reading');
+  chars[0].send(Uint8Array.from([1]));
+  chars[1].send(Uint8Array.from([2]));
+  await sleep(5);
+  ok(r.bridge.frames.map((f) => f.kind).join() === 'primary,meta', 'indications go to the engine as what they are');
+  ok(r.bridge.flushes === 0, 'the engine has not been asked to settle yet');
+  await sleep(60);
+  ok(r.bridge.flushes === 1, 'when the engine says a shot is still arriving and no error indication follows, it is asked to settle after the time it names');
+  chars[0].send(Uint8Array.from([1]));
+  chars[2].send(Uint8Array.from([3]));
+  await sleep(60);
+  ok(r.bridge.frames.map((f) => f.kind).join() === 'primary,meta,primary,errors' && r.bridge.flushes === 1, 'but when the error indication completes the shot there is nothing to settle');
   r.inst.takeShot();
   await sleep(150);
   const sent = char(dev, BRIC_CONTROL_SERVICE, BRIC_CONTROL).written;
@@ -198,12 +265,12 @@ const char = (d: FakeDevice, service: string, uuid: string) => d.services.find((
   install(dev);
   await n.inst.connect();
   ok(n.inst.kind === 'nus' && n.statuses.at(-1)?.s === 'connected', 'an unknown name on Nordic UART connects, not yet knowing which');
-  char(dev, X1_SERVICE, SAP5_NOTIFY).send(encodeDistoXPacket({ distance: 2.5, azimuth: 10, inclination: 3, seq: 0 }));
+  char(dev, X1_SERVICE, SAP5_NOTIFY).send(Uint8Array.from([1, 0, 0, 0, 0, 0, 0, 0]));
   await sleep(20);
-  ok(n.readings.length === 1 && n.readings[0].source === 'sap5', 'an 8-byte packet is a SAP5 shot');
-  char(dev, X1_SERVICE, X1_NOTIFY).send(encodePacket({ distance: 5.5, azimuth: 80, inclination: 1, time: 3 }));
+  ok(n.inst.kind === 'sap5' && n.bridge.connects.join() === 'x1,sap5', 'an 8-byte packet makes it a SAP5, and the engine is told');
+  char(dev, X1_SERVICE, X1_NOTIFY).send(new Uint8Array(40));
   await sleep(20);
-  ok(n.readings.length === 2 && n.readings[1].source === 'x1' && n.inst.kind === 'x1', 'a long packet is an X1 shot, and it is then known to be one');
+  ok(n.inst.kind === 'x1' && n.bridge.connects.join() === 'x1,sap5,x1' && n.bridge.frames.length === 2, 'a long packet makes it an X1 again');
 }
 
 // ---- what goes wrong ----
@@ -239,10 +306,10 @@ const char = (d: FakeDevice, service: string, uuid: string) => d.services.find((
   const o = lastOptions as { acceptAllDevices?: boolean; optionalServices: string[] };
   ok(o.acceptAllDevices === true && o.optionalServices.includes('0000ffe0-0000-1000-8000-00805f9b34fb'), 'capture asks for every device and the services it was told about');
   ok(r.frames.some((f) => f.startsWith('found ') && f.includes(X1_NOTIFY)), 'it lists every characteristic it finds');
-  ok(r.inst.groupsLegs === false && r.inst.canTakeShot === false, 'and groups nothing and fires nothing');
+  ok(r.bridge.connects.join() === 'capture' && r.inst.canTakeShot === false, 'the engine is told it is a capture, and nothing can be fired');
   char(dev, X1_SERVICE, X1_NOTIFY).send(Uint8Array.from([1, 2, 255]));
   await sleep(10);
-  ok(r.frames.includes('01 02 ff') && r.readings.length === 0, 'every frame it sends is logged as hex and is never a reading');
+  ok(r.frames.includes('01 02 ff') && r.bridge.frames.length === 0, 'every frame it sends is logged as hex and none goes to be decoded');
 }
 
 if (bad) process.exit(1);

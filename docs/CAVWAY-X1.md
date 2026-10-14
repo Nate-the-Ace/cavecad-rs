@@ -122,29 +122,30 @@ Acknowledge = the flag byte `OR 0x55`, sent framed (TopoDroid: `sendCommand(pack
 - Calibration is done on the device alone (groups of four shots), with the same method as the DistoX2.
 - Battery: 1800 mAh, non-magnetic. USB-C charges and carries data. IP67.
 
-## What is built from this (branch `survey`)
+## What is built from this
 
-- `lib/instrument/cavway.ts`: the decoder, framing, ack, commands, memory queries, accuracy-error parsing, and an
-  encoder used by the simulator and tests (`npm run test:cavway`: a packet written out by hand from the PDF layout,
-  the 33-byte short form, a 70 m shot, flags and marks, framing bytes).
-- `lib/instrument/link.ts` `X1Link`: decode, acknowledge every packet (a repeat too), drop a byte-for-byte repeat of
-  one of the last eight packets, leave calibration shots out.
-- `lib/instrument/legs.ts` `LegAssembler`: the X1 sends single shots, so close shots are grouped (tape 5 cm or 0.5 %,
-  compass and clino 2 degrees: a guess, one function, `isClose`). Three close shots, or one the device flags as a
-  leg, are ONE leg (the average, circular for the compass); a fourth close shot refines it; any other shot is a splay,
-  settled when the next far shot arrives or after an 8 second pause (or the "Splays now" button). It does not depend
-  on whether all three shots carry the flag or only one: all three behaviours are tested (`npm run test:legs`).
-- `lib/survey.ts`: an `auto` mode where the instrument says what each thing is: a splay is at the station stood at, a
-  leg marked Backsight goes to the leg awaiting one (or the last leg, if backsights are not switched on), anything
-  else is the next leg. Moving on without a backsight is understood from the next splay or leg.
-- `lib/survey-run.ts`: one event start to finish (decide, write, new state); `npm run test:x1session` runs whole
-  trips from a simulated X1 into a stand-in notebook under all three flag behaviours, repeated and short packets,
-  with and without backsights.
-- `lib/instrument/x1sim.ts`: a pretend X1: one press, one shot (a leg is three close shots, marked Backsight for a
-  backsight), going through the same framing and decoding. `webble.ts` has an `x1` mode (service filter or "show every
-  device", writes one at a time 100 ms apart as TopoDroid does, reconnect), a `caveble` mode and `capture`.
+All of it is Rust, in `crates/cave-instrument` (the instrument side) and `crates/cave-session` (the session); the
+browser keeps only the Bluetooth transport (`lib/instrument/webble.ts`) and the screen.
+
+- `cavway.rs`: the decoder, framing, ack, commands, memory queries, accuracy-error parsing, and an encoder used by the
+  simulator and tests (the 33-byte short form, a 70 m shot, flags and marks, framing bytes).
+- `link.rs` `X1Link`: decode, acknowledge every packet (a repeat too), drop a byte-for-byte repeat of one of the last
+  eight packets, leave calibration shots out.
+- `legs.rs` `LegAssembler`: the X1 sends single shots, so close shots are grouped (tape 5 cm or 0.5 %, compass and clino
+  2 degrees: a guess, one function, `is_close`). Three close shots, or one the device flags as a leg, are ONE leg (the
+  average, circular for the compass); a fourth close shot refines it; any other shot is a splay, settled when the next
+  far shot arrives or after an 8 second pause (the browser keeps that timer: the engine has no clock) or the "Splays
+  now" button. It does not depend on whether all three shots carry the flag or only one: all three behaviours are tested.
+- `cave-session` `rules.rs`: an `auto` mode where the instrument says what each thing is: a splay is at the station
+  stood at, a leg marked Backsight goes to the leg awaiting one (or the last leg, if backsights are not switched on),
+  anything else is the next leg. Moving on without a backsight is understood from the next splay or leg.
+- `cave-session` `session.rs`: one event start to finish (decide, write as ONE undoable notebook edit, new state);
+  `tests/session.rs` runs whole trips from a simulated X1 into a real document under all three flag behaviours,
+  repeated and short packets, with and without backsights.
+- `sim.rs`: a pretend instrument for every device (see INSTRUMENTS.md). `webble.ts` connects any of them (service
+  filter or "show every device", writes one at a time 100 ms apart as TopoDroid does, reconnect) and `capture`.
 - Not built: marks other than Backsight reaching the notebook (feature, ridge and generic are decoded and carried but
-  not written), history download over BLE (`queryFrame` and `parseReply` exist), calibration, laser buttons.
+  not written), history download over BLE (`query_frame` and `parse_reply` exist), calibration, laser buttons.
 
 ## UNVERIFIED (settled with the real X1)
 

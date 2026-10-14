@@ -29,7 +29,7 @@
       <span>Backsights</span>
     </label>
     <label class="opt" title="Off: each shot waits for Accept in the Survey panel before it is written">
-      <input type="checkbox" bind:checked={survey.auto} />
+      <input type="checkbox" checked={survey.auto} onchange={(e) => live.setAuto(e.currentTarget.checked)} />
       <span>Write at once</span>
     </label>
   </div>

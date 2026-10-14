@@ -1,5 +1,5 @@
 // Loads the Rust engine (WASM) once and re-exports the few calls the UI uses.
-import init, { start, log, console_events, console_clear, engine_version, open_demo, scene, profile_runs, profile_band, add_profile_sketch, undo, redo, edit_state, passage_mesh, shading, palette, open_dxf, save_dxf, section_stations, section_at, add_section_sketch, map_sections, place_section, map_profile_sketches, add_map_line, map_lines, draw_tools, edit_line, delete_line, set_line_closed, set_line_kind, line_info, set_line_flip, set_line_text, ornament, callout, sheet_options, sheet_plan, flipped_lines, revision, station_rows, set_station_mark, station_detail, shot_detail, set_shot, set_station_walls, set_station_note, set_station_benchmark, symbols, fills, fill_marks, draw_tool_groups, sync_outbox, sync_apply, sync_snapshot, sync_load, notebook_trips, notebook_page, notebook_set_reading, notebook_set_walls, notebook_set_note, notebook_set_trip_field, notebook_set_declination, notebook_add_shot, notebook_remove_shot, notebook_rename_station, notebook_new_trip, scan_links, scan_link, scan_unlink, scan_placements, scan_alignment, scan_add_anchor, scan_remove_anchor, scan_set_mode, scan_trim, scan_set_trim, scan_view_stations, new_cave, scan_completed, scan_set_complete, shelf_summary, shelf_summarize, shelf_summarize_demo, shelf_summarize_native } from '../wasm/cave_wasm.js';
+import init, { start, log, console_events, console_clear, engine_version, open_demo, scene, profile_runs, profile_band, add_profile_sketch, undo, redo, edit_state, passage_mesh, shading, palette, open_dxf, save_dxf, section_stations, section_at, add_section_sketch, map_sections, place_section, map_profile_sketches, add_map_line, map_lines, draw_tools, edit_line, delete_line, set_line_closed, set_line_kind, line_info, set_line_flip, set_line_text, ornament, callout, sheet_options, sheet_plan, flipped_lines, revision, station_rows, set_station_mark, station_detail, shot_detail, set_shot, set_station_walls, set_station_note, set_station_benchmark, symbols, fills, fill_marks, draw_tool_groups, sync_outbox, sync_apply, sync_snapshot, sync_load, notebook_trips, notebook_page, notebook_set_reading, notebook_set_walls, notebook_set_note, notebook_set_trip_field, notebook_set_declination, notebook_add_shot, notebook_remove_shot, notebook_rename_station, notebook_new_trip, scan_links, scan_link, scan_unlink, scan_placements, scan_alignment, scan_add_anchor, scan_remove_anchor, scan_set_mode, scan_trim, scan_set_trim, scan_view_stations, new_cave, scan_completed, scan_set_complete, shelf_summary, shelf_summarize, shelf_summarize_demo, shelf_summarize_native, survey_sync_trip, survey_snapshot, survey_connect, survey_frame, survey_flush_link, survey_disconnect, survey_link_down, survey_sim_station, survey_settle_now, survey_accept, survey_discard, survey_undo_last, survey_set_mode, survey_set_backsights, survey_set_auto, survey_skip_backsight, survey_next_station, survey_set_names, survey_set_standing_wall, instrument_catalog, instrument_identify, sketch_source, sketch_views, sketch_anchor, sketch_place } from '../wasm/cave_wasm.js';
 
 import { setInkPalette } from './ink';
 import { setOrnamentSource } from './section-glyph';
@@ -8,6 +8,8 @@ import type { Warp } from './scan-warp';
 import { setFillSource, type FillDef, type Marks } from './fills';
 import type { StationRow } from './station-table';
 import type { Lrud, NotebookPage, TripChoice } from './notebook';
+import type { Catalog, Identified, Step } from './survey-types';
+import type { Anchored, Mark, SketchSource, SketchViews } from './sketch-types';
 
 /** The panels that keep their own undo history. */
 export type Scope = 'profile' | 'section' | 'map' | 'stations' | 'notebook' | 'scans';
@@ -347,6 +349,39 @@ export const engine = {
   notebookRenameStation: (station: string, name: string): string => notebook_rename_station(station, name),
   /** Starts a new trip; returns its id, or `error: ...`. */
   notebookNewTrip: (name: string): string => notebook_new_trip(name),
+  // ---- the in-cave Survey (cave-session, cave-instrument): every call answers with one step ----
+  /** Makes the Survey session ready for a trip. */
+  surveySyncTrip: (trip: string): Step => JSON.parse(survey_sync_trip(trip)),
+  surveySnapshot: (): Step => JSON.parse(survey_snapshot()),
+  /** Brings a link up: `x1`, `sap6`, `sap5`, `bric`, `capture` or `sim` (with `{device, quirk}`). */
+  surveyConnect: (kind: string, options: object = {}): Step => JSON.parse(survey_connect(kind, JSON.stringify(options))),
+  /** A frame from the instrument (`frame`, or a BRIC's `primary`, `meta`, `errors`). */
+  surveyFrame: (kind: string, bytes: Uint8Array): Step => JSON.parse(survey_frame(kind, bytes)),
+  surveyFlushLink: (): Step => JSON.parse(survey_flush_link()),
+  surveyDisconnect: (): Step => JSON.parse(survey_disconnect()),
+  surveyLinkDown: (): Step => JSON.parse(survey_link_down()),
+  /** The simulator shoots a whole station. */
+  surveySimStation: (walls: boolean): Step => JSON.parse(survey_sim_station(walls)),
+  surveySettleNow: (): Step => JSON.parse(survey_settle_now()),
+  surveyAccept: (): Step => JSON.parse(survey_accept()),
+  surveyDiscard: (): Step => JSON.parse(survey_discard()),
+  surveyUndoLast: (): Step => JSON.parse(survey_undo_last()),
+  surveySetMode: (mode: string): Step => JSON.parse(survey_set_mode(mode)),
+  surveySetBacksights: (on: boolean): Step => JSON.parse(survey_set_backsights(on)),
+  surveySetAuto: (auto: boolean): Step => JSON.parse(survey_set_auto(auto)),
+  surveySkipBacksight: (): Step => JSON.parse(survey_skip_backsight()),
+  surveyNextStation: (): Step => JSON.parse(survey_next_station()),
+  surveySetNames: (from: string, to: string): Step => JSON.parse(survey_set_names(from, to)),
+  surveySetStandingWall: (side: string, value: number | null): Step => JSON.parse(survey_set_standing_wall(side, value === null ? '' : String(value))),
+  /** The instruments' Bluetooth ids and names, and the simulator's devices and quirks. */
+  instrumentCatalog: (): Catalog => JSON.parse(instrument_catalog()),
+  instrumentIdentify: (name: string, services: string[]): { identified: Identified | null; nordicUart: boolean } => JSON.parse(instrument_identify(name, JSON.stringify(services))),
+  // ---- the sketchpad's geometry (cave-sketch) ----
+  /** A trip's page as the shots and passage dimensions the sketchpad draws. */
+  sketchSource: (trip: string): SketchSource | null => JSON.parse(sketch_source(trip)),
+  sketchViews: (source: SketchSource, station: string | null): SketchViews | null => JSON.parse(sketch_views(JSON.stringify(source), station ?? '')),
+  sketchAnchor: (stations: Mark[], pts: [number, number][], kind: string, widths: number[] | null): Anchored | null => JSON.parse(sketch_anchor(JSON.stringify(stations), JSON.stringify(pts), kind, JSON.stringify(widths))),
+  sketchPlace: (stations: Mark[], stroke: Anchored): [number, number][] | null => JSON.parse(sketch_place(JSON.stringify(stations), JSON.stringify(stroke))),
   /** Every scan linked to a trip (paths relative to the scans folder). */
   scanLinks: (): { trip: string; path: string }[] => JSON.parse(scan_links()),
   /** Links a scan to a trip (one undoable edit in the Scans panel's history). */

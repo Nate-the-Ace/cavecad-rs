@@ -21,7 +21,7 @@
   import { orderedScales } from '../lib/sheet.svelte';
   import { engine, loadEngine, type SheetOptions } from '../lib/engine';
   import { formatLength } from '../lib/units';
-  import { anchorStroke, fitView, placeStroke, toScreen as project, toWorld as unproject, type Pt, type Transform } from '../lib/sketch-geometry';
+  import { fitView, toScreen as project, toWorld as unproject, type Pt, type Transform } from '../lib/sketch-types';
   import { GRID, describeScale, drawGrid, gridCaption, matchScale, pxPerMetre, visibleGrid } from '../lib/sketch-grid';
   import { PANE_SCOPE, PANE_TITLE, sketch, type Pane } from '../lib/sketch.svelte';
 
@@ -51,7 +51,7 @@
   const lines = $derived.by<Line[]>(() => {
     const out: Line[] = [];
     for (const s of sketch.paneStrokes(pane)) {
-      const points = placeStroke(stations, s);
+      const points = engine.sketchPlace(stations, s);
       if (points) out.push({ id: s.id, points, widths: s.widths, closed: s.closed, kind: s.kind, text: s.text, flip: s.flip });
     }
     return out;
@@ -517,7 +517,7 @@
         sketch.setPoints(pickup.line.id, joined.pts, joined.widths);
         cave.selected = '';
       } else {
-        const hung = anchorStroke(stations, fit.pts, cave.tool, fit.widths);
+        const hung = engine.sketchAnchor(stations, fit.pts, cave.tool, fit.widths);
         if (hung) {
           message = '';
           sketch.add(pane, hung, closed);

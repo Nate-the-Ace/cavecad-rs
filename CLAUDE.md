@@ -74,6 +74,10 @@ The QCAD-era app already solved the survey math. Port from `~/Documents/github/c
 
 The `ci` workflow is disabled on GitHub (Nathan's call, 2026-10-11: webapp-forward, no more failure emails). The file stays in `.github/workflows/ci.yml`; re-enable with `gh workflow enable ci`. Until then the checks are run by hand before every commit: `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test`, the wasm32 build line above, `python3 tools/make_code_index.py --check`, and `npx svelte-check` in `apps/web`.
 
+## In-cave survey and sketchpad
+
+Instruments, the survey session and the sketchpad's geometry are Rust (`cave-instrument`, `cave-session`, `cave-sketch`, doors in `cave-wasm/src/survey.rs`); the web app keeps only the Bluetooth transport and the screen. `npm run harness` in `apps/web` opens the real engine on a fresh cave for tapping through it with the simulator. The golden files in those crates were written by the OLD TypeScript (`tools/golden/gen_instrument_golden.mjs`, `gen_session_golden.mjs`, `gen_sketch_golden.mjs`); to regenerate them run the scripts against commit `6d3ced2`, which still has it. Do not format the whole workspace with `cargo fmt` (other crates are not rustfmt-clean): use `cargo fmt -p <crate>`.
+
 ## Test caves (standing rule from Nathan, 2026-10-11)
 
 **Pitfall Cave is the default test cave** (opens first in the app; the main fixture for every check). **Plumbline Pit is the vertical-cave guard**: every decision about geometry, walls (LRUD), cameras or views must also be checked on Plumbline Pit (and Stairstep) so horizontal and vertical-style caves both keep working. A pitch has no bearing, so nothing may invent one (see the old app's "vertical bearing trap").

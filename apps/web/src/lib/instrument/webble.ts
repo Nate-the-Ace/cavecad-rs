@@ -5,17 +5,13 @@
 // mode instead connects to any device and writes every frame it sends to the log as hex, for an instrument whose
 // protocol is not known yet.
 //
-// Written against the Web Bluetooth API without a real instrument; everything it hands bytes to is tested
-// (tests/cavway, instruments, caveble), and the connecting is tested against a stand-in for the API
-// (tests/webble.check.ts). The first real connection is the first real test.
+// This file is only the transport: it opens the connection, finds the characteristics, and hands every frame to
+// the Rust engine through a `LinkBridge` (decoding, acknowledging, repeats, leg grouping and the notebook writes
+// are `cave-instrument` and `cave-session`). The ids, names and commands come from the engine's catalog, so the
+// browser keeps no copy. Written against the Web Bluetooth API without a real instrument; the connecting is
+// tested against a stand-in for the API (tests/webble.check.ts). The first real connection is the first real test.
 
-import { CAVE_BLE_SERVICE, COMMAND_CHARACTERISTIC, Command, LEG_CHARACTERISTIC, NAME_CHARACTERISTIC, hex } from './caveble.ts';
-import { X1Command, X1_NOTIFY, X1_SERVICE, X1_WRITE, command } from './cavway.ts';
-import { BATTERY_SERVICE, BRIC_CONTROL, BRIC_CONTROL_SERVICE, BRIC_ERRORS, BRIC_MEASURE_SERVICE, BRIC_META, BRIC_PRIMARY, BricCommand, DEVICE_INFO_SERVICE, commandBytes } from './bric.ts';
-import { SAP5_NOTIFY, SAP5_SERVICE, SAP5_WRITE } from './sap5.ts';
-import { NAMES, hasNordicUart, identify, type InstrumentKind } from './identify.ts';
-import { BricLink, LegLink, Sap5Link, X1Link } from './link.ts';
-import type { Instrument, LinkEvents } from './types.ts';
+import type { Catalog, Instrument, InstrumentKind, LinkBridge, LinkEvents, Step } from '../survey-types';
 
 // The Web Bluetooth types are not in the DOM lib this project builds against: only what is used.
 interface Gatt {
@@ -61,7 +57,9 @@ const valueOf = (e: Event) => (e.target as unknown as GattCharacteristic).value;
 const WRITE_GAP_MS = 100;
 
 /** Every service the supported instruments use. The browser only lets a page reach services it named when asking, so all of them are named. */
-export const ALL_SERVICES = [X1_SERVICE, CAVE_BLE_SERVICE, BRIC_MEASURE_SERVICE, BRIC_CONTROL_SERVICE, BATTERY_SERVICE, DEVICE_INFO_SERVICE];
+export const allServices = (c: Catalog): string[] => [c.x1.service, c.sap6.service, c.bric.measureService, c.bric.controlService, c.bric.batteryService, c.bric.deviceInfoService];
+
+const hex = (b: Uint8Array) => Array.from(b, (x) => x.toString(16).padStart(2, '0')).join(' ');
 
 export interface WebBleOptions {
   /** `auto`: any supported instrument, told apart by its name. `capture`: any device, log every frame. */
@@ -76,30 +74,26 @@ export class WebBleInstrument implements Instrument {
   name = 'Bluetooth instrument';
   /** What was found: true once an instrument that can be told to fire is connected. */
   canTakeShot = false;
-  /** Every supported instrument sends single shots: three close shots make a leg (the X1 also flags them). */
-  groupsLegs = true;
   /** Which instrument it turned out to be, once known. */
   kind: InstrumentKind | 'nus' | null = null;
   private device: BtDevice | null = null;
   private writer: GattCharacteristic | null = null;
   private withResponse = false;
-  private readonly x1: X1Link;
-  private readonly sap5: Sap5Link;
-  private readonly sap6: LegLink;
-  private readonly bric: BricLink;
   private readonly events: LinkEvents;
+  private readonly bridge: LinkBridge;
   private readonly opts: WebBleOptions;
+  private readonly cat: Catalog;
   private wanted = false;
+  /** The engine has been told which instrument this is (once per connection: a reconnect keeps the link). */
+  private linked = false;
+  private settle: ReturnType<typeof setTimeout> | undefined;
   private queue: Promise<void> = Promise.resolve();
 
-  constructor(events: LinkEvents, opts: WebBleOptions) {
+  constructor(events: LinkEvents, bridge: LinkBridge, opts: WebBleOptions) {
     this.events = events;
+    this.bridge = bridge;
     this.opts = opts;
-    this.groupsLegs = opts.mode !== 'capture';
-    this.x1 = new X1Link(events, (bytes) => this.write(bytes), 'x1');
-    this.sap5 = new Sap5Link(events, 'sap5');
-    this.sap6 = new LegLink(events, (b) => this.write(Uint8Array.of(b)), 'sap6');
-    this.bric = new BricLink(events, 'bric');
+    this.cat = bridge.catalog();
   }
 
   async connect() {
@@ -123,24 +117,25 @@ export class WebBleInstrument implements Instrument {
 
   disconnect() {
     this.wanted = false;
-    this.bric.flush();
+    clearTimeout(this.settle);
     this.device?.gatt?.disconnect();
     this.events.status('idle');
   }
 
   /** Fires the instrument, as pressing its own button does (where that is known to work). */
   takeShot() {
-    if (this.kind === 'x1') this.write(command(X1Command.TRIGGER));
-    else if (this.kind === 'sap6') this.write(Uint8Array.of(Command.TAKE_SHOT));
-    else if (this.kind === 'bric') this.write(commandBytes(BricCommand.SHOT));
+    const c = this.cat;
+    if (this.kind === 'x1') this.write(Uint8Array.from(c.x1.takeShot));
+    else if (this.kind === 'sap6') this.write(Uint8Array.from(c.sap6.takeShot));
+    else if (this.kind === 'bric') this.write(Uint8Array.from(c.bric.takeShot));
   }
 
   /** What the browser's device chooser is asked to show: the known instruments by their names, or everything. */
   private chooser(): unknown {
-    const reach = [...ALL_SERVICES, ...(this.opts.services ?? [])];
+    const reach = [...allServices(this.cat), ...(this.opts.services ?? [])];
     if (this.opts.mode === 'capture' || this.opts.anyDevice) return { acceptAllDevices: true, optionalServices: reach };
     return {
-      filters: [...NAMES.map((n) => ({ namePrefix: n.prefix })), { services: [CAVE_BLE_SERVICE] }, { services: [BRIC_MEASURE_SERVICE] }],
+      filters: [...this.cat.names.map((n) => ({ namePrefix: n.prefix })), { services: [this.cat.sap6.service] }, { services: [this.cat.bric.measureService] }],
       optionalServices: reach,
     };
   }
@@ -167,24 +162,46 @@ export class WebBleInstrument implements Instrument {
     });
   }
 
+  /** The engine's answer to something: write back what it says to, let the store show the rest, and ask to be woken if a shot is still arriving. */
+  private take(step: Step) {
+    for (const bytes of step.sends) this.write(Uint8Array.from(bytes));
+    this.events.step(step);
+    clearTimeout(this.settle);
+    if (step.settle_ms !== null) this.settle = setTimeout(() => this.take(this.bridge.flushLink()), step.settle_ms);
+  }
+
+  /** A frame from the instrument goes to the engine. */
+  private frame(kind: string, bytes: Uint8Array) {
+    this.take(this.bridge.frame(kind, bytes));
+  }
+
+  /** Tells the engine which instrument this is, once. */
+  private link(kind: string) {
+    if (this.linked) return;
+    this.linked = true;
+    this.take(this.bridge.connect(kind));
+  }
+
   private async attach() {
     const gatt = await this.device!.gatt!.connect();
-    for (const l of [this.x1, this.sap5, this.sap6, this.bric]) l.reset();
     this.writer = null;
     this.withResponse = false;
     this.canTakeShot = false;
     const services = (await gatt.getPrimaryServices()).map((s) => s.uuid);
     if (this.opts.mode === 'capture') {
+      this.link('capture');
       await this.attachCapture(gatt);
       this.name = this.device?.name || 'Bluetooth device';
       this.events.status('connected', this.name);
       return;
     }
-    const found = identify(this.device?.name, services);
-    const kind: InstrumentKind | 'nus' | null = found?.kind ?? (hasNordicUart(services) ? 'nus' : null);
+    const { identified: found, nordicUart } = this.bridge.identify(this.device?.name ?? '', services);
+    const kind: InstrumentKind | 'nus' | null = found?.kind ?? (nordicUart ? 'nus' : null);
     if (kind === null) throw new Error('This device offers none of the services of a supported instrument. Try "Show every Bluetooth device" under the capture settings, or capture its frames to find out what it sends.');
     if (kind === 'unsupported') throw new Error(`${found?.label ?? 'This instrument'} is recognised but not supported yet.`);
     this.kind = kind;
+    // A Nordic UART instrument whose name is not known is told by its packets (below); until then it is read as an X1.
+    this.link(kind === 'nus' ? 'x1' : kind);
     if (kind === 'x1') await this.attachX1(gatt);
     else if (kind === 'sap5') await this.attachSap5(gatt);
     else if (kind === 'sap6') await this.attachSap6(gatt);
@@ -197,70 +214,79 @@ export class WebBleInstrument implements Instrument {
 
   /** The Cavway X1: write on 0002, packets notified on 0003, each one acknowledged. */
   private async attachX1(gatt: Gatt) {
-    const service = await gatt.getPrimaryService(X1_SERVICE);
-    this.writer = await service.getCharacteristic(X1_WRITE);
-    const notify = await service.getCharacteristic(X1_NOTIFY);
-    this.listen(notify, (b) => this.x1.onFrame(b));
+    const x1 = this.cat.x1;
+    const service = await gatt.getPrimaryService(x1.service);
+    this.writer = await service.getCharacteristic(x1.write);
+    const notify = await service.getCharacteristic(x1.notify);
+    this.listen(notify, (b) => this.frame('frame', b));
     await notify.startNotifications();
     this.canTakeShot = true;
   }
 
   /** The SAP5: 8-byte DistoX packets notified on 0002, nothing to acknowledge. */
   private async attachSap5(gatt: Gatt) {
-    const service = await gatt.getPrimaryService(SAP5_SERVICE);
-    const notify = await service.getCharacteristic(SAP5_NOTIFY);
-    this.listen(notify, (b) => this.sap5.onFrame(b));
+    const sap5 = this.cat.sap5;
+    const service = await gatt.getPrimaryService(sap5.service);
+    const notify = await service.getCharacteristic(sap5.notify);
+    this.listen(notify, (b) => this.frame('frame', b));
     await notify.startNotifications();
-    this.writer = await service.getCharacteristic(SAP5_WRITE).catch(() => null);
+    this.writer = await service.getCharacteristic(sap5.write).catch(() => null);
   }
 
   /** A Nordic UART instrument whose name this does not know: listen on both characteristics and tell by the packets (8 bytes: SAP5; 33 or more: X1). */
   private async attachNordic(gatt: Gatt) {
-    const service = await gatt.getPrimaryService(X1_SERVICE);
+    const { x1, sap5 } = this.cat;
+    const service = await gatt.getPrimaryService(x1.service);
+    let current = 'x1';
     const route = (b: Uint8Array) => {
-      if (b.length === 8) this.sap5.onFrame(b, 'sap5');
-      else {
-        this.kind = 'x1'; // a packet of an X1's length: that is what it is
-        this.x1.onFrame(b);
+      const want = b.length === 8 ? 'sap5' : 'x1';
+      if (want !== current) {
+        this.linked = false;
+        this.link(want);
+        current = want;
       }
+      this.kind = want;
+      this.frame('frame', b);
     };
-    for (const uuid of [SAP5_NOTIFY, X1_NOTIFY]) {
+    for (const uuid of [sap5.notify, x1.notify]) {
       const c = await service.getCharacteristic(uuid).catch(() => null);
       if (c && (c.properties.notify || c.properties.indicate)) {
         this.listen(c, route);
         await c.startNotifications();
       }
     }
-    this.writer = await service.getCharacteristic(X1_WRITE).catch(() => null);
+    this.writer = await service.getCharacteristic(x1.write).catch(() => null);
   }
 
   /** The SAP6 (CaveBLE): legs notified, each acknowledged with 0x55 plus its sequence bit. */
   private async attachSap6(gatt: Gatt) {
-    const service = await gatt.getPrimaryService(CAVE_BLE_SERVICE);
-    this.writer = await service.getCharacteristic(COMMAND_CHARACTERISTIC);
+    const sap6 = this.cat.sap6;
+    const service = await gatt.getPrimaryService(sap6.service);
+    this.writer = await service.getCharacteristic(sap6.command);
     try {
-      const nameChar = await service.getCharacteristic(NAME_CHARACTERISTIC);
+      const nameChar = await service.getCharacteristic(sap6.name);
       this.events.frame(`protocol: ${new TextDecoder().decode(await nameChar.readValue())}`, 'name');
     } catch {
       /* the name is only for the log */
     }
-    const leg = await service.getCharacteristic(LEG_CHARACTERISTIC);
-    this.listen(leg, (b) => this.sap6.onFrame(b));
+    const leg = await service.getCharacteristic(sap6.leg);
+    this.listen(leg, (b) => this.frame('frame', b));
     await leg.startNotifications();
     this.canTakeShot = true;
   }
 
   /** The BRIC4 and BRIC5: three indications make a shot; commands are ASCII words written with a response. */
   private async attachBric(gatt: Gatt) {
-    const service = await gatt.getPrimaryService(BRIC_MEASURE_SERVICE);
-    for (const [uuid, kind] of [[BRIC_PRIMARY, 'primary'], [BRIC_META, 'meta'], [BRIC_ERRORS, 'errors']] as const) {
+    const bric = this.cat.bric;
+    const service = await gatt.getPrimaryService(bric.measureService);
+    for (const [uuid, kind] of [[bric.primary, 'primary'], [bric.meta, 'meta'], [bric.errors, 'errors']] as const) {
       const c = await service.getCharacteristic(uuid);
-      this.listen(c, (b) => this.bric.onFrame(kind, b));
+      this.listen(c, (b) => this.frame(kind, b));
       await c.startNotifications(); // these characteristics indicate; the browser enables whichever the instrument offers
     }
     try {
-      const control = await gatt.getPrimaryService(BRIC_CONTROL_SERVICE);
-      this.writer = await control.getCharacteristic(BRIC_CONTROL);
+      const control = await gatt.getPrimaryService(bric.controlService);
+      this.writer = await control.getCharacteristic(bric.control);
       this.withResponse = true;
       this.canTakeShot = true;
     } catch {

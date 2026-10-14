@@ -4,6 +4,20 @@ Built 2026-10-14 on the Banning PC with no instrument and no Rust build. Everyth
 TypeScript; no crate was touched. Design and what exists: `docs/DESIGN.md`, section "Survey: shots from an
 instrument straight into the notebook".
 
+## Update 2026-10-14 (ported to Rust, branch `survey-rust`)
+
+Everything below this note was written against a mock engine on a PC with no Rust build. It has since been ported to
+Rust (see DESIGN.md, "The survey work moves to Rust") and run in the browser against the REAL engine: `npm run harness`
+in `apps/web` opens a fresh cave; Simulator then Shoot station fills the real Notebook and the Plan, Profile and Cross
+section from the document, Undo last shot takes a whole shot back in one step, and the console is clean.
+**Where the text below says "mock", "stand-in notebook" or names a `.ts` file under `lib/instrument`, `survey.ts`,
+`survey-run.ts`, `survey-writer.ts` or `sketch-geometry.ts`, read the Rust crate instead** (`cave-instrument`,
+`cave-session`, `cave-sketch`). The open decision "single-edit shot in `cave-notebook`" is done.
+Still NOT done: Web Bluetooth against a device, the Map beside these panels in the real app (the harness cannot show
+it), `surveyLayout()` and the lock/layout edits to existing app files in the real app, and merging with `main`
+(which has moved 39 commits since this branch was made; eight files conflict: `package.json`, `Ribbon.svelte`,
+`Viewport3D.svelte`, `cave-view.ts`, `workspace.svelte.ts`, `ProfilePanel.svelte`, `SectionPanel.svelte`, `DESIGN.md`).
+
 ## What was checked, and how
 
 - `npm run test:caveble`, `test:survey`, `test:surveywriter` (all in `apps/web`): the wire format decoded from a

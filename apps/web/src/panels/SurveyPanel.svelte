@@ -3,7 +3,7 @@
   // simulator) sends shots; each one is written to the Survey Notebook as it arrives, and the Map, Profile
   // and Cross Section beside this panel redraw from the notebook, so the cave grows while it is being
   // surveyed. Everything here is sized for a tablet held in a glove: big targets, one thing to do next.
-  // The rules (what a reading is, where the surveyor stands next) are in lib/survey.ts and tested there.
+  // The rules (what a reading is, where the surveyor stands next) are Rust: crates/cave-session, tested there.
   import { untrack } from 'svelte';
   import { Check, Crosshair, SkipForward, Undo2, X } from '@lucide/svelte';
   import LengthField from '../components/LengthField.svelte';
@@ -14,7 +14,6 @@
   import { formatLength } from '../lib/units';
   import * as live from '../lib/survey.svelte';
   import { survey } from '../lib/survey.svelte';
-  import { nextStep } from '../lib/survey';
   import { webBluetoothAvailable } from '../lib/instrument/webble';
 
   let ready = $state(false);
@@ -35,11 +34,7 @@
   });
 
   // The oldest thing held for Accept, and what writing it would do, for the preview card.
-  const held = $derived.by(() => {
-    void survey.state;
-    const next = survey.held[0];
-    return next ? live.preview(next) : null;
-  });
+  const held = $derived(survey.held[0] ?? null);
 
   // Passage dimensions at the station the surveyor stands at.
   let wallInput = $state<Record<Side, number | null>>({ left: null, right: null, up: null, down: null });
@@ -47,12 +42,12 @@
   let wallsFromEngine: Record<Side, number | null> = { left: null, right: null, up: null, down: null };
   $effect(() => {
     void cave.version;
-    void survey.state;
+    void survey.standingWalls;
     void ready;
     untrack(() => {
-      const w = ready ? live.standingWalls() : null;
+      const w = ready ? survey.standingWalls : null;
       wallStation = w?.station ?? null;
-      wallsFromEngine = w?.walls ?? { left: null, right: null, up: null, down: null };
+      wallsFromEngine = w ? { left: w.left, right: w.right, up: w.up, down: w.down } : { left: null, right: null, up: null, down: null };
       wallInput = { ...wallsFromEngine };
     });
   });
@@ -145,11 +140,11 @@
 
     <section class="where" aria-label="Where you are">
       <div class="names">
-        <label>From <input class="name" bind:value={survey.state.from} maxlength="40" aria-label="Station you are at" onkeydown={enter} disabled={survey.state.awaiting !== null} /></label>
+        <label>From <input class="name" value={survey.state.from} oninput={(e) => live.setNames(e.currentTarget.value, survey.state.to)} maxlength="40" aria-label="Station you are at" onkeydown={enter} disabled={survey.state.awaiting !== null} /></label>
         <span aria-hidden="true">→</span>
-        <label>To <input class="name" bind:value={survey.state.to} maxlength="40" aria-label="Station the next shot goes to" onkeydown={enter} disabled={survey.state.mode === 'splay' || survey.state.awaiting !== null} /></label>
+        <label>To <input class="name" value={survey.state.to} oninput={(e) => live.setNames(survey.state.from, e.currentTarget.value)} maxlength="40" aria-label="Station the next shot goes to" onkeydown={enter} disabled={survey.state.mode === 'splay' || survey.state.awaiting !== null} /></label>
       </div>
-      <p class="next" role="status">{nextStep(survey.state)}</p>
+      <p class="next" role="status">{survey.instruction}</p>
       {#if survey.groupsLegs && survey.waiting > 0}
         <p class="wait" role="status">{survey.waiting} close shot{survey.waiting === 1 ? '' : 's'} so far: {survey.waiting === 1 ? 'two more make' : 'one more makes'} a leg. A pause of a few seconds makes {survey.waiting === 1 ? 'it a splay' : 'them splays'}. <button class="link" onclick={live.settleNow}>Splays now</button></p>
       {:else}

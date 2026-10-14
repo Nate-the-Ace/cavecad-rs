@@ -129,6 +129,8 @@ pub struct Snapshot {
     pub state: SessionState,
     /// What to do next, in plain words.
     pub instruction: String,
+    /// The station the surveyor is physically at (the new one while a backsight is awaited).
+    pub standing: String,
     /// Write each thing at once (default, as TopoDroid does) or hold it for an Accept.
     pub auto: bool,
     /// The instrument sends single shots that must be grouped (an X1).
@@ -777,6 +779,7 @@ impl Session {
             trip: self.trip,
             state: self.state.clone(),
             instruction: next_step(&self.state),
+            standing: standing(&self.state),
             auto: self.auto,
             groups_legs: self.groups_legs,
             held: self.held.iter().map(|h| self.preview(host, h)).collect(),

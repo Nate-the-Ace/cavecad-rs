@@ -9,17 +9,11 @@
   import DrawTools from '../src/components/DrawTools.svelte';
   import LayoutGroup from '../src/components/LayoutGroup.svelte';
   import { surveyGroups } from '../src/components/survey-groups';
-  import { cave, option, setOption, setUnits } from '../src/lib/cave.svelte';
-  import { loadEngine } from '../src/lib/engine';
-  import { survey } from '../src/lib/survey.svelte';
-  import { standing } from '../src/lib/survey';
+  import { cave, changed, option, setOption, setUnits } from '../src/lib/cave.svelte';
+  import { engine, loadEngine } from '../src/lib/engine';
+  import { disconnect, survey } from '../src/lib/survey.svelte';
   import { sketch } from '../src/lib/sketch.svelte';
-  import type { DimsByStation, SurveyShot } from '../src/lib/sketch-geometry';
   import { PANELS, initDock, panelState, resetDock, togglePanel } from './dock.svelte';
-
-  type Shot = { id: string; from: string; to: string | null; c: Record<string, number | null> };
-  type Book = { shots: Shot[]; walls: Record<string, unknown> };
-  const bookOf = () => (globalThis as unknown as { __book?: Book }).__book;
 
   let host: HTMLDivElement;
   onMount(() => {
@@ -35,16 +29,17 @@
     sketch.open('harness');
     return initDock(host);
   });
-  loadEngine();
 
-  function resetNotebook() {
-    const book = bookOf();
-    if (book) {
-      book.shots.length = 0;
-      for (const k of Object.keys(book.walls)) delete book.walls[k];
-    }
-    location.reload();
+  /** Opens a fresh empty cave (feet, as the working scale 1" = 20' is): the survey is written into it. */
+  async function newNotebook() {
+    await loadEngine();
+    disconnect();
+    engine.newCave('Harness cave', 'Harness trip', 'ft');
+    cave.trip = engine.notebookTrips()[0]?.id ?? '';
+    cave.opened += 1;
+    changed();
   }
+  newNotebook();
 
   const icons = { survey: Crosshair, notebook: BookOpen, plan: MapIcon, profile: Activity, section: Scissors } as const;
 
@@ -56,22 +51,21 @@
       { name: 'Panels', items: Object.entries(PANELS).map(([id, def]) => ({ label: def.title, icon: icons[id as keyof typeof icons], run: () => togglePanel(id), pressed: () => !!panelState.open[id] })) },
       { name: 'Sketch', items: [{ label: 'Follow survey', icon: Crosshair, run: () => setOption('followSurvey', !option('followSurvey', true)), pressed: () => option('followSurvey', true) }] },
       { name: 'Units', items: [{ label: 'Metric', icon: Ruler, run: () => setUnits('metric'), pressed: () => cave.units === 'metric' }, { label: 'Imperial', icon: Footprints, run: () => setUnits('imperial'), pressed: () => cave.units === 'imperial' }] },
-      { name: 'Layout', items: [{ label: 'Reset', icon: LayoutDashboard, run: resetDock }, { label: 'New notebook', icon: Trash2, run: resetNotebook }] },
+      { name: 'Layout', items: [{ label: 'Reset', icon: LayoutDashboard, run: resetDock }, { label: 'New notebook', icon: Trash2, run: newNotebook }] },
       { name: 'Saved layouts', items: [], custom: LayoutGroup },
       { name: 'Map view', items: [{ label: 'Lock view', icon: Lock, run: () => setOption('mapLock', !option('mapLock', false)), pressed: () => option('mapLock', false) }] },
     ],
   };
 
-  // The sketchpad draws what the mock notebook holds (the real app would read the notebook page the same way).
+  // The sketchpad draws what the notebook holds: the engine reads the open trip's page into the shots and passage
+  // dimensions the views are made of.
   $effect(() => {
     void cave.version;
-    const here = survey.state.from ? standing(survey.state) : null;
+    void cave.trip;
+    const here = survey.standing || null;
     untrack(() => {
-      const book = bookOf();
-      const shots: SurveyShot[] = ($state.snapshot(book?.shots ?? []) as Shot[]).map((s) => ({
-        id: s.id, from: s.from, to: s.to, distance: s.c.distance ?? null, az: s.c.az_fs ?? null, inc: s.c.inc_fs ?? null, azBack: s.c.az_bs ?? null, incBack: s.c.inc_bs ?? null,
-      }));
-      sketch.setSource(shots, structuredClone($state.snapshot(book?.walls ?? {})) as DimsByStation, here);
+      const src = sketch.ready && cave.trip ? engine.sketchSource(cave.trip) : null;
+      sketch.setSource(src ?? { shots: [], dims: {} }, here);
     });
   });
 </script>

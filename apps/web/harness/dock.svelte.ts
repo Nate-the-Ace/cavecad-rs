@@ -1,5 +1,5 @@
 // The harness's workspace: the same dockview the app uses (panels you can drag, resize, tab together, float,
-// maximize, minimize, close and bring back), with the Survey panel, a mock notebook and the sketchpad's
+// maximize, minimize, close and bring back), with the Survey panel, the Notebook and the sketchpad's
 // panes as its panels. The layout is remembered; a layout that no longer fits is dropped, not trusted.
 import { createDockview, themeDark, themeLight } from 'dockview-core/dist/dockview-core.js';
 import type { DockviewApi } from 'dockview-core';
@@ -11,7 +11,7 @@ import SurveyPanel from '../src/panels/SurveyPanel.svelte';
 import SketchPlanPanel from '../src/panels/SketchPlanPanel.svelte';
 import SketchProfilePanel from '../src/panels/SketchProfilePanel.svelte';
 import SketchSectionPanel from '../src/panels/SketchSectionPanel.svelte';
-import MockNotebook from './MockNotebook.svelte';
+import NotebookPanel from '../src/panels/NotebookPanel.svelte';
 
 const LAYOUT_KEY = 'cavecad.harness.layout.v1';
 
@@ -24,7 +24,7 @@ interface PanelDef {
 
 export const PANELS: Record<string, PanelDef> = {
   survey: { title: 'Survey', component: SurveyPanel, width: 400 },
-  notebook: { title: 'Notebook', component: MockNotebook },
+  notebook: { title: 'Notebook', component: NotebookPanel },
   plan: { title: 'Plan', component: SketchPlanPanel },
   profile: { title: 'Profile', component: SketchProfilePanel, width: 430 },
   section: { title: 'Cross section', component: SketchSectionPanel, height: 330 },

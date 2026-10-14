@@ -28,18 +28,9 @@
     "test:p2p": "node --experimental-strip-types tests/p2p.check.ts",
     "test:cavefile": "node --experimental-strip-types tests/cavefile.check.ts",
     "test:plane": "node --experimental-strip-types tests/plane.check.ts",
-    "test:caveble": "node --experimental-strip-types tests/caveble.check.ts",
-    "test:survey": "node --experimental-strip-types tests/survey.check.ts",
-    "test:surveywriter": "node --experimental-strip-types tests/surveywriter.check.ts",
-    "test:cavway": "node --experimental-strip-types tests/cavway.check.ts",
-    "test:legs": "node --experimental-strip-types tests/legs.check.ts",
-    "test:x1session": "node --experimental-strip-types tests/x1session.check.ts",
-    "test:sketch": "node --experimental-strip-types tests/sketch.check.ts",
     "test:sketchgrid": "node --experimental-strip-types tests/sketchgrid.check.ts",
     "test:layoutslots": "node --experimental-strip-types tests/layoutslots.check.ts",
-    "test:instruments": "node --experimental-strip-types tests/instruments.check.ts",
-    "test:webble": "node --experimental-strip-types tests/webble.check.ts",
-    "test:devsim": "node --experimental-strip-types tests/devsim.check.ts"
+    "test:webble": "node --experimental-strip-types tests/webble.check.ts"
   },
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "^7.3.1",

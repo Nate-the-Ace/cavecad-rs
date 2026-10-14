@@ -3,10 +3,12 @@
 // history. What a person does is NOT kept here: the running tool is `cave.tool`, the selected line `cave.selected`,
 // the section's station `cave.station`, and the settings are `option()`: the same as in every other panel, so the
 // ribbon's Draw tab, its options tab and its Edit tab drive the sketchpad as they drive the rest of the app.
-// The geometry is in sketch-geometry.ts and the grid in sketch-grid.ts; both are pure and tested.
+// The geometry (the survey laid out, the plan, profile and section views, strokes hung on stations) is Rust:
+// crates/cave-sketch, tested there. The grid and paper-scale maths are in sketch-grid.ts.
 
 import { cave, changed, option } from './cave.svelte';
-import { layout, planView, profileView, sectionView, type Anchored, type DimsByStation, type Pt, type SurveyShot, type Transform } from './sketch-geometry';
+import { engine, loadEngine } from './engine';
+import type { Anchored, Layout, PlanView, ProfileView, Pt, SectionView, SketchSource, SketchViews, Transform } from './sketch-types';
 import { DEFAULT_FEET_PER_INCH, pxPerMetre } from './sketch-grid';
 
 export type Pane = 'plan' | 'profile' | 'section';
@@ -45,31 +47,38 @@ const newId = () => `k${(++counter).toString(36)}${Math.random().toString(36).sl
 class Sketch {
   /** Key for what is kept on this device. */
   key = 'default';
-  shots = $state<SurveyShot[]>([]);
-  dims = $state<DimsByStation>({});
+  source = $state<SketchSource>({ shots: [], dims: {} });
   standing = $state<string | null>(null);
+  /** The engine is loaded, so the geometry can be asked for. */
+  ready = $state(false);
   strokes = $state<Stroke[]>([]);
   history = $state<Record<Pane, { undo: string[]; redo: string[] }>>({ plan: { undo: [], redo: [] }, profile: { undo: [], redo: [] }, section: { undo: [], redo: [] } });
   /** Per pane, kept here so a pane that is closed and opened again comes back as it was. */
   views = $state<Record<Pane, PaneView>>({ plan: newView(), profile: newView(), section: newView() });
 
-  L = $derived(layout(this.shots));
-  plan = $derived(planView(this.L, this.dims));
-  profile = $derived(profileView(this.L, this.dims));
+  /** The survey laid out and its plan and profile. */
+  geo = $derived.by<SketchViews | null>(() => (this.ready ? engine.sketchViews($state.snapshot(this.source) as SketchSource, null) : null));
+  L = $derived<Layout>(this.geo?.layout ?? { stations: [], legs: [], splays: [], chain: [] });
+  plan = $derived<PlanView>(this.geo?.plan ?? { stations: [], legs: [], splays: [], walls: [], passage: [] });
+  profile = $derived<ProfileView>(this.geo?.profile ?? { stations: [], legs: [], walls: [], passage: [] });
   /** The station the cross section shows: the one stood at while following, else the one picked (`cave.station`), else the last on the chain. */
   selected = $derived<string | null>(
-    option('followSurvey', true) && this.standing && this.L.stations[this.standing]
+    option('followSurvey', true) && this.standing && this.has(this.standing)
       ? this.standing
-      : cave.station && this.L.stations[cave.station]
+      : cave.station && this.has(cave.station)
         ? cave.station
         : (this.L.chain[this.L.chain.length - 1] ?? null),
   );
-  section = $derived(this.selected ? sectionView(this.L, this.dims, this.selected) : null);
+  section = $derived<SectionView | null>(this.ready && this.selected ? (engine.sketchViews($state.snapshot(this.source) as SketchSource, this.selected)?.section ?? null) : null);
+
+  /** True when the survey has placed a station with this label. */
+  has(label: string): boolean {
+    return this.L.stations.some((s) => s.label === label);
+  }
 
   /** The survey to draw (called by the host whenever the notebook changes). */
-  setSource(shots: SurveyShot[], dims: DimsByStation, standing: string | null) {
-    this.shots = shots;
-    this.dims = dims;
+  setSource(source: SketchSource, standing: string | null) {
+    this.source = source;
     this.standing = standing;
   }
 
@@ -197,3 +206,5 @@ class Sketch {
 }
 
 export const sketch = new Sketch();
+// After the module graph has loaded: the engine imports this graph too, so asking for it now would loop.
+queueMicrotask(() => loadEngine().then(() => (sketch.ready = true)));

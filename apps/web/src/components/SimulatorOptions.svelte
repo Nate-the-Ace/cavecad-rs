@@ -5,8 +5,8 @@
   import * as live from '../lib/survey.svelte';
   import { survey } from '../lib/survey.svelte';
 
-  const device = $derived(live.SIM_DEVICES.find((d) => d.kind === survey.sim.device) ?? live.SIM_DEVICES[0]);
-  const quirk = $derived(device.quirks.find((q) => q.id === survey.sim.quirk) ?? device.quirks[0]);
+  const device = $derived(live.simDevices().find((d) => d.kind === survey.sim.device) ?? live.simDevices()[0]);
+  const quirk = $derived(device?.quirks.find((q) => q.id === survey.sim.quirk) ?? device?.quirks[0]);
 
   function pickDevice(kind: string) {
     survey.sim.device = kind as typeof survey.sim.device;
@@ -27,13 +27,13 @@
   <label title="Which instrument to pretend to be: each one sends its own bytes, and they go through that instrument's real decoder">
     <span>Device</span>
     <select value={survey.sim.device} aria-label="Instrument to simulate" onchange={(e) => pickDevice(e.currentTarget.value)}>
-      {#each live.SIM_DEVICES as d}<option value={d.kind}>{d.label}</option>{/each}
+      {#each live.simDevices() as d}<option value={d.kind}>{d.label}</option>{/each}
     </select>
   </label>
-  <label title={quirk.expect}>
+  <label title={quirk?.expect ?? ''}>
     <span>Quirk</span>
     <select value={survey.sim.quirk} aria-label="Quirk of the simulated instrument" onchange={(e) => pickQuirk(e.currentTarget.value)}>
-      {#each device.quirks as q}<option value={q.id}>{q.label}</option>{/each}
+      {#each device?.quirks ?? [] as q}<option value={q.id}>{q.label}</option>{/each}
     </select>
   </label>
 </div>

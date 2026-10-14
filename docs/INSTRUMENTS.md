@@ -1,7 +1,7 @@
 # Supported instruments: how each one talks (2026-10-14)
 
 Worked out WITHOUT any of the instruments, from their open repositories and TopoDroid. One **Connect** button in the
-Survey tab serves all of them (`lib/instrument/webble.ts`); this note says what it speaks and what is not yet checked
+Survey tab serves all of them (`lib/instrument/webble.ts` for the Bluetooth, `crates/cave-instrument` for everything it receives); this note says what it speaks and what is not yet checked
 on a real unit. The Cavway X1 has its own note, `docs/CAVWAY-X1.md`.
 
 ## Sources
@@ -20,7 +20,7 @@ Nothing was copied from the GPL code; the layouts below are facts about the inst
 
 The Cavway X1 and the SAP5 offer the very same Bluetooth service (Nordic UART, `6e400001-b5a3-f393-e0a9-e50e24dcca9e`),
 so the service cannot say which is which. TopoDroid goes by the **name the instrument advertises**, and so does Connect
-(`lib/instrument/identify.ts`):
+(`cave-instrument` `identify.rs`):
 
 | Advertised name starts with | Instrument |
 |---|---|
@@ -39,7 +39,7 @@ instrument with a name this does not know.
 reach them; they would need a native app.
 
 All of these send single shots; none says "this is a leg" except the X1's flag. So for every instrument three close
-shots become one leg (`lib/instrument/legs.ts`), as in TopoDroid, and any other shot is a splay.
+shots become one leg (`cave-instrument` `legs.rs`), as in TopoDroid, and any other shot is a splay.
 
 ## SAP6 (Shetland Attack Pony 6): CaveBLE
 
@@ -48,7 +48,7 @@ response), leg `…968` (notify). A frame is 17 bytes, little-endian: sequence b
 (degrees) and distance (metres). Acknowledge each frame by writing `0x55 + sequence bit`; the pony resends until it hears.
 Commands (single bytes): `0x38` take a shot, `0x36` laser on, `0x37` laser off, `0x34` power off, `0x31` and `0x30` start
 and stop calibration. The firmware sends each reading as it is taken (`measure.py`: `send_data` per reading), so there is
-no leg flag. Decoder: `caveble.ts`. Confirmed against both the CaveBLE source and TopoDroid.
+no leg flag. Decoder: `caveble.rs`. Confirmed against both the CaveBLE source and TopoDroid.
 
 ## SAP5 (Shetland Attack Pony 5): Nordic UART, DistoX packets
 
@@ -58,7 +58,7 @@ written to on `6e400003-…`. Each notification is one 8-byte DistoX data packet
 `x * 180 / 32768` degrees; bytes 5 to 6 inclination, signed, `x * 90 / 16384` degrees; byte 7 roll, `x * 180 / 128`
 degrees. Nothing is acknowledged. **Firmware fault** (reported by its author, 2023): bit 16 is set once a distance
 passes 32.768 m, not 65.536 m; the packet is corrected by clearing bit 16 when byte 2's top bit is set, as TopoDroid does
-by default. Decoder: `sap5.ts`. **UNVERIFIED:** whether the SAP5 can be told to fire from the screen (no command found, so
+by default. Decoder: `sap5.rs`. **UNVERIFIED:** whether the SAP5 can be told to fire from the screen (no command found, so
 the button does nothing for it), and the corrected distance past 32.768 m.
 
 ## BRIC4 and BRIC5
@@ -81,7 +81,7 @@ float32 values: 1 to 4 accelerometer or magnetometer too high, 5 and 6 the two s
 laser signal weak or strong, 10 pattern error, 11 timeout, 12 laser error, 13 wrong message, 14 clino, 15 azimuth.
 The shot is complete when the errors arrive; if they never do it is written after 400 ms. A primary identical to the last is a repeat; a
 shot with no length is ignored; a jump in the running index means shots were missed (logged). Commands, ASCII to
-`58E1` written with a response: `shot`, `scan`, `laser`, `power off`, `clear memory`. Decoder: `bric.ts`; link
+`58E1` written with a response: `shot`, `scan`, `laser`, `power off`, `clear memory`. Decoder: `bric.rs`; link
 `BricLink`. BRIC4 and BRIC5 are treated as one protocol (TopoDroid does).
 
 **UNVERIFIED:** that a browser's `startNotifications` enables the indications these characteristics use (the Web
@@ -115,7 +115,7 @@ either change nothing about the survey (the logic copes) or show exactly what it
 | BRIC5 | instrument errors | the same survey, some shots with "the target moved" |
 | BRIC5 | repeated indications | the same survey |
 
-`tests/devsim.check.ts` runs every one and also checks that all four devices write the same survey (distances to 1 cm,
+`crates/cave-session/tests/session.rs` runs every one and also checks that all four devices write the same survey (distances to 1 cm,
 angles to 0.05 degrees). **What it found already:** only the X1 can mark a leg as a backsight; SAP5, SAP6 and BRIC cannot,
 so after a leg with backsights on, the next leg is taken as its backsight if it comes back along the one before (within 25
 degrees and about as long: `looksLikeBack`), and as the next leg if it does not (the backsight was skipped). A real
@@ -124,6 +124,8 @@ the usual backsight warnings (compass, clino and tape disagreeing) flag it.
 
 ## How it is tested
 
-`tests/devsim.check.ts` (every device and quirk, and all four agreeing), `tests/instruments.check.ts` (BRIC and SAP5 bytes written out by hand, the links, identification), `tests/webble.check.ts`
-(the whole connect flow for each instrument against a stand-in for the Web Bluetooth API, including an unknown name,
-unsupported and cancelled), `tests/caveble.check.ts`, `tests/cavway.check.ts`. No instrument has been connected yet.
+Rust, natively: `cave-instrument/tests/golden.rs` (every frame, link sequence, leg grouping and simulated device and
+quirk, against what the first TypeScript version produced: `tools/golden/gen_instrument_golden.mjs`),
+`cave-session/tests/session.rs` (every device and quirk through the session into a real notebook, and all four
+agreeing). Browser: `tests/webble.check.ts` (the whole connect flow for each instrument against a stand-in for the Web
+Bluetooth API and for the engine, including an unknown name, unsupported and cancelled). No instrument has been connected yet.
