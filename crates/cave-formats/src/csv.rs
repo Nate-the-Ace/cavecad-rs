@@ -159,11 +159,16 @@ pub fn parse(content: &str) -> Survey {
             shot.to.clear();
         }
         shot.distance = dist;
-        shot.inclination = opt(get("inclination")).unwrap_or(0.0);
+        let back_inc = opt(get("backinclination"));
+        // an empty foresight beside a backsight was not taken: the backsight carries it
+        shot.inclination =
+            opt(get("inclination")).unwrap_or(if back_inc.is_some() { f64::NAN } else { 0.0 });
         // an empty azimuth cell is not a bearing of zero
         let az_raw = trim(get("azimuth").unwrap_or(""));
         let az = parse_float(az_raw);
-        if az_raw.is_empty() || az.is_nan() {
+        if (az_raw.is_empty() || az.is_nan()) && opt(get("backazimuth")).is_some() {
+            shot.azimuth = f64::NAN;
+        } else if az_raw.is_empty() || az.is_nan() {
             if shot.inclination.abs() >= PLUMB_DEG {
                 shot.azimuth = 0.0;
                 shot.azimuth_omitted = true;
@@ -277,12 +282,16 @@ pub fn write(survey: &Survey) -> String {
             s.from.clone(),
             if s.splay { String::new() } else { s.to.clone() },
             num_str(s.distance),
-            if s.azimuth_omitted {
+            if s.azimuth_omitted || !s.azimuth.is_finite() {
                 String::new()
             } else {
                 num_str(s.azimuth)
             },
-            num_str(s.inclination),
+            if s.inclination.is_finite() {
+                num_str(s.inclination)
+            } else {
+                String::new()
+            },
             lrud_entry_text(s.left, s.left_all.as_deref(), s.left_open),
             lrud_entry_text(s.right, s.right_all.as_deref(), s.right_open),
             lrud_entry_text(s.up, s.up_all.as_deref(), s.up_open),

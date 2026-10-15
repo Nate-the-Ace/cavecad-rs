@@ -17,6 +17,7 @@ pub mod csv;
 mod document;
 pub mod js;
 mod model;
+pub mod project;
 pub mod survex;
 pub mod therion;
 pub mod walls;
@@ -26,6 +27,7 @@ pub use model::{
     FEET_PER_METER, Finding, Fixed, Lrud, LrudEntry, PLUMB_DEG, Shot, Survey, Trip,
     applied_declination, convert, lrud_entry_text, normalize_azimuth, parse_lrud_entry,
 };
+pub use project::{ProjectFormat, ProjectRead, detect_project, read_project};
 
 /// A survey data format.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

@@ -74,6 +74,7 @@ version = "0.0.1"
 dependencies = [
  "cave-doc",
  "cave-id",
+ "cave-survey",
  "serde",
  "serde_json",
 ]

@@ -573,3 +573,94 @@ pub(crate) fn unknown_elevation_note(name: &str) -> String {
         "elevation UNKNOWN for {name} -- written as 0.00 to keep this file valid; it is NOT a surveyed datum"
     )
 }
+
+impl Survey {
+    /// Rescales the whole survey into another distance unit ("ft" or "m"): distances, every LRUD
+    /// reading, the start dimensions and the fixed points (angles do not change). A port of the old
+    /// `CsUnits.convertSurvey`, which existed because a copy that forgot the fixed points or the
+    /// LRUD drew a cave that looked right until somebody measured it.
+    pub fn convert_units(&mut self, to: &str) {
+        let from = self.unit().to_string();
+        if from == to || !matches!(to, "ft" | "m") {
+            return;
+        }
+        let k = convert(1.0, &from, to);
+        let scale = |v: &mut Option<f64>| *v = v.map(|x| x * k);
+        let scale_all = |v: &mut Option<Vec<f64>>| {
+            if let Some(a) = v {
+                a.iter_mut().for_each(|x| *x *= k);
+            }
+        };
+        let scale_lrud = |l: &mut Lrud| {
+            for v in [&mut l.left, &mut l.right, &mut l.up, &mut l.down] {
+                scale(v);
+            }
+            for v in [
+                &mut l.left_all,
+                &mut l.right_all,
+                &mut l.up_all,
+                &mut l.down_all,
+            ] {
+                scale_all(v);
+            }
+        };
+        for s in &mut self.shots {
+            s.distance *= k;
+            for v in [&mut s.left, &mut s.right, &mut s.up, &mut s.down] {
+                scale(v);
+            }
+            for v in [
+                &mut s.left_all,
+                &mut s.right_all,
+                &mut s.up_all,
+                &mut s.down_all,
+            ] {
+                scale_all(v);
+            }
+        }
+        let names: Vec<String> = self.fixed.iter().map(|(n, _)| n.to_string()).collect();
+        for n in names {
+            if let Some(f) = self.fixed.get_mut(&n) {
+                for v in [&mut f.x, &mut f.y, &mut f.z] {
+                    scale(v);
+                }
+            }
+        }
+        if let Some(l) = &mut self.start_lrud {
+            scale_lrud(l);
+        }
+        for t in &mut self.trips {
+            if let Some(l) = &mut t.start_lrud {
+                scale_lrud(l);
+            }
+            t.distance_unit = Some(to.into());
+        }
+        self.distance_unit = Some(to.into());
+    }
+
+    /// Adds another survey's trips, shots and fixed points to this one, in this survey's unit.
+    /// Stations with one name are one station (a project's files join that way); a fixed point
+    /// already here keeps its place.
+    pub fn absorb(&mut self, mut other: Survey) {
+        self.ensure_trips();
+        other.ensure_trips();
+        other.convert_units(&self.unit().to_string());
+        let offset = self.trips.len();
+        for s in &mut other.shots {
+            s.trip += offset;
+        }
+        if self.cave_name.is_empty() {
+            self.cave_name = std::mem::take(&mut other.cave_name);
+        }
+        self.trips.extend(other.trips);
+        self.shots.extend(other.shots);
+        for (n, f) in other.fixed.iter() {
+            if !self.fixed.has(n) {
+                self.fixed.set(n, f.clone());
+            }
+        }
+        for f in other.parse_findings.into_iter().flatten() {
+            self.add_finding(&f.severity, &f.code, f.message);
+        }
+    }
+}

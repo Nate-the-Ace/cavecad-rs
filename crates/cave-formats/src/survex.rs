@@ -433,14 +433,22 @@ pub fn parse(content: &str) -> Survey {
                     }
                     None => {
                         let v = parse_float(c);
-                        clino = if v.is_nan() { 0.0 } else { units.clino(v) };
+                        clino = if !v.is_nan() {
+                            units.clino(v)
+                        } else if has_reading(rec.get("backclino")) {
+                            f64::NAN // the backsight carries it
+                        } else {
+                            0.0
+                        };
                         plumbed = clino.abs() >= 89.999;
                     }
                 }
             }
             let mut compass = rec.get("compass").map_or(f64::NAN, |c| parse_float(c));
             let mut omitted = false;
-            if compass.is_nan() {
+            if compass.is_nan() && has_reading(rec.get("backcompass")) {
+                // only the backsight was read: it carries the bearing
+            } else if compass.is_nan() {
                 if !plumbed {
                     survey.add_finding(
                         "warning",
@@ -546,6 +554,11 @@ pub fn parse(content: &str) -> Survey {
     }
     survey.ensure_trips();
     survey
+}
+
+/// Whether a field holds a number.
+pub(crate) fn has_reading(v: Option<&String>) -> bool {
+    v.is_some_and(|v| !parse_float(v).is_nan())
 }
 
 /// The first `"..."` in a line.
@@ -665,7 +678,8 @@ pub fn write(survey: &mut Survey) -> String {
             } else {
                 s.to.as_str()
             };
-            let az_out = if s.azimuth_omitted {
+            // no bearing sighted, or only a backsight taken: Survex's own "-"
+            let az_out = if s.azimuth_omitted || !s.azimuth.is_finite() {
                 "-".to_string()
             } else {
                 to_fixed(az, 2)
@@ -674,7 +688,11 @@ pub fn write(survey: &mut Survey) -> String {
                 "{}\t{to_name}\t{}\t{az_out}\t{}",
                 s.from,
                 to_fixed(s.distance, 2),
-                to_fixed(s.inclination, 2)
+                if s.inclination.is_finite() {
+                    to_fixed(s.inclination, 2)
+                } else {
+                    "-".to_string()
+                }
             );
             if any_back {
                 let b = s.back_azimuth.map(|b| normalize_azimuth(b - decl));

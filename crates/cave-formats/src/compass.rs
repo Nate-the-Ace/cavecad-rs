@@ -16,8 +16,24 @@
 use crate::js::{JsObj, parse_float, split_lines, split_ws, to_fixed, trim};
 use crate::model::{Lrud, Shot, Survey, Trip, applied_declination, convert, normalize_azimuth};
 
+/// A reading Compass writes as "not taken": -999 (and 999, from Karst). Anything beyond 639 is
+/// outside every real compass or clino reading even after a correction, which is Survex's test.
 fn is_missing_reading(v: f64) -> bool {
-    v.is_nan() || v <= -900.0
+    v.is_nan() || v.abs() > 999.0 - 360.0
+}
+
+/// `CORRECTIONS: compass clino tape` (or `CORRECTIONS2: backcompass backclino`): the numbers, which
+/// are ADDED to every reading of that kind (instrument zero errors, already worked out).
+fn corrections(block: &str, key: &str, count: usize) -> Option<Vec<f64>> {
+    first_match(block, key, |rest| {
+        let words: Vec<f64> = rest
+            .split_whitespace()
+            .take(count)
+            .map(parse_float)
+            .take_while(|v| !v.is_nan())
+            .collect();
+        (words.len() == count).then_some(words)
+    })
 }
 
 /// The text after the first case-insensitive `key` in `block`, if it is there.
@@ -171,7 +187,14 @@ pub fn parse(content: &str) -> Survey {
         let letters = format_letters(block);
         let last = letters.chars().last().map(|c| c.to_ascii_uppercase());
         let to_station = last == Some('T');
-        let has_backsights = letters.chars().skip(8).any(|c| c == 'B');
+        // The backsight letter is the 12th of a 12- or 13-letter FORMAT and the 14th of a 15-letter
+        // one; B means backsight columns, and so does C (the same, shown reversed in Compass).
+        let chars: Vec<char> = letters.chars().collect();
+        let back_at = if chars.len() >= 15 { 13 } else { 11 };
+        let has_backsights = letters.chars().skip(8).any(|c| c == 'B')
+            || (chars.len() >= 12 && matches!(chars[back_at], 'B' | 'C'));
+        let fore = corrections(block, "CORRECTIONS:", 3).unwrap_or(vec![0.0; 3]);
+        let back = corrections(block, "CORRECTIONS2:", 2).unwrap_or(vec![fore[0], fore[1]]);
         let lines = split_lines(block);
 
         let name = block_name(block);
@@ -249,9 +272,34 @@ pub fn parse(content: &str) -> Survey {
             };
             let have_back = has_backsights || (t9.is_finite() && t10.is_finite());
             if have_back && tokens.len() > 10 && !t9.is_nan() && !t10.is_nan() {
-                back_az = (!is_missing_reading(t9)).then_some(t9);
-                back_inc = (!is_missing_reading(t10)).then_some(t10);
+                back_az = (!is_missing_reading(t9)).then_some(t9 + back[0]);
+                back_inc = (!is_missing_reading(t10)).then_some(t10 + back[1]);
                 next = 11;
+            }
+            // A foresight of -999 was not taken: the backsight carries the shot. With neither,
+            // a bearing is missing (the leg cannot be placed) and an inclination is level.
+            let bearing = if is_missing_reading(bearing) {
+                f64::NAN
+            } else {
+                bearing + fore[0]
+            };
+            let inc = if !is_missing_reading(inc) {
+                inc + fore[1]
+            } else if back_inc.is_some() {
+                f64::NAN
+            } else {
+                0.0
+            };
+            let length = length + fore[2];
+            if bearing.is_nan() && back_az.is_none() {
+                survey.add_finding(
+                    "warning",
+                    "compass-no-bearing",
+                    format!(
+                        "Shot {} to {} has no compass reading either way (-999 and no backsight), so it cannot be placed -- anything beyond it is unconnected.",
+                        tokens[0], tokens[1]
+                    ),
+                );
             }
             let remainder = tokens[next.min(tokens.len())..].join(" ");
             let (flags, comment) = match find_flags(&remainder) {
@@ -505,7 +553,17 @@ pub fn write(survey: &mut Survey) -> String {
 
         for &i in &block.shots {
             let s = &survey.shots[i];
-            let magnetic = normalize_azimuth(s.azimuth - decl);
+            // a reading not taken goes out as Compass writes it: -999
+            let magnetic = if s.azimuth.is_finite() {
+                normalize_azimuth(s.azimuth - decl)
+            } else {
+                -999.0
+            };
+            let inclination = if s.inclination.is_finite() {
+                s.inclination
+            } else {
+                -999.0
+            };
             let back_az = s.back_azimuth.map(|b| normalize_azimuth(b - decl));
             let mut flags = String::new();
             for (on, c) in [
@@ -539,7 +597,7 @@ pub fn write(survey: &mut Survey) -> String {
                 &to_name,
                 to_ft(s.distance),
                 magnetic,
-                s.inclination,
+                inclination,
                 from_lrud,
                 back_az,
                 s.back_inclination,

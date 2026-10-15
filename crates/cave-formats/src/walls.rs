@@ -502,11 +502,19 @@ pub fn write(survey: &mut Survey) -> String {
             out.push("#]".into());
             in_exclude = false;
         }
-        let mut az = to_fixed(normalize_azimuth(s.azimuth - decl), 2);
+        let mut az = if s.azimuth.is_finite() {
+            to_fixed(normalize_azimuth(s.azimuth - decl), 2)
+        } else {
+            "--".into()
+        };
         if let Some(b) = s.back_azimuth {
             az += &format!("/{}", to_fixed(normalize_azimuth(b - decl), 2));
         }
-        let mut inc = to_fixed(s.inclination, 2);
+        let mut inc = if s.inclination.is_finite() {
+            to_fixed(s.inclination, 2)
+        } else {
+            "--".into()
+        };
         if let Some(b) = s.back_inclination {
             inc += &format!("/{}", to_fixed(b, 2));
         }

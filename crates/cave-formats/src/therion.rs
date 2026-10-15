@@ -656,13 +656,21 @@ fn parse_inner(content: &str, input_findings: Vec<InputFinding>) -> Survey {
                     }
                     None => {
                         let v = parse_float(c);
-                        clino = if v.is_nan() { 0.0 } else { sc.units.clino(v) };
+                        clino = if !v.is_nan() {
+                            sc.units.clino(v)
+                        } else if crate::survex::has_reading(rec.get("backclino")) {
+                            f64::NAN // the backsight carries it
+                        } else {
+                            0.0
+                        };
                         plumbed = clino.abs() >= 89.999;
                     }
                 }
             }
             let mut compass = rec.get("compass").map_or(f64::NAN, |c| parse_float(c));
-            if compass.is_nan() {
+            if compass.is_nan() && crate::survex::has_reading(rec.get("backcompass")) {
+                // only the backsight was read: it carries the bearing
+            } else if compass.is_nan() {
                 if !plumbed {
                     continue;
                 }
@@ -1058,8 +1066,16 @@ pub fn write(survey: &mut Survey) -> String {
             format!("    {}", s.from),
             to_name.to_string(),
             to_fixed(s.distance, 2),
-            to_fixed(mag, 2),
-            to_fixed(s.inclination, 2),
+            if mag.is_finite() {
+                to_fixed(mag, 2)
+            } else {
+                "-".into()
+            },
+            if s.inclination.is_finite() {
+                to_fixed(s.inclination, 2)
+            } else {
+                "-".into()
+            },
         ];
         if any_back {
             row.push(dash(s.back_azimuth.map(|b| normalize_azimuth(b - decl))));
