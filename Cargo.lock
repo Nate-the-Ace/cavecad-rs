@@ -69,6 +69,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "cave-formats"
+version = "0.0.1"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "cave-geom"
 version = "0.0.1"
 dependencies = [
