@@ -1,5 +1,5 @@
-//! Builds a [`Document`] from a simple shot-list JSON, so the app and tests have real caves to
-//! show before the file importers exist.
+//! Builds a [`Document`] from a simple shot-list JSON: the synthetic test caves the app's samples and
+//! the tests use.
 //!
 //! The format is what `tools/golden/gen_survey_golden.mjs` writes (the old app's parsed survey):
 //! `{ "unit": "ft", "name": "...", "shots": [ { from, to, distance, azimuth, inclination, ... } ],

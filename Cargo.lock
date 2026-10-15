@@ -300,6 +300,7 @@ dependencies = [
  "cave-dxf",
  "cave-fill",
  "cave-fixture",
+ "cave-formats",
  "cave-geom",
  "cave-id",
  "cave-instrument",

@@ -21,7 +21,8 @@
 
 <script lang="ts">
   import { engine, loadEngine } from '../lib/engine';
-  import { exportDxf, exportProject, openCave, saveCave } from '../lib/files';
+  import { openCave, saveCave } from '../lib/files';
+  import ProjectFiles from './ProjectFiles.svelte';
   import { shelf } from '../lib/shelf.svelte';
   import { leaveP2p, p2p } from '../lib/p2p.svelte';
   import { leave, live } from '../lib/sync.svelte';
@@ -47,7 +48,7 @@
   import { fillLabel, isFillKind } from '../lib/fills';
   import { onMount, untrack } from 'svelte';
   import { PANELS, panelState, resetLayout, showPanel, surveyLayout, togglePanel, workLayout } from '../lib/workspace.svelte';
-  import { GraduationCap, Check, Trash2, LogIn, LogOut, Users, Library, FilePlus, FileInput, FolderOpen, Save, Ruler, Footprints, Scissors, Map as MapIcon, Terminal, LayoutDashboard, Activity, Shapes, Table2, BookOpen, ScanLine, FileText, ChevronDown, PanelTop, FileOutput, Package, Mountain, SlidersHorizontal, Crosshair, Tent, Lock } from '@lucide/svelte';
+  import { GraduationCap, Check, Trash2, LogIn, LogOut, Users, Library, FilePlus, FolderOpen, Save, Ruler, Footprints, Scissors, Map as MapIcon, Terminal, LayoutDashboard, Activity, Shapes, Table2, BookOpen, ScanLine, FileText, ChevronDown, PanelTop, Mountain, SlidersHorizontal, Crosshair, Tent, Lock } from '@lucide/svelte';
 
   /**
    * The app shows the ribbon as it is. A host that is only a part of the app (the survey harness) can give its own
@@ -56,8 +57,6 @@
    */
   let { tabs: given }: { tabs?: Record<string, Group[]> } = $props();
 
-  const press = (label: string) => engine.log('info', 'ribbon', `${label}: not built yet`);
-  const stub = (label: string, icon: Component<any>): Item => ({ label, icon, run: () => press(label) });
   const panelItem = (id: string, icon: Component<any>): Item => ({
     label: PANELS[id].title,
     icon,
@@ -79,7 +78,7 @@
   const own: Record<string, Group[]> = {
     Home: [
       { name: 'File', items: [{ label: 'Caves', icon: Library, run: () => (shelf.open = true) }, { label: 'New', icon: FilePlus, run: () => (cave.newDialog = true) }, { label: 'Open', icon: FolderOpen, run: open }, { label: 'Save', icon: Save, run: save }, { label: 'Save as', icon: Save, run: saveAs }, { label: 'Scans in file', icon: ScanLine, run: () => setOption('saveScans', !option('saveScans', true)), pressed: () => option('saveScans', true) }] },
-      { name: 'Project files', items: [stub('Import', FileInput), { label: 'DXF', icon: FileOutput, run: () => run(exportDxf()) }, { label: 'Project', icon: Package, run: () => run(exportProject()) }] },
+      { name: 'Project files', items: [], custom: ProjectFiles },
       {
         name: 'Live',
         items: [

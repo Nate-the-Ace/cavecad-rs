@@ -193,7 +193,7 @@
         </div>
         <div class="row">
           <button onclick={() => { shelf.open = false; cave.newDialog = true; }}>New cave…</button>
-          <button onclick={importFile} title="A cave saved as a DXF file by CaveCAD">Import file…</button>
+          <button onclick={importFile} title="A cave saved as a DXF by CaveCAD, or a survey from Compass, Walls, Survex, Therion or a CSV file">Import file…</button>
         </div>
         <button class="join" class:sel={joining} onclick={startJoin} title="Someone is sharing a cave live: paste the link they sent you">Join a live session…</button>
       </div>

@@ -1,7 +1,8 @@
 // Opening and saving a cave on the person's own machine. Nothing is uploaded: the file is read and
 // written in the browser. A cave is saved in CaveCAD's own file (.cavecad: the whole cave, with the
 // scans it uses bundled in); a DXF is an export, and so is a whole project (everything in the
-// cave's folder). Where the File System Access API exists (Chromium) the open file is remembered so
+// cave's folder), and so is the survey alone in one of the standard cave data formats (Compass, Walls,
+// Survex, Therion, CSV), which Open and Import also read. Where the File System Access API exists (Chromium) the open file is remembered so
 // Save writes back to it; elsewhere Open uses a file input and Save downloads a copy.
 import { engine } from './engine';
 import { cave, changed, markSaved, markUnsaved, option, unsaved } from './cave.svelte';
@@ -26,7 +27,11 @@ type Picker = {
   showSaveFilePicker?: (o: unknown) => Promise<Handle>;
 };
 const picker = window as unknown as Picker;
-const OPEN_TYPES = [{ description: 'A CaveCAD cave, a DXF drawing, or a survey imported from an old drawing', accept: { 'application/zip': [EXT], 'application/dxf': ['.dxf'], 'application/json': ['.json'] } }];
+/** The survey data files Open and Import read (Compass, Walls, Survex, Therion, CSV). */
+const SURVEY_EXTS = ['.dat', '.srv', '.svx', '.th', '.csv', '.txt'];
+const isSurveyFile = (name: string) => SURVEY_EXTS.some((e) => name.toLowerCase().endsWith(e));
+const SURVEY_TYPES = [{ description: 'Survey data (Compass, Walls, Survex, Therion, CSV)', accept: { 'text/plain': SURVEY_EXTS } }];
+const OPEN_TYPES = [{ description: 'A CaveCAD cave, a DXF drawing, a survey data file, or a survey imported from an old drawing', accept: { 'application/zip': [EXT], 'application/dxf': ['.dxf'], 'application/json': ['.json'], 'text/plain': SURVEY_EXTS } }];
 const SAVE_TYPES = [{ description: 'CaveCAD cave', accept: { 'application/zip': [EXT] } }];
 const DXF_SAVE_TYPES = [{ description: 'DXF drawing', accept: { 'application/dxf': ['.dxf'] } }];
 
@@ -34,7 +39,7 @@ let handle: Handle | null = null;
 
 const isAbort = (e: unknown) => e instanceof DOMException && e.name === 'AbortError';
 const safeName = (n: string) => n.replace(/[\\/:*?"<>|]+/g, ' ').trim() || 'cave';
-const stem = (n: string) => n.replace(/\.(cavecad|dxf|json|zip)$/i, '');
+const stem = (n: string) => n.replace(/\.(cavecad|dxf|json|zip|dat|srv|svx|th|csv|txt)$/i, '');
 
 /** Picks a file: with the API when there is one, otherwise with a throwaway `<input type=file>`. */
 async function chooseFile(): Promise<{ bytes: Uint8Array; name: string; handle: Handle | null } | null> {
@@ -51,11 +56,34 @@ async function chooseFile(): Promise<{ bytes: Uint8Array; name: string; handle: 
   return new Promise((resolve) => {
     const input = document.createElement('input');
     input.type = 'file';
-    input.accept = `${EXT},.dxf,.json,application/zip,application/dxf,image/vnd.dxf,application/json`;
+    input.accept = `${EXT},.dxf,.json,${SURVEY_EXTS.join(',')},application/zip,application/dxf,image/vnd.dxf,application/json`;
     input.onchange = async () => {
       const file = input.files?.[0];
       resolve(file ? { bytes: await read(file), name: file.name, handle: null } : null);
     };
+    input.oncancel = () => resolve(null);
+    input.click();
+  });
+}
+
+/** Picks one or more survey data files (several when a Therion project is split across files). */
+async function chooseSurveyFiles(): Promise<{ bytes: Uint8Array; name: string }[] | null> {
+  const read = async (f: File) => ({ bytes: new Uint8Array(await f.arrayBuffer()), name: f.name });
+  if (picker.showOpenFilePicker) {
+    try {
+      const hs = await picker.showOpenFilePicker({ types: SURVEY_TYPES, multiple: true });
+      return Promise.all(hs.map(async (h) => read(await h.getFile())));
+    } catch (e) {
+      if (isAbort(e)) return null;
+      throw e;
+    }
+  }
+  return new Promise((resolve) => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.multiple = true;
+    input.accept = SURVEY_EXTS.join(',');
+    input.onchange = async () => resolve(input.files?.length ? await Promise.all([...input.files].map(read)) : null);
     input.oncancel = () => resolve(null);
     input.click();
   });
@@ -181,6 +209,11 @@ export async function openCave(): Promise<{ ok: boolean; message: string } | nul
     message = ok ? `${bundle.manifest.name}` : r.replace(/^error: /, '');
     native = true;
     bundled = bundle.scans;
+  } else if (isSurveyFile(lower)) {
+    const r = engine.importSurvey(picked.name, text());
+    ok = r.ok;
+    message = r.message;
+    warnings = r.warnings;
   } else if (lower.endsWith('.json')) {
     // A survey written by tools/import_old_dxf.mjs (a one-off importer for old drawings) opens as a demo-style cave.
     const r = openSurveyJson(text());
@@ -244,6 +277,47 @@ export async function exportDxf(): Promise<string | null> {
   if (!text) return 'Nothing to export: no cave is open.';
   const name = await writeNew(`${stem(cave.fileName)}.dxf`, text, 'application/dxf', DXF_SAVE_TYPES);
   return name ? `Exported ${name}` : null;
+}
+
+/**
+ * Imports a survey data file (Compass, Walls, Survex, Therion or CSV) as the cave, replacing the one on
+ * screen. Several files can be picked at once: a Therion project split across files is read through
+ * the one whose `input` lines pull the others in. Returns what to tell the person, or `null` if cancelled.
+ */
+export async function importSurvey(): Promise<{ ok: boolean; message: string } | null> {
+  const picked = await chooseSurveyFiles();
+  if (!picked?.length) return null;
+  if (!confirmDiscard()) return null;
+  const files = picked.map((f) => ({ name: f.name, text: new TextDecoder().decode(f.bytes) }));
+  // the file that pulls the others in is the one to read; otherwise the first
+  const main = files.find((f) => /^\s*input\s/im.test(f.text)) ?? files[0];
+  const others = Object.fromEntries(files.filter((f) => f !== main).map((f) => [f.name, f.text]));
+  const r = engine.importSurvey(main.name, main.text, others);
+  if (!r.ok) return { ok: false, message: r.message };
+  leave(); // a different cave: stop sharing the old one
+  handle = null;
+  cave.fileName = `${stem(main.name)}${EXT}`;
+  cave.hasCave = true;
+  cave.name = stem(main.name);
+  shelf0();
+  for (const w of r.warnings) engine.log('warn', 'import', w);
+  if (files.length > 1 && !/^\s*input\s/im.test(main.text)) engine.log('warn', 'import', `Only ${main.name} was read: the other files picked with it were not used.`);
+  cave.opened += 1; // the canvas re-reads and re-frames
+  changed();
+  markUnsaved(); // nothing is a CaveCAD file yet
+  void storeOpenCave(main.name);
+  return { ok: true, message: `Imported ${main.name}: ${r.message}` };
+}
+
+/** Exports the survey in one of the standard cave data formats (an id from `engine.surveyFormats()`). */
+export async function exportSurvey(format: string): Promise<string | null> {
+  if (readOnly.noKeep) return LOCKED;
+  if (!cave.hasCave) return 'Nothing to export: no cave is open.';
+  const r = engine.exportSurvey(format);
+  if (!r.ok) return r.message;
+  const label = engine.surveyFormats().find((f) => f.id === format)?.label ?? format;
+  const name = await writeNew(`${safeName(stem(cave.fileName))}.${r.extension}`, r.text, 'text/plain', [{ description: label, accept: { 'text/plain': [`.${r.extension}`] } }]);
+  return name ? `Exported ${name} (${label})` : null;
 }
 
 /** Exports the whole project: the cave, its DXF and everything in the scans folder, as one zip. */

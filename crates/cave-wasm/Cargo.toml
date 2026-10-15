@@ -14,6 +14,7 @@ workspace = true
 cave-log = { path = "../cave-log" }
 cave-doc = { path = "../cave-doc" }
 cave-fixture = { path = "../cave-fixture" }
+cave-formats = { path = "../cave-formats" }
 cave-scene = { path = "../cave-scene" }
 cave-style = { path = "../cave-style" }
 cave-dxf = { path = "../cave-dxf" }
