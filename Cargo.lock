@@ -231,6 +231,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "cave-snap"
+version = "0.0.1"
+dependencies = [
+ "cave-geom",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "cave-store"
 version = "0.0.1"
 dependencies = [
