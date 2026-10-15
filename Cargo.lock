@@ -63,7 +63,7 @@ name = "cave-fixture"
 version = "0.0.1"
 dependencies = [
  "cave-doc",
- "cave-id",
+ "cave-formats",
  "cave-survey",
  "serde_json",
 ]
@@ -72,6 +72,8 @@ dependencies = [
 name = "cave-formats"
 version = "0.0.1"
 dependencies = [
+ "cave-doc",
+ "cave-id",
  "serde",
  "serde_json",
 ]

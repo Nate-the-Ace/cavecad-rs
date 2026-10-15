@@ -14,12 +14,14 @@
 
 pub mod compass;
 pub mod csv;
+mod document;
 pub mod js;
 mod model;
 pub mod survex;
 pub mod therion;
 pub mod walls;
 
+pub use document::{from_document, to_document};
 pub use model::{
     FEET_PER_METER, Finding, Fixed, Lrud, LrudEntry, PLUMB_DEG, Shot, Survey, Trip,
     applied_declination, convert, lrud_entry_text, normalize_azimuth, parse_lrud_entry,

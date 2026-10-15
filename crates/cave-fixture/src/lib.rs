@@ -4,269 +4,49 @@
 //! The format is what `tools/golden/gen_survey_golden.mjs` writes (the old app's parsed survey):
 //! `{ "unit": "ft", "name": "...", "shots": [ { from, to, distance, azimuth, inclination, ... } ],
 //! "fixed": { "A1": { x, y, z } } }`. Distances stay in the file's unit (the trip records it);
-//! fixed coordinates are converted to metres. Not a file format people should use.
+//! fixed coordinates are converted to metres. Not a file format people should use: the document is
+//! built by `cave_formats::to_document`, the same code that imports real survey files.
 
-use cave_doc::{Action, ActorId, Document, Field, Kind, Value};
-use cave_id::{Id, IdSource, SeqIds};
+use cave_doc::{ActorId, Document};
+use cave_formats::Survey;
 use serde_json::Value as Json;
-use std::collections::HashMap;
 
-const FEET_TO_METRES: f64 = 0.3048;
-
-fn number(j: &Json) -> Value {
-    Value::Number(j.as_f64())
-}
-
-/// Parses the JSON and builds a document edited by `actor`.
+/// Parses the JSON and builds a document edited by `actor` (through the same builder Import uses).
 pub fn from_shot_list(text: &str, actor: ActorId) -> Result<Document, String> {
     let json: Json = serde_json::from_str(text).map_err(|e| e.to_string())?;
-    let mut ids = SeqIds::new(0x5eed);
-    let mut doc = Document::new(actor);
-    let unit = json["unit"].as_str().unwrap_or("m").to_string();
-
-    // One Trip per entry of "trips" (the old app's trip table); one trip if the file has none.
-    let trip_list = json["trips"]
-        .as_array()
-        .filter(|t| !t.is_empty())
-        .cloned()
-        .unwrap_or_else(|| vec![Json::Null]);
-    let mut trips = Vec::new();
-    for (i, t) in trip_list.iter().enumerate() {
-        let id = ids.next_id();
-        let name = t["name"].as_str().or(json["name"].as_str()).unwrap_or("");
-        let mut actions = vec![
-            Action::Create {
-                id,
-                kind: Kind::Trip,
-            },
-            Action::Set {
-                id,
-                field: Field::TripName,
-                value: Value::Text(name.into()),
-            },
-            Action::Set {
-                id,
-                field: Field::TripDistanceUnit,
-                value: Value::Text(unit.clone()),
-            },
-            Action::Set {
-                id,
-                field: Field::TripOrder,
-                value: Value::Number(Some(i as f64)),
-            },
-        ];
-        for (key, field) in [
-            ("date", Field::TripDate),
-            ("team", Field::TripTeam),
-            ("instruments", Field::TripInstruments),
-            ("declinationSource", Field::TripDeclinationSource),
-            ("startNote", Field::TripStartNote),
-        ] {
-            if let Some(text) = t[key].as_str().filter(|s| !s.is_empty()) {
-                actions.push(Action::Set {
-                    id,
-                    field,
-                    value: Value::Text(text.into()),
-                });
-            }
-        }
-        if t["declination"].is_number() {
-            actions.push(Action::Set {
-                id,
-                field: Field::TripDeclination,
-                value: number(&t["declination"]),
-            });
-        }
-        if i == 0
-            && let Some(cave_name) = json["caveName"]
-                .as_str()
-                .or(json["name"].as_str())
-                .filter(|n| !n.is_empty())
-        {
-            actions.push(Action::Set {
-                id,
-                field: Field::TripCaveName,
-                value: Value::Text(cave_name.into()),
-            });
-        }
-        let start = &t["startLrud"];
-        for (key, field) in [
-            ("left", Field::TripStartLeft),
-            ("right", Field::TripStartRight),
-            ("up", Field::TripStartUp),
-            ("down", Field::TripStartDown),
-        ] {
-            if start[key].is_number() {
-                actions.push(Action::Set {
-                    id,
-                    field,
-                    value: number(&start[key]),
-                });
-            }
-        }
-        for (key, field) in [
-            ("leftOpen", Field::TripStartLeftOpen),
-            ("rightOpen", Field::TripStartRightOpen),
-            ("upOpen", Field::TripStartUpOpen),
-            ("downOpen", Field::TripStartDownOpen),
-        ] {
-            if start[key].as_bool() == Some(true) {
-                actions.push(Action::Set {
-                    id,
-                    field,
-                    value: Value::Flag(true),
-                });
-            }
-        }
-        doc.edit(actions).map_err(|e| format!("{e:?}"))?;
-        trips.push(id);
+    if !json["shots"].is_array() {
+        return Err("no shots".into());
     }
-
-    let mut stations: HashMap<String, Id> = HashMap::new();
-    let mut station = |doc: &mut Document, name: &str, ids: &mut SeqIds| -> Result<Id, String> {
-        if let Some(id) = stations.get(name) {
-            return Ok(*id);
-        }
-        let id = ids.next_id();
-        doc.edit(vec![
-            Action::Create {
-                id,
-                kind: Kind::Station,
-            },
-            Action::Set {
-                id,
-                field: Field::StationLabel,
-                value: Value::Text(name.into()),
-            },
-        ])
-        .map_err(|e| format!("{e:?}"))?;
-        stations.insert(name.to_string(), id);
-        Ok(id)
-    };
-
-    for (i, s) in json["shots"]
-        .as_array()
-        .ok_or("no shots")?
-        .iter()
-        .enumerate()
-    {
-        let id = ids.next_id();
-        let trip_index = s["trip"]
-            .as_u64()
-            .map_or(0, |t| (t as usize).min(trips.len() - 1));
-        let mut actions = vec![
-            Action::Create {
-                id,
-                kind: Kind::Shot,
-            },
-            Action::Set {
-                id,
-                field: Field::ShotTrip,
-                value: Value::Ref(Some(trips[trip_index])),
-            },
-            Action::Set {
-                id,
-                field: Field::ShotOrder,
-                value: Value::Number(Some(i as f64)),
-            },
-        ];
-        for (key, field) in [("from", Field::ShotFrom), ("to", Field::ShotTo)] {
-            let name = s[key].as_str().unwrap_or("");
-            if !name.is_empty() {
-                let st = station(&mut doc, name, &mut ids)?;
-                actions.push(Action::Set {
-                    id,
-                    field,
-                    value: Value::Ref(Some(st)),
-                });
+    let mut survey: Survey = serde_json::from_value(json.clone()).map_err(|e| e.to_string())?;
+    survey.distance_unit = Some(json["unit"].as_str().unwrap_or("m").to_string());
+    let name = json["name"].as_str().unwrap_or("");
+    match json["trips"].as_array().filter(|t| !t.is_empty()) {
+        Some(trips) => {
+            // a trip with no name of its own takes the file's, and every trip the file's unit
+            for (t, j) in survey.trips.iter_mut().zip(trips) {
+                if !j["name"].is_string() {
+                    t.name = name.to_string();
+                }
+                t.distance_unit = survey.distance_unit.clone();
             }
         }
-        for (key, field) in [
-            ("distance", Field::ShotDistance),
-            ("azimuth", Field::ShotAzimuth),
-            ("inclination", Field::ShotInclination),
-            ("backAzimuth", Field::ShotBackAzimuth),
-            ("backInclination", Field::ShotBackInclination),
-            ("left", Field::ShotLeft),
-            ("right", Field::ShotRight),
-            ("up", Field::ShotUp),
-            ("down", Field::ShotDown),
-        ] {
-            if s[key].is_number() {
-                actions.push(Action::Set {
-                    id,
-                    field,
-                    value: number(&s[key]),
-                });
-            }
-        }
-        if let Some(note) = s["notes"].as_str().filter(|n| !n.is_empty()) {
-            actions.push(Action::Set {
-                id,
-                field: Field::ShotNote,
-                value: Value::Text(note.into()),
-            });
-        }
-        if s["declination"].is_number() {
-            actions.push(Action::Set {
-                id,
-                field: Field::ShotDeclination,
-                value: number(&s["declination"]),
-            });
-        }
-        for (key, field) in [
-            ("splay", Field::ShotSplay),
-            ("excludeFromAll", Field::ShotExcludeFromAll),
-            ("excludeFromPlot", Field::ShotExcludeFromPlot),
-            ("noAdjust", Field::ShotNoAdjust),
-            ("azimuthOmitted", Field::ShotAzimuthOmitted),
-            ("leftOpen", Field::ShotLeftOpen),
-            ("rightOpen", Field::ShotRightOpen),
-            ("upOpen", Field::ShotUpOpen),
-            ("downOpen", Field::ShotDownOpen),
-        ] {
-            if s[key].as_bool() == Some(true) {
-                actions.push(Action::Set {
-                    id,
-                    field,
-                    value: Value::Flag(true),
-                });
-            }
-        }
-        doc.edit(actions).map_err(|e| format!("{e:?}"))?;
-    }
-
-    let to_m = if unit == "ft" { FEET_TO_METRES } else { 1.0 };
-    if let Some(fixed) = json["fixed"].as_object() {
-        for (name, p) in fixed {
-            let st = station(&mut doc, name, &mut ids)?;
-            let m = |k: &str| Value::Number(p[k].as_f64().map(|v| v * to_m));
-            doc.edit(vec![
-                Action::Set {
-                    id: st,
-                    field: Field::StationFixedX,
-                    value: m("x"),
-                },
-                Action::Set {
-                    id: st,
-                    field: Field::StationFixedY,
-                    value: m("y"),
-                },
-                Action::Set {
-                    id: st,
-                    field: Field::StationFixedZ,
-                    value: m("z"),
-                },
-            ])
-            .map_err(|e| format!("{e:?}"))?;
+        None => {
+            // one trip, carrying only the file's name
+            survey.trips = vec![cave_formats::Trip {
+                name: name.to_string(),
+                distance_unit: survey.distance_unit.clone(),
+                ..cave_formats::Trip::default()
+            }];
+            survey.start_lrud = None;
         }
     }
-    Ok(doc)
+    cave_formats::to_document(&survey, actor)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use cave_doc::Kind;
     use cave_survey::{extract, resolve};
 
     #[test]
