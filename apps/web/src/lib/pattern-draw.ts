@@ -1,7 +1,19 @@
 // Drawing the patterns a caver authored on a canvas: a custom linetype along a line, a custom fill inside an area. The engine lays
 // the marks out; this file asks for them (keeping the answers until the line, the scale or the pattern changes) and strokes them.
-import { engine } from './engine';
 import type { PatternMarks } from './patterns';
+
+/** Where the marks come from: the engine, which installs itself once it has loaded (so this file does not import it, and can be loaded without it). */
+export interface PatternSource {
+  revision(): number;
+  linePatternMarksNamed(name: string, pts: [number, number][], scale: number): PatternMarks;
+  fillPatternMarksNamed(name: string, outline: [number, number][], id: string, amount: number, scale: number): PatternMarks;
+}
+// `var`, with no initial value: see section-glyph.ts (the modules import each other in a ring while loading).
+var engine: PatternSource | undefined;
+/** Installs the source of pattern marks. */
+export function setPatternSource(s: PatternSource) {
+  engine = s;
+}
 
 const lines = new Map<string, PatternMarks>();
 const EMPTY: PatternMarks = {};
@@ -11,12 +23,12 @@ function keyOf(kind: string, name: string, scale: number, pts: [number, number][
   const b = pts[pts.length >> 1];
   const c = pts[pts.length - 1];
   // the cave's revision goes up on every edit, undo and merge, so a changed pattern is never drawn from an old layout
-  return `${engine.revision()}|${kind}|${name}|${scale.toFixed(3)}|${extra}|${pts.length}|${a}|${b}|${c}`;
+  return `${engine?.revision() ?? 0}|${kind}|${name}|${scale.toFixed(3)}|${extra}|${pts.length}|${a}|${b}|${c}`;
 }
 
 /** The marks of a custom linetype along `pts` (pixels). `pxPerMm` is how many pixels a paper millimetre is here. */
 export function lineMarksPx(name: string, pts: [number, number][], pxPerMm: number, scale = 1): PatternMarks {
-  if (pts.length < 2 || !(pxPerMm > 0)) return EMPTY;
+  if (!engine || pts.length < 2 || !(pxPerMm > 0)) return EMPTY;
   // the engine's layout is in whatever units the path is in: giving it pixels and a "scale" that makes a paper millimetre
   // `pxPerMm` of them lays the pattern out in pixels directly
   const s = pxPerMm * 1000 * scale;
@@ -32,7 +44,7 @@ export function lineMarksPx(name: string, pts: [number, number][], pxPerMm: numb
 
 /** The marks of a custom fill inside `outline` (metres) at the drawing's scale. */
 export function fillMarksM(name: string, id: string, outline: [number, number][], amount: number, scale: number): PatternMarks {
-  if (outline.length < 3) return EMPTY;
+  if (!engine || outline.length < 3) return EMPTY;
   const k = keyOf('fill', name, scale, outline, `${id}|${amount}`);
   let m = lines.get(k);
   if (!m) {

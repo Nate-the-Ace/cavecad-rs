@@ -26,8 +26,10 @@ export interface FillSource {
   revision(): number;
 }
 
-let source: FillSource | null = null;
-let defs: FillDef[] = [];
+// `var`, with no initial value: the engine installs these while the modules are still loading (they import each other in a
+// ring), and a `let` that has not been reached yet would throw. A `var` is there from the start and keeps what was set.
+var source: FillSource | null | undefined;
+var defs: FillDef[] | undefined;
 
 /** Installs the engine's fill catalogue (call once the engine has loaded). */
 export function setFillSource(s: FillSource) {
@@ -42,12 +44,12 @@ export function isFillKind(kind: string | undefined): boolean {
 
 /** Every kind of fill, in palette order. */
 export function fillDefs(): FillDef[] {
-  return defs;
+  return defs ?? [];
 }
 
 /** The name people see for a fill type. */
 export function fillLabel(kind: string): string | undefined {
-  return defs.find((d) => d.key === kind)?.label;
+  return defs?.find((d) => d.key === kind)?.label;
 }
 
 /** The drawing scale the fills' authored sizes belong to (`cave_draw::BASE_SCALE`): `length` is the drawing's scale over this. */

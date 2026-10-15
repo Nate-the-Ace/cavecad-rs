@@ -15,7 +15,9 @@ export interface OrnamentSource {
   ornament(kind: string, curve: [number, number][], closed: boolean, flip: boolean, id: string, survey: [number, number][]): { spine: boolean; lines: [number, number][][] };
   flippedLines(): string[];
 }
-let source: OrnamentSource | null = null;
+// `var`, with no initial value: the engine installs this while the modules are still loading (they import each other in a
+// ring), and a `let` that has not been reached yet would throw. A `var` is there from the start and keeps what was set.
+var source: OrnamentSource | null | undefined;
 /** Installs the ornament source. */
 export function setOrnamentSource(s: OrnamentSource) {
   source = s;

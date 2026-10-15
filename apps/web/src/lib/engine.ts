@@ -4,6 +4,7 @@ import init, { start, log, console_events, console_clear, engine_version, open_d
 
 import { setInkPalette } from './ink';
 import { setOrnamentSource } from './section-glyph';
+import { setPatternSource } from './pattern-draw';
 import { setCalloutSource, setSymbolCatalogue, type SymbolDef } from './symbols';
 import type { Warp } from './scan-warp';
 import { setFillSource, type FillDef, type Marks } from './fills';
@@ -560,6 +561,7 @@ export async function loadBuildInfo(): Promise<BuildInfo | null> {
 }
 
 setOrnamentSource(engine); // shaped-line marks are drawn by the 2D canvases from the engine
+setPatternSource(engine); // so are the marks of a custom linetype or fill
 
 // Dev-only handle for tests and debugging in the browser console.
 if (import.meta.env.DEV) (window as unknown as { __engine: typeof engine }).__engine = engine;
