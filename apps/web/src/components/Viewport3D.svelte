@@ -16,7 +16,6 @@
   import { openLineMenu } from '../lib/line-menu.svelte';
   import { snap, clearPick, cycle, escapePick, pickBuiltUp, toggleSnap } from '../lib/snap.svelte';
   import SnapButton from './SnapButton.svelte';
-  import SnapMenu from './SnapMenu.svelte';
   import { cave, changed, filter, haloFade, haloReach, option, setOption, selectedIds, selectIds, toggleSelected, setPick, setShowSections, setShown, wireFilter, toolStyle } from '../lib/cave.svelte';
   import { tolerancePx } from '../lib/commands';
   import { ViewCube } from '../lib/viewport/view-cube';
@@ -480,7 +479,6 @@
     <button class:on={depthColor} title="Colour by elevation" onclick={() => ((depthColor = !depthColor), view?.setElevationColors(depthColor), loadPassage())}><Palette size={15} /></button>
     {#if drawHint}<span class="status">{drawHint}</span>{:else if status}<span class="status">{status}</span>{/if}
   </div>
-  <SnapMenu />
   <div class="cube" class:locked>
     <div bind:this={cubeHost}></div>
     <div class="cubebar">

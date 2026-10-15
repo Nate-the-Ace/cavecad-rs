@@ -1,6 +1,6 @@
 # Object snap (osnap) design
 
-Date: 2026-10-14. Branch: `object-snap`. Status: design agreed with Nathan in conversation; not yet built.
+Date: 2026-10-14. Branch: `object-snap`. Status: built (2026-10-15): `cave-snap`, the wasm doors, the Map and the flat panes. See "As built" at the end.
 
 ## Goal
 
@@ -197,3 +197,13 @@ per-machine view state, not cave data.
 
 - The exact distance at which plain Intersection treats two crossings as one point.
 - Whether Station snap needs its own marker or reuses Insertion's.
+
+## As built (2026-10-15)
+
+- `cave-snap` has: point modes, nearest, perpendicular, tangent (smooth things only), the intersection family (Extended is override-only and lines only), extension (line, arc round its circle, spline end tangent), parallel, tracking and polar guides, Temporary Track Point, From, Mid Between 2 Points, the one-pick override and the typed-distance helper (`along_guide`). 24 hand-solved tests.
+- **Ranking differs from the first sketch in one place:** a Center or Geometric Center that fires because the cursor is on the OUTLINE ranks behind every other point mode in reach (otherwise a circle's Quadrant could never win near the ring). Near the centre itself it ranks by distance as before.
+- Every fit point of a drawn line is an Endpoint (a leader tip fastens to it by `index=id#vertex`, as before); the ends of an open line are what extension acquires.
+- Each thing is described in its own plane (`Frame`), so the map, the profile, the section and the sketchpad all use the same engine. The camera is a matrix, not a callback.
+- On the map: strokes snap at their start and end, symbols and text at their insertion and direction, leader tips and fit-point drags, the Copy base and Paste target. The same in the flat panes through `PaneSnap`. `nearestVertex` remains only as the fallback of a `LineEditor` that is given no snap hook.
+- UI: Snap button with a settings popover in the Map toolbar, F3, Tab, Escape, Shift or Ctrl right click for the one-pick menu (hosted once in `App.svelte`).
+- **Not built yet:** the typed-distance field in the browser (the engine places the point; no field is shown), long-press for the menu on pen and touch, snapping in the 3D viewer, the handbook page, a status-bar button (the button is in the Map toolbar).

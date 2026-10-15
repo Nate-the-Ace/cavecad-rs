@@ -13,6 +13,9 @@
   import { looks } from '../lib/ink';
   import { drawHandles, drawStrokes, ornamentFor } from '../lib/section-glyph';
   import { LineEditor, endpointNear, joinFit } from '../lib/line-editor';
+import { PaneSnap } from '../lib/snap-pane';
+import { snap, snapping } from '../lib/snap.svelte';
+import { planFrame } from '../lib/snap-types';
   import { Touches } from '../lib/touch';
   import { PenGuard, isEraser, widthFor } from '../lib/pen';
   import { drawStationMarker, isStampKind, leaderLook, liveWords, needsWords, stampEditSpot, withLabelSpot } from '../lib/symbols';
@@ -90,9 +93,28 @@
       changed();
     },
     redraw: () => schedule(),
+    snap: (x, y, id) => psnap.pick(x, y, id)?.p ?? null,
     paperPx: () => (scale * drawing.scale) / 1000,
     ornament: (l) => ornamentFor(l.kind ?? '', l.id ?? '', smooth(l.points, null, 10, !!l.closed).pts, !!l.closed, [[0, 0]] as [number, number][]).lines,
     hidden: (kind) => !!kind && filter.hiddenTypes.includes(kind),
+  });
+
+  // Object snap, the same as on the map: markers, tooltip, guides, the one-pick menu (Shift or Ctrl right click).
+  const psnap: PaneSnap = new PaneSnap({
+    lines: () => (section?.sketches ?? []).map((k) => ({ id: k.id ?? '', kind: k.kind ?? '', points: k.points as number[][], closed: !!k.closed, text: k.text })),
+    extra: () => section ? [{ id: 'station', kind: 'station' as const, frame: planFrame(0), geom: { type: 'point' as const, at: [0, 0, 0] as [number, number, number] }, label: section.label }, ...section.measured.map((p, i) => ({ id: `measured-${i}`, kind: 'node' as const, frame: planFrame(0), geom: { type: 'point' as const, at: [p[0], p[1], 0] as [number, number, number] }, label: '' }))] : [],
+    tf: () => ({ scale, tx: ox, ty: oy }),
+    size: () => ({ w: width, h: height }),
+    wants: (): boolean => !!cave.tool || (copyOp.on && copyOp.view === 'section') || (pasteOp.on && pasteOp.view === 'section') || editor.dragging || !!cave.arrowOp.op,
+    redraw: () => schedule(),
+    stamp: (kind) => isStampKind(kind),
+    hidden: (kind) => !!kind && filter.hiddenTypes.includes(kind),
+    openMenu: (x, y) => (snap.menu = { x, y }),
+  });
+  // A new tool starts with a clean pick.
+  $effect(() => {
+    void cave.tool;
+    untrack(() => psnap.done());
   });
   $effect(() => {
     void cave.selected;
@@ -319,6 +341,7 @@
     g.lineTo(16 + len * per * scale, height - 44);
     g.stroke();
     g.fillText(`${len} ${unitName(cave.units)}`, 16, height - 50);
+    psnap.draw(g);
   }
 
   // ---- input: pen and mouse draw, fingers and middle button pan, wheel zooms -------------------
@@ -329,6 +352,23 @@
   let gesturing = false;
   let panning: { x: number; y: number } | null = null;
   let lastMiddle = 0;
+
+  /** A stroke starts at the pointer: a snap in reach, else the raw point. False when the pick only set something up (a track point). */
+  function startPoint(e: PointerEvent): boolean {
+    if (!live) return false;
+    const r = canvas.getBoundingClientRect();
+    const x = e.clientX - r.left;
+    const y = e.clientY - r.top;
+    const used = psnap.land(psnap.pick(x, y)?.p ?? toWorld(x, y));
+    if (!used) {
+      live = null;
+      schedule();
+      return false;
+    }
+    live.pts.push(used);
+    live.widths.push(live.pressure ? widthFor(e.pressure) : 1);
+    return true;
+  }
 
   function addPoint(e: PointerEvent) {
     if (!live) return;
@@ -390,15 +430,21 @@
     if (e.button === 0 && !cave.tool && pasteOp.on && pasteOp.view === 'section') {
       // a paste waits: the press says where it goes
       const r = canvas.getBoundingClientRect();
-      pastePlace('section', toWorld(e.clientX - r.left, e.clientY - r.top));
+      const x = e.clientX - r.left;
+      const y = e.clientY - r.top;
+      const used = psnap.land(psnap.pick(x, y)?.p ?? toWorld(x, y));
+      if (used) pastePlace('section', used);
       schedule();
       return;
     }
     if (e.button === 0 && !cave.tool && copyOp.on && copyOp.view === 'section') {
       // the Copy command: the first press is the base point, each after drops a copy
       const r = canvas.getBoundingClientRect();
-      const w = toWorld(e.clientX - r.left, e.clientY - r.top);
-      copyPress('section', copyOp.base ? w : snapToSelection('section', w, 10 / (scale || 1)));
+      const x = e.clientX - r.left;
+      const y = e.clientY - r.top;
+      const w = toWorld(x, y);
+      const used = psnap.land(psnap.pick(x, y)?.p ?? (copyOp.base ? w : snapToSelection('section', w, 10 / (scale || 1))));
+      if (used) copyPress('section', used);
       schedule();
       return;
     }
@@ -411,11 +457,17 @@
       if (isStampKind(cave.tool)) {
         // A symbol: press where it goes, drag to say which way is up and how big.
         const r = canvas.getBoundingClientRect();
-        const p = toWorld(e.clientX - r.left, e.clientY - r.top);
+        const x = e.clientX - r.left;
+        const y = e.clientY - r.top;
+        const p = psnap.land(psnap.pick(x, y)?.p ?? toWorld(x, y));
+        if (!p) {
+          schedule();
+          return;
+        }
         live = { pts: [p, [p[0], p[1]]], widths: [1, 1], pressure: false };
       } else {
         live = { pts: [], widths: [], pressure: e.pointerType === 'pen' && option('pressure', true) };
-        addPoint(e);
+        startPoint(e);
       }
     } else {
       panning = { x: e.clientX, y: e.clientY };
@@ -473,12 +525,13 @@
       if (gesturing) return; // one finger left after a gesture: wait until all are lifted
     }
     const r = canvas.getBoundingClientRect();
+    if (!editor.dragging) psnap.pick(e.clientX - r.left, e.clientY - r.top);
     if (editor.move(e.clientX - r.left, e.clientY - r.top)) return;
     if (!live && !panning && cave.tool) showPickup(e.clientX - r.left, e.clientY - r.top);
     if (live) {
       if (isStampKind(cave.tool)) {
         const r2 = canvas.getBoundingClientRect();
-        live.pts[1] = toWorld(e.clientX - r2.left, e.clientY - r2.top);
+        live.pts[1] = psnap.pick(e.clientX - r2.left, e.clientY - r2.top)?.p ?? toWorld(e.clientX - r2.left, e.clientY - r2.top);
       } else {
         const samples = e.getCoalescedEvents?.() ?? [];
         for (const ev of samples.length > 0 ? samples : [e]) addPoint(ev);
@@ -526,6 +579,13 @@
     if (!live) return;
     const stroked = live;
     live = null;
+    // The end of the stroke snaps like its start (the points between follow the pen).
+    if (e && stroked.pts.length >= 2) {
+      const rr = canvas.getBoundingClientRect();
+      const end = psnap.pick(e.clientX - rr.left, e.clientY - rr.top);
+      if (end) stroked.pts[stroked.pts.length - 1] = end.p;
+    }
+    psnap.done();
     if (isStampKind(cave.tool) && stroked.pts.length === 2 && cave.station) {
       const [p0, q] = stroked.pts;
       const a = toScreen(p0[0], p0[1]);
@@ -606,6 +666,10 @@
     if (engine.redo('section')) changed();
   }
   function onKey(e: KeyboardEvent) {
+    if (psnap.key(e)) {
+      e.preventDefault();
+      return;
+    }
     if (editor.key(e)) {
       e.preventDefault();
       return;
@@ -677,6 +741,7 @@
     onkeydown={onKey}
     oncontextmenu={(e) => {
       e.preventDefault();
+      if (psnap.rightClick(e)) return;
       if (pasteOp.on) {
         endPaste(); // a right click drops a waiting paste
         return;

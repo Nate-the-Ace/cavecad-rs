@@ -12,6 +12,9 @@
   import { looks } from '../lib/ink';
   import { drawHandles, drawStrokes } from '../lib/section-glyph';
   import { LineEditor, endpointNear, joinFit, type EditableLine } from '../lib/line-editor';
+import { PaneSnap } from '../lib/snap-pane';
+import { snap } from '../lib/snap.svelte';
+import { planFrame } from '../lib/snap-types';
   import { Touches } from '../lib/touch';
   import { PenGuard, isEraser, widthFor } from '../lib/pen';
   import { FIT_SPACING, fitStroke } from '../lib/spline';
@@ -72,7 +75,26 @@
     commit: (id, pts, widths) => sketch.setPoints(id, pts, widths),
     remove: (id) => sketch.remove(id),
     redraw: () => schedule(),
+    snap: (x, y, id) => psnap.pick(x, y, id)?.p ?? null,
     hidden: (kind) => !!kind && filter.hiddenTypes.includes(kind),
+  });
+
+  // Object snap, the same as on the map: markers, tooltip, guides, the one-pick menu (Shift or Ctrl right click).
+  const psnap: PaneSnap = new PaneSnap({
+    lines: () => lines.map((k) => ({ id: k.id ?? '', kind: k.kind ?? '', points: k.points as number[][], closed: !!k.closed, text: k.text })),
+    extra: () => stations.map((st) => ({ id: `station-${st.label}`, kind: 'station' as const, frame: planFrame(0), geom: { type: 'point' as const, at: [st.p[0], st.p[1], 0] as [number, number, number] }, label: st.label })),
+    tf: () => ({ scale: tf().scale, tx: tf().tx, ty: tf().ty }),
+    size: () => ({ w: view.size.w, h: view.size.h }),
+    wants: (): boolean => !!cave.tool || editor.dragging,
+    redraw: () => schedule(),
+    stamp: () => false,
+    hidden: (kind) => !!kind && filter.hiddenTypes.includes(kind),
+    openMenu: (x, y) => (snap.menu = { x, y }),
+  });
+  // A new tool starts with a clean pick.
+  $effect(() => {
+    void cave.tool;
+    untrack(() => psnap.done());
   });
   $effect(() => {
     void cave.selected;
@@ -320,6 +342,7 @@
       g.fillStyle = c.warn;
       g.fillText(message, 12, 50);
     }
+    psnap.draw(g);
   }
 
   // ---- the canvas's size ----
@@ -343,6 +366,23 @@
   let lastMiddle = 0;
   let moved = 0;
   let pressedAt: Pt | null = null;
+
+  /** A stroke starts at the pointer: a snap in reach, else the raw point. False when the pick only set something up (a track point). */
+  function startPoint(e: PointerEvent): boolean {
+    if (!live) return false;
+    const r = canvas.getBoundingClientRect();
+    const x = e.clientX - r.left;
+    const y = e.clientY - r.top;
+    const used = psnap.land(psnap.pick(x, y)?.p ?? toWorld(x, y));
+    if (!used) {
+      live = null;
+      schedule();
+      return false;
+    }
+    live.pts.push(used);
+    live.widths.push(live.pressure ? widthFor(e.pressure) : 1);
+    return true;
+  }
 
   function addPoint(e: PointerEvent) {
     if (!live) return;
@@ -407,7 +447,7 @@
     const draws = !!cave.tool && !isStampKind(cave.tool) && !middle && e.button === 0 && (e.pointerType !== 'touch' || option('finger', true));
     if (draws) {
       live = { pts: [], widths: [], pressure: e.pointerType === 'pen' && option('pressure', true) };
-      addPoint(e);
+      startPoint(e);
     } else {
       panning = { x: e.clientX, y: e.clientY };
       free();
@@ -456,6 +496,7 @@
     }
     const r = canvas.getBoundingClientRect();
     if (pressedAt) moved = Math.max(moved, Math.hypot(e.clientX - r.left - pressedAt[0], e.clientY - r.top - pressedAt[1]));
+    if (!editor.dragging) psnap.pick(e.clientX - r.left, e.clientY - r.top);
     if (editor.move(e.clientX - r.left, e.clientY - r.top)) return;
     if (!live && !panning && cave.tool) showPickup(e.clientX - r.left, e.clientY - r.top);
     if (live) {
@@ -506,6 +547,13 @@
     if (!live) return;
     const stroked = live;
     live = null;
+    // The end of the stroke snaps like its start (the points between follow the pen).
+    if (e && stroked.pts.length >= 2) {
+      const rr = canvas.getBoundingClientRect();
+      const end = psnap.pick(e.clientX - rr.left, e.clientY - rr.top);
+      if (end) stroked.pts[stroked.pts.length - 1] = end.p;
+    }
+    psnap.done();
     if (stroked.pts.length >= 2) {
       // A freehand stroke becomes a smooth curve through a few fit points.
       const wantClosed = option('close', false);
@@ -569,6 +617,10 @@
   }
 
   function onKey(e: KeyboardEvent) {
+    if (psnap.key(e)) {
+      e.preventDefault();
+      return;
+    }
     if (editor.key(e)) {
       e.preventDefault();
       return;
@@ -615,6 +667,7 @@
       }}
       oncontextmenu={(e) => {
         e.preventDefault();
+        if (psnap.rightClick(e)) return;
         if (cave.tool) cave.tool = ''; // a right click ends the command
       }}
       onkeydown={onKey}

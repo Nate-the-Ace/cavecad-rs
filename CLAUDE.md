@@ -39,7 +39,7 @@ the index useful; `missing_docs` is a warning for that reason.
 Toolchain: use rustup's, not Homebrew's `rustc` (no wasm32 target). Put it first on PATH:
 `export PATH=/opt/homebrew/opt/rustup/bin:$PATH`. Local browser-build check:
 
-    cargo build --target wasm32-unknown-unknown -p cave-id -p cave-store -p cave-log -p cave-geom -p cave-doc -p cave-survey -p cave-notebook -p cave-scans -p cave-pattern
+    cargo build --target wasm32-unknown-unknown -p cave-id -p cave-store -p cave-log -p cave-geom -p cave-doc -p cave-survey -p cave-notebook -p cave-scans -p cave-pattern -p cave-snap
 
 ## Web app (apps/web)
 
@@ -77,6 +77,10 @@ The `ci` workflow is disabled on GitHub (Nathan's call, 2026-10-11: webapp-forwa
 ## In-cave survey and sketchpad
 
 Instruments, the survey session and the sketchpad's geometry are Rust (`cave-instrument`, `cave-session`, `cave-sketch`, doors in `cave-wasm/src/survey.rs`); the web app keeps only the Bluetooth transport and the screen. `npm run harness` in `apps/web` opens the real engine on a fresh cave for tapping through it with the simulator. The golden files in those crates were written by the OLD TypeScript (`tools/golden/gen_instrument_golden.mjs`, `gen_session_golden.mjs`, `gen_sketch_golden.mjs`); to regenerate them run the scripts against commit `6d3ced2`, which still has it. Do not format the whole workspace with `cargo fmt` (other crates are not rustfmt-clean): use `cargo fmt -p <crate>`.
+
+## Object snap
+
+Every point a person picks can snap (`crates/cave-snap`, spec `docs/superpowers/specs/2026-10-14-object-snap-design.md`). The engine is pure Rust: the browser hands it the camera as a matrix, the things in view (each in its own drawing plane), the cursor, the settings and the `Session` of the pick in progress, and gets candidates, guides and what hovering could acquire. In the web app the Map (`viewport/cave-view.ts`) and the flat panes (Profile, Cross Section, sketchpad, through `lib/snap-pane.ts`) call it for every pick; the store is `lib/snap.svelte.ts`, the drawing `lib/snap-draw.ts`. A new tool that asks for a point must pick through it (`pickPoint` on the map, `PaneSnap.pick`/`land` in a pane) so it gets markers, tracking and the Shift+right-click menu for free. F3 switches it, Tab cycles, Escape drops track points.
 
 ## Test caves (standing rule from Nathan, 2026-10-11)
 

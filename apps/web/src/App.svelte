@@ -1,5 +1,6 @@
 <script lang="ts">
   import { selectAllInLastView } from './lib/select-all';
+  import SnapMenu from './components/SnapMenu.svelte';
   import { copyEvent, deleteSelection, pasteEvent } from './lib/view-clip.svelte';
   import LineMenu from './components/LineMenu.svelte';
   import TextEditor from './components/TextEditor.svelte';
@@ -135,6 +136,7 @@
 
 <div class="shell">
   <Ribbon />
+  <SnapMenu />
   <NewCave />
   <CaveShelf />
   <LiveShare />

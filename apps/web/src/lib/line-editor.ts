@@ -71,6 +71,11 @@ export interface Hooks<T extends EditableLine> {
   arrowDone?: () => void;
   /** Saves a leader's moved points together with its style (where its arrows are fastened) as one undoable edit. */
   commitLeader?: (id: string, points: Pt[], style: string) => void;
+  /**
+   * Object snap for a point being placed or moved (a fit point, a leader tip) at screen (`x`, `y`): the snapped point, or null
+   * when nothing is in reach or snapping is off. When a view gives this, it replaces the old nearest-vertex fastening.
+   */
+  snap?: (x: number, y: number, exclude: string) => Pt | null;
 }
 
 /** How close, in pixels, a press must be to a line to select it, and to a fit point to pick it up. */
@@ -87,6 +92,22 @@ export class LineEditor<T extends EditableLine = EditableLine> {
 
   constructor(hooks: Hooks<T>) {
     this.h = hooks;
+  }
+
+  /** True while a fit point is being moved. */
+  get dragging(): boolean {
+    return this.drag !== null;
+  }
+
+  /** The id of the line whose fit point is being moved, or ''. */
+  get dragId(): string {
+    return this.drag?.id ?? '';
+  }
+
+  /** A point to fasten a leader tip to: object snap when the view gives it, else the nearest vertex of another thing. */
+  private snapped(x: number, y: number, exclude: string): Pt | null {
+    if (this.h.snap) return this.h.snap(x, y, exclude);
+    return nearestVertex(this.shown(), exclude, this.h.toScreen, x, y, SNAP_REACH);
   }
 
   /** The lines that are switched on. */
@@ -117,7 +138,7 @@ export class LineEditor<T extends EditableLine = EditableLine> {
     const op = sel?.kind === 'callout' ? this.h.arrowOp?.(sel.id) : '';
     if (sel && op) {
       const screen = sel.points.map(this.h.toScreen);
-      const spot = nearestVertex(this.shown(), sel.id, this.h.toScreen, x, y, SNAP_REACH) ?? this.h.toWorld(x, y);
+      const spot = this.snapped(x, y, sel.id) ?? this.h.toWorld(x, y);
       const next = op === 'add' ? withArrow(sel.points, spot) : withoutArrow(sel.points, arrowAt(screen, x, y, HANDLE_REACH + 6));
       if (next) this.saveLeader(sel.id, next, sel.style);
       this.h.arrowDone?.();
@@ -195,8 +216,8 @@ export class LineEditor<T extends EditableLine = EditableLine> {
       this.drag.points = this.drag.points.map((q) => [q[0] + dx, q[1] + dy] as Pt);
     } else if (this.drag.leader && this.drag.index !== 1) {
       // a leader's arrow snaps to another thing's point, and is then fastened to it
-      this.drag.points[this.drag.index] = nearestVertex(this.shown(), this.drag.id, this.h.toScreen, x, y, SNAP_REACH) ?? to;
-    } else this.drag.points[this.drag.index] = to;
+      this.drag.points[this.drag.index] = this.snapped(x, y, this.drag.id) ?? to;
+    } else this.drag.points[this.drag.index] = (this.h.snap ? this.h.snap(x, y, this.drag.id) : null) ?? to;
     this.h.redraw();
     return true;
   }

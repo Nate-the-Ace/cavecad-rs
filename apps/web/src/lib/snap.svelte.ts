@@ -181,6 +181,13 @@ export const pickBuiltUp = (): boolean => {
 /** The tool ended or changed: drops everything, the last point too. */
 export function clearPick() {
   snap.free = false;
+  // Nothing built up: nothing to ask the engine (which may not be loaded yet when a tool is first picked).
+  if (!pickBuiltUp() && !snap.session.last_point) {
+    snap.result = null;
+    snap.tab = 0;
+    snap.menu = null;
+    return;
+  }
   snap.session = engine.snapCancel({ ...snap.session, last_point: null });
   snap.result = null;
   snap.tab = 0;
