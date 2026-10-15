@@ -303,6 +303,7 @@ dependencies = [
  "cave-sheet",
  "cave-shelf",
  "cave-sketch",
+ "cave-snap",
  "cave-style",
  "cave-symbols",
  "js-sys",

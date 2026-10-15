@@ -14,6 +14,9 @@
   import { copyGhost, copyOp, copyPress, endCopy, endPaste, pasteGhost, pasteOp, pastePlace, registerClipView } from '../lib/view-clip.svelte';
   import { openNewText, openTextEdit } from '../lib/text-edit.svelte';
   import { openLineMenu } from '../lib/line-menu.svelte';
+  import { snap, clearPick, cycle, escapePick, pickBuiltUp, toggleSnap } from '../lib/snap.svelte';
+  import SnapButton from './SnapButton.svelte';
+  import SnapMenu from './SnapMenu.svelte';
   import { cave, changed, filter, haloFade, haloReach, option, setOption, selectedIds, selectIds, toggleSelected, setPick, setShowSections, setShown, wireFilter, toolStyle } from '../lib/cave.svelte';
   import { tolerancePx } from '../lib/commands';
   import { ViewCube } from '../lib/viewport/view-cube';
@@ -186,6 +189,24 @@
       showMenu = false;
       return;
     }
+    // Object snap: F3 switches it, Tab moves to the next thing in reach, Escape drops what a pick built up (track points, acquired points).
+    if (e.key === 'F3') {
+      e.preventDefault();
+      toggleSnap();
+      view?.requestRender();
+      return;
+    }
+    if (e.key === 'Tab' && view?.wantsPoint() && snap.on) {
+      e.preventDefault();
+      cycle();
+      view.requestRender();
+      return;
+    }
+    if (e.key === 'Escape' && pickBuiltUp()) {
+      escapePick();
+      view?.requestRender();
+      return;
+    }
     if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z') {
       e.preventDefault();
       if ((e.shiftKey ? engine.redo('map') : engine.undo('map'))) changed();
@@ -218,6 +239,7 @@
   $effect(() => {
     const tool = cave.tool;
     view?.setDrawTool(tool);
+    untrack(() => clearPick()); // a new tool starts with a clean pick: no track points, no last point (untracked: it reads and writes the snap state)
     drawHint = '';
   });
 
@@ -330,6 +352,7 @@
     v.arrowOp = () => cave.arrowOp;
     v.onArrowDone = () => (cave.arrowOp = { id: '', op: '' });
     v.onEndCommand = () => (cave.tool = '');
+    v.onSnapMenu = (x, y) => (snap.menu = { x, y });
     v.onLeaderEdited = (id, points, style) => {
       const r = engine.editLeader(id, points, style, cave.adjusted);
       if (r !== 'ok') engine.log('warn', 'draw', r);
@@ -453,9 +476,11 @@
       {/if}
     </div>
     <PanelUndo scope="map" label="on the map" />
+    <SnapButton />
     <button class:on={depthColor} title="Colour by elevation" onclick={() => ((depthColor = !depthColor), view?.setElevationColors(depthColor), loadPassage())}><Palette size={15} /></button>
     {#if drawHint}<span class="status">{drawHint}</span>{:else if status}<span class="status">{status}</span>{/if}
   </div>
+  <SnapMenu />
   <div class="cube" class:locked>
     <div bind:this={cubeHost}></div>
     <div class="cubebar">

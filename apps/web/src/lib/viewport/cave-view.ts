@@ -7,7 +7,11 @@ import { LineSegmentsGeometry } from 'three/addons/lines/LineSegmentsGeometry.js
 import { LineMaterial } from 'three/addons/lines/LineMaterial.js';
 import type { MapSection, PassageBuffers, Pt, ProfileSketch3d, Scene, TypeStyle } from '../engine';
 import { PenGuard, isEraser, widthFor } from '../pen';
-import { arrowAt, attachOf, nearestVertex, resolveLeaders, withArrow, withoutArrow } from '../leader-edit';
+import { arrowAt, attachOf, resolveLeaders, withArrow, withoutArrow } from '../leader-edit';
+import { acquireHover, chosen, clearPick, commit, overrideName, query, snap, snapping } from '../snap.svelte';
+import { drawAperture, drawSnap } from '../snap-draw';
+import { sceneThings } from '../snap-scene';
+import { cameraOf, planFrame, type SnapScene } from '../snap-types';
 import { withAttach } from '../line-style-text';
 import { drawStampHalo, liveWords, stampEditSpot, drawStamp, drawStationMarker, hitsLabelNote, hitsStamp, isStampKind, leaderLook, placement } from '../symbols';
 import { paintCopy } from '../copy-ghost';
@@ -109,6 +113,13 @@ export class CaveView {
   private rightDown: { x: number; y: number } | null = null;
   /** Where the pointer last was on the map plan (for paste and the Copy command). */
   private lastPlan: [number, number] | null = null;
+  /** The pointer on the canvas (pixels), for the snap feedback. */
+  private cursorPx: [number, number] | null = null;
+  private hoverTimer: ReturnType<typeof setTimeout> | undefined;
+  /** What the snap in reach for the pointer's latest move was, as a pick would take it. */
+  private lastPick: { p: [number, number]; z: number | null; snapped: boolean } | null = null;
+  /** Opens the one-pick snap menu at a client position (Shift or Ctrl right click). */
+  onSnapMenu: (x: number, y: number) => void = () => {};
   /** The Copy command: running, its base point once picked, what it would drop at a pointer spot, and the calls for a press and an end. */
   private copyOn = false;
   private copyBase: [number, number] | null = null;
@@ -286,6 +297,11 @@ export class CaveView {
       if (e.button !== 2 || !d) return;
       this.rightDown = null;
       if (Math.hypot(e.clientX - d.x, e.clientY - d.y) >= 5) return;
+      // Shift or Ctrl right click while a point is wanted: the one-pick snap menu, not the end of the command.
+      if ((e.shiftKey || e.ctrlKey) && this.wantsPoint()) {
+        this.onSnapMenu(e.clientX, e.clientY);
+        return;
+      }
       if (this.pasteOn) {
         this.onEndPaste();
         return;
@@ -318,10 +334,17 @@ export class CaveView {
         if (this.drawTool) {
           // Drawing on the map: only from straight above or below, where plan is what is seen.
           if (!this.canDrawHere || this.fingers.size > 1 || (e.pointerType === 'touch' && !this.drawOptions.finger)) return;
-          const p = this.planPoint(e.clientX, e.clientY);
-          if (!p) return;
+          const pick = this.pickPoint(e);
+          if (!pick) return;
+          const used = this.land(pick);
           e.stopImmediatePropagation();
           e.stopPropagation();
+          if (!used) {
+            // The pick only set something up (a track point, a base point): no stroke starts.
+            this.requestRender();
+            return;
+          }
+          const p: [number, number] = [used[0], used[1]];
           this.controls.enabled = false;
           canvas.setPointerCapture(e.pointerId);
           if (isStampKind(this.drawTool)) {
@@ -355,6 +378,9 @@ export class CaveView {
         if (cp) this.onCursor(cp[0], cp[1]);
         if (this.copyOn || this.pasteOn) this.requestRender();
       }
+      // What a pick here would snap to (the thing being edited is not snapped to).
+      const here = this.pickPoint(e, this.lineEdit?.id ?? '');
+      if (this.wantsPoint()) this.requestRender();
       if (e.pointerType === 'pen') {
         this.guard.pen(e);
         if (this.erasing) {
@@ -364,7 +390,7 @@ export class CaveView {
       }
       const edit = this.lineEdit;
       if (edit) {
-        const p = this.planPoint(e.clientX, e.clientY);
+        const p = here?.p ?? null;
         if (p && edit.stamp && edit.index === 0 && !edit.leader) {
           // A symbol's insertion point carries the whole symbol, its size and turn handle with it.
           const dx = p[0] - edit.pts[0][0];
@@ -372,16 +398,14 @@ export class CaveView {
           edit.pts = edit.pts.map((q) => [q[0] + dx, q[1] + dy, q[2]] as [number, number, number]);
         } else if (p && edit.leader && edit.index !== 1) {
           // a leader's arrow snaps to another thing's point, and is then fastened to it
-          const r = canvas.getBoundingClientRect();
-          const snap = nearestVertex(this.displayMapLines(), edit.id, (q) => this.project(q) ?? [-1e9, -1e9], e.clientX - r.left, e.clientY - r.top, 10);
-          edit.pts[edit.index] = snap ? [snap[0], snap[1], snap[2]] : [p[0], p[1], edit.pts[edit.index][2]];
+          edit.pts[edit.index] = here?.snapped ? [p[0], p[1], here.z ?? edit.pts[edit.index][2]] : [p[0], p[1], edit.pts[edit.index][2]];
         } else if (p) edit.pts[edit.index] = [p[0], p[1], edit.pts[edit.index][2]];
         this.requestRender();
         return;
       }
       const line = this.liveLine;
       if (line && isStampKind(this.drawTool)) {
-        const p = this.planPoint(e.clientX, e.clientY);
+        const p = here?.p ?? null;
         if (p) line.pts[1] = p;
         this.requestRender();
         return;
@@ -416,10 +440,11 @@ export class CaveView {
         canvas.style.cursor = this.sectionAt(e.clientX, e.clientY) ? 'grab' : '';
       }
     });
-    const drop = () => {
+    const drop = (e: PointerEvent) => {
       const edit = this.lineEdit;
       if (edit) {
         this.lineEdit = null;
+        clearPick();
         this.controls.enabled = true;
         const was = this.mapLines.find((k) => k.id === edit.id);
         if (edit.leader) this.onLeaderEdited(edit.id, edit.pts.map((p) => [p[0], p[1]] as [number, number]), withAttach(was?.style, attachOf(edit.pts, this.displayMapLines(), edit.id)));
@@ -431,6 +456,10 @@ export class CaveView {
       if (line) {
         this.liveLine = null;
         this.controls.enabled = true;
+        // The end of the stroke snaps like its start (the points between follow the pen).
+        const end = this.pickPoint(e);
+        if (end && line.pts.length >= 2) line.pts[line.pts.length - 1] = end.p;
+        clearPick();
         if (isStampKind(this.drawTool) && line.pts.length === 2) {
           const a = this.project([line.pts[0][0], line.pts[0][1], line.z]);
           const b = this.project([line.pts[1][0], line.pts[1][1], line.z]);
@@ -864,6 +893,55 @@ export class CaveView {
     return Math.abs(this.cameraOffset.clone().normalize().z) > 0.985;
   }
 
+  /** True while the map is waiting for a point: a drawing tool, Copy or Paste, a leader tip, or a fit point being dragged. */
+  wantsPoint(): boolean {
+    return this.canDrawHere && (!!this.drawTool || this.copyOn || this.pasteOn || !!this.lineEdit || !!this.arrowOp().op);
+  }
+
+  /** What object snap can snap to in this view, as the engine is told it: the drawn lines, stamps and stations. */
+  private snapScene(exclude: string): SnapScene {
+    const m = new THREE.Matrix4().multiplyMatrices(this.camera.projectionMatrix, this.camera.matrixWorldInverse);
+    const lines = this.displayMapLines().filter((k) => k.id !== exclude && !isKindHidden(k.kind));
+    return {
+      camera: cameraOf(m.elements, this.width, this.height),
+      things: sceneThings(lines, this.data?.stations ?? [], { stamp: isStampKind }),
+      plane: this.canDrawHere ? planFrame(this.controls.target.z) : null,
+    };
+  }
+
+  /**
+   * The point a pick at the pointer lands on: the snap in reach (when a point is wanted and snapping is on), else the plan
+   * point under it. Remembers the snap for the overlay, and arms the hover that acquires an end to extend from.
+   */
+  private pickPoint(e: { clientX: number; clientY: number }, exclude = ''): { p: [number, number]; z: number | null; snapped: boolean } | null {
+    const raw = this.planPoint(e.clientX, e.clientY);
+    const rect = this.canvas.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    this.cursorPx = [x, y];
+    let out: { p: [number, number]; z: number | null; snapped: boolean } | null = raw ? { p: raw, z: null, snapped: false } : null;
+    if (this.wantsPoint() && snapping()) {
+      query(this.snapScene(exclude), x, y);
+      const c = chosen();
+      if (c) out = { p: [c.world[0], c.world[1]], z: c.world[2], snapped: true };
+      clearTimeout(this.hoverTimer);
+      this.hoverTimer = setTimeout(() => {
+        acquireHover();
+        if (this.cursorPx) query(this.snapScene(exclude), this.cursorPx[0], this.cursorPx[1]);
+        this.requestRender();
+      }, 300);
+    } else if (snap.result) {
+      snap.result = null;
+    }
+    this.lastPick = out;
+    return out;
+  }
+
+  /** A pick landed: the session takes it. Answers the world point the tool should use, or null when the pick only set something up (a track point, a base point). */
+  private land(pick: { p: [number, number]; z: number | null }): [number, number, number] | null {
+    return commit([pick.p[0], pick.p[1], pick.z ?? this.controls.target.z]);
+  }
+
   /** The plan position (east, north) under a screen point, on the level of what the camera looks at. */
   private planPoint(clientX: number, clientY: number): [number, number] | null {
     const rect = this.canvas.getBoundingClientRect();
@@ -1024,32 +1102,26 @@ export class CaveView {
     const y = e.clientY - rect.top;
     if (this.pasteOn) {
       // a paste waits: the press says where it goes
-      const p = this.canDrawHere ? this.planPoint(e.clientX, e.clientY) : null;
+      const pick = this.canDrawHere ? this.pickPoint(e) : null;
       e.stopImmediatePropagation();
       e.stopPropagation();
-      if (p) this.onPastePress(p);
+      const used = pick ? this.land(pick) : null;
+      if (used) this.onPastePress([used[0], used[1]]);
+      else this.requestRender();
       return;
     }
     if (this.copyOn) {
       // the Copy command: the first press is the base point (snapping to a point of what is being copied), each after drops a copy
-      const p = this.canDrawHere ? this.planPoint(e.clientX, e.clientY) : null;
+      const pick = this.canDrawHere ? this.pickPoint(e) : null;
       e.stopImmediatePropagation();
       e.stopPropagation();
-      if (!p) return;
-      let at: [number, number] = p;
-      if (!this.copyBase) {
-        let bd = 10;
-        for (const k of this.mapLines.filter((m) => this.selectedSet.has(m.id))) {
-          for (const q of k.points) {
-            const s = this.project(q);
-            const d = s ? Math.hypot(s[0] - x, s[1] - y) : Infinity;
-            if (d <= bd) {
-              bd = d;
-              at = [q[0], q[1]];
-            }
-          }
-        }
+      if (!pick) return;
+      const used = this.land(pick);
+      if (!used) {
+        this.requestRender();
+        return;
       }
+      const at: [number, number] = [used[0], used[1]];
       this.onCopyPress(at);
       return;
     }
@@ -1057,10 +1129,10 @@ export class CaveView {
     const sel = additive ? undefined : this.displayMapLines().find((k) => k.id === this.selectedLine);
     const pending = this.arrowOp();
     if (sel && sel.kind === 'callout' && pending.id === sel.id && pending.op && this.canDrawHere) {
-      const cp = this.planPoint(e.clientX, e.clientY);
+      const pick = this.pickPoint(e, sel.id);
       const z = sel.points[0][2];
-      const snap = nearestVertex(this.displayMapLines(), sel.id, (q) => this.project(q) ?? [-1e9, -1e9], x, y, 10);
-      const spot: [number, number, number] | null = snap ? [snap[0], snap[1], snap[2]] : cp ? [cp[0], cp[1], z] : null;
+      const used = pick ? this.land(pick) : null;
+      const spot: [number, number, number] | null = used ? [used[0], used[1], pick?.snapped ? used[2] : z] : null;
       const next = pending.op === 'add' ? (spot ? withArrow(sel.points, spot) : null) : withoutArrow(sel.points, arrowAt(this.screenPoints(sel).map((p) => p ?? [-1e9, -1e9]) as [number, number][], x, y, 16));
       if (next) this.onLeaderEdited(sel.id, next.map((p) => [p[0], p[1]] as [number, number]), withAttach(sel.style, attachOf(next, this.displayMapLines(), sel.id)));
       this.onArrowDone();
@@ -1783,6 +1855,11 @@ export class CaveView {
       g.lineTo(16 + metres * pxPerM, this.height - 18);
       g.stroke();
       g.fillText(`${length} ${unitName(this.units)}`, 16, this.height - 24);
+    }
+    // Object snap: what a pick here would land on, the guides, the markers and the aperture.
+    if (this.cursorPx && this.wantsPoint() && snapping()) {
+      const at = drawSnap(g, snap.result, snap.session, { cursor: this.cursorPx, aperture: snap.settings.aperture, width: this.width, project: (p) => this.project(p), prefs: snap.prefs, overrideName: overrideName(), tab: snap.tab });
+      drawAperture(g, at, snap.settings.aperture);
     }
   }
 

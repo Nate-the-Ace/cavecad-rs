@@ -77,6 +77,15 @@ export const READS: readonly string[] = [
   'shotDetail',
   'notebookTrips',
   'notebookPage',
+  // Object snap only chooses a point: it never changes the cave.
+  'snapCatalog',
+  'snapPick',
+  'snapCommit',
+  'snapAcquire',
+  'snapOnePick',
+  'snapCancel',
+  'snapLastPoint',
+  'snapAlong',
   // The in-cave survey's view state (where the surveyor stands, held readings), the instrument catalog and the sketchpad geometry change nothing in the cave.
   'surveySyncTrip',
   'surveySnapshot',

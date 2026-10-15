@@ -1,6 +1,6 @@
 // Loads the Rust engine (WASM) once and re-exports the few calls the UI uses.
 import type { FillDef as PatternFillDef, LineDef, Motif, PatternKind, PatternLibrary, PatternMarks, Prim } from './patterns';
-import init, { start, log, console_events, console_clear, engine_version, open_demo, scene, profile_runs, profile_band, add_profile_sketch, undo, redo, edit_state, passage_mesh, shading, palette, open_dxf, save_dxf, section_stations, section_at, add_section_sketch, map_sections, place_section, map_profile_sketches, add_map_line, paste_lines, last_added_id, map_lines, draw_tools, edit_line, edit_leader, delete_line, set_line_closed, set_line_kind, line_info, set_line_flip, set_line_style, drawing_scale, set_drawing_scale, linetypes, pattern_library, motif_from_drawing, save_pattern, remove_pattern, check_pattern, line_pattern_marks, fill_pattern_marks, line_pattern_marks_named, fill_pattern_marks_named, set_line_text, ornament, callout, sheet_options, sheet_plan, flipped_lines, revision, station_rows, set_station_mark, station_detail, shot_detail, set_shot, set_station_walls, set_station_note, set_station_benchmark, symbols, fills, fill_marks, draw_tool_groups, sync_outbox, sync_apply, sync_snapshot, sync_load, notebook_trips, notebook_page, notebook_set_reading, notebook_set_walls, notebook_set_note, notebook_set_trip_field, notebook_set_declination, notebook_add_shot, notebook_remove_shot, notebook_rename_station, notebook_new_trip, scan_links, scan_link, scan_unlink, scan_placements, scan_alignment, scan_add_anchor, scan_remove_anchor, scan_set_mode, scan_trim, scan_set_trim, scan_view_stations, new_cave, scan_completed, scan_set_complete, shelf_summary, shelf_summarize, shelf_summarize_demo, shelf_summarize_native, survey_sync_trip, survey_snapshot, survey_connect, survey_frame, survey_flush_link, survey_disconnect, survey_link_down, survey_sim_station, survey_settle_now, survey_accept, survey_discard, survey_undo_last, survey_set_mode, survey_set_backsights, survey_set_auto, survey_skip_backsight, survey_next_station, survey_set_names, survey_set_standing_wall, instrument_catalog, instrument_identify, sketch_source, sketch_views, sketch_anchor, sketch_place } from '../wasm/cave_wasm.js';
+import init, { start, log, console_events, console_clear, engine_version, open_demo, scene, profile_runs, profile_band, add_profile_sketch, undo, redo, edit_state, passage_mesh, shading, palette, open_dxf, save_dxf, section_stations, section_at, add_section_sketch, map_sections, place_section, map_profile_sketches, add_map_line, paste_lines, last_added_id, map_lines, draw_tools, edit_line, edit_leader, delete_line, set_line_closed, set_line_kind, line_info, set_line_flip, set_line_style, drawing_scale, set_drawing_scale, linetypes, pattern_library, motif_from_drawing, save_pattern, remove_pattern, check_pattern, line_pattern_marks, fill_pattern_marks, line_pattern_marks_named, fill_pattern_marks_named, set_line_text, ornament, callout, sheet_options, sheet_plan, flipped_lines, revision, station_rows, set_station_mark, station_detail, shot_detail, set_shot, set_station_walls, set_station_note, set_station_benchmark, symbols, fills, fill_marks, draw_tool_groups, sync_outbox, sync_apply, sync_snapshot, sync_load, notebook_trips, notebook_page, notebook_set_reading, notebook_set_walls, notebook_set_note, notebook_set_trip_field, notebook_set_declination, notebook_add_shot, notebook_remove_shot, notebook_rename_station, notebook_new_trip, scan_links, scan_link, scan_unlink, scan_placements, scan_alignment, scan_add_anchor, scan_remove_anchor, scan_set_mode, scan_trim, scan_set_trim, scan_view_stations, new_cave, scan_completed, scan_set_complete, shelf_summary, shelf_summarize, shelf_summarize_demo, shelf_summarize_native, survey_sync_trip, survey_snapshot, survey_connect, survey_frame, survey_flush_link, survey_disconnect, survey_link_down, survey_sim_station, survey_settle_now, survey_accept, survey_discard, survey_undo_last, survey_set_mode, survey_set_backsights, survey_set_auto, survey_skip_backsight, survey_next_station, survey_set_names, survey_set_standing_wall, instrument_catalog, instrument_identify, sketch_source, sketch_views, sketch_anchor, sketch_place, snap_pick, snap_commit, snap_session, snap_along, snap_catalog } from '../wasm/cave_wasm.js';
 
 import { setInkPalette } from './ink';
 import { setOrnamentSource } from './section-glyph';
@@ -12,6 +12,7 @@ import type { StationRow } from './station-table';
 import type { Lrud, NotebookPage, TripChoice } from './notebook';
 import type { Catalog, Identified, Step } from './survey-types';
 import type { Anchored, Mark, SketchSource, SketchViews } from './sketch-types';
+import type { SnapAcquired, SnapCatalog, SnapGuide, SnapMode, SnapOutcome, SnapResult, SnapScene, SnapSession, SnapSettings, V3 } from './snap-types';
 
 /** The panels that keep their own undo history. */
 export type Scope = 'profile' | 'section' | 'map' | 'stations' | 'notebook' | 'scans';
@@ -408,6 +409,20 @@ const rawEngine = {
   /** The instruments' Bluetooth ids and names, and the simulator's devices and quirks. */
   instrumentCatalog: (): Catalog => JSON.parse(instrument_catalog()),
   instrumentIdentify: (name: string, services: string[]): { identified: Identified | null; nordicUart: boolean } => JSON.parse(instrument_identify(name, JSON.stringify(services))),
+  // ---- object snap (cave-snap): what a point pick can land on ----
+  /** The modes the settings list and the override menu offer, and the default settings. */
+  snapCatalog: (): SnapCatalog => JSON.parse(snap_catalog()),
+  /** What the cursor (pixels) can snap to in a scene. */
+  snapPick: (scene: SnapScene, x: number, y: number, settings: SnapSettings, session: SnapSession): SnapResult => JSON.parse(snap_pick(JSON.stringify(scene), x, y, JSON.stringify(settings), JSON.stringify(session))),
+  /** A pick landed on a world point: the point to use (null when the pick only set something up) and the session after it. */
+  snapCommit: (session: SnapSession, p: V3): SnapOutcome => JSON.parse(snap_commit(JSON.stringify(session), p[0], p[1], p[2])),
+  snapAcquire: (session: SnapSession, a: SnapAcquired): SnapSession => JSON.parse(snap_session('acquire', JSON.stringify(session), JSON.stringify(a))),
+  /** The next pick searches only this mode (or sets the reference up); `null` returns to the running modes. */
+  snapOnePick: (session: SnapSession, mode: SnapMode | null): SnapSession => JSON.parse(snap_session('one_pick', JSON.stringify(session), JSON.stringify(mode))),
+  snapCancel: (session: SnapSession): SnapSession => JSON.parse(snap_session('cancel', JSON.stringify(session), 'null')),
+  snapLastPoint: (session: SnapSession, p: V3 | null): SnapSession => JSON.parse(snap_session('last', JSON.stringify(session), JSON.stringify(p))),
+  /** The point `distance` along a straight guide. */
+  snapAlong: (guide: SnapGuide, distance: number): V3 | null => JSON.parse(snap_along(JSON.stringify(guide), distance)),
   // ---- the sketchpad's geometry (cave-sketch) ----
   /** A trip's page as the shots and passage dimensions the sketchpad draws. */
   sketchSource: (trip: string): SketchSource | null => JSON.parse(sketch_source(trip)),
