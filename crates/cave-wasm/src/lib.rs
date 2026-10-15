@@ -14,6 +14,7 @@ use wasm_bindgen::prelude::*;
 
 static CONSOLE: OnceLock<LogBuffer> = OnceLock::new();
 
+mod snap;
 mod survey;
 
 thread_local! {

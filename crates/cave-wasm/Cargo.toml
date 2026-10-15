@@ -22,6 +22,7 @@ cave-notebook = { path = "../cave-notebook" }
 cave-instrument = { path = "../cave-instrument" }
 cave-session = { path = "../cave-session" }
 cave-sketch = { path = "../cave-sketch" }
+cave-snap = { path = "../cave-snap" }
 cave-scans = { path = "../cave-scans" }
 cave-shelf = { path = "../cave-shelf" }
 cave-shape = { path = "../cave-shape" }
