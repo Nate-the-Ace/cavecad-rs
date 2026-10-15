@@ -496,7 +496,10 @@ import { planFrame } from '../lib/snap-types';
     }
     const r = canvas.getBoundingClientRect();
     if (pressedAt) moved = Math.max(moved, Math.hypot(e.clientX - r.left - pressedAt[0], e.clientY - r.top - pressedAt[1]));
-    if (!editor.dragging) psnap.pick(e.clientX - r.left, e.clientY - r.top);
+    if (!editor.dragging && psnap.active()) {
+      psnap.pick(e.clientX - r.left, e.clientY - r.top);
+      schedule(); // the markers follow the pointer
+    }
     if (editor.move(e.clientX - r.left, e.clientY - r.top)) return;
     if (!live && !panning && cave.tool) showPickup(e.clientX - r.left, e.clientY - r.top);
     if (live) {

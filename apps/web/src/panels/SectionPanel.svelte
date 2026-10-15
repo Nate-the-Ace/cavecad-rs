@@ -525,7 +525,10 @@ import { planFrame } from '../lib/snap-types';
       if (gesturing) return; // one finger left after a gesture: wait until all are lifted
     }
     const r = canvas.getBoundingClientRect();
-    if (!editor.dragging) psnap.pick(e.clientX - r.left, e.clientY - r.top);
+    if (!editor.dragging && psnap.active()) {
+      psnap.pick(e.clientX - r.left, e.clientY - r.top);
+      schedule(); // the markers follow the pointer
+    }
     if (editor.move(e.clientX - r.left, e.clientY - r.top)) return;
     if (!live && !panning && cave.tool) showPickup(e.clientX - r.left, e.clientY - r.top);
     if (live) {
