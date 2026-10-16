@@ -926,7 +926,13 @@ pub fn parse_with(content: &str, georef: Option<GeoRef>) -> Survey {
             }
             continue;
         }
-        r.data_line(line);
+        // a macro may stand anywhere in a data line, not just in a directive
+        if line.contains("$(") {
+            let line = expand(line, &r.macros);
+            r.data_line(&line);
+        } else {
+            r.data_line(line);
+        }
     }
 
     let mut survey = r.survey;

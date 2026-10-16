@@ -77,3 +77,21 @@ fn readings_this_reader_cannot_follow_are_said_not_dropped() {
     assert!(s.shots.is_empty());
     assert_eq!(s.findings().len(), 2, "{:?}", s.findings());
 }
+
+#[test]
+fn a_walls_macro_expands_in_a_data_line() {
+    let s = cave_formats::walls::parse("#units meters $az=90\nA1 A2 10 $(az) 0\n");
+    assert_eq!(s.shots[0].azimuth, 90.0);
+}
+
+#[test]
+fn a_negative_tape_is_said_not_silently_left_off() {
+    let (_, s) = cave_formats::read_any("x.svx", "1 2 -10 90 0\n2 3 5 0 0\n", &|_| None).unwrap();
+    assert!(
+        s.findings()
+            .iter()
+            .any(|f| f.code == "tape-unusable" && f.message.contains("1 to 2")),
+        "{:?}",
+        s.findings()
+    );
+}

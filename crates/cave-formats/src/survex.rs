@@ -724,9 +724,9 @@ pub fn parse(content: &str) -> Survey {
             continue;
         }
 
-        if line.starts_with('*') {
+        if let Some(rest) = line.strip_prefix('*') {
             // "* begin" is "*begin": blanks may follow the star
-            let joined = format!("*{}", crate::js::trim_start(&line[1..]));
+            let joined = format!("*{}", crate::js::trim_start(rest));
             let line = joined.as_str();
             let tokens = split_ws(line);
             let cmd = tokens[0].to_lowercase();

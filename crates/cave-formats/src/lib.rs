@@ -280,8 +280,9 @@ pub fn read_any(
     read: &dyn Fn(&str) -> Option<String>,
 ) -> Result<(String, Survey), String> {
     if let Some(project) = detect_project(file_name, text) {
-        let r = read_project(project, file_name, text, read);
+        let mut r = read_project(project, file_name, text, read);
         let n = r.files.len();
+        unusable_tapes(&mut r.survey);
         return Ok((
             format!(
                 "{} ({n} file{})",
@@ -296,10 +297,38 @@ pub fn read_any(
             "{file_name} is not a survey file CaveCAD can read. It reads Compass (.dat, .mak), Walls (.srv, .wpj), Survex (.svx), Therion (.th, thconfig) and CSV."
         ));
     };
-    let survey = match format {
+    let mut survey = match format {
         Format::Therion => therion::parse_with_inputs(text, file_name, read),
         Format::Survex => survex::parse_with_includes(text, file_name, read),
         f => f.parse(text),
     };
+    unusable_tapes(&mut survey);
     Ok((format.label().to_string(), survey))
+}
+
+/// Says which legs have a tape reading nothing can be drawn from (negative, or not a number), in
+/// any format: they are kept, and left off the map, and without this nobody would know why.
+fn unusable_tapes(survey: &mut Survey) {
+    let bad: Vec<String> = survey
+        .shots
+        .iter()
+        .filter(|s| !s.splay && !(s.distance.is_finite() && s.distance >= 0.0))
+        .map(|s| format!("{} to {}", s.from, s.to))
+        .collect();
+    if bad.is_empty() {
+        return;
+    }
+    let shown: Vec<&str> = bad.iter().take(5).map(String::as_str).collect();
+    survey.add_finding(
+        "warning",
+        "tape-unusable",
+        format!(
+            "{} leg{} a tape reading that is negative or not a number ({}{}), so {} not drawn: check the notes.",
+            bad.len(),
+            if bad.len() == 1 { " has" } else { "s have" },
+            shown.join(", "),
+            if bad.len() > 5 { ", ..." } else { "" },
+            if bad.len() == 1 { "it is" } else { "they are" }
+        ),
+    );
 }
