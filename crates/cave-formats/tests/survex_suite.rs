@@ -77,7 +77,12 @@ fn ours(survey: &cave_formats::Survey) -> Result<HashMap<String, [f64; 3]>, Stri
     let ex = extract(&doc);
     let r = resolve(&ex.legs, &ex.fixed);
     let a = adjust(&ex.legs, &r, &Params::default());
-    Ok(a.stations
+    // a station only ever fixed (no shot reaches it) is placed by its fix
+    let mut placed = a.stations.clone();
+    for f in &ex.fixed {
+        placed.entry(f.station).or_insert(f.pos);
+    }
+    Ok(placed
         .iter()
         .filter_map(|(id, p)| {
             let name = doc.entity(*id)?.text(Field::StationLabel);
@@ -138,7 +143,13 @@ fn survex_test_suite() {
             }
         };
         // Survex joins prefixes with its separator; compare names with it removed
-        let key = |n: &str| n.replace([':', '.'], "/").to_lowercase();
+        // and writes an empty Walls level as " " and an empty name as "empty name"
+        let key = |n: &str| {
+            n.replace("empty name", "")
+                .replace(' ', "")
+                .replace([':', '.'], "/")
+                .to_lowercase()
+        };
         let want: HashMap<String, [f64; 3]> = want.into_iter().map(|(k, v)| (key(&k), v)).collect();
         let got: HashMap<String, [f64; 3]> = got.into_iter().map(|(k, v)| (key(&k), v)).collect();
         let common: Vec<&String> = {

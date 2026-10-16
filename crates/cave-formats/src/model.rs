@@ -664,3 +664,29 @@ impl Survey {
         }
     }
 }
+
+/// Where a survey is on the Earth, as a project file declares it: enough to work out the magnetic
+/// declination on a date (IGRF) and the grid convergence of its UTM zone.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct GeoRef {
+    /// Degrees, north positive.
+    pub lat: f64,
+    /// Degrees, east positive.
+    pub lon: f64,
+    /// UTM zone, negative in the southern hemisphere.
+    pub zone: i32,
+}
+
+impl GeoRef {
+    /// The magnetic declination on a "YYYY-MM-DD" date, degrees east positive.
+    pub fn declination_on(&self, date: &str) -> Option<f64> {
+        let year = cave_geomag::decimal_year_of(date)?;
+        cave_geomag::declination(self.lat, self.lon, year)
+    }
+
+    /// Grid north's angle east of true north here. Fixed points given in UTM are on the grid, so a
+    /// survey tied to them needs grid bearings: true bearing minus this.
+    pub fn convergence(&self) -> f64 {
+        cave_geomag::utm_convergence(self.lat, self.lon, self.zone)
+    }
+}

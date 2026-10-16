@@ -15,7 +15,7 @@
 //! passages looks like a smaller cave.
 
 use crate::js::{split_lines, trim};
-use crate::model::{Fixed, Survey};
+use crate::model::{Fixed, GeoRef, Survey};
 use crate::{compass, therion, walls};
 
 /// A project file format.
@@ -232,10 +232,11 @@ fn mak_station(item: &str) -> Option<(String, Option<Fixed>)> {
     let Some(unit) = inner.trim_start().chars().next() else {
         return Some((name, None));
     };
-    let k = match unit.to_ascii_uppercase() {
-        'M' => crate::FEET_PER_METER,
-        'F' => 1.0,
-        _ => return Some((name, None)),
+    // F feet, M metres; Compass reads any other letter as metres (Survex checked)
+    let k = if unit.eq_ignore_ascii_case(&'F') {
+        1.0
+    } else {
+        crate::FEET_PER_METER
     };
     let rest = &inner.trim_start()[unit.len_utf8()..];
     let mut numbers = Vec::new();
@@ -293,8 +294,13 @@ fn read_mak(path: &str, content: &str, read: &dyn Fn(&str) -> Option<String>) ->
     let mut survey = merge(parts, notes);
     survey.convert_units("ft");
     // the project's fixes are the cave's: they are in feet, as Compass keeps everything
+    // the first fix of a station holds; a second is ignored, as Compass does
+    let mut seen: Vec<String> = Vec::new();
     for (name, f) in fixes {
-        survey.fixed.set(&name, f);
+        if !seen.contains(&name) {
+            survey.fixed.set(&name, f);
+            seen.push(name);
+        }
     }
     if survey.cave_name.is_empty() {
         survey.cave_name = project
@@ -317,12 +323,34 @@ fn read_mak(path: &str, content: &str, read: &dyn Fn(&str) -> Option<String>) ->
 // book, where Walls always sets it), 0x10000 "an attached file that is not survey data".
 
 const WPJ_DETACHED: u64 = 0x2;
+
+/// `.REF northing easting zone convergence elevation flags latd latm lats lond lonm lons datum "name"`:
+/// the place, from its latitude and longitude (flag 0x4: west, 0x8: south).
+fn wpj_ref(rest: &str) -> Option<GeoRef> {
+    let v: Vec<f64> = rest
+        .split_whitespace()
+        .take(12)
+        .filter_map(|t| t.parse().ok())
+        .collect();
+    if v.len() < 12 {
+        return None;
+    }
+    let flags = v[5] as u64;
+    let lat = (v[6] + v[7] / 60.0 + v[8] / 3600.0) * if flags & 0x8 != 0 { -1.0 } else { 1.0 };
+    let lon = (v[9] + v[10] / 60.0 + v[11] / 3600.0) * if flags & 0x4 != 0 { -1.0 } else { 1.0 };
+    Some(GeoRef {
+        lat,
+        lon,
+        zone: v[2] as i32,
+    })
+}
 const WPJ_NOT_SURVEY: u64 = 0x10000;
 
 #[derive(Clone)]
 struct Frame {
     path: String,
     options: Vec<String>,
+    georef: Option<GeoRef>,
 }
 
 fn read_wpj(path: &str, content: &str, read: &dyn Fn(&str) -> Option<String>) -> ProjectRead {
@@ -333,6 +361,7 @@ fn read_wpj(path: &str, content: &str, read: &dyn Fn(&str) -> Option<String>) ->
     let mut frames = vec![Frame {
         path: dir_of(path),
         options: Vec::new(),
+        georef: None,
     }];
     let mut title = String::new();
     let (mut depth, mut detached, mut status) = (0usize, 0usize, 0u64);
@@ -345,6 +374,7 @@ fn read_wpj(path: &str, content: &str, read: &dyn Fn(&str) -> Option<String>) ->
         let frame = frames.pop().unwrap_or(Frame {
             path: String::new(),
             options: Vec::new(),
+            georef: None,
         });
         if status & WPJ_NOT_SURVEY != 0 {
             return false;
@@ -373,7 +403,7 @@ fn read_wpj(path: &str, content: &str, read: &dyn Fn(&str) -> Option<String>) ->
                     .iter()
                     .map(|o| format!("#Units {o}\n"))
                     .collect();
-                parts.push(walls::parse(&format!("{prefix}{text}")));
+                parts.push(walls::parse_with(&format!("{prefix}{text}"), frame.georef));
                 files.push(full);
             }
             None => missing(&mut notes, &project, &format!("{name}.SRV")),
@@ -412,6 +442,7 @@ fn read_wpj(path: &str, content: &str, read: &dyn Fn(&str) -> Option<String>) ->
                 let top = frames.last().cloned().unwrap_or(Frame {
                     path: String::new(),
                     options: Vec::new(),
+                    georef: None,
                 });
                 frames.push(top);
             }
@@ -419,6 +450,7 @@ fn read_wpj(path: &str, content: &str, read: &dyn Fn(&str) -> Option<String>) ->
                 let top = frames.last().cloned().unwrap_or(Frame {
                     path: String::new(),
                     options: Vec::new(),
+                    georef: None,
                 });
                 frames.push(top);
                 status = 0;
@@ -436,6 +468,11 @@ fn read_wpj(path: &str, content: &str, read: &dyn Fn(&str) -> Option<String>) ->
                     && !rest.is_empty()
                 {
                     f.options.push(rest.to_string());
+                }
+            }
+            "REF" => {
+                if let Some(f) = frames.last_mut() {
+                    f.georef = wpj_ref(rest);
                 }
             }
             "PATH" => {
