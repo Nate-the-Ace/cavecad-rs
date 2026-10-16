@@ -275,15 +275,21 @@ fn read_mak(path: &str, content: &str, read: &dyn Fn(&str) -> Option<String>) ->
         if file.is_empty() {
             continue;
         }
+        let mut named: Vec<String> = Vec::new();
         for item in &items[1..] {
-            if let Some((name, Some(f))) = mak_station(item) {
-                fixes.push((name, f));
+            match mak_station(item) {
+                Some((name, Some(f))) => {
+                    named.push(name.clone());
+                    fixes.push((name, f));
+                }
+                Some((name, None)) => named.push(name),
+                None => {}
             }
         }
         let full = join(&dir, &file);
         match read(&full) {
             Some(text) => {
-                let mut s = compass::parse(&text);
+                let mut s = compass::parse_keeping(&text, &named);
                 s.convert_units("ft");
                 parts.push(s);
                 files.push(full);

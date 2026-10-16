@@ -210,8 +210,19 @@ fn real_data_against_survex() {
             .iter()
             .map(|(a, k)| (a.to_lowercase(), k.to_lowercase()))
             .collect();
+        // Survex and Therion fold case by default; Compass and Walls names are case-sensitive
+        let fold = !matches!(
+            root.extension()
+                .map(|e| e.to_string_lossy().to_lowercase())
+                .as_deref(),
+            Some("dat" | "mak" | "srv" | "wpj")
+        );
         let key = |n: &str| {
-            let n = n.to_lowercase();
+            let n = if fold {
+                n.to_lowercase()
+            } else {
+                n.to_string()
+            };
             aliases.get(&n).cloned().unwrap_or(n)
         };
         let mut want: HashMap<String, [f64; 3]> =

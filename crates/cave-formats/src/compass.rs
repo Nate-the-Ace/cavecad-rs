@@ -137,6 +137,7 @@ struct Raw {
     to_station: bool,
     trip: usize,
     declination: f64,
+    azimuth_omitted: bool,
 }
 
 /// `#\|([A-Za-z]*)#\s*` in `s`: (start, end of match, letters).
@@ -168,6 +169,12 @@ fn find_flags(s: &str) -> Option<(usize, usize, String)> {
 
 /// Reads a Compass .dat file.
 pub fn parse(content: &str) -> Survey {
+    parse_keeping(content, &[])
+}
+
+/// Reads a Compass .dat file in a project: the stations in `keep` (those the project fixes or links)
+/// are real stations, so a zero-length shot to one joins it rather than only carrying LRUD.
+pub fn parse_keeping(content: &str, keep: &[String]) -> Survey {
     let mut survey = Survey {
         distance_unit: Some("ft".into()),
         ..Survey::default()
@@ -291,6 +298,11 @@ pub fn parse(content: &str) -> Survey {
                 0.0
             };
             let length = length + fore[2];
+            // no bearing either way: fine on a vertical or zero-length shot (Compass writes -999
+            // there), else the shot cannot be placed
+            let vertical = inc.abs() >= 89.999 || back_inc.is_some_and(|b| b.abs() >= 89.999);
+            let omitted = bearing.is_nan() && back_az.is_none() && (vertical || length == 0.0);
+            let bearing = if omitted { 0.0 } else { bearing };
             if bearing.is_nan() && back_az.is_none() {
                 survey.add_finding(
                     "warning",
@@ -326,6 +338,7 @@ pub fn parse(content: &str) -> Survey {
                 to_station,
                 trip,
                 declination,
+                azimuth_omitted: omitted,
             };
             for st in [&raw.from, &raw.to] {
                 let n = station_refs.get(st).copied().unwrap_or(0);
@@ -340,7 +353,8 @@ pub fn parse(content: &str) -> Survey {
         let is_carrier = r.distance == 0.0
             && has_lrud
             && station_refs.get(&r.to) == Some(&1)
-            && !r.flags.contains('S');
+            && !r.flags.contains('S')
+            && !keep.contains(&r.to);
         if !r.to_station && has_lrud {
             station_lrud.set(&r.from, r.lrud.clone()); // the last reading wins
         }
@@ -354,6 +368,7 @@ pub fn parse(content: &str) -> Survey {
             to: if splay { String::new() } else { r.to.clone() },
             distance: r.distance,
             azimuth: r.azimuth,
+            azimuth_omitted: r.azimuth_omitted,
             inclination: r.inclination,
             back_azimuth: r.back_azimuth,
             back_inclination: r.back_inclination,
