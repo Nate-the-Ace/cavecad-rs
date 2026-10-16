@@ -314,7 +314,14 @@ pub fn export_survey(format: &str) -> String {
                     ok: true,
                     text,
                     extension: f.extensions()[0],
-                    message: String::new(),
+                    // names the format could not hold, and what they were written as
+                    message: survey
+                        .findings()
+                        .iter()
+                        .filter(|x| x.code == "export-renamed")
+                        .map(|x| x.message.clone())
+                        .collect::<Vec<_>>()
+                        .join(" "),
                 }
             }
         }),

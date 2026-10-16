@@ -17,6 +17,7 @@ pub mod csv;
 mod document;
 pub mod js;
 mod model;
+mod names;
 pub mod project;
 pub mod survex;
 pub mod th2;
@@ -106,7 +107,37 @@ impl Format {
 
     /// Writes a survey in this format. The writers first make sure the survey has its trip table
     /// (which is why they take it mutably), exactly as the old ones did.
+    ///
+    /// A station name this format cannot hold is renamed first (see `names`), and the renames are
+    /// added to the survey's findings for whoever is exporting.
     pub fn write(self, survey: &mut Survey) -> String {
+        let renamed = names::make_safe(self, survey);
+        if !renamed.is_empty() {
+            let shown: Vec<String> = renamed
+                .iter()
+                .take(6)
+                .map(|(a, b)| format!("\"{a}\" as {b}"))
+                .collect();
+            survey.add_finding(
+                "warning",
+                "export-renamed",
+                format!(
+                    "{} station name{} cannot be written in {} as {} stand{}, so {} written {}{}.",
+                    renamed.len(),
+                    if renamed.len() == 1 { "" } else { "s" },
+                    self.label(),
+                    if renamed.len() == 1 { "it" } else { "they" },
+                    if renamed.len() == 1 { "s" } else { "" },
+                    if renamed.len() == 1 {
+                        "it is"
+                    } else {
+                        "they are"
+                    },
+                    shown.join(", "),
+                    if renamed.len() > 6 { ", ..." } else { "" }
+                ),
+            );
+        }
         match self {
             Format::Compass => compass::write(survey),
             Format::Walls => walls::write(survey),

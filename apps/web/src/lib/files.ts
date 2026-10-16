@@ -396,7 +396,9 @@ export async function exportSurvey(format: string): Promise<string | null> {
   if (!r.ok) return r.message;
   const label = engine.surveyFormats().find((f) => f.id === format)?.label ?? format;
   const name = await writeNew(`${safeName(stem(cave.fileName))}.${r.extension}`, r.text, 'text/plain', [{ description: label, accept: { 'text/plain': [`.${r.extension}`] } }]);
-  return name ? `Exported ${name} (${label})` : null;
+  // a station name the format cannot hold was written another way: say which
+  if (name && r.message) engine.log('warn', 'export', r.message);
+  return name ? `Exported ${name} (${label})${r.message ? ` -- ${r.message}` : ''}` : null;
 }
 
 /** Exports the whole project: the cave, its DXF and everything in the scans folder, as one zip. */
