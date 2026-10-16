@@ -104,7 +104,7 @@ fn mutate(text: &str, r: &mut Rng) -> String {
                 let j = r.below(lines.len());
                 lines.swap(i, j);
             }
-            3 | 4 | 5 => {
+            3..=5 => {
                 // a word replaced by poison
                 let mut w: Vec<String> = lines[i].split(' ').map(str::to_string).collect();
                 let k = r.below(w.len());

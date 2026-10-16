@@ -37,7 +37,8 @@ mod ties {
 
     #[test]
     fn degenerate_ties_never_give_nonsense() {
-        let cases: &[(&str, &[(&str, [f64; 2])])] = &[
+        type Ties<'a> = &'a [(&'a str, [f64; 2])];
+        let cases: &[(&str, Ties)] = &[
             // the same marker twice
             (
                 "point 0 0 station -name a\npoint 0 0 station -name a\npoint 100 0 station -name b\npoint 0 100 station -name c\n",
