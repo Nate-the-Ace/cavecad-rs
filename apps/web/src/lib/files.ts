@@ -28,7 +28,7 @@ type Picker = {
 };
 const picker = window as unknown as Picker;
 /** The survey data files Open and Import read (Compass, Walls, Survex, Therion, CSV). */
-const SURVEY_EXTS = ['.dat', '.srv', '.svx', '.th', '.csv', '.txt', '.mak', '.wpj', '.thconfig'];
+const SURVEY_EXTS = ['.dat', '.srv', '.svx', '.th', '.csv', '.tsv', '.txt', '.mak', '.wpj', '.thconfig'];
 /** A project file: one that names the survey files of a cave (Compass .mak, Walls .wpj, Therion thconfig). */
 const isProjectFile = (name: string) => /\.(mak|wpj|thconfig)$|(^|[\\/])thconfig(\.[^\\/]*)?$/i.test(name);
 const isSurveyFile = (name: string) => SURVEY_EXTS.some((e) => name.toLowerCase().endsWith(e)) || isProjectFile(name);

@@ -139,3 +139,9 @@ fn a_csv_nothing_can_be_read_from_says_so() {
     assert!(s.shots.is_empty());
     assert!(s.findings().iter().any(|f| f.code == "csv-no-legs"));
 }
+
+#[test]
+fn a_tab_separated_file_is_read_as_csv() {
+    let t = "From\tTo\tDistance\tAzimuth\tInclination\nA1\tA2\t10\t90\t0\n";
+    assert_eq!(cave_formats::read_any("x.tsv", t, &|_| None).unwrap().1.shots.len(), 1);
+}

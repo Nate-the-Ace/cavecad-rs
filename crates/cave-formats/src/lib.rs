@@ -90,7 +90,7 @@ impl Format {
             Format::Walls => &["srv"],
             Format::Survex => &["svx"],
             Format::Therion => &["th"],
-            Format::Csv => &["csv", "txt"],
+            Format::Csv => &["csv", "txt", "tsv"],
         }
     }
 
