@@ -11,8 +11,8 @@
 use crate::tile::{self, Layout};
 use crate::title::{self, Values};
 use crate::{
-    bar_for, furniture, papers, piece_shapes, title_height, Furniture, North, Piece, Shape, Title,
-    Wants, CHAR_WIDTH, FT_PER_M, MARGIN_INCHES, TEXT,
+    CHAR_WIDTH, FT_PER_M, Furniture, MARGIN_INCHES, North, Piece, Shape, TEXT, Title, Wants,
+    bar_for, furniture, papers, piece_shapes, title_height,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -156,7 +156,10 @@ impl Placed {
         let (dx, dy) = ((x - self.center[0]) * self.k, (y - self.center[1]) * self.k);
         let t = self.twist.to_radians();
         let (c, s) = (t.cos(), t.sin());
-        let mid = [(self.rect[0] + self.rect[2]) / 2.0, (self.rect[1] + self.rect[3]) / 2.0];
+        let mid = [
+            (self.rect[0] + self.rect[2]) / 2.0,
+            (self.rect[1] + self.rect[3]) / 2.0,
+        ];
         [mid[0] + dx * c - dy * s, mid[1] + dx * s + dy * c]
     }
 }
@@ -184,7 +187,10 @@ pub fn paper_size(def: &SheetDef) -> Option<(f64, f64)> {
 
 /// The title block's words as printed: a person's typing wins, a linked field follows the notebook, and
 /// the Sheet line is the sheet's name.
-pub fn effective_values(def: &SheetDef, filled: &BTreeMap<String, String>) -> BTreeMap<String, String> {
+pub fn effective_values(
+    def: &SheetDef,
+    filled: &BTreeMap<String, String>,
+) -> BTreeMap<String, String> {
     let mut v = title::plain(&def.values);
     let mut merged = def.values.clone();
     title::sync(&mut merged, filled);
@@ -231,8 +237,15 @@ fn pack(def: &SheetDef, w: f64, th: f64) -> Furniture {
 pub fn default_rect(def: &SheetDef, values: &BTreeMap<String, String>) -> Option<[f64; 4]> {
     let (w, h) = paper_size(def)?;
     let (name, lines) = title_words(values);
-    let th = title_height(&Title { name: &name, lines: &lines });
-    let band = if def.band { pack(def, w, th).footer } else { 0.0 };
+    let th = title_height(&Title {
+        name: &name,
+        lines: &lines,
+    });
+    let band = if def.band {
+        pack(def, w, th).footer
+    } else {
+        0.0
+    };
     let m = MARGIN_INCHES;
     Some([m, m + band, w - m, h - m])
 }
@@ -243,11 +256,17 @@ pub fn render(def: &SheetDef, ctx: &Context) -> Option<Rendered> {
     let m = MARGIN_INCHES;
     let values = effective_values(def, &ctx.filled);
     let (name, lines) = title_words(&values);
-    let words = Title { name: &name, lines: &lines };
+    let words = Title {
+        name: &name,
+        lines: &lines,
+    };
     let th = title_height(&words);
     let packed = pack(def, w, th);
     let mut warnings = Vec::new();
-    let mut shapes = vec![Shape::Rect { a: [m, m], b: [w - m, h - m] }];
+    let mut shapes = vec![Shape::Rect {
+        a: [m, m],
+        b: [w - m, h - m],
+    }];
     let frames: Vec<Placed> = def
         .frames
         .iter()
@@ -263,7 +282,12 @@ pub fn render(def: &SheetDef, ctx: &Context) -> Option<Rendered> {
         })
         .collect();
     for d in &def.pieces {
-        let Some(mut piece) = packed.pieces.iter().find(|p| p.kind == d.kind.as_str()).cloned() else {
+        let Some(mut piece) = packed
+            .pieces
+            .iter()
+            .find(|p| p.kind == d.kind.as_str())
+            .cloned()
+        else {
             continue;
         };
         if let Some(at) = d.at {
@@ -287,7 +311,8 @@ pub fn render(def: &SheetDef, ctx: &Context) -> Option<Rendered> {
             b: [x + piece.w + pad, y + piece.h + pad],
         });
         piece_shapes(&mut shapes, &piece, [m, m], &words, fpi, &north);
-        if x < m - 1e-9 || y < m - 1e-9 || x + piece.w > w - m + 1e-9 || y + piece.h > h - m + 1e-9 {
+        if x < m - 1e-9 || y < m - 1e-9 || x + piece.w > w - m + 1e-9 || y + piece.h > h - m + 1e-9
+        {
             warnings.push(format!("The {} runs past the margin.", d.kind));
         }
     }
@@ -303,7 +328,13 @@ pub fn render(def: &SheetDef, ctx: &Context) -> Option<Rendered> {
             });
         }
     }
-    Some(Rendered { w, h, frames, shapes, warnings })
+    Some(Rendered {
+        w,
+        h,
+        frames,
+        shapes,
+        warnings,
+    })
 }
 
 fn text_len(s: &str, h: f64) -> f64 {
@@ -336,23 +367,53 @@ fn corner_and_matches(out: &mut Vec<Shape>, def: &SheetDef, a: &Auto, w: f64, h:
         match e.edge.as_str() {
             "E" => {
                 let x = r[2] - half;
-                out.push(Shape::Dash { a: [x, r[1]], b: [x, r[3]] });
-                out.push(Shape::Turned { at: [x - 0.06, (r[1] + r[3]) / 2.0 - len / 2.0], h: t, s: text, deg: 90.0 });
+                out.push(Shape::Dash {
+                    a: [x, r[1]],
+                    b: [x, r[3]],
+                });
+                out.push(Shape::Turned {
+                    at: [x - 0.06, (r[1] + r[3]) / 2.0 - len / 2.0],
+                    h: t,
+                    s: text,
+                    deg: 90.0,
+                });
             }
             "W" => {
                 let x = r[0] + half;
-                out.push(Shape::Dash { a: [x, r[1]], b: [x, r[3]] });
-                out.push(Shape::Turned { at: [x + 0.06 + t, (r[1] + r[3]) / 2.0 - len / 2.0], h: t, s: text, deg: 90.0 });
+                out.push(Shape::Dash {
+                    a: [x, r[1]],
+                    b: [x, r[3]],
+                });
+                out.push(Shape::Turned {
+                    at: [x + 0.06 + t, (r[1] + r[3]) / 2.0 - len / 2.0],
+                    h: t,
+                    s: text,
+                    deg: 90.0,
+                });
             }
             "N" => {
                 let y = r[3] - half;
-                out.push(Shape::Dash { a: [r[0], y], b: [r[2], y] });
-                out.push(Shape::Text { at: [(r[0] + r[2]) / 2.0 - len / 2.0, y - 0.06 - t], h: t, s: text });
+                out.push(Shape::Dash {
+                    a: [r[0], y],
+                    b: [r[2], y],
+                });
+                out.push(Shape::Text {
+                    at: [(r[0] + r[2]) / 2.0 - len / 2.0, y - 0.06 - t],
+                    h: t,
+                    s: text,
+                });
             }
             _ => {
                 let y = r[1] + half;
-                out.push(Shape::Dash { a: [r[0], y], b: [r[2], y] });
-                out.push(Shape::Text { at: [(r[0] + r[2]) / 2.0 - len / 2.0, y + 0.06], h: t, s: text });
+                out.push(Shape::Dash {
+                    a: [r[0], y],
+                    b: [r[2], y],
+                });
+                out.push(Shape::Text {
+                    at: [(r[0] + r[2]) / 2.0 - len / 2.0, y + 0.06],
+                    h: t,
+                    s: text,
+                });
             }
         }
     }
@@ -400,21 +461,37 @@ pub fn generate(g: &Gen) -> Vec<SheetDef> {
     let Some(paper) = papers().into_iter().find(|p| p.name == g.paper) else {
         return Vec::new();
     };
-    let (pw, ph) = if g.layout.turned { (paper.h, paper.w) } else { (paper.w, paper.h) };
+    let (pw, ph) = if g.layout.turned {
+        (paper.h, paper.w)
+    } else {
+        (paper.w, paper.h)
+    };
     g.layout
         .tiles
         .iter()
         .map(|t| {
             let mut pieces = Vec::new();
             if g.title && t.title {
-                pieces.push(PieceDef { kind: "title".into(), frame: String::new(), at: None });
+                pieces.push(PieceDef {
+                    kind: "title".into(),
+                    frame: String::new(),
+                    at: None,
+                });
             }
             for (on, k) in [(g.bar, "bar"), (g.north, "north")] {
                 if on {
-                    pieces.push(PieceDef { kind: k.into(), frame: String::new(), at: None });
+                    pieces.push(PieceDef {
+                        kind: k.into(),
+                        frame: String::new(),
+                        at: None,
+                    });
                 }
             }
-            let name = if tiled { t.id.clone() } else { "Plan".to_string() };
+            let name = if tiled {
+                t.id.clone()
+            } else {
+                "Plan".to_string()
+            };
             let c = t.map.centre();
             SheetDef {
                 id: generated_id(g.group, &t.id),
@@ -443,7 +520,10 @@ pub fn generate(g: &Gen) -> Vec<SheetDef> {
                     matches: t
                         .matches
                         .iter()
-                        .map(|e| MatchEdge { edge: e.edge.to_string(), to: e.to.clone() })
+                        .map(|e| MatchEdge {
+                            edge: e.edge.to_string(),
+                            to: e.to.clone(),
+                        })
                         .collect(),
                 }),
             }
@@ -462,7 +542,11 @@ pub enum Change {
 
 /// Brings the stored sheets of one group up to date with a fresh generation: a sheet a person has edited
 /// is left alone (and reported), the rest are rewritten, and generated sheets the grid no longer has go.
-pub fn merge(existing: &[SheetDef], generated: Vec<SheetDef>, group: &str) -> (Vec<Change>, Vec<String>) {
+pub fn merge(
+    existing: &[SheetDef],
+    generated: Vec<SheetDef>,
+    group: &str,
+) -> (Vec<Change>, Vec<String>) {
     let mut changes = Vec::new();
     let mut kept = Vec::new();
     let ids: Vec<&str> = generated.iter().map(|s| s.id.as_str()).collect();
@@ -487,7 +571,14 @@ pub fn merge(existing: &[SheetDef], generated: Vec<SheetDef>, group: &str) -> (V
 }
 
 /// A new sheet with one viewframe over the whole box, the way a person adds one by hand.
-pub fn blank(id: &str, name: &str, paper: &str, turned: bool, center: [f64; 2], feet_per_inch: f64) -> Option<SheetDef> {
+pub fn blank(
+    id: &str,
+    name: &str,
+    paper: &str,
+    turned: bool,
+    center: [f64; 2],
+    feet_per_inch: f64,
+) -> Option<SheetDef> {
     let mut def = SheetDef {
         id: id.to_string(),
         name: name.to_string(),
@@ -496,7 +587,11 @@ pub fn blank(id: &str, name: &str, paper: &str, turned: bool, center: [f64; 2], 
         frames: Vec::new(),
         pieces: ["title", "bar", "north"]
             .iter()
-            .map(|k| PieceDef { kind: (*k).into(), frame: String::new(), at: None })
+            .map(|k| PieceDef {
+                kind: (*k).into(),
+                frame: String::new(),
+                at: None,
+            })
             .collect(),
         values: Values::new(),
         band: true,
@@ -526,5 +621,8 @@ pub fn bar_inches(feet_per_inch: f64) -> f64 {
 /// Is a piece's box (as packed or moved) within the margin? Used by tests and the editor.
 pub fn piece_fits(p: &Piece, paper_w: f64, paper_h: f64) -> bool {
     let m = MARGIN_INCHES;
-    m + p.x >= m - 1e-9 && m + p.y >= m - 1e-9 && m + p.x + p.w <= paper_w - m + 1e-9 && m + p.y + p.h <= paper_h - m + 1e-9
+    m + p.x >= m - 1e-9
+        && m + p.y >= m - 1e-9
+        && m + p.x + p.w <= paper_w - m + 1e-9
+        && m + p.y + p.h <= paper_h - m + 1e-9
 }

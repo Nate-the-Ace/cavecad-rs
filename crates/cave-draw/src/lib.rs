@@ -17,6 +17,7 @@ pub use station_survey::{
     set_station_benchmark, set_station_walls, set_walls_at, shot_now, walls_at, walls_source,
 };
 
+pub mod blobs;
 pub mod patterns;
 
 use cave_doc::{Action, AnchorError, Document, Field, Frame, Kind, Value, anchor_stroke};

@@ -594,13 +594,21 @@ pub fn piece_shapes(
                     b: mat(mh, 0.0),
                 });
                 out.push(Shape::Fill {
-                    pts: vec![mat(mh, 0.0), mat(mh - head_len * 0.8, 0.0), mat(mh - head_len * 0.8, head_half)],
+                    pts: vec![
+                        mat(mh, 0.0),
+                        mat(mh - head_len * 0.8, 0.0),
+                        mat(mh - head_len * 0.8, head_half),
+                    ],
                 });
                 let lab = mat(mh + 0.08, 0.04);
                 out.push(Shape::Text {
                     at: lab,
                     h: TEXT.small,
-                    s: format!("MN {:.1}\u{b0}{}", d.abs(), if d >= 0.0 { "E" } else { "W" }),
+                    s: format!(
+                        "MN {:.1}\u{b0}{}",
+                        d.abs(),
+                        if d >= 0.0 { "E" } else { "W" }
+                    ),
                 });
             }
         }
@@ -624,14 +632,7 @@ pub fn shapes(
         b: [paper_w - m, paper_h - m],
     }];
     for p in &f.pieces {
-        piece_shapes(
-            &mut out,
-            p,
-            [m, m],
-            title,
-            feet_per_inch,
-            &North::default(),
-        );
+        piece_shapes(&mut out, p, [m, m], title, feet_per_inch, &North::default());
     }
     out
 }

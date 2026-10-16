@@ -1,6 +1,6 @@
 // Loads the Rust engine (WASM) once and re-exports the few calls the UI uses.
 import type { FillDef as PatternFillDef, LineDef, Motif, PatternKind, PatternLibrary, PatternMarks, Prim } from './patterns';
-import init, { start, log, console_events, console_clear, engine_version, open_demo, scene, profile_runs, profile_band, add_profile_sketch, undo, redo, edit_state, passage_mesh, shading, palette, open_dxf, save_dxf, section_stations, section_at, add_section_sketch, map_sections, place_section, map_profile_sketches, add_map_line, paste_lines, last_added_id, map_lines, draw_tools, edit_line, edit_leader, delete_line, set_line_closed, set_line_kind, line_info, set_line_flip, set_line_style, drawing_scale, set_drawing_scale, linetypes, pattern_library, motif_from_drawing, save_pattern, remove_pattern, check_pattern, line_pattern_marks, fill_pattern_marks, line_pattern_marks_named, fill_pattern_marks_named, set_line_text, ornament, callout, sheet_options, sheet_plan, flipped_lines, revision, station_rows, set_station_mark, station_detail, shot_detail, set_shot, set_station_walls, set_station_note, set_station_benchmark, symbols, fills, fill_marks, draw_tool_groups, sync_outbox, sync_apply, sync_snapshot, sync_load, notebook_trips, notebook_page, notebook_set_reading, notebook_set_walls, notebook_set_note, notebook_set_trip_field, notebook_set_declination, notebook_add_shot, notebook_remove_shot, notebook_rename_station, notebook_new_trip, scan_links, scan_link, scan_unlink, scan_placements, scan_alignment, scan_add_anchor, scan_remove_anchor, scan_set_mode, scan_trim, scan_set_trim, scan_view_stations, new_cave, scan_completed, scan_set_complete, shelf_summary, shelf_summarize, shelf_summarize_demo, shelf_summarize_native, survey_sync_trip, survey_snapshot, survey_connect, survey_frame, survey_flush_link, survey_disconnect, survey_link_down, survey_sim_station, survey_settle_now, survey_accept, survey_discard, survey_undo_last, survey_set_mode, survey_set_backsights, survey_set_auto, survey_skip_backsight, survey_next_station, survey_set_names, survey_set_standing_wall, instrument_catalog, instrument_identify, sketch_source, sketch_views, sketch_anchor, sketch_place, snap_pick, snap_commit, snap_session, snap_along, snap_catalog } from '../wasm/cave_wasm.js';
+import init, { start, log, console_events, console_clear, engine_version, open_demo, scene, profile_runs, profile_band, add_profile_sketch, undo, redo, edit_state, passage_mesh, shading, palette, open_dxf, save_dxf, section_stations, section_at, add_section_sketch, map_sections, place_section, map_profile_sketches, add_map_line, paste_lines, last_added_id, map_lines, draw_tools, edit_line, edit_leader, delete_line, set_line_closed, set_line_kind, line_info, set_line_flip, set_line_style, drawing_scale, set_drawing_scale, linetypes, pattern_library, motif_from_drawing, save_pattern, remove_pattern, check_pattern, line_pattern_marks, fill_pattern_marks, line_pattern_marks_named, fill_pattern_marks_named, set_line_text, ornament, callout, sheet_options, sheet_plan, sheets_list, sheet_put, sheet_remove, sheet_new, sheet_render, sheet_title_values, sheet_gen_params, sheet_generate, sheet_set_values, flipped_lines, revision, station_rows, set_station_mark, station_detail, shot_detail, set_shot, set_station_walls, set_station_note, set_station_benchmark, symbols, fills, fill_marks, draw_tool_groups, sync_outbox, sync_apply, sync_snapshot, sync_load, notebook_trips, notebook_page, notebook_set_reading, notebook_set_walls, notebook_set_note, notebook_set_trip_field, notebook_set_declination, notebook_add_shot, notebook_remove_shot, notebook_rename_station, notebook_new_trip, scan_links, scan_link, scan_unlink, scan_placements, scan_alignment, scan_add_anchor, scan_remove_anchor, scan_set_mode, scan_trim, scan_set_trim, scan_view_stations, new_cave, scan_completed, scan_set_complete, shelf_summary, shelf_summarize, shelf_summarize_demo, shelf_summarize_native, survey_sync_trip, survey_snapshot, survey_connect, survey_frame, survey_flush_link, survey_disconnect, survey_link_down, survey_sim_station, survey_settle_now, survey_accept, survey_discard, survey_undo_last, survey_set_mode, survey_set_backsights, survey_set_auto, survey_skip_backsight, survey_next_station, survey_set_names, survey_set_standing_wall, instrument_catalog, instrument_identify, sketch_source, sketch_views, sketch_anchor, sketch_place, snap_pick, snap_commit, snap_session, snap_along, snap_catalog } from '../wasm/cave_wasm.js';
 
 import { setInkPalette } from './ink';
 import { setOrnamentSource } from './section-glyph';
@@ -118,7 +118,107 @@ export interface SheetSetup {
   north: boolean;
 }
 /** A shape of the sheet's furniture, in inches from the paper's lower left corner. */
-export type SheetShape = { t: 'line'; a: [number, number]; b: [number, number] } | { t: 'rect'; a: [number, number]; b: [number, number] } | { t: 'fill'; pts: [number, number][] } | { t: 'text'; at: [number, number]; h: number; s: string };
+export type SheetShape =
+  | { t: 'line'; a: [number, number]; b: [number, number] }
+  | { t: 'rect'; a: [number, number]; b: [number, number] }
+  | { t: 'fill'; pts: [number, number][] }
+  | { t: 'back'; a: [number, number]; b: [number, number] }
+  | { t: 'dash'; a: [number, number]; b: [number, number] }
+  | { t: 'turned'; at: [number, number]; h: number; s: string; deg: number }
+  | { t: 'text'; at: [number, number]; h: number; s: string };
+/** A window onto the map: what shows in a box on the paper, at what scale and turn. */
+export interface Viewframe {
+  id: string;
+  /** The box on the paper [x1, y1, x2, y2], inches. */
+  rect: [number, number, number, number];
+  /** The map point at the box's middle, metres. */
+  center: [number, number];
+  feet_per_inch: number;
+  /** Degrees counter-clockwise. */
+  twist: number;
+  locked: boolean;
+  hidden: string[];
+  clip: [number, number][];
+  label: string;
+}
+/** A piece of furniture on a sheet. */
+export interface PieceDef {
+  kind: 'title' | 'bar' | 'north';
+  frame: string;
+  /** Lower left corner in inches when a person moved it. */
+  at: [number, number] | null;
+}
+/** A title block field's stored state. */
+export interface TitleValue {
+  text: string;
+  link: 'auto' | 'manual';
+}
+/** Where a generated sheet came from. */
+export interface SheetAuto {
+  group: string;
+  tile: string;
+  edited: boolean;
+  overlap_in: number;
+  matches: { edge: string; to: string }[];
+}
+/** One stored sheet. */
+export interface SheetDef {
+  id: string;
+  name: string;
+  paper: string;
+  turned: boolean;
+  frames: Viewframe[];
+  pieces: PieceDef[];
+  values: Record<string, TitleValue>;
+  band: boolean;
+  auto: SheetAuto | null;
+}
+/** A viewframe placed on the paper: draw the map through it. */
+export interface PlacedFrame {
+  id: string;
+  rect: [number, number, number, number];
+  clip: [number, number][];
+  center: [number, number];
+  /** Inches of paper per metre of cave. */
+  k: number;
+  twist: number;
+  hidden: string[];
+  label: string;
+}
+/** A sheet drawn: the paper, its viewframes and the furniture. */
+export interface RenderedSheet {
+  w: number;
+  h: number;
+  frames: PlacedFrame[];
+  shapes: SheetShape[];
+  warnings: string[];
+}
+/** How a grid of sheets is made (kept in the cave). */
+export interface GenParams {
+  group: string;
+  paper: string;
+  /** 0 landscape, 1 portrait, 2 whichever needs fewer sheets. */
+  turned: 0 | 1 | 2;
+  /** Feet of cave per inch; 0 for the most detailed scale that fits one sheet. */
+  feet_per_inch: number;
+  shift: [number, number];
+  title: boolean;
+  bar: boolean;
+  north: boolean;
+  footer: number;
+  values: Record<string, TitleValue>;
+  bounds?: [number, number, number, number];
+  occupied?: [number, number, number, number][];
+}
+/** What generating sheets did. */
+export interface GenResult {
+  sheets: number;
+  description: string;
+  too_many: boolean;
+  kept: string[];
+  scale: number;
+  turned: boolean;
+}
 /** A sheet laid out: paper size (inches), the box the map may use, the scale and the furniture. */
 export interface SheetPlan {
   w: number;
@@ -516,6 +616,27 @@ const rawEngine = {
   setLineFlip: (id: string, flip: boolean): string => set_line_flip(id, flip),
   /** The papers and plot scales a sheet offers. */
   sheetOptions: (): SheetOptions => JSON.parse(sheet_options()),
+  /** Every stored sheet. */
+  sheetsList: (): SheetDef[] => JSON.parse(sheets_list()),
+  /** Stores a sheet (one undoable edit). */
+  sheetPut: (d: SheetDef): string => sheet_put(JSON.stringify(d)),
+  /** Deletes a sheet. */
+  sheetRemove: (id: string): string => sheet_remove(id),
+  /** A new blank sheet centred on a map point; its id, or `error: ...`. */
+  sheetNew: (name: string, paper: string, turned: boolean, cx: number, cy: number, feetPerInch: number): string => sheet_new(name, paper, turned, cx, cy, feetPerInch),
+  /** A stored sheet drawn (the title block follows the notebook), or null. */
+  sheetRender: (id: string): RenderedSheet | null => JSON.parse(sheet_render(id)),
+  /** What each title block field shows on a sheet now. */
+  sheetTitleValues: (id: string): Record<string, string> | null => JSON.parse(sheet_title_values(id)),
+  /** What a group of sheets was last generated with, or null. */
+  sheetGenParams: (group: string): GenParams | null => JSON.parse(sheet_gen_params(group)),
+  /** Lays the cave over sheets and stores them; sheets changed by hand are kept. */
+  sheetGenerate: (p: GenParams): GenResult | string => {
+    const r = sheet_generate(JSON.stringify(p));
+    return r.startsWith('error') ? r : JSON.parse(r);
+  },
+  /** Sets the title block's words on every sheet of a group. */
+  sheetSetValues: (group: string, v: Record<string, TitleValue>): string => sheet_set_values(group, JSON.stringify(v)),
   /** A sheet laid out for a cave this many metres wide and tall (see `sheet_plan` in the engine). */
   sheetPlan: (width: number, height: number, p: SheetSetup): SheetPlan => JSON.parse(sheet_plan(width, height, p.paper, p.turned, p.feetPerInch, p.name, JSON.stringify(p.lines), p.title, p.bar, p.north)),
   ornament: (kind: string, curve: [number, number][], closed: boolean, flip: boolean, id: string, survey: [number, number][]): { spine: boolean; lines: [number, number][][] } => JSON.parse(ornament(kind, JSON.stringify(curve), closed, flip, id, JSON.stringify(survey))),
