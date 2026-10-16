@@ -55,7 +55,8 @@ impl Report {
     pub fn messages(&self, file: &str) -> Vec<String> {
         let mut out = Vec::new();
         let placed: usize = self.placed.values().sum();
-        out.push(format!(
+        if placed > 0 {
+            out.push(format!(
             "{file}: {placed} sketch scrap{} placed on the map ({} lines, {} symbols, {} words, {} fills).",
             plural(placed),
             self.lines,
@@ -63,6 +64,7 @@ impl Report {
             self.words,
             self.fills
         ));
+        }
         if let Some(n) = self.placed.get("one-station") {
             out.push(format!(
                 "{n} scrap{} marked only one station, so {} placed at the scale it declares, north up the page, and not bent onto the survey. Check {} size and direction.",
@@ -72,7 +74,7 @@ impl Report {
             ));
         }
         for (name, why) in &self.not_placed {
-            out.push(format!("Scrap \"{name}\" was not placed: {why}"));
+            out.push(format!("{file}: scrap \"{name}\" was not placed: {why}"));
         }
         for (view, n) in &self.other_views {
             let what = match view.as_str() {
@@ -81,7 +83,7 @@ impl Report {
                 _ => "other",
             };
             out.push(format!(
-                "{n} {what} scrap{} ({view}) not drawn: only plan sketches are brought in so far.",
+                "{file}: {n} {what} scrap{} ({view}) not drawn: only plan sketches are brought in so far.",
                 plural(*n)
             ));
         }

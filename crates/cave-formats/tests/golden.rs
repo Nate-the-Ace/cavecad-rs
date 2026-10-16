@@ -232,9 +232,28 @@ fn th2_check(key: &str) -> (usize, Vec<String>) {
     let cases = cases.as_array().unwrap();
     let mut bad = Vec::new();
     for case in cases {
-        let actual =
+        let mut actual =
             serde_json::to_value(cave_formats::th2::parse(case["input"].as_str().unwrap()))
                 .unwrap();
+        // deliberate divergence: the old reader missed an area's boundary written Therion's way
+        // (bare line ids), so where it found none, the ids read here are not held against it
+        for (s, old) in actual["scraps"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .zip(case["sketch"]["scraps"].as_array().unwrap())
+        {
+            for (a, o) in s["areas"]
+                .as_array_mut()
+                .unwrap()
+                .iter_mut()
+                .zip(old["areas"].as_array().unwrap())
+            {
+                if o["lineIds"].as_array().is_some_and(|v| v.is_empty()) {
+                    a["lineIds"] = serde_json::json!([]);
+                }
+            }
+        }
         if let Some(d) = diff(&case["sketch"], &actual, "") {
             bad.push(format!("{}: {d}", case["file"].as_str().unwrap()));
         }

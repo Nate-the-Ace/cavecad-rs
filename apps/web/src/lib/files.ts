@@ -32,7 +32,10 @@ const SURVEY_EXTS = ['.dat', '.srv', '.svx', '.th', '.csv', '.txt', '.mak', '.wp
 /** A project file: one that names the survey files of a cave (Compass .mak, Walls .wpj, Therion thconfig). */
 const isProjectFile = (name: string) => /\.(mak|wpj|thconfig)$|(^|[\\/])thconfig(\.[^\\/]*)?$/i.test(name);
 const isSurveyFile = (name: string) => SURVEY_EXTS.some((e) => name.toLowerCase().endsWith(e)) || isProjectFile(name);
-const SURVEY_TYPES = [{ description: 'Survey data (Compass, Walls, Survex, Therion, CSV)', accept: { 'text/plain': SURVEY_EXTS } }];
+/** Picked with survey data, never read on their own: Therion sketch pages, drawn onto the map of the survey that pulls them in. */
+const SKETCH_EXTS = ['.th2'];
+const isSketchFile = (name: string) => SKETCH_EXTS.some((e) => name.toLowerCase().endsWith(e));
+const SURVEY_TYPES = [{ description: 'Survey data (Compass, Walls, Survex, Therion, CSV) and Therion sketches', accept: { 'text/plain': [...SURVEY_EXTS, ...SKETCH_EXTS] } }];
 const OPEN_TYPES = [{ description: 'A CaveCAD cave, a DXF drawing, a survey data file, or a survey imported from an old drawing', accept: { 'application/zip': [EXT], 'application/dxf': ['.dxf'], 'application/json': ['.json'], 'text/plain': SURVEY_EXTS } }];
 const SAVE_TYPES = [{ description: 'CaveCAD cave', accept: { 'application/zip': [EXT] } }];
 const DXF_SAVE_TYPES = [{ description: 'DXF drawing', accept: { 'application/dxf': ['.dxf'] } }];
@@ -84,7 +87,7 @@ async function chooseSurveyFiles(): Promise<{ bytes: Uint8Array; name: string }[
     const input = document.createElement('input');
     input.type = 'file';
     input.multiple = true;
-    input.accept = SURVEY_EXTS.join(',');
+    input.accept = [...SURVEY_EXTS, ...SKETCH_EXTS].join(',');
     input.onchange = async () => resolve(input.files?.length ? await Promise.all([...input.files].map(read)) : null);
     input.oncancel = () => resolve(null);
     input.click();
@@ -292,7 +295,9 @@ export async function importSurvey(): Promise<{ ok: boolean; message: string } |
   if (!confirmDiscard()) return null;
   const files = picked.map((f) => ({ name: f.name, text: new TextDecoder().decode(f.bytes) }));
   // a project file, or a Therion file that pulls the others in, is the one to read; otherwise the first
-  const main = files.find((f) => isProjectFile(f.name)) ?? files.find((f) => /^\s*input\s/im.test(f.text)) ?? files[0];
+  const data = files.filter((f) => !isSketchFile(f.name));
+  if (!data.length) return { ok: false, message: 'Sketch pages (.th2) are drawn onto a survey: pick the Therion file that pulls them in, with them.' };
+  const main = data.find((f) => isProjectFile(f.name)) ?? data.find((f) => /^\s*input\s/im.test(f.text)) ?? data[0];
   const others = Object.fromEntries(files.filter((f) => f !== main).map((f) => [f.name, f.text]));
   const r = engine.importSurvey(main.name, main.text, others);
   if (!r.ok) return { ok: false, message: r.message };
@@ -303,7 +308,7 @@ export async function importSurvey(): Promise<{ ok: boolean; message: string } |
   cave.name = stem(main.name);
   shelf0();
   for (const w of r.warnings) engine.log('warn', 'import', w);
-  if (files.length > 1 && !isProjectFile(main.name) && !/^\s*input\s/im.test(main.text)) engine.log('warn', 'import', `Only ${main.name} was read: the other files picked with it were not used.`);
+  if (data.length > 1 && !isProjectFile(main.name) && !/^\s*input\s/im.test(main.text)) engine.log('warn', 'import', `Only ${main.name} was read: the other files picked with it were not used.`);
   cave.opened += 1; // the canvas re-reads and re-frames
   changed();
   markUnsaved(); // nothing is a CaveCAD file yet
@@ -313,7 +318,7 @@ export async function importSurvey(): Promise<{ ok: boolean; message: string } |
 
 /** The text files of a folder that could be survey data, by path inside it (largest file 20 MB). */
 async function chooseFolder(): Promise<{ name: string; files: Record<string, string> } | null> {
-  const wanted = (n: string) => isSurveyFile(n) || /\.th2$/i.test(n);
+  const wanted = (n: string) => isSurveyFile(n) || isSketchFile(n);
   const files: Record<string, string> = {};
   type Dir = { name: string; kind: 'directory'; values(): AsyncIterable<Dir | { name: string; kind: 'file'; getFile(): Promise<File> }> };
   const pickDir = (window as unknown as { showDirectoryPicker?: () => Promise<Dir> }).showDirectoryPicker;

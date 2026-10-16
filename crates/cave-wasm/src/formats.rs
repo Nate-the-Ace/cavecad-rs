@@ -156,18 +156,58 @@ pub(crate) fn read_folder(files_json: &str) -> Result<(String, Survey), String> 
 /// `{ok, message, warnings}`, as [`import_survey`].
 #[wasm_bindgen]
 pub fn import_folder(files: &str) -> String {
-    finish_import("the folder", read_folder(files))
+    finish_import("the folder", read_folder(files), files)
 }
 
 /// Opens a survey data file as the cave (replacing the one open). Returns JSON
 /// `{ok, message, warnings}`: what the reader could not use is in `warnings`.
 #[wasm_bindgen]
 pub fn import_survey(file_name: &str, text: &str, others: &str) -> String {
-    finish_import(file_name, read_survey(file_name, text, others))
+    finish_import(file_name, read_survey(file_name, text, others), others)
+}
+
+/// Draws the sketch pages a survey's project pulls in (`files`: JSON, path to text, where they are
+/// looked up) onto `doc`'s map. Returns what happened, as sentences.
+fn draw_sketches(doc: &mut cave_doc::Document, survey: &Survey, files: &str) -> Vec<String> {
+    let files: HashMap<String, String> = serde_json::from_str(files).unwrap_or_default();
+    let read = resolver(&files);
+    let aliases: Vec<(String, String)> = survey
+        .aliases
+        .iter()
+        .map(|(a, k)| (a.to_string(), k.clone()))
+        .collect();
+    let mut out = Vec::new();
+    // a fresh cave, so a fixed sequence (as `to_document` gives its survey) cannot collide
+    let mut ids = cave_id::SeqIds::new(0x5ce7);
+    for page in &survey.sketches {
+        let name = base(&page.path);
+        let Some(text) = read(&page.path) else {
+            out.push(format!(
+                "The sketch page {name} was not among the files picked, so its drawing is missing."
+            ));
+            continue;
+        };
+        let sketch = cave_formats::th2::parse(&text);
+        out.extend(
+            sketch
+                .findings
+                .iter()
+                .map(|f| format!("{name}: {}", f.message)),
+        );
+        let (actions, report) =
+            cave_th2::import(doc, &mut ids, &sketch, &page.survey, &aliases, true);
+        if let Err(e) = doc.edit(actions) {
+            out.push(format!("{name} could not be drawn ({e:?})."));
+            continue;
+        }
+        tracing::info!(source = "import", "drew sketch page {name}");
+        out.extend(report.messages(name));
+    }
+    out
 }
 
 /// Makes what was read the open cave, and says how it went.
-fn finish_import(file_name: &str, read: Result<(String, Survey), String>) -> String {
+fn finish_import(file_name: &str, read: Result<(String, Survey), String>, files: &str) -> String {
     let result = match read {
         Err(message) => OpenResult {
             ok: false,
@@ -180,7 +220,8 @@ fn finish_import(file_name: &str, read: Result<(String, Survey), String>) -> Str
                 message: format!("{file_name} could not be turned into a cave ({e})."),
                 warnings: Vec::new(),
             },
-            Ok(doc) => {
+            Ok(mut doc) => {
+                let drawn = draw_sketches(&mut doc, &survey, files);
                 let scene = cave_scene::build(&doc, true);
                 let message = format!(
                     "{}: {} stations, {} legs, {} loop closures",
@@ -198,6 +239,7 @@ fn finish_import(file_name: &str, read: Result<(String, Survey), String>) -> Str
                         .findings()
                         .iter()
                         .map(|f| f.message.clone())
+                        .chain(drawn)
                         .collect(),
                 }
             }
@@ -335,5 +377,34 @@ mod tests {
         let (_, survey) = read_survey("main.th", main, &others).unwrap();
         assert_eq!(survey.shots.len(), 1);
         assert!(survey.findings().is_empty(), "{:?}", survey.findings());
+    }
+
+    #[test]
+    fn a_therion_sketch_page_is_drawn_onto_the_map() {
+        let th = "survey cave\n  input pages/plan.th2\n  centreline\n    data normal from to length compass clino\n    1 2 10 90 0\n    2 3 10 0 0\n  endcentreline\nendsurvey\n";
+        let th2 = "encoding utf-8\nscrap s1 -projection plan -scale [0 0 100 0 0 0 10 0 m]\n  point 0 0 station -name 1\n  point 100 0 station -name 2\n  point 100 100 station -name 3\n  line wall\n    -10 10\n    90 10\n    90 110\n  endline\n  line border -id pool -close on\n    20 20\n    40 20\n    30 40\n  endline\n  area water\n    pool\n  endarea\n  point 50 0 stalagmite\n  point 50 50 label -text \"Big Room\"\nendscrap\n";
+        let others = serde_json::json!({ "plan.th2": th2 }).to_string();
+        let r: serde_json::Value =
+            serde_json::from_str(&import_survey("cave.th", th, &others)).unwrap();
+        assert_eq!(r["ok"], true, "{r}");
+        let said = r["warnings"].to_string();
+        assert!(
+            said.contains("1 sketch scrap placed on the map (1 lines, 1 symbols, 1 words, 1 fills"),
+            "{said}"
+        );
+        let lines: serde_json::Value = serde_json::from_str(&crate::map_lines(true)).unwrap();
+        let wall = lines
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|l| l["kind"] == "wall")
+            .unwrap();
+        // the sketch's (90, 110) is 1 m past station 3 at (10, 10) east and north
+        let last = &wall["points"][2];
+        assert!(
+            (last[0].as_f64().unwrap() - 9.0).abs() < 1e-6
+                && (last[1].as_f64().unwrap() - 11.0).abs() < 1e-6,
+            "{wall}"
+        );
     }
 }

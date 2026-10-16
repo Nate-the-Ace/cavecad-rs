@@ -454,11 +454,15 @@ pub fn parse(content: &str) -> Sketch {
                 ar.line_ids.push(tokens[1].clone());
                 continue;
             }
+            // Therion's own form: the boundary lines' ids, bare, one or more to a line. The old app
+            // read only `line <id>`, so every real area came through with no boundary.
             if is_option(&tokens[0]) {
                 let (_, opts) = options(&tokens);
                 for (k, v) in opts.iter() {
                     ar.options.set(k, v.clone());
                 }
+            } else {
+                ar.line_ids.extend(tokens.iter().cloned());
             }
             continue;
         }
