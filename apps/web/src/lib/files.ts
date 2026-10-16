@@ -4,6 +4,7 @@
 // cave's folder), and so is the survey alone in one of the standard cave data formats (Compass, Walls,
 // Survex, Therion, CSV), which Open and Import also read. Where the File System Access API exists (Chromium) the open file is remembered so
 // Save writes back to it; elsewhere Open uses a file input and Save downloads a copy.
+import { decodeSurveyText } from './text-decode';
 import { engine } from './engine';
 import { cave, changed, markSaved, markUnsaved, option, unsaved } from './cave.svelte';
 import { leave } from './sync.svelte';
@@ -194,7 +195,7 @@ export async function openCave(): Promise<{ ok: boolean; message: string } | nul
   if (!picked) return null;
   if (!confirmDiscard()) return null;
   const lower = picked.name.toLowerCase();
-  const text = () => new TextDecoder().decode(picked.bytes);
+  const text = () => decodeSurveyText(picked.bytes);
   let ok = false;
   let message = '';
   let warnings: string[] = [];
@@ -293,7 +294,7 @@ export async function importSurvey(): Promise<{ ok: boolean; message: string } |
   const picked = await chooseSurveyFiles();
   if (!picked?.length) return null;
   if (!confirmDiscard()) return null;
-  const files = picked.map((f) => ({ name: f.name, text: new TextDecoder().decode(f.bytes) }));
+  const files = picked.map((f) => ({ name: f.name, text: decodeSurveyText(f.bytes) }));
   // a project file, or a Therion file that pulls the others in, is the one to read; otherwise the first
   const data = files.filter((f) => !isSketchFile(f.name));
   if (!data.length) return { ok: false, message: 'Sketch pages (.th2) are drawn onto a survey: pick the Therion file that pulls them in, with them.' };
@@ -337,7 +338,7 @@ async function chooseFolder(): Promise<{ name: string; files: Record<string, str
         if (entry.kind === 'directory') await walk(entry, path, depth + 1);
         else if (wanted(entry.name)) {
           const f = await entry.getFile();
-          if (f.size < 20e6) files[path] = await f.text();
+          if (f.size < 20e6) files[path] = decodeSurveyText(new Uint8Array(await f.arrayBuffer()));
         }
       }
     };
@@ -353,7 +354,7 @@ async function chooseFolder(): Promise<{ name: string; files: Record<string, str
       if (!list.length) return resolve(null);
       for (const f of list) {
         const path = (f as File & { webkitRelativePath?: string }).webkitRelativePath || f.name;
-        if (wanted(f.name) && f.size < 20e6) files[path.slice(path.indexOf('/') + 1)] = await f.text();
+        if (wanted(f.name) && f.size < 20e6) files[path.slice(path.indexOf('/') + 1)] = decodeSurveyText(new Uint8Array(await f.arrayBuffer()));
       }
       const first = (list[0] as File & { webkitRelativePath?: string }).webkitRelativePath ?? '';
       resolve({ name: first.split('/')[0] || 'folder', files });
