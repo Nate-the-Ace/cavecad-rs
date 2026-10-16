@@ -262,8 +262,6 @@ pub struct Tile {
     pub paper: PaperBox,
     /// Neighbours across its edges.
     pub matches: Vec<Match>,
-    #[serde(skip)]
-    pieces: Vec<BBox>,
 }
 
 /// A match line between two sheets.
@@ -527,7 +525,6 @@ pub fn layout_one(o: &TileInput) -> Layout {
                 map: k.map,
                 paper: paper_of(&k.map),
                 matches: Vec::new(),
-                pieces: k.pieces,
             }
         })
         .collect();

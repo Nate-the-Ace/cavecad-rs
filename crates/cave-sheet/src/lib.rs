@@ -6,6 +6,7 @@
 
 use serde::Serialize;
 
+pub mod sheetset;
 pub mod tile;
 pub mod title;
 
@@ -399,6 +400,31 @@ pub enum Shape {
         /// Corners.
         pts: Vec<[f64; 2]>,
     },
+    /// A white box behind a piece of furniture laid over the map, so the map does not run through it.
+    Back {
+        /// Lower left.
+        a: [f64; 2],
+        /// Upper right.
+        b: [f64; 2],
+    },
+    /// A dashed line (a match line).
+    Dash {
+        /// Start.
+        a: [f64; 2],
+        /// End.
+        b: [f64; 2],
+    },
+    /// Text turned `deg` degrees counter-clockwise about its start.
+    Turned {
+        /// Where it starts.
+        at: [f64; 2],
+        /// Its height.
+        h: f64,
+        /// The words.
+        s: String,
+        /// The turn.
+        deg: f64,
+    },
     /// Text starting at a baseline point.
     Text {
         /// Where it starts.
@@ -424,6 +450,164 @@ pub fn title_height(title: &Title) -> f64 {
     0.25 + TEXT.cave_name + n as f64 * TEXT.body * LINE_SPACING
 }
 
+/// Which way the north arrow points and what it says about the compass.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct North {
+    /// How far the map is turned on the paper, degrees counter-clockwise (the arrow turns with it).
+    pub twist: f64,
+    /// Magnetic declination in degrees, east positive; adds a magnetic arm when known.
+    pub declination: Option<f64>,
+}
+
+/// One piece of furniture drawn as shapes. `origin` is the lower left of the box the piece's own
+/// position is measured from (the margin box on a sheet).
+pub fn piece_shapes(
+    out: &mut Vec<Shape>,
+    p: &Piece,
+    origin: [f64; 2],
+    title: &Title,
+    feet_per_inch: f64,
+    north: &North,
+) {
+    let (x, y) = (origin[0] + p.x, origin[1] + p.y);
+    match p.kind {
+        "title" => {
+            out.push(Shape::Rect {
+                a: [x, y],
+                b: [x + p.w, y + p.h],
+            });
+            let mut ty = y + p.h - 0.15 - TEXT.cave_name;
+            out.push(Shape::Text {
+                at: [x + 0.15, ty],
+                h: TEXT.cave_name,
+                s: title.name.to_uppercase(),
+            });
+            for l in title.lines.iter().filter(|l| !l.trim().is_empty()) {
+                ty -= TEXT.body * LINE_SPACING;
+                out.push(Shape::Text {
+                    at: [x + 0.15, ty],
+                    h: TEXT.body,
+                    s: l.to_uppercase(),
+                });
+            }
+        }
+        "bar" => {
+            let bar = bar_for(feet_per_inch);
+            let block_w = bar.per_block_feet / feet_per_inch;
+            let (bx, by) = (x + 0.1, y + BAR_LIFT);
+            for k in 0..=bar.blocks {
+                let tx = bx + block_w * f64::from(k);
+                out.push(Shape::Line {
+                    a: [tx, by],
+                    b: [tx, by + BAR.height],
+                });
+                out.push(Shape::Text {
+                    at: [tx, by - BAR.tick * 2.0],
+                    h: TEXT.small,
+                    s: format!("{}", bar.per_block * f64::from(k)),
+                });
+            }
+            for k in (0..bar.blocks).step_by(2) {
+                let x0 = bx + block_w * f64::from(k);
+                out.push(Shape::Fill {
+                    pts: vec![
+                        [x0, by],
+                        [x0 + block_w, by],
+                        [x0 + block_w, by + BAR.height],
+                        [x0, by + BAR.height],
+                    ],
+                });
+            }
+            let end = bx + block_w * f64::from(bar.blocks);
+            out.push(Shape::Line {
+                a: [bx, by],
+                b: [end, by],
+            });
+            out.push(Shape::Line {
+                a: [bx, by + BAR.height],
+                b: [end, by + BAR.height],
+            });
+            out.push(Shape::Text {
+                at: [bx, by + BAR.height + TEXT.body],
+                h: TEXT.body,
+                s: scale_text(feet_per_inch),
+            });
+            out.push(Shape::Text {
+                at: [
+                    end + 0.1 + TEXT.small * CHAR_WIDTH * 4.0,
+                    by - BAR.tick * 2.0,
+                ],
+                h: TEXT.small,
+                s: bar.unit.to_string(),
+            });
+        }
+        "north" => {
+            let pin = p.pin.unwrap_or([0.0, 0.0]);
+            let (px, py) = (x + pin[0], y + pin[1] + 0.2);
+            let (height, head_len, head_half) = (1.4, 0.4, 0.18);
+            // the arrow points where north is on the paper: straight up, turned with the map
+            let t = north.twist.to_radians();
+            let up = [-t.sin(), t.cos()];
+            let right = [t.cos(), t.sin()];
+            let at = |along: f64, across: f64| {
+                [
+                    px + up[0] * along + right[0] * across,
+                    py + up[1] * along + right[1] * across,
+                ]
+            };
+            out.push(Shape::Line {
+                a: [px, py],
+                b: at(height, 0.0),
+            });
+            out.push(Shape::Fill {
+                pts: vec![
+                    at(height, 0.0),
+                    at(height - head_len, -head_half),
+                    at(height - head_len, head_half),
+                ],
+            });
+            let tip = at(height + 0.1, 0.0);
+            out.push(Shape::Text {
+                at: [tip[0] - TEXT.heading * 0.3, tip[1]],
+                h: TEXT.heading,
+                s: "N".to_string(),
+            });
+            out.push(Shape::Text {
+                at: [px - 0.9, py - 0.2],
+                h: TEXT.small,
+                s: "TRUE NORTH".to_string(),
+            });
+            if let Some(d) = north.declination {
+                // magnetic north is `d` degrees east (clockwise) of true: a shorter half-arrow
+                let m = (north.twist - d).to_radians();
+                let mu = [-m.sin(), m.cos()];
+                let mr = [m.cos(), m.sin()];
+                let mat = |along: f64, across: f64| {
+                    [
+                        px + mu[0] * along + mr[0] * across,
+                        py + mu[1] * along + mr[1] * across,
+                    ]
+                };
+                let mh = height * 0.8;
+                out.push(Shape::Line {
+                    a: [px, py],
+                    b: mat(mh, 0.0),
+                });
+                out.push(Shape::Fill {
+                    pts: vec![mat(mh, 0.0), mat(mh - head_len * 0.8, 0.0), mat(mh - head_len * 0.8, head_half)],
+                });
+                let lab = mat(mh + 0.08, 0.04);
+                out.push(Shape::Text {
+                    at: lab,
+                    h: TEXT.small,
+                    s: format!("MN {:.1}\u{b0}{}", d.abs(), if d >= 0.0 { "E" } else { "W" }),
+                });
+            }
+        }
+        _ => {}
+    }
+}
+
 /// The sheet's furniture drawn as shapes: the border at the margin, the title block, the scale bar
 /// (blocks alternate filled and open) and the north arrow. `origin` is the margin box's lower left
 /// corner on the paper (the margin).
@@ -440,106 +624,14 @@ pub fn shapes(
         b: [paper_w - m, paper_h - m],
     }];
     for p in &f.pieces {
-        let (x, y) = (m + p.x, m + p.y);
-        match p.kind {
-            "title" => {
-                out.push(Shape::Rect {
-                    a: [x, y],
-                    b: [x + p.w, y + p.h],
-                });
-                let mut ty = y + p.h - 0.15 - TEXT.cave_name;
-                out.push(Shape::Text {
-                    at: [x + 0.15, ty],
-                    h: TEXT.cave_name,
-                    s: title.name.to_uppercase(),
-                });
-                for l in title.lines.iter().filter(|l| !l.trim().is_empty()) {
-                    ty -= TEXT.body * LINE_SPACING;
-                    out.push(Shape::Text {
-                        at: [x + 0.15, ty],
-                        h: TEXT.body,
-                        s: l.to_uppercase(),
-                    });
-                }
-            }
-            "bar" => {
-                let bar = bar_for(feet_per_inch);
-                let block_w = bar.per_block_feet / feet_per_inch;
-                let (bx, by) = (x + 0.1, y + BAR_LIFT);
-                for k in 0..=bar.blocks {
-                    let tx = bx + block_w * f64::from(k);
-                    out.push(Shape::Line {
-                        a: [tx, by],
-                        b: [tx, by + BAR.height],
-                    });
-                    out.push(Shape::Text {
-                        at: [tx, by - BAR.tick * 2.0],
-                        h: TEXT.small,
-                        s: format!("{}", bar.per_block * f64::from(k)),
-                    });
-                }
-                for k in (0..bar.blocks).step_by(2) {
-                    let x0 = bx + block_w * f64::from(k);
-                    out.push(Shape::Fill {
-                        pts: vec![
-                            [x0, by],
-                            [x0 + block_w, by],
-                            [x0 + block_w, by + BAR.height],
-                            [x0, by + BAR.height],
-                        ],
-                    });
-                }
-                let end = bx + block_w * f64::from(bar.blocks);
-                out.push(Shape::Line {
-                    a: [bx, by],
-                    b: [end, by],
-                });
-                out.push(Shape::Line {
-                    a: [bx, by + BAR.height],
-                    b: [end, by + BAR.height],
-                });
-                out.push(Shape::Text {
-                    at: [bx, by + BAR.height + TEXT.body],
-                    h: TEXT.body,
-                    s: scale_text(feet_per_inch),
-                });
-                out.push(Shape::Text {
-                    at: [
-                        end + 0.1 + TEXT.small * CHAR_WIDTH * 4.0,
-                        by - BAR.tick * 2.0,
-                    ],
-                    h: TEXT.small,
-                    s: bar.unit.to_string(),
-                });
-            }
-            "north" => {
-                let pin = p.pin.unwrap_or([0.0, 0.0]);
-                let (px, py) = (x + pin[0], y + pin[1] + 0.2);
-                let (height, head_len, head_half) = (1.4, 0.4, 0.18);
-                out.push(Shape::Line {
-                    a: [px, py],
-                    b: [px, py + height],
-                });
-                out.push(Shape::Fill {
-                    pts: vec![
-                        [px, py + height],
-                        [px - head_half, py + height - head_len],
-                        [px + head_half, py + height - head_len],
-                    ],
-                });
-                out.push(Shape::Text {
-                    at: [px - TEXT.heading * 0.3, py + height + 0.1],
-                    h: TEXT.heading,
-                    s: "N".to_string(),
-                });
-                out.push(Shape::Text {
-                    at: [px - 0.9, py - 0.2],
-                    h: TEXT.small,
-                    s: "TRUE NORTH".to_string(),
-                });
-            }
-            _ => {}
-        }
+        piece_shapes(
+            &mut out,
+            p,
+            [m, m],
+            title,
+            feet_per_inch,
+            &North::default(),
+        );
     }
     out
 }
