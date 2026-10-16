@@ -95,3 +95,47 @@ fn a_negative_tape_is_said_not_silently_left_off() {
         s.findings()
     );
 }
+
+/// Each leg as "from>to distance azimuth".
+fn csv_legs(t: &str) -> Vec<String> {
+    cave_formats::csv::parse(t)
+        .shots
+        .iter()
+        .map(|x| format!("{}>{} {} {}", x.from, x.to, x.distance, x.azimuth))
+        .collect()
+}
+
+#[test]
+fn spreadsheet_csv_reads_whatever_its_layout() {
+    let want = ["A1>A2 10.5 90"];
+    // a European spreadsheet: semicolons and a decimal comma
+    assert_eq!(
+        csv_legs("From;To;Distance;Azimuth;Inclination\nA1;A2;10,5;90;0\n"),
+        want
+    );
+    assert_eq!(
+        csv_legs("From\tTo\tDistance\tAzimuth\tInclination\nA1\tA2\t10.5\t90\t0\n"),
+        want
+    );
+    // columns in another order, named another way, with a unit
+    assert_eq!(
+        csv_legs("To Station,From Station,Bearing,Length (m),Clino\nA2,A1,90,10.5,0\n"),
+        want
+    );
+    // quoted cells keep their commas and lose their quotes
+    assert_eq!(
+        csv_legs(
+            "From,To,Distance,Azimuth,Inclination,Comment\n\"A1\",A2,10.5,90,0,\"big, wet\"\n"
+        ),
+        want
+    );
+    let s = cave_formats::csv::parse("From,To,Distance (ft),Azimuth,Inclination\nA1,A2,10,90,0\n");
+    assert_eq!(s.distance_unit.as_deref(), Some("ft"));
+}
+
+#[test]
+fn a_csv_nothing_can_be_read_from_says_so() {
+    let s = cave_formats::csv::parse("Station,Something,Other,More\nA1,x,y,z\n");
+    assert!(s.shots.is_empty());
+    assert!(s.findings().iter().any(|f| f.code == "csv-no-legs"));
+}

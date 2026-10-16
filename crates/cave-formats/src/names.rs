@@ -19,7 +19,8 @@ fn allowed(f: Format, c: char) -> bool {
         }
         // printable ASCII; a blank or a comma would split the line
         Format::Compass => c.is_ascii_graphic() && c != ',',
-        Format::Csv => true,
+        // the app's own CSV writes names unquoted: a comma or a line break would split the row
+        Format::Csv => c != ',' && !c.is_control(),
     }
 }
 

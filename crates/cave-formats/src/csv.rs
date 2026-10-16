@@ -42,10 +42,126 @@ fn meta(line: &str) -> Option<(String, String)> {
     Some((key.to_lowercase(), value.to_string()))
 }
 
+/// The separator a file uses: the one its first data line has most of (a European spreadsheet
+/// writes `;`, some exports a tab), else the comma.
+fn separator(content: &str) -> char {
+    let first = split_lines(content)
+        .into_iter()
+        .map(|l| trim(&l).to_string())
+        .find(|l| !l.is_empty() && !l.starts_with('#'))
+        .unwrap_or_default();
+    let count = |c: char| first.matches(c).count();
+    if count(';') > count(',') && count(';') >= count('\t') {
+        ';'
+    } else if count('\t') > count(',') {
+        '\t'
+    } else {
+        ','
+    }
+}
+
+/// A line's cells. A cell that starts with a quote runs to its closing quote (`""` inside is one
+/// quote), so a comma in a name or a comment does not split it; quotes elsewhere are ordinary.
+fn cells_of(line: &str, sep: char) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut chars = line.chars().peekable();
+    loop {
+        // blanks before an opening quote are not part of a quoted cell; before anything else
+        // they are kept (a note written last keeps its spacing)
+        let mut ahead = chars.clone();
+        while ahead.peek().is_some_and(|c| *c == ' ') {
+            ahead.next();
+        }
+        let mut cell = String::new();
+        if ahead.peek() == Some(&'"') {
+            chars = ahead;
+            chars.next();
+            while let Some(c) = chars.next() {
+                if c == '"' {
+                    if chars.peek() == Some(&'"') {
+                        chars.next();
+                        cell.push('"');
+                    } else {
+                        break;
+                    }
+                } else {
+                    cell.push(c);
+                }
+            }
+            // anything after the closing quote, up to the separator, belongs to the cell too
+            while let Some(&c) = chars.peek() {
+                if c == sep {
+                    break;
+                }
+                cell.push(c);
+                chars.next();
+            }
+        } else {
+            while let Some(&c) = chars.peek() {
+                if c == sep {
+                    break;
+                }
+                cell.push(c);
+                chars.next();
+            }
+        }
+        out.push(cell);
+        if chars.next().is_none() {
+            break;
+        }
+    }
+    out
+}
+
+/// A header cell as one of the column names this reads, and the length unit it names, if any
+/// (`Distance (ft)`). `None` for a cell that is not a column this knows.
+fn column_of(cell: &str) -> (Option<&'static str>, Option<&'static str>) {
+    let lower = trim(cell).to_lowercase();
+    let (name, unit) = match lower.find(['(', '[']) {
+        Some(i) => {
+            let u = lower[i + 1..]
+                .trim_end_matches([')', ']'])
+                .trim()
+                .to_string();
+            (trim(&lower[..i]).to_string(), Some(u))
+        }
+        None => (lower.clone(), None),
+    };
+    let unit = unit.and_then(|u| match u.as_str() {
+        "ft" | "feet" | "foot" => Some("ft"),
+        "m" | "metres" | "meters" | "metre" | "meter" => Some("m"),
+        _ => None,
+    });
+    let words: String = name.split_whitespace().collect::<Vec<_>>().join(" ");
+    let col = match words.as_str() {
+        "from" | "from station" | "station from" | "from st" | "fr" => "from",
+        "to" | "to station" | "station to" | "to st" => "to",
+        "distance" | "length" | "tape" | "dist" | "len" => "distance",
+        "azimuth" | "bearing" | "compass" | "az" | "azm" | "heading" | "direction" => "azimuth",
+        "inclination" | "clino" | "inc" | "incl" | "dip" | "gradient" | "slope"
+        | "vertical angle" | "vertical" => "inclination",
+        "left" | "l" => "left",
+        "right" | "r" => "right",
+        "up" | "u" | "ceiling" => "up",
+        "down" | "d" | "floor" => "down",
+        "backazimuth" | "back azimuth" | "back bearing" | "backbearing" | "back compass"
+        | "backcompass" | "azimuth2" | "az2" => "backazimuth",
+        "backinclination" | "back inclination" | "back clino" | "backclino" | "back gradient"
+        | "inclination2" | "inc2" => "backinclination",
+        "flags" | "flag" => "flags",
+        "notes" | "note" | "comment" | "comments" | "remarks" | "remark" => "notes",
+        _ => return (None, unit),
+    };
+    (Some(col), unit)
+}
+
 /// Reads a CSV survey.
 pub fn parse(content: &str) -> Survey {
     let mut survey = Survey::default();
     let mut columns: Vec<String> = DEFAULT_COLUMNS.iter().map(|s| s.to_string()).collect();
+    let sep = separator(content);
+    let mut header_unit: Option<&'static str> = None;
+    let mut rows_seen = 0usize;
 
     for raw in split_lines(content) {
         let line = trim(&raw);
@@ -110,21 +226,57 @@ pub fn parse(content: &str) -> Survey {
             }
             continue;
         }
-        let cells: Vec<&str> = line.split(',').collect();
+        let owned = cells_of(line, sep);
+        let owned: Vec<String> = if sep == ';' {
+            // a semicolon file is a decimal-comma one: 10,5 is ten and a half
+            owned
+                .into_iter()
+                .map(|c| {
+                    let t = trim(&c);
+                    if !t.is_empty()
+                        && t.chars()
+                            .all(|ch| ch.is_ascii_digit() || matches!(ch, ',' | '-' | '+'))
+                    {
+                        t.replace(',', ".")
+                    } else {
+                        c
+                    }
+                })
+                .collect()
+        } else {
+            owned
+        };
+        let cells: Vec<&str> = owned.iter().map(String::as_str).collect();
         if cells.len() < 4 {
             continue;
         }
-        // a header row maps the columns for everything below it
-        if parse_float(cells[2]).is_nan() && trim(cells[0]).eq_ignore_ascii_case("from") {
-            columns = cells.iter().map(|c| trim(c).to_lowercase()).collect();
+        // a header row maps the columns for everything below it: one naming both stations, in
+        // whatever order and spelling (an unknown column is kept under its own name and ignored)
+        let named: Vec<(Option<&str>, Option<&str>)> = cells.iter().map(|c| column_of(c)).collect();
+        if named.iter().any(|(c, _)| *c == Some("from"))
+            && named.iter().any(|(c, _)| *c == Some("to"))
+        {
+            columns = cells
+                .iter()
+                .zip(&named)
+                .map(|(c, (col, _))| col.map_or_else(|| trim(c).to_lowercase(), str::to_string))
+                .collect();
+            header_unit = named
+                .iter()
+                .zip(&columns)
+                .find(|(_, c)| c.as_str() == "distance")
+                .and_then(|((_, u), _)| *u);
             continue;
         }
+        rows_seen += 1;
         let mut rec: Vec<(String, String)> = Vec::new();
+        let notes_last = columns.last().is_some_and(|c| c == "notes");
         for (ci, col) in columns.iter().enumerate() {
             if ci >= cells.len() {
                 break;
             }
-            if col == "notes" {
+            // notes written last and unquoted keep their commas (the app's own files do this)
+            if col == "notes" && notes_last && sep == ',' {
                 rec.push(("notes".into(), trim(&cells[ci..].join(",")).to_string()));
                 break;
             }
@@ -208,6 +360,18 @@ pub fn parse(content: &str) -> Survey {
         }
         shot.notes = get("notes").unwrap_or("").to_string();
         survey.shots.push(shot);
+    }
+    if survey.distance_unit.is_none() || !content.contains("# unit:") {
+        if let Some(u) = header_unit {
+            survey.distance_unit = Some(u.into());
+        }
+    }
+    if survey.shots.is_empty() && rows_seen > 0 && survey.findings().is_empty() {
+        survey.add_finding(
+            "warning",
+            "csv-no-legs",
+            format!("No legs could be read from {rows_seen} row{}: a header row naming at least From, To, Distance and Azimuth (in any order) tells this reader which column is which.", if rows_seen == 1 { "" } else { "s" }),
+        );
     }
     survey.ensure_trips();
     survey
@@ -299,7 +463,8 @@ pub fn write(survey: &Survey) -> String {
             s.back_azimuth.map(num_str).unwrap_or_default(),
             s.back_inclination.map(num_str).unwrap_or_default(),
             flags,
-            s.notes.clone(),
+            // one row per leg: a line break in a note would start a new one
+            s.notes.replace(['\r', '\n'], " "),
         ];
         out.push(row.join(","));
     }
