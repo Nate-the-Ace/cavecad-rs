@@ -19,6 +19,7 @@ pub mod js;
 mod model;
 pub mod project;
 pub mod survex;
+pub mod th2;
 pub mod therion;
 pub mod walls;
 

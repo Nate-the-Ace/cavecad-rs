@@ -121,13 +121,13 @@ fn split_comment(line: &str) -> (String, String) {
     (line.to_string(), String::new())
 }
 
-struct Logical {
-    text: String,
-    comment: String,
+pub(crate) struct Logical {
+    pub(crate) text: String,
+    pub(crate) comment: String,
 }
 
 /// Joins backslash-continued lines, each logical line keeping its comments.
-fn logical_lines(content: &str) -> Vec<Logical> {
+pub(crate) fn logical_lines(content: &str) -> Vec<Logical> {
     let mut out = Vec::new();
     let mut pending: Option<Logical> = None;
     for raw in split_lines(content) {

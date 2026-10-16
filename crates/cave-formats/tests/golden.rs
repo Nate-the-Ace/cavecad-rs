@@ -217,3 +217,42 @@ fn a_therion_project_split_across_files_is_read_whole() {
         panic!("{d}");
     }
 }
+
+/// Each sketch in a .th2 answer key (tools/golden/gen_th2_golden.mjs) read the way the old app
+/// read it. Returns the files that disagree, with where.
+fn th2_check(key: &str) -> (usize, Vec<String>) {
+    let cases: Value = serde_json::from_str(&std::fs::read_to_string(key).unwrap()).unwrap();
+    let cases = cases.as_array().unwrap();
+    let mut bad = Vec::new();
+    for case in cases {
+        let actual =
+            serde_json::to_value(cave_formats::th2::parse(case["input"].as_str().unwrap()))
+                .unwrap();
+        if let Some(d) = diff(&case["sketch"], &actual, "") {
+            bad.push(format!("{}: {d}", case["file"].as_str().unwrap()));
+        }
+    }
+    (cases.len(), bad)
+}
+
+#[test]
+fn the_test_sketch_reads_as_the_old_app_read_it() {
+    let (n, bad) = th2_check(&format!(
+        "{}/tests/golden/th2.json",
+        env!("CARGO_MANIFEST_DIR")
+    ));
+    assert!(n > 0 && bad.is_empty(), "{bad:#?}");
+}
+
+/// Real sketches, answer key made locally (never committed): `cargo test -- --ignored real_sketches`.
+#[test]
+#[ignore]
+fn real_sketches_read_as_the_old_app_read_them() {
+    let key = format!(
+        "{}/Documents/cave-test-data/golden-th2.json",
+        std::env::var("HOME").unwrap()
+    );
+    let (n, bad) = th2_check(&key);
+    eprintln!("{} of {n} sketches agree", n - bad.len());
+    assert!(bad.is_empty(), "{:#?}", &bad[..bad.len().min(20)]);
+}
