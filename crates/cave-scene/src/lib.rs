@@ -33,7 +33,7 @@ pub use under::Shading;
 
 use cave_doc::{Document, Field, Kind};
 use cave_id::Id;
-use cave_survey::{LegKind, LegResult, Params, Splay, adjust, extract, resolve};
+use cave_survey::{LegKind, LegResult, Splay, extract, resolve};
 use serde::Serialize;
 use std::collections::HashMap;
 
@@ -224,7 +224,7 @@ pub fn build_seen_from(
     let touched_any = touched(&r.legs, &ex.splays);
     let touched_vis = touched(&legs, &vis_splays);
     let adj = use_adjustment
-        .then(|| adjust(&ex.legs, &r, &Params::default()))
+        .then(|| solved::adjusted(&ex.legs, &ex.fixed, &r))
         .filter(|a| a.adjusted);
     let pos = |id: Id| -> Option<cave_survey::Vec3> {
         match &adj {
