@@ -70,7 +70,11 @@ fn clino_keyword(t: &str) -> Option<f64> {
     }
 }
 
-fn is_anonymous(n: &str) -> bool {
+/// An anonymous station: ".", "..", "...", and "-". Survex makes "-" anonymous only after
+/// `*alias station - ..`; the old reader always did, deliberately, because PocketTopo-style files
+/// write "-" splays without the alias, and a station really named "-" is rarer than those files.
+/// (Survex's own cmd_alias test differs on purpose.)
+fn is_anonymous(n: &str, _alias_dash: bool) -> bool {
     matches!(n, "-" | "." | ".." | "...")
 }
 
@@ -88,6 +92,12 @@ pub(crate) struct Units {
     pub length_scale: f64,
     pub compass_grads: bool,
     clino: Clino,
+    /// A `*units` factor on an angle ("*units compass 90 degrees": a reading of 2 is 180).
+    compass_scale: f64,
+    clino_scale: f64,
+    /// Readings in minutes of arc.
+    compass_minutes: bool,
+    clino_minutes: bool,
 }
 
 impl Default for Units {
@@ -97,20 +107,31 @@ impl Default for Units {
             length_scale: 1.0,
             compass_grads: false,
             clino: Clino::Deg,
+            compass_scale: 1.0,
+            clino_scale: 1.0,
+            compass_minutes: false,
+            clino_minutes: false,
         }
     }
 }
 
 impl Units {
     pub fn compass(&self, v: f64) -> f64 {
+        let v = v * self.compass_scale;
         if self.compass_grads {
             grads_to_degrees(v)
+        } else if self.compass_minutes {
+            v / 60.0
         } else {
             v
         }
     }
 
     pub fn clino(&self, v: f64) -> f64 {
+        let v = v * self.clino_scale;
+        if self.clino_minutes {
+            return v / 60.0;
+        }
         match self.clino {
             Clino::Grad => grads_to_degrees(v),
             Clino::Percent => (v / 100.0).atan() * 180.0 / std::f64::consts::PI,
@@ -149,10 +170,15 @@ impl Units {
             }
         }
         let grads = unit_word.contains("grad") || unit_word.contains("mil");
+        let minutes = unit_word.starts_with("minute");
         if has("compass") || has("bearing") {
             self.compass_grads = grads;
+            self.compass_minutes = minutes;
+            self.compass_scale = factor;
         }
         if has("clino") || has("gradient") {
+            self.clino_minutes = minutes;
+            self.clino_scale = factor;
             self.clino = if grads {
                 Clino::Grad
             } else if unit_word.contains("percent") {
@@ -206,11 +232,14 @@ pub(crate) fn read_date(t: &str, seps: &[u8]) -> Option<String> {
     Some(format!("{}-{}-{}", &t[..4], two(month), two(day)))
 }
 
-/// A `*calibrate` correction: `(reading - zero) * scale`.
+/// A `*calibrate` correction: `(reading - zero) * scale` -- or, when the zero error was given in
+/// explicit units, `reading * scale - zero` (Survex: the zero is then a real length or angle, not
+/// a reading).
 #[derive(Clone, Copy)]
 struct Correction {
     zero: f64,
     scale: f64,
+    zero_after_scale: bool,
 }
 
 impl Default for Correction {
@@ -218,13 +247,18 @@ impl Default for Correction {
         Correction {
             zero: 0.0,
             scale: 1.0,
+            zero_after_scale: false,
         }
     }
 }
 
 impl Correction {
     fn apply(&self, v: f64) -> f64 {
-        (v - self.zero) * self.scale
+        if self.zero_after_scale {
+            v * self.scale - self.zero
+        } else {
+            (v - self.zero) * self.scale
+        }
     }
 }
 
@@ -252,6 +286,77 @@ struct Settings {
     /// toupper, 'P' preserve.
     case: char,
     decimal_comma: bool,
+    infer_plumbs: bool,
+    infer_equates: bool,
+    /// `*alias station - ..`: "-" is an anonymous station.
+    alias_dash: bool,
+    truncate: Option<usize>,
+    cartesian: Vec<String>,
+    /// `*cartesian`: which north the offsets are against ('T' true, 'G' grid, 'M' magnetic) and an
+    /// extra rotation, degrees.
+    cart_north: char,
+    cart_rotation: f64,
+    /// `*cs`: the coordinate system `*fix` coordinates are given in.
+    cs: Option<Cs>,
+    /// `*declination auto x y z`: where to work the declination out for, from each survey date.
+    decl_auto: Option<(f64, f64, f64)>,
+}
+
+/// A coordinate system Survex can name, as far as this reader converts them: UTM zones (south
+/// negative) and latitude/longitude. Anything else is kept by name and used as given.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) enum Cs {
+    Utm(i32),
+    LongLat,
+    Other(String),
+}
+
+impl Cs {
+    /// "UTM33", "utm33n", "UTM60S", "EPSG:32633", "EPSG:32733", "Long-Lat", "EPSG:4326".
+    fn parse(name: &str) -> Cs {
+        let u = name.to_ascii_uppercase();
+        if let Some(z) = u.strip_prefix("UTM") {
+            let (num, south) = match z.strip_suffix('S') {
+                Some(n) => (n, true),
+                None => (z.strip_suffix('N').unwrap_or(z), false),
+            };
+            if let Ok(n) = num.parse::<i32>()
+                && (1..=60).contains(&n)
+            {
+                return Cs::Utm(if south { -n } else { n });
+            }
+        }
+        if let Some(code) = u.strip_prefix("EPSG:").and_then(|c| c.parse::<i32>().ok()) {
+            match code {
+                32601..=32660 => return Cs::Utm(code - 32600),
+                32701..=32760 => return Cs::Utm(-(code - 32700)),
+                4326 => return Cs::LongLat,
+                _ => {}
+            }
+        }
+        if u == "LONG-LAT" {
+            return Cs::LongLat;
+        }
+        Cs::Other(name.to_string())
+    }
+
+    /// Latitude and longitude of a point given in this system.
+    fn to_latlon(&self, x: f64, y: f64) -> Option<(f64, f64)> {
+        match self {
+            Cs::Utm(z) => Some(cave_geomag::utm_to_latlon(x, y, *z)),
+            Cs::LongLat => Some((y, x)),
+            Cs::Other(_) => None,
+        }
+    }
+
+    /// A point in this system from latitude and longitude.
+    fn at_latlon(&self, lat: f64, lon: f64) -> Option<(f64, f64)> {
+        match self {
+            Cs::Utm(z) => Some(cave_geomag::latlon_to_utm(lat, lon, *z)),
+            Cs::LongLat => Some((lon, lat)),
+            Cs::Other(_) => None,
+        }
+    }
 }
 
 impl Default for Settings {
@@ -270,6 +375,15 @@ impl Default for Settings {
             calib: Calib::default(),
             case: 'L',
             decimal_comma: false,
+            infer_plumbs: false,
+            infer_equates: false,
+            alias_dash: false,
+            truncate: None,
+            cartesian: ["from", "to", "dx", "dy", "dz"].map(String::from).to_vec(),
+            cart_north: 'G',
+            cart_rotation: 0.0,
+            cs: None,
+            decl_auto: None,
         }
     }
 }
@@ -324,30 +438,35 @@ impl Settings {
                     self.calib.tape = Correction {
                         zero: length(zero),
                         scale,
+                        zero_after_scale: unit_word.is_some(),
                     }
                 }
                 "compass" | "bearing" => {
                     self.calib.compass = Correction {
                         zero: angle(zero),
                         scale,
+                        zero_after_scale: unit_word.is_some(),
                     }
                 }
                 "clino" | "gradient" => {
                     self.calib.clino = Correction {
                         zero: angle(zero),
                         scale,
+                        zero_after_scale: unit_word.is_some(),
                     }
                 }
                 "backcompass" | "backbearing" => {
                     self.calib.backcompass = Correction {
                         zero: angle(zero),
                         scale,
+                        zero_after_scale: unit_word.is_some(),
                     }
                 }
                 "backclino" | "backgradient" => {
                     self.calib.backclino = Correction {
                         zero: angle(zero),
                         scale,
+                        zero_after_scale: unit_word.is_some(),
                     }
                 }
                 _ => {}
@@ -500,6 +619,8 @@ pub fn parse(content: &str) -> Survey {
     // everything *begin saves and *end restores
     let mut st = Settings::default();
     let mut saved: Vec<Settings> = Vec::new();
+    // `*cs out`: the coordinate system positions are wanted in (not scoped by *begin)
+    let mut cs_out: Option<Cs> = None;
     // the first spelling of each station name, by its case-folded form
     let mut spelled: HashMap<String, String> = HashMap::new();
     let mut team_dirty = false;
@@ -509,17 +630,32 @@ pub fn parse(content: &str) -> Survey {
     // in case are one station, shown as first written; toupper shows them upper case; preserve
     // keeps them apart.
     let full =
-        |prefix: &[String], name: &str, case: char, spelled: &mut HashMap<String, String>| {
-            let n = if prefix.is_empty() {
+        |prefix: &[String], name: &str, st: &Settings, spelled: &mut HashMap<String, String>| {
+            let case = st.case;
+            // "*truncate n": only the first n characters of a name count
+            let name: String = match st.truncate {
+                Some(n) => name.chars().take(n).collect(),
+                None => name.to_string(),
+            };
+            let name = name.as_str();
+            let parts: Vec<&str> = prefix
+                .iter()
+                .map(String::as_str)
+                .filter(|p| !p.is_empty())
+                .collect();
+            let n = if parts.is_empty() {
                 name.to_string()
             } else {
-                format!("{}.{name}", prefix.join("."))
+                format!("{}.{name}", parts.join("."))
             };
-            match case {
-                'P' => n,
+            // the station's identity under the *case in force, shown as it was first written
+            let key = match case {
+                'P' => n.clone(),
                 'U' => n.to_uppercase(),
-                _ => spelled.entry(n.to_lowercase()).or_insert(n).clone(),
-            }
+                _ => n.to_lowercase(),
+            };
+            let shown = if case == 'U' { key.clone() } else { n };
+            spelled.entry(key).or_insert(shown).clone()
         };
 
     for (li, raw) in split_lines(content).iter().enumerate() {
@@ -538,10 +674,7 @@ pub fn parse(content: &str) -> Survey {
             match cmd.as_str() {
                 "*begin" => {
                     prefix.push(
-                        tokens
-                            .get(1)
-                            .cloned()
-                            .unwrap_or_else(|| format!("anon{li}")),
+                        tokens.get(1).cloned().unwrap_or_default(), // a *begin with no name adds no prefix
                     );
                     saved.push(st.clone());
                     if survey.name.is_empty() && tokens.len() > 1 {
@@ -627,6 +760,18 @@ pub fn parse(content: &str) -> Survey {
                         } else if kind == "passage" {
                             st.style = "passage";
                             st.passage = fields();
+                        } else if kind == "cartesian" {
+                            st.style = "cartesian";
+                            let f: Vec<String> = fields();
+                            st.cartesian = f
+                                .into_iter()
+                                .map(|w| match w.as_str() {
+                                    "easting" => "dx".into(),
+                                    "northing" => "dy".into(),
+                                    "altitude" => "dz".into(),
+                                    _ => w,
+                                })
+                                .collect();
                         } else {
                             st.style = "other";
                         }
@@ -645,6 +790,60 @@ pub fn parse(content: &str) -> Survey {
                         st.calibrate(&tokens[1..]);
                     }
                 }
+                "*alias" if tokens.len() > 2 && tokens[1].eq_ignore_ascii_case("station") => {
+                    st.alias_dash = tokens[2] == "-" && tokens.get(3).is_some_and(|t| t == "..");
+                }
+                "*cs" if tokens.len() > 1 => {
+                    let out = tokens[1].eq_ignore_ascii_case("out");
+                    let name = if out { tokens.get(2) } else { tokens.get(1) };
+                    if let Some(n) = name {
+                        let cs = if n.eq_ignore_ascii_case("custom") {
+                            Cs::Other(line.to_string())
+                        } else {
+                            Cs::parse(n)
+                        };
+                        if let Cs::Other(_) = cs {
+                            survey.add_finding(
+                                "warning",
+                                "survex-cs",
+                                format!("The coordinate system \"{n}\" is not one CaveCAD converts (it converts UTM zones and latitude/longitude), so fixed points in it are used exactly as written."),
+                            );
+                        }
+                        if out {
+                            cs_out = Some(cs);
+                        } else {
+                            st.cs = Some(cs);
+                        }
+                    }
+                }
+                "*cartesian" if tokens.len() > 1 => {
+                    st.cart_north = match tokens[1].to_lowercase().as_str() {
+                        "true" => 'T',
+                        "magnetic" => 'M',
+                        _ => 'G',
+                    };
+                    st.cart_rotation = tokens.get(2).map_or(0.0, |v| {
+                        let r = parse_float(v);
+                        match tokens.get(3).map(|u| u.to_lowercase()) {
+                            Some(u) if u.starts_with("grad") || u.starts_with("mil") => {
+                                grads_to_degrees(r)
+                            }
+                            Some(u) if u.starts_with("minute") => r / 60.0,
+                            _ => r,
+                        }
+                    });
+                }
+                "*truncate" if tokens.len() > 1 => {
+                    st.truncate = tokens[1].parse().ok().filter(|n: &usize| *n > 0);
+                }
+                "*infer" if tokens.len() > 2 => {
+                    let on = tokens[2].eq_ignore_ascii_case("on");
+                    match tokens[1].to_lowercase().as_str() {
+                        "plumbs" => st.infer_plumbs = on,
+                        "equates" => st.infer_equates = on,
+                        _ => {}
+                    }
+                }
                 "*case" if tokens.len() > 1 => {
                     st.case = match tokens[1].to_lowercase().as_str() {
                         "preserve" => 'P',
@@ -655,9 +854,38 @@ pub fn parse(content: &str) -> Survey {
                 "*set" if tokens.len() > 2 && tokens[1].eq_ignore_ascii_case("decimal") => {
                     st.decimal_comma = tokens[2].contains(',');
                 }
+                "*declination" if tokens.len() >= 4 && tokens[1].eq_ignore_ascii_case("auto") => {
+                    // the place, in the input system; the declination comes from each date
+                    let (x, y) = (parse_float(&tokens[2]), parse_float(&tokens[3]));
+                    let z = tokens.get(4).map_or(0.0, |t| parse_float(t)).max(-1e6);
+                    let place = st
+                        .cs
+                        .as_ref()
+                        .or(cs_out.as_ref())
+                        .and_then(|c| c.to_latlon(x, y));
+                    match place {
+                        Some((lat, lon)) => {
+                            st.decl_auto = Some((lat, lon, if z.is_nan() { 0.0 } else { z }));
+                            survey.declination_source = "igrf".into();
+                        }
+                        None => survey.add_finding(
+                            "warning",
+                            "survex-declination-auto",
+                            "\"*declination auto\" needs a coordinate system CaveCAD converts (UTM or latitude/longitude) to know where the cave is; the declination was left at zero.".into(),
+                        ),
+                    }
+                }
                 "*declination" => {
+                    st.decl_auto = None;
                     if tokens.len() >= 2 && tokens[1].to_lowercase() != "auto" {
-                        let d = parse_float(&tokens[1]);
+                        let mut d = parse_float(&tokens[1]);
+                        match tokens.get(2).map(|u| u.to_lowercase()) {
+                            Some(u) if u.starts_with("grad") || u.starts_with("mil") => {
+                                d = grads_to_degrees(d)
+                            }
+                            Some(u) if u.starts_with("minute") => d /= 60.0,
+                            _ => {}
+                        }
                         if !d.is_nan() {
                             st.declination = d;
                             survey.declination = d;
@@ -680,6 +908,15 @@ pub fn parse(content: &str) -> Survey {
                             0.0
                         };
                         if !fx.is_nan() && !fy.is_nan() {
+                            // from the input coordinate system into the output one, when both
+                            // are ones converted here
+                            let (fx, fy) = match (&st.cs, &cs_out) {
+                                (Some(a), Some(b)) if a != b => a
+                                    .to_latlon(fx, fy)
+                                    .and_then(|(lat, lon)| b.at_latlon(lat, lon))
+                                    .unwrap_or((fx, fy)),
+                                _ => (fx, fy),
+                            };
                             let x = into_survey_unit(&mut survey, &st.units, fx);
                             let y = into_survey_unit(&mut survey, &st.units, fy);
                             let z = if fz.is_nan() {
@@ -688,7 +925,7 @@ pub fn parse(content: &str) -> Survey {
                                 into_survey_unit(&mut survey, &st.units, fz)
                             };
                             survey.fixed.set(
-                                &full(&prefix, &tokens[1], st.case, &mut spelled),
+                                &full(&prefix, &tokens[1], &st, &mut spelled),
                                 Fixed::at(x, y, z),
                             );
                         }
@@ -698,7 +935,7 @@ pub fn parse(content: &str) -> Survey {
                     equates.push(
                         tokens[1..]
                             .iter()
-                            .map(|t| full(&prefix, t, st.case, &mut spelled))
+                            .map(|t| full(&prefix, t, &st, &mut spelled))
                             .collect(),
                     );
                 }
@@ -728,8 +965,17 @@ pub fn parse(content: &str) -> Survey {
             if tape.is_nan() {
                 continue;
             }
-            let tape = st.calib.tape.apply(tape);
             let (from, to) = (from.clone(), to.clone());
+            if st.infer_equates && tape == 0.0 {
+                // "*infer equates on": a zero-length leg joins its two stations
+                let pair = vec![
+                    full(&prefix, &from, &st, &mut spelled),
+                    full(&prefix, &to, &st, &mut spelled),
+                ];
+                equates.push(pair);
+                continue;
+            }
+            let tape = st.calib.tape.apply(tape);
             let mut clino = 0.0;
             let mut plumbed = false;
             if let Some(c) = rec.get("clino") {
@@ -737,6 +983,14 @@ pub fn parse(content: &str) -> Survey {
                     Some(k) => {
                         clino = k;
                         plumbed = k != 0.0;
+                    }
+                    None if st.infer_plumbs
+                        && (st.units.clino(parse_float(c)).abs() - 90.0).abs() < 1e-9 =>
+                    {
+                        // "*infer plumbs on": a reading of +/-90 is a plumbed leg, before any
+                        // calibration
+                        clino = st.units.clino(parse_float(c));
+                        plumbed = true;
                     }
                     None => {
                         let v = parse_float(c);
@@ -774,15 +1028,27 @@ pub fn parse(content: &str) -> Survey {
                 compass = st.calib.compass.apply(st.units.compass(compass));
             }
 
-            let anon = is_anonymous(&to);
+            if let Some((lat, lon, alt)) = st.decl_auto {
+                // the field on this survey's date (Survex uses 0 with no date), less the grid
+                // convergence when the output is a UTM grid (the fixes are grid coordinates)
+                let d = cave_geomag::decimal_year_of(&cur_date)
+                    .and_then(|y| cave_geomag::field(lat, lon, y, alt / 1000.0))
+                    .map_or(0.0, |f| f.declination);
+                let conv = match &cs_out {
+                    Some(Cs::Utm(z)) => cave_geomag::utm_convergence(lat, lon, *z),
+                    _ => 0.0,
+                };
+                st.declination = d - conv;
+            }
+            let anon = is_anonymous(&to, st.alias_dash);
             let distance = into_survey_unit(&mut survey, &st.units, tape);
             let mut shot = Shot {
                 splay: anon || st.flags.splay,
-                from: full(&prefix, &from, st.case, &mut spelled),
+                from: full(&prefix, &from, &st, &mut spelled),
                 to: if anon {
                     String::new()
                 } else {
-                    full(&prefix, &to, st.case, &mut spelled)
+                    full(&prefix, &to, &st, &mut spelled)
                 },
                 distance,
                 azimuth_omitted: omitted,
@@ -813,6 +1079,16 @@ pub fn parse(content: &str) -> Survey {
                     }
                 }
             }
+            if is_anonymous(&from, st.alias_dash) && !anon {
+                // "- 2 ...": a wall point INTO the named station, turned to hang from it
+                shot.from = full(&prefix, &to, &st, &mut spelled);
+                shot.to = String::new();
+                shot.splay = true;
+                shot.azimuth = normalize_azimuth(shot.azimuth + 180.0);
+                shot.inclination = -shot.inclination;
+                shot.back_azimuth = shot.back_azimuth.map(|b| normalize_azimuth(b + 180.0));
+                shot.back_inclination = shot.back_inclination.map(|b| -b);
+            }
             shot.notes = notes;
             shot.trip = survey.trip_id_for(Trip {
                 date: cur_date.clone(),
@@ -820,6 +1096,54 @@ pub fn parse(content: &str) -> Survey {
                 declination: st.declination,
                 ..Trip::default()
             });
+            team_dirty = true;
+            survey.shots.push(shot);
+        } else if st.style == "cartesian" {
+            // offsets east, north and up: placed as they are (no declination)
+            let mut rec: JsObj<String> = JsObj::new();
+            for (k, v) in data_fields(line, &st.cartesian, st.decimal_comma) {
+                rec.set(&k, v);
+            }
+            let (Some(from), Some(to)) = (rec.get("from").cloned(), rec.get("to").cloned()) else {
+                continue;
+            };
+            let d = |k: &str| rec.get(k).map_or(0.0, |v| parse_float(v)).max(f64::MIN);
+            let (dx, dy, dz) = (d("dx"), d("dy"), d("dz"));
+            if dx.is_nan() || dy.is_nan() || dz.is_nan() {
+                continue;
+            }
+            let h = dx.hypot(dy);
+            let distance = into_survey_unit(&mut survey, &st.units, h.hypot(dz));
+            let shot = Shot {
+                from: full(&prefix, &from, &st, &mut spelled),
+                to: full(&prefix, &to, &st, &mut spelled),
+                distance,
+                // rotated by *cartesian's rotation, and by the declination when magnetic
+                azimuth: if h > 0.0 {
+                    normalize_azimuth(
+                        dx.atan2(dy).to_degrees()
+                            + st.cart_rotation
+                            + if st.cart_north == 'M' {
+                                st.declination
+                            } else {
+                                0.0
+                            },
+                    )
+                } else {
+                    0.0
+                },
+                azimuth_omitted: h == 0.0,
+                inclination: dz.atan2(h).to_degrees(),
+                declination: Some(0.0),
+                notes,
+                trip: survey.trip_id_for(Trip {
+                    date: cur_date.clone(),
+                    team: cur_team.clone(),
+                    declination: st.declination,
+                    ..Trip::default()
+                }),
+                ..Shot::default()
+            };
             team_dirty = true;
             survey.shots.push(shot);
         } else if st.style == "passage" {
@@ -843,7 +1167,7 @@ pub fn parse(content: &str) -> Survey {
                 }
             };
             let l = Lrud::of(num("left"), num("right"), num("up"), num("down"));
-            passage.set(&full(&prefix, &station, st.case, &mut spelled), l);
+            passage.set(&full(&prefix, &station, &st, &mut spelled), l);
         }
     }
 
@@ -876,7 +1200,9 @@ fn data_fields(line: &str, order: &[String], decimal_comma: bool) -> Vec<(String
     let chars: Vec<char> = line.chars().collect();
     let mut i = 0;
     let mut out = Vec::new();
-    let blank = |c: char| crate::js::is_space(c);
+    // Survex's default blanks are tab, space and comma (a comma is the decimal point only after
+    // "*set decimal ,")
+    let blank = |c: char| crate::js::is_space(c) || (c == ',' && !decimal_comma);
     for name in order {
         while i < chars.len() && blank(chars[i]) {
             i += 1;

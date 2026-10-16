@@ -147,7 +147,7 @@ fn survex_test_suite() {
         let key = |n: &str| {
             n.replace("empty name", "")
                 .replace(' ', "")
-                .replace([':', '.'], "/")
+                .replace([':', '.', '!'], "/")
                 .to_lowercase()
         };
         let want: HashMap<String, [f64; 3]> = want.into_iter().map(|(k, v)| (key(&k), v)).collect();

@@ -266,12 +266,15 @@ pub fn latlon_to_utm(lat: f64, lon: f64, zone: i32) -> (f64, f64) {
 }
 
 /// The grid convergence (degrees) at a place: grid north minus true north, positive when grid
-/// north lies east of true north. A true bearing minus this is a grid bearing.
+/// north lies east of true north. A true bearing minus this is a grid bearing. Measured on the
+/// projection itself (the grid direction of a short step due north), so it is as exact as the
+/// projection is.
 pub fn utm_convergence(lat: f64, lon: f64, zone: i32) -> f64 {
-    let lon0 = f64::from(zone.abs()) * 6.0 - 183.0;
-    ((lon - lon0).to_radians().tan() * lat.to_radians().sin())
-        .atan()
-        .to_degrees()
+    let step = 1e-5;
+    let (e0, n0) = latlon_to_utm(lat - step, lon, zone);
+    let (e1, n1) = latlon_to_utm(lat + step, lon, zone);
+    // true north points at this grid bearing; grid north is the same angle the other way
+    -(e1 - e0).atan2(n1 - n0).to_degrees()
 }
 
 #[cfg(test)]

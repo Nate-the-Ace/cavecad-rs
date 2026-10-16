@@ -342,6 +342,7 @@ fn wpj_ref(rest: &str) -> Option<GeoRef> {
         lat,
         lon,
         zone: v[2] as i32,
+        alt: v[4],
     })
 }
 const WPJ_NOT_SURVEY: u64 = 0x10000;

@@ -679,13 +679,15 @@ pub struct GeoRef {
     pub lon: f64,
     /// UTM zone, negative in the southern hemisphere.
     pub zone: i32,
+    /// Height above the ellipsoid, metres (the field model is evaluated there).
+    pub alt: f64,
 }
 
 impl GeoRef {
     /// The magnetic declination on a "YYYY-MM-DD" date, degrees east positive.
     pub fn declination_on(&self, date: &str) -> Option<f64> {
         let year = cave_geomag::decimal_year_of(date)?;
-        cave_geomag::declination(self.lat, self.lon, year)
+        cave_geomag::field(self.lat, self.lon, year, self.alt / 1000.0).map(|f| f.declination)
     }
 
     /// Grid north's angle east of true north here. Fixed points given in UTM are on the grid, so a
