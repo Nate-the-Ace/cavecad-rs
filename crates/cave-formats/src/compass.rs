@@ -476,6 +476,25 @@ fn num(v: f64, width: usize) -> String {
 /// FROM-station association, a leaf station's reading on a zero-length carrier shot.
 pub fn write(survey: &mut Survey) -> String {
     survey.ensure_trips();
+    // a .dat has nowhere to put a coordinate: Compass keeps fixed stations in the project (.mak)
+    let fixed: Vec<String> = survey.fixed.iter().map(|(n, _)| n.to_string()).collect();
+    if !fixed.is_empty() {
+        let shown: Vec<&str> = fixed.iter().take(4).map(String::as_str).collect();
+        survey.add_finding(
+            "warning",
+            "export-fixes-dropped",
+            format!(
+                "A Compass .dat file cannot hold fixed coordinates, so {} fixed station{} ({}{}) {} not in it: the survey will sit at Compass's own origin{} until {} set in a Compass project (.mak).",
+                fixed.len(),
+                if fixed.len() == 1 { "" } else { "s" },
+                shown.join(", "),
+                if fixed.len() > 4 { ", ..." } else { "" },
+                if fixed.len() == 1 { "is" } else { "are" },
+                if fixed.len() > 1 { ", and separately fixed parts will not keep their places" } else { "" },
+                if fixed.len() == 1 { "it is" } else { "they are" },
+            ),
+        );
+    }
     let unit = survey.unit().to_string();
     let to_ft = |v: f64| convert(v, &unit, "ft");
     let any_back = survey.shots.iter().any(Shot::has_backsight);

@@ -314,11 +314,11 @@ pub fn export_survey(format: &str) -> String {
                     ok: true,
                     text,
                     extension: f.extensions()[0],
-                    // names the format could not hold, and what they were written as
+                    // what the format could not hold: names (and what they became), fixes
                     message: survey
                         .findings()
                         .iter()
-                        .filter(|x| x.code == "export-renamed")
+                        .filter(|x| x.code.starts_with("export-"))
                         .map(|x| x.message.clone())
                         .collect::<Vec<_>>()
                         .join(" "),

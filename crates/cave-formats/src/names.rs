@@ -58,9 +58,24 @@ pub(crate) fn make_safe(f: Format, survey: &mut Survey) -> Vec<(String, String)>
     let ok = |n: &str| {
         !reserved(f, n) && n.chars().count() <= longest(f) && n.chars().all(|c| allowed(f, c))
     };
-    let mut taken: HashSet<String> = all.iter().filter(|n| ok(n)).cloned().collect();
+    // Survex reads names ignoring case unless told otherwise, so A16 and a16 would be one station
+    let fold = f == Format::Survex;
+    let key = |n: &str| {
+        if fold {
+            n.to_lowercase()
+        } else {
+            n.to_string()
+        }
+    };
+    let mut taken: HashSet<String> = HashSet::new();
+    let mut clashing: Vec<&String> = Vec::new();
+    for n in all.iter().filter(|n| ok(n)) {
+        if !taken.insert(key(n)) {
+            clashing.push(n);
+        }
+    }
     let mut renames: HashMap<String, String> = HashMap::new();
-    for n in all.iter().filter(|n| !ok(n)) {
+    for n in all.iter().filter(|n| !ok(n)).chain(clashing) {
         let mut base: String = n
             .chars()
             .map(|c| if allowed(f, c) { c } else { '_' })
@@ -71,7 +86,7 @@ pub(crate) fn make_safe(f: Format, survey: &mut Survey) -> Vec<(String, String)>
         let fit = |s: &str, room: usize| s.chars().take(room).collect::<String>();
         let mut pick = fit(&base, longest(f));
         let mut k = 2;
-        while taken.contains(&pick) {
+        while taken.contains(&key(&pick)) {
             let tail = format!("_{k}");
             pick = format!(
                 "{}{tail}",
@@ -79,7 +94,7 @@ pub(crate) fn make_safe(f: Format, survey: &mut Survey) -> Vec<(String, String)>
             );
             k += 1;
         }
-        taken.insert(pick.clone());
+        taken.insert(key(&pick));
         renames.insert(n.clone(), pick);
     }
     if renames.is_empty() {
@@ -171,6 +186,14 @@ mod tests {
         names.dedup();
         assert_eq!(names.len(), 3, "{r:?}");
         assert!(r.iter().all(|(old, _)| old != "a_b"));
+    }
+
+    #[test]
+    fn names_differing_only_in_case_stay_two_stations_in_survex() {
+        let mut s = survey(&["A16", "a16", "B1"]);
+        let text = Format::Survex.write(&mut s);
+        let back = Format::Survex.parse(&text);
+        assert_ne!(back.shots[0].from, back.shots[0].to, "{text}");
     }
 
     #[test]
