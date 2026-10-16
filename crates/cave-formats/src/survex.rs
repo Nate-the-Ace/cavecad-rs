@@ -15,6 +15,7 @@ use crate::model::{
     Fixed, Lrud, Shot, Survey, Trip, applied_declination, convert, grads_to_degrees,
     normalize_azimuth, unknown_elevation_note,
 };
+use std::collections::HashMap;
 
 pub(crate) fn field_alias(w: &str) -> &str {
     match w {
@@ -205,11 +206,285 @@ pub(crate) fn read_date(t: &str, seps: &[u8]) -> Option<String> {
     Some(format!("{}-{}-{}", &t[..4], two(month), two(day)))
 }
 
+/// A `*calibrate` correction: `(reading - zero) * scale`.
+#[derive(Clone, Copy)]
+struct Correction {
+    zero: f64,
+    scale: f64,
+}
+
+impl Default for Correction {
+    fn default() -> Self {
+        Correction {
+            zero: 0.0,
+            scale: 1.0,
+        }
+    }
+}
+
+impl Correction {
+    fn apply(&self, v: f64) -> f64 {
+        (v - self.zero) * self.scale
+    }
+}
+
+/// The corrections in force, per quantity.
+#[derive(Clone, Copy, Default)]
+struct Calib {
+    tape: Correction,
+    compass: Correction,
+    clino: Correction,
+    backcompass: Correction,
+    backclino: Correction,
+}
+
+/// Every setting Survex saves at `*begin` and restores at `*end`.
+#[derive(Clone)]
+struct Settings {
+    units: Units,
+    declination: f64,
+    flags: Flags,
+    style: &'static str,
+    normal: Vec<String>,
+    passage: Vec<String>,
+    calib: Calib,
+    /// `*case`: 'L' tolower (Survex's default: names that differ only in case are one), 'U'
+    /// toupper, 'P' preserve.
+    case: char,
+    decimal_comma: bool,
+}
+
+impl Default for Settings {
+    fn default() -> Self {
+        Settings {
+            units: Units::default(),
+            declination: 0.0,
+            flags: Flags::default(),
+            style: "normal",
+            normal: ["from", "to", "tape", "compass", "clino"]
+                .map(String::from)
+                .to_vec(),
+            passage: ["station", "left", "right", "up", "down"]
+                .map(String::from)
+                .to_vec(),
+            calib: Calib::default(),
+            case: 'L',
+            decimal_comma: false,
+        }
+    }
+}
+
+impl Settings {
+    /// `*calibrate <quantities> <zero error> [<units>] [<scale>]`, or `*calibrate default`.
+    fn calibrate(&mut self, args: &[String]) {
+        if args
+            .first()
+            .is_some_and(|a| a.eq_ignore_ascii_case("default"))
+        {
+            self.calib = Calib::default();
+            return;
+        }
+        let Some(at) = args
+            .iter()
+            .position(|a| !parse_float(a).is_nan() && is_finite_str(a))
+        else {
+            return;
+        };
+        let zero = parse_float(&args[at]);
+        let rest = &args[at + 1..];
+        // an optional units word, then an optional scale
+        let (unit_word, scale_at) = match rest.first() {
+            Some(w) if parse_float(w).is_nan() => (Some(w.to_lowercase()), 1),
+            _ => (None, 0),
+        };
+        let scale = rest
+            .get(scale_at)
+            .map(|s| parse_float(s))
+            .filter(|v| !v.is_nan())
+            .unwrap_or(1.0);
+        for q in &args[..at] {
+            let q = q.to_lowercase();
+            let angle = |z: f64| match unit_word.as_deref() {
+                Some(u) if u.contains("grad") || u.contains("mil") => {
+                    crate::model::grads_to_degrees(z)
+                }
+                _ => z,
+            };
+            let length = |z: f64| match unit_word.as_deref() {
+                Some(u) if u.contains("feet") || u == "ft" => {
+                    crate::model::convert(z, "ft", self.units.length_unit)
+                }
+                Some(u) if u.starts_with("met") || u == "m" => {
+                    crate::model::convert(z, "m", self.units.length_unit) / self.units.length_scale
+                }
+                _ => z,
+            };
+            match q.as_str() {
+                "tape" | "length" => {
+                    self.calib.tape = Correction {
+                        zero: length(zero),
+                        scale,
+                    }
+                }
+                "compass" | "bearing" => {
+                    self.calib.compass = Correction {
+                        zero: angle(zero),
+                        scale,
+                    }
+                }
+                "clino" | "gradient" => {
+                    self.calib.clino = Correction {
+                        zero: angle(zero),
+                        scale,
+                    }
+                }
+                "backcompass" | "backbearing" => {
+                    self.calib.backcompass = Correction {
+                        zero: angle(zero),
+                        scale,
+                    }
+                }
+                "backclino" | "backgradient" => {
+                    self.calib.backclino = Correction {
+                        zero: angle(zero),
+                        scale,
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+}
+
 #[derive(Clone, Copy, Default)]
 struct Flags {
     splay: bool,
     duplicate: bool,
     surface: bool,
+}
+
+/// The name in a `*include` line (quoted or not), if the line is one.
+fn include_name(line: &str) -> Option<String> {
+    let code = line.split(';').next().unwrap_or("");
+    let t = crate::js::trim_start(code);
+    let rest = t.strip_prefix('*')?;
+    let rest = crate::js::trim_start(rest);
+    if !rest
+        .get(..7)
+        .is_some_and(|w| w.eq_ignore_ascii_case("include"))
+    {
+        return None;
+    }
+    let after = &rest[7..];
+    if !after.starts_with(crate::js::is_space) {
+        return None;
+    }
+    let arg = trim(after);
+    match arg.strip_prefix('"') {
+        Some(q) => Some(q.split('"').next().unwrap_or("").to_string()),
+        None => arg.split_whitespace().next().map(str::to_string),
+    }
+}
+
+/// The ways Survex tries a file name it was given: as written, with ".svx", with backslashes as
+/// slashes, lower case, an upper-case first letter, all upper case.
+fn include_candidates(dir: &str, name: &str) -> Vec<String> {
+    let name = name.replace('\\', "/");
+    let has_ext = name
+        .rsplit('/')
+        .next()
+        .is_some_and(|leaf| leaf.contains('.'));
+    let mut variants = vec![name.clone(), name.to_lowercase()];
+    let leaf_at = name.rfind('/').map_or(0, |i| i + 1);
+    let lower = name.to_lowercase();
+    let mut cap = lower.clone();
+    if let Some(c) = cap[leaf_at..].chars().next() {
+        cap.replace_range(
+            leaf_at..leaf_at + c.len_utf8(),
+            &c.to_uppercase().to_string(),
+        );
+    }
+    variants.push(cap);
+    variants.push(name.to_uppercase());
+    let mut out = Vec::new();
+    for v in variants {
+        let base = if v.starts_with('/') || dir.is_empty() {
+            v.clone()
+        } else {
+            format!("{dir}/{v}")
+        };
+        if !has_ext {
+            out.push(format!("{base}.svx"));
+            out.push(format!("{base}.SVX"));
+        }
+        out.push(base);
+    }
+    out.dedup();
+    out
+}
+
+/// Splices every `*include` into the text where it stands (Survex reads one stream: settings made
+/// in an included file carry on after it). Returns the text and what could not be followed.
+pub(crate) fn expand_includes(
+    content: &str,
+    path: &str,
+    read: &dyn Fn(&str) -> Option<String>,
+) -> (String, Vec<String>) {
+    fn walk(
+        text: &str,
+        here: &str,
+        stack: &mut Vec<String>,
+        read: &dyn Fn(&str) -> Option<String>,
+        problems: &mut Vec<String>,
+    ) -> String {
+        let dir = match here.replace('\\', "/").rfind('/') {
+            Some(i) => here[..i].to_string(),
+            None => String::new(),
+        };
+        let mut out = Vec::new();
+        for line in split_lines(text) {
+            let Some(name) = include_name(&line) else {
+                out.push(line);
+                continue;
+            };
+            let found = include_candidates(&dir, &name)
+                .into_iter()
+                .find_map(|c| read(&c).map(|t| (c, t)));
+            match found {
+                None => {
+                    problems.push(format!("This file includes \"{name}\", and it could not be read -- every passage in it is missing from this import."));
+                    out.push(format!("; *include {name} (not found)"));
+                }
+                Some((p, _)) if stack.contains(&p) || stack.len() > 50 => {
+                    problems.push(format!("\"{name}\" includes itself, directly or through other files, so it was read once."));
+                }
+                Some((p, t)) => {
+                    stack.push(p.clone());
+                    out.push(walk(&t, &p, stack, read, problems));
+                    stack.pop();
+                }
+            }
+        }
+        out.join("\n")
+    }
+    let mut problems = Vec::new();
+    let mut stack = vec![path.to_string()];
+    let text = walk(content, path, &mut stack, read, &mut problems);
+    (text, problems)
+}
+
+/// Reads a Survex .svx file at `path`, following its `*include`s through `read`.
+pub fn parse_with_includes(
+    content: &str,
+    path: &str,
+    read: &dyn Fn(&str) -> Option<String>,
+) -> Survey {
+    let (text, problems) = expand_includes(content, path, read);
+    let mut survey = parse(&text);
+    for p in problems {
+        survey.add_finding("warning", "survex-include", p);
+    }
+    survey
 }
 
 /// Reads a Survex .svx file.
@@ -218,30 +493,34 @@ pub fn parse(content: &str) -> Survey {
         distance_unit: None,
         ..Survey::default()
     };
+    // *equate groups, by full station name
+    let mut equates: Vec<Vec<String>> = Vec::new();
     let mut passage: JsObj<Lrud> = JsObj::new();
     let mut prefix: Vec<String> = Vec::new();
-    let mut units = Units::default();
-    let mut declination = 0.0;
-    let mut flags = Flags::default();
-    let mut flag_stack: Vec<Flags> = Vec::new();
+    // everything *begin saves and *end restores
+    let mut st = Settings::default();
+    let mut saved: Vec<Settings> = Vec::new();
+    // the first spelling of each station name, by its case-folded form
+    let mut spelled: HashMap<String, String> = HashMap::new();
     let mut team_dirty = false;
     let mut cur_date = String::new();
     let mut cur_team = String::new();
-    let mut style = "normal";
-    let mut normal_fields: Vec<String> = ["from", "to", "tape", "compass", "clino"]
-        .map(String::from)
-        .to_vec();
-    let mut passage_fields: Vec<String> = ["station", "left", "right", "up", "down"]
-        .map(String::from)
-        .to_vec();
-
-    let full = |prefix: &[String], name: &str| {
-        if prefix.is_empty() {
-            name.to_string()
-        } else {
-            format!("{}.{name}", prefix.join("."))
-        }
-    };
+    // A station's full name, with Survex's *case applied: by default (tolower) names differ only
+    // in case are one station, shown as first written; toupper shows them upper case; preserve
+    // keeps them apart.
+    let full =
+        |prefix: &[String], name: &str, case: char, spelled: &mut HashMap<String, String>| {
+            let n = if prefix.is_empty() {
+                name.to_string()
+            } else {
+                format!("{}.{name}", prefix.join("."))
+            };
+            match case {
+                'P' => n,
+                'U' => n.to_uppercase(),
+                _ => spelled.entry(n.to_lowercase()).or_insert(n).clone(),
+            }
+        };
 
     for (li, raw) in split_lines(content).iter().enumerate() {
         let (code, notes) = match raw.find(';') {
@@ -264,15 +543,15 @@ pub fn parse(content: &str) -> Survey {
                             .cloned()
                             .unwrap_or_else(|| format!("anon{li}")),
                     );
-                    flag_stack.push(flags);
+                    saved.push(st.clone());
                     if survey.name.is_empty() && tokens.len() > 1 {
                         survey.name = tokens[1].clone();
                     }
                 }
                 "*end" => {
                     prefix.pop();
-                    if let Some(f) = flag_stack.pop() {
-                        flags = f;
+                    if let Some(f) = saved.pop() {
+                        st = f;
                     }
                 }
                 "*date" if tokens.len() > 1 => {
@@ -323,9 +602,9 @@ pub fn parse(content: &str) -> Survey {
                             continue;
                         }
                         match f.as_str() {
-                            "splay" => flags.splay = !negate,
-                            "duplicate" => flags.duplicate = !negate,
-                            "surface" => flags.surface = !negate,
+                            "splay" => st.flags.splay = !negate,
+                            "duplicate" => st.flags.duplicate = !negate,
+                            "surface" => st.flags.surface = !negate,
                             _ => {}
                         }
                         negate = false;
@@ -333,7 +612,7 @@ pub fn parse(content: &str) -> Survey {
                 }
                 "*data" => {
                     if tokens.len() == 1 {
-                        style = "normal";
+                        st.style = "normal";
                     } else {
                         let kind = tokens[1].to_lowercase();
                         let fields = || {
@@ -343,32 +622,44 @@ pub fn parse(content: &str) -> Survey {
                                 .collect()
                         };
                         if kind == "normal" {
-                            style = "normal";
-                            normal_fields = fields();
+                            st.style = "normal";
+                            st.normal = fields();
                         } else if kind == "passage" {
-                            style = "passage";
-                            passage_fields = fields();
+                            st.style = "passage";
+                            st.passage = fields();
                         } else {
-                            style = "other";
+                            st.style = "other";
                         }
                     }
                 }
-                "*units" => units.apply(&tokens, &["ft"]),
+                "*units" => st.units.apply(&tokens, &["ft"]),
                 "*calibrate" => {
                     if tokens.len() >= 3 && tokens[1].to_lowercase() == "declination" {
                         let d = parse_float(&tokens[2]);
                         if !d.is_nan() {
-                            declination = -d;
+                            st.declination = -d;
                             survey.declination = -d;
                             survey.declination_source = "file".into();
                         }
+                    } else {
+                        st.calibrate(&tokens[1..]);
                     }
+                }
+                "*case" if tokens.len() > 1 => {
+                    st.case = match tokens[1].to_lowercase().as_str() {
+                        "preserve" => 'P',
+                        "toupper" => 'U',
+                        _ => 'L',
+                    };
+                }
+                "*set" if tokens.len() > 2 && tokens[1].eq_ignore_ascii_case("decimal") => {
+                    st.decimal_comma = tokens[2].contains(',');
                 }
                 "*declination" => {
                     if tokens.len() >= 2 && tokens[1].to_lowercase() != "auto" {
                         let d = parse_float(&tokens[1]);
                         if !d.is_nan() {
-                            declination = d;
+                            st.declination = d;
                             survey.declination = d;
                             survey.declination_source = "file".into();
                         }
@@ -389,29 +680,44 @@ pub fn parse(content: &str) -> Survey {
                             0.0
                         };
                         if !fx.is_nan() && !fy.is_nan() {
-                            let x = into_survey_unit(&mut survey, &units, fx);
-                            let y = into_survey_unit(&mut survey, &units, fy);
+                            let x = into_survey_unit(&mut survey, &st.units, fx);
+                            let y = into_survey_unit(&mut survey, &st.units, fy);
                             let z = if fz.is_nan() {
                                 0.0
                             } else {
-                                into_survey_unit(&mut survey, &units, fz)
+                                into_survey_unit(&mut survey, &st.units, fz)
                             };
-                            survey
-                                .fixed
-                                .set(&full(&prefix, &tokens[1]), Fixed::at(x, y, z));
+                            survey.fixed.set(
+                                &full(&prefix, &tokens[1], st.case, &mut spelled),
+                                Fixed::at(x, y, z),
+                            );
                         }
                     }
+                }
+                "*equate" if tokens.len() > 2 => {
+                    equates.push(
+                        tokens[1..]
+                            .iter()
+                            .map(|t| full(&prefix, t, st.case, &mut spelled))
+                            .collect(),
+                    );
                 }
                 _ => {}
             }
             continue;
         }
 
-        let fields = split_ws(line);
-        if style == "normal" {
+        let mut fields = split_ws(line);
+        if st.decimal_comma {
+            // "*set decimal ,": a comma is the decimal point
+            for f in &mut fields {
+                *f = f.replace(',', ".");
+            }
+        }
+        if st.style == "normal" {
             let mut rec: JsObj<String> = JsObj::new();
-            for (k, v) in normal_fields.iter().zip(fields.iter()) {
-                rec.set(k, v.clone());
+            for (k, v) in data_fields(line, &st.normal, st.decimal_comma) {
+                rec.set(&k, v);
             }
             let (Some(from), Some(to), Some(tape)) =
                 (rec.get("from"), rec.get("to"), rec.get("tape"))
@@ -422,6 +728,7 @@ pub fn parse(content: &str) -> Survey {
             if tape.is_nan() {
                 continue;
             }
+            let tape = st.calib.tape.apply(tape);
             let (from, to) = (from.clone(), to.clone());
             let mut clino = 0.0;
             let mut plumbed = false;
@@ -434,7 +741,7 @@ pub fn parse(content: &str) -> Survey {
                     None => {
                         let v = parse_float(c);
                         clino = if !v.is_nan() {
-                            units.clino(v)
+                            st.calib.clino.apply(st.units.clino(v))
                         } else if has_reading(rec.get("backclino")) {
                             f64::NAN // the backsight carries it
                         } else {
@@ -464,32 +771,34 @@ pub fn parse(content: &str) -> Survey {
                 compass = 0.0;
                 omitted = true;
             } else {
-                compass = units.compass(compass);
+                compass = st.calib.compass.apply(st.units.compass(compass));
             }
 
             let anon = is_anonymous(&to);
-            let distance = into_survey_unit(&mut survey, &units, tape);
+            let distance = into_survey_unit(&mut survey, &st.units, tape);
             let mut shot = Shot {
-                splay: anon || flags.splay,
-                from: full(&prefix, &from),
+                splay: anon || st.flags.splay,
+                from: full(&prefix, &from, st.case, &mut spelled),
                 to: if anon {
                     String::new()
                 } else {
-                    full(&prefix, &to)
+                    full(&prefix, &to, st.case, &mut spelled)
                 },
                 distance,
                 azimuth_omitted: omitted,
-                azimuth: normalize_azimuth(compass + declination),
-                declination: Some(declination),
+                azimuth: normalize_azimuth(compass + st.declination),
+                declination: Some(st.declination),
                 inclination: clino,
-                exclude_from_length: flags.duplicate || flags.surface,
-                exclude_from_plot: flags.surface,
+                exclude_from_length: st.flags.duplicate || st.flags.surface,
+                exclude_from_plot: st.flags.surface,
                 ..Shot::default()
             };
             if let Some(bc) = rec.get("backcompass") {
                 let v = parse_float(bc);
                 if !v.is_nan() {
-                    shot.back_azimuth = Some(normalize_azimuth(units.compass(v) + declination));
+                    shot.back_azimuth = Some(normalize_azimuth(
+                        st.calib.backcompass.apply(st.units.compass(v)) + st.declination,
+                    ));
                 }
             }
             if let Some(bc) = rec.get("backclino") {
@@ -498,7 +807,8 @@ pub fn parse(content: &str) -> Survey {
                     None => {
                         let v = parse_float(bc);
                         if !v.is_nan() {
-                            shot.back_inclination = Some(units.clino(v));
+                            shot.back_inclination =
+                                Some(st.calib.backclino.apply(st.units.clino(v)));
                         }
                     }
                 }
@@ -507,15 +817,15 @@ pub fn parse(content: &str) -> Survey {
             shot.trip = survey.trip_id_for(Trip {
                 date: cur_date.clone(),
                 team: cur_team.clone(),
-                declination,
+                declination: st.declination,
                 ..Trip::default()
             });
             team_dirty = true;
             survey.shots.push(shot);
-        } else if style == "passage" {
+        } else if st.style == "passage" {
             let mut rec: JsObj<String> = JsObj::new();
-            for (k, v) in passage_fields.iter().zip(fields.iter()) {
-                rec.set(k, v.clone());
+            for (k, v) in data_fields(line, &st.passage, st.decimal_comma) {
+                rec.set(&k, v);
             }
             let Some(station) = rec.get("station").cloned() else {
                 continue;
@@ -528,15 +838,18 @@ pub fn parse(content: &str) -> Survey {
                     if n.is_nan() {
                         None
                     } else {
-                        Some(into_survey_unit(&mut survey, &units, n))
+                        Some(into_survey_unit(&mut survey, &st.units, n))
                     }
                 }
             };
             let l = Lrud::of(num("left"), num("right"), num("up"), num("down"));
-            passage.set(&full(&prefix, &station), l);
+            passage.set(&full(&prefix, &station, st.case, &mut spelled), l);
         }
     }
 
+    if !equates.is_empty() {
+        join_equates(&mut survey, &mut passage, &equates);
+    }
     for s in &mut survey.shots {
         if !s.splay
             && let Some(p) = passage.get(&s.to)
@@ -550,10 +863,161 @@ pub fn parse(content: &str) -> Survey {
         survey.trips[0].start_lrud = Some(start);
     }
     if survey.distance_unit.is_none() {
-        survey.distance_unit = Some(units.length_unit.into());
+        survey.distance_unit = Some(st.units.length_unit.into());
     }
     survey.ensure_trips();
     survey
+}
+
+/// The fields of a data line, read as Survex reads them: a station name runs to the next blank,
+/// but a reading ends where its number does, so `8.2-down` is tape 8.2, compass omitted, clino
+/// down. `ignoreall` takes the rest of the line.
+fn data_fields(line: &str, order: &[String], decimal_comma: bool) -> Vec<(String, String)> {
+    let chars: Vec<char> = line.chars().collect();
+    let mut i = 0;
+    let mut out = Vec::new();
+    let blank = |c: char| crate::js::is_space(c);
+    for name in order {
+        while i < chars.len() && blank(chars[i]) {
+            i += 1;
+        }
+        if i >= chars.len() {
+            break;
+        }
+        let start = i;
+        let word = |i: &mut usize| {
+            while *i < chars.len() && !blank(chars[*i]) {
+                *i += 1;
+            }
+        };
+        match name.as_str() {
+            "from" | "to" | "station" | "ignore" | "newline" => word(&mut i),
+            "ignoreall" => i = chars.len(),
+            _ => {
+                // a reading: a number, else "-" (omitted, any run of them), else a word
+                let mut j = i;
+                if j < chars.len() && matches!(chars[j], '+' | '-') {
+                    j += 1;
+                }
+                let digits_start = j;
+                let point = if decimal_comma { ',' } else { '.' };
+                while j < chars.len() && (chars[j].is_ascii_digit() || chars[j] == point) {
+                    j += 1;
+                }
+                if j > digits_start && chars[digits_start..j].iter().any(char::is_ascii_digit) {
+                    i = j;
+                } else if chars[i] == '-'
+                    && (i + 1 >= chars.len() || !chars[i + 1].is_ascii_alphabetic())
+                {
+                    while i < chars.len() && chars[i] == '-' {
+                        i += 1;
+                    }
+                } else if chars[i] == '-'
+                    && !(name.ends_with("clino") && {
+                        let mut k = i;
+                        word(&mut k);
+                        clino_keyword(&chars[i..k].iter().collect::<String>()).is_some()
+                    })
+                {
+                    i += 1; // "-down": compass omitted, then the clino ("-V" is a clino of its own)
+                } else {
+                    word(&mut i);
+                }
+            }
+        }
+        let text: String = chars[start..i].iter().collect();
+        let text = if decimal_comma {
+            text.replace(',', ".")
+        } else {
+            text
+        };
+        out.push((name.clone(), text));
+    }
+    out
+}
+
+/// `*equate`: every member of a group is one station. Each is renamed to the group's first member
+/// that a shot uses (else its first), in the shots, the per-station LRUD and the fixed points.
+fn join_equates(survey: &mut Survey, passage: &mut JsObj<Lrud>, groups: &[Vec<String>]) {
+    let mut parent: HashMap<String, String> = HashMap::new();
+    fn find(parent: &mut HashMap<String, String>, n: &str) -> String {
+        let mut n = n.to_string();
+        while let Some(p) = parent.get(&n).cloned() {
+            if p == n {
+                break;
+            }
+            let gp = parent.get(&p).cloned().unwrap_or_else(|| p.clone());
+            parent.insert(n.clone(), gp.clone());
+            n = gp;
+        }
+        n
+    }
+    let mut order: Vec<String> = Vec::new();
+    for g in groups {
+        for n in g {
+            if !parent.contains_key(n) {
+                parent.insert(n.clone(), n.clone());
+                order.push(n.clone());
+            }
+        }
+        for n in &g[1..] {
+            let (a, b) = (find(&mut parent, &g[0]), find(&mut parent, n));
+            if a != b {
+                parent.insert(b, a);
+            }
+        }
+    }
+    let used: std::collections::HashSet<&str> = survey
+        .shots
+        .iter()
+        .flat_map(|s| [s.from.as_str(), s.to.as_str()])
+        .collect();
+    let mut canon: HashMap<String, String> = HashMap::new();
+    for n in &order {
+        let root = find(&mut parent, n);
+        let replace = match canon.get(&root) {
+            None => true,
+            Some(c) => !used.contains(c.as_str()) && used.contains(n.as_str()),
+        };
+        if replace {
+            canon.insert(root, n.clone());
+        }
+    }
+    let mut rename: HashMap<String, String> = HashMap::new();
+    for n in &order {
+        let root = find(&mut parent, n);
+        if let Some(c) = canon.get(&root)
+            && c != n
+        {
+            rename.insert(n.clone(), c.clone());
+        }
+    }
+    for (alias, kept) in &rename {
+        survey.aliases.set(alias, kept.clone());
+    }
+    let re = |n: &str| rename.get(n).cloned().unwrap_or_else(|| n.to_string());
+    for s in &mut survey.shots {
+        s.from = re(&s.from);
+        if !s.to.is_empty() {
+            s.to = re(&s.to);
+        }
+    }
+    let mut joined: JsObj<Lrud> = JsObj::new();
+    for (n, l) in passage.iter() {
+        let t = re(n);
+        if !joined.has(&t) || t == n {
+            joined.set(&t, l.clone());
+        }
+    }
+    *passage = joined;
+    let mut fixed: JsObj<Fixed> = JsObj::new();
+    for (n, f) in survey.fixed.iter() {
+        let t = re(n);
+        if !fixed.has(&t) || t == n {
+            fixed.set(&t, f.clone());
+        }
+    }
+    survey.fixed = fixed;
 }
 
 /// Whether a field holds a number.

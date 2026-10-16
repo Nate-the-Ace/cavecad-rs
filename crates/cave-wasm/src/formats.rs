@@ -3,7 +3,7 @@
 
 use crate::{DOC, OpenResult, install};
 use cave_doc::ActorId;
-use cave_formats::{FORMATS, Format, Survey, therion};
+use cave_formats::{FORMATS, Format, Survey};
 use serde::Serialize;
 use std::collections::HashMap;
 use wasm_bindgen::prelude::*;
@@ -79,30 +79,7 @@ pub(crate) fn read_survey(
     others: &str,
 ) -> Result<(String, Survey), String> {
     let files: HashMap<String, String> = serde_json::from_str(others).unwrap_or_default();
-    let (label, mut survey) = if let Some(project) = cave_formats::detect_project(file_name, text) {
-        let r = cave_formats::read_project(project, file_name, text, &resolver(&files));
-        (
-            format!(
-                "{} ({} file{})",
-                project.label(),
-                r.files.len(),
-                if r.files.len() == 1 { "" } else { "s" }
-            ),
-            r.survey,
-        )
-    } else {
-        let Some(format) = cave_formats::detect(file_name, text) else {
-            return Err(format!(
-                "{file_name} is not a survey file CaveCAD can read. It reads Compass (.dat, .mak), Walls (.srv, .wpj), Survex (.svx), Therion (.th, thconfig) and CSV."
-            ));
-        };
-        let survey = if format == Format::Therion && !files.is_empty() {
-            therion::parse_with_inputs(text, file_name, &resolver(&files))
-        } else {
-            format.parse(text)
-        };
-        (format.label().to_string(), survey)
-    };
+    let (label, mut survey) = cave_formats::read_any(file_name, text, &resolver(&files))?;
     if survey.cave_name.is_empty() && survey.name.is_empty() {
         // a file that names nothing is named after itself
         let stem = base(file_name);

@@ -265,3 +265,37 @@ pub fn read(file_name: &str, content: &str) -> Option<Read> {
         survey: format.parse(content),
     })
 }
+
+/// Reads a survey file, or a project file and the data files it names, following every reference
+/// (`*include`, Therion `input`, a project's file list) through `read`, which answers a path's
+/// text or `None`. Returns what it was read as, and the survey; an error when the file is not
+/// survey data CaveCAD can read.
+pub fn read_any(
+    file_name: &str,
+    text: &str,
+    read: &dyn Fn(&str) -> Option<String>,
+) -> Result<(String, Survey), String> {
+    if let Some(project) = detect_project(file_name, text) {
+        let r = read_project(project, file_name, text, read);
+        let n = r.files.len();
+        return Ok((
+            format!(
+                "{} ({n} file{})",
+                project.label(),
+                if n == 1 { "" } else { "s" }
+            ),
+            r.survey,
+        ));
+    }
+    let Some(format) = detect(file_name, text) else {
+        return Err(format!(
+            "{file_name} is not a survey file CaveCAD can read. It reads Compass (.dat, .mak), Walls (.srv, .wpj), Survex (.svx), Therion (.th, thconfig) and CSV."
+        ));
+    };
+    let survey = match format {
+        Format::Therion => therion::parse_with_inputs(text, file_name, read),
+        Format::Survex => survex::parse_with_includes(text, file_name, read),
+        f => f.parse(text),
+    };
+    Ok((format.label().to_string(), survey))
+}

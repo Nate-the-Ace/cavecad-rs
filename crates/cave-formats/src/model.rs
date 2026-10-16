@@ -286,6 +286,9 @@ pub struct Survey {
     pub trips: Vec<Trip>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub parse_findings: Option<Vec<Finding>>,
+    /// Other names of joined stations (`*equate`, Therion `equate`): alias to the name kept.
+    #[serde(skip_serializing_if = "JsObj::is_empty", deserialize_with = "nd")]
+    pub aliases: JsObj<String>,
 }
 
 impl Default for Survey {
@@ -305,6 +308,7 @@ impl Default for Survey {
             start_lrud: None,
             trips: Vec::new(),
             parse_findings: None,
+            aliases: JsObj::new(),
         }
     }
 }
