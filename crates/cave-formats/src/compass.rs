@@ -106,8 +106,13 @@ fn block_date(block: &str) -> String {
     let Some((mo, da, mut yr)) = first_match(block, "SURVEY DATE:", three) else {
         return String::new();
     };
+    // A two-digit year is always 19XX (Larry Fish, Compass's author, via Survex), and 1 1 1901 is
+    // what Compass writes when no date was given. (The old reader guessed 20XX for 00-50.)
     if yr < 100 {
-        yr += if yr > 50 { 1900 } else { 2000 };
+        yr += 1900;
+    }
+    if (yr, mo, da) == (1901, 1, 1) {
+        return String::new();
     }
     format!("{yr}-{mo:02}-{da:02}")
 }
@@ -169,12 +174,13 @@ fn find_flags(s: &str) -> Option<(usize, usize, String)> {
 
 /// Reads a Compass .dat file.
 pub fn parse(content: &str) -> Survey {
-    parse_keeping(content, &[])
+    parse_keeping(content, &[], None)
 }
 
 /// Reads a Compass .dat file in a project: the stations in `keep` (those the project fixes or links)
 /// are real stations, so a zero-length shot to one joins it rather than only carrying LRUD.
-pub fn parse_keeping(content: &str, keep: &[String]) -> Survey {
+/// `lrud_to` overrides every block's FORMAT on which station the LRUD belong to (a project's `!O`).
+pub fn parse_keeping(content: &str, keep: &[String], lrud_to: Option<bool>) -> Survey {
     let mut survey = Survey {
         distance_unit: Some("ft".into()),
         ..Survey::default()
@@ -193,7 +199,7 @@ pub fn parse_keeping(content: &str, keep: &[String]) -> Survey {
         let declination = decl_found.unwrap_or(0.0);
         let letters = format_letters(block);
         let last = letters.chars().last().map(|c| c.to_ascii_uppercase());
-        let to_station = last == Some('T');
+        let to_station = lrud_to.unwrap_or(last == Some('T'));
         // The backsight letter is the 12th of a 12- or 13-letter FORMAT and the 14th of a 15-letter
         // one; B means backsight columns, and so does C (the same, shown reversed in Compass).
         let chars: Vec<char> = letters.chars().collect();

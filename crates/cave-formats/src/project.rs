@@ -266,6 +266,12 @@ fn read_mak(path: &str, content: &str, read: &dyn Fn(&str) -> Option<String>) ->
     let mut parts = Vec::new();
     let mut files = Vec::new();
     let mut fixes: Vec<(String, Fixed)> = Vec::new();
+    // the project's own settings, wherever they stand in the file
+    let mut opts = MakOptions::default();
+    for st in mak_statements(content) {
+        opts.read(&st);
+    }
+    let lrud_to = opts.flag('O').then(|| opts.flag('T'));
     for st in mak_statements(content) {
         let Some(body) = st.strip_prefix('#') else {
             continue;
@@ -289,7 +295,7 @@ fn read_mak(path: &str, content: &str, read: &dyn Fn(&str) -> Option<String>) ->
         let full = join(&dir, &file);
         match read(&full) {
             Some(text) => {
-                let mut s = compass::parse_keeping(&text, &named);
+                let mut s = compass::parse_keeping(&text, &named, lrud_to);
                 s.convert_units("ft");
                 parts.push(s);
                 files.push(full);
@@ -299,6 +305,7 @@ fn read_mak(path: &str, content: &str, read: &dyn Fn(&str) -> Option<String>) ->
     }
     let mut survey = merge(parts, notes);
     survey.convert_units("ft");
+    opts.apply(&mut survey);
     // the project's fixes are the cave's: they are in feet, as Compass keeps everything
     // the first fix of a station holds; a second is ignored, as Compass does
     let mut seen: Vec<String> = Vec::new();
@@ -317,6 +324,153 @@ fn read_mak(path: &str, content: &str, read: &dyn Fn(&str) -> Option<String>) ->
         format: ProjectFormat::CompassMak,
         survey,
         files,
+    }
+}
+
+/// A .mak's settings: `@east,north,elevation,zone,convergence;` (the base location, which the
+/// declination is computed at), `$zone;`, `%convergence;` (applied) or `*convergence;` (not), and the
+/// `!` letters: declinations `I` ignored, `E` from the survey files, `A` computed from the base location
+/// and each survey's date; `V` apply the UTM convergence; `O` override the LRUD association with `T`
+/// (to station) or `t` (from); and `S`/`X`/`P`/`L`/`C` -- shot flags, total exclusion, plotting,
+/// length and closure exclusion -- each switched off by its lower-case letter.
+#[derive(Default)]
+struct MakOptions {
+    base: Option<(f64, f64, f64)>,
+    zone: Option<i32>,
+    /// From a `%`/`*` line.
+    convergence: Option<f64>,
+    /// From the `@` line (Compass's own figure; 0.0 there is a placeholder).
+    base_convergence: Option<f64>,
+    convergence_on: bool,
+    letters: String,
+}
+
+impl MakOptions {
+    fn read(&mut self, st: &str) {
+        let body = st[1..].trim();
+        let nums = || {
+            body.split(',')
+                .map(|v| v.trim().parse::<f64>())
+                .collect::<Vec<_>>()
+        };
+        match st.chars().next() {
+            Some('@') => {
+                let v = nums();
+                if let [Ok(e), Ok(n), Ok(z), Ok(zone), rest @ ..] = &v[..] {
+                    self.base = Some((*e, *n, *z));
+                    self.zone = Some(*zone as i32);
+                    if let Some(Ok(c)) = rest.first() {
+                        self.base_convergence = Some(*c).filter(|c| *c != 0.0);
+                    }
+                }
+            }
+            Some('$') => self.zone = body.parse().ok().or(self.zone),
+            Some('%') => {
+                self.convergence = body.parse().ok().or(self.convergence);
+                self.convergence_on = true;
+            }
+            Some('*') => self.convergence = body.parse().ok().or(self.convergence),
+            Some('!') => self.letters = body.to_string(),
+            _ => {}
+        }
+    }
+
+    fn flag(&self, c: char) -> bool {
+        self.letters.contains(c)
+    }
+
+    /// Applies the settings to the merged survey.
+    fn apply(&self, survey: &mut Survey) {
+        // flags a project switches off
+        let off = |c: char| self.letters.contains(c);
+        for s in &mut survey.shots {
+            if off('s') {
+                s.exclude_from_all = false;
+                s.exclude_from_plot = false;
+                s.exclude_from_length = false;
+                s.no_adjust = false;
+            }
+            if off('x') {
+                s.exclude_from_all = false;
+            }
+            if off('p') {
+                s.exclude_from_plot = false;
+            }
+            if off('l') {
+                s.exclude_from_length = false;
+            }
+            if off('c') {
+                s.no_adjust = false;
+            }
+        }
+        // declination and convergence
+        let place = match (self.base, self.zone) {
+            (Some((e, n, z)), Some(zone)) if zone != 0 => {
+                let (lat, lon) = cave_geomag::utm_to_latlon(e, n, zone);
+                Some((lat, lon, z, zone))
+            }
+            _ => None,
+        };
+        let convergence = if self.flag('V') || self.convergence_on {
+            self.convergence
+                .or(self.base_convergence)
+                .or(place.map(|(lat, lon, _, zone)| cave_geomag::utm_convergence(lat, lon, zone)))
+                .unwrap_or(0.0)
+        } else {
+            0.0
+        };
+        let mode = if self.flag('I') {
+            'I'
+        } else if self.flag('A') && place.is_some() {
+            'A'
+        } else {
+            'E'
+        };
+        if mode == 'E' && convergence == 0.0 {
+            return;
+        }
+        let trips = survey.trips.clone();
+        let mut cache: Vec<(String, f64)> = Vec::new();
+        for s in &mut survey.shots {
+            let applied = crate::model::applied_declination(s, trips.get(s.trip));
+            let wanted = match mode {
+                'I' => 0.0,
+                'A' => {
+                    let date = trips
+                        .get(s.trip)
+                        .map(|t| t.date.clone())
+                        .unwrap_or_default();
+                    match cache.iter().find(|(d, _)| *d == date) {
+                        Some((_, v)) => *v,
+                        None => {
+                            let (lat, lon, alt, _) = place.unwrap_or_default();
+                            let v = cave_geomag::decimal_year_of(&date)
+                                .and_then(|y| cave_geomag::field(lat, lon, y, alt / 1000.0))
+                                .map_or(applied, |f| f.declination);
+                            cache.push((date, v));
+                            v
+                        }
+                    }
+                }
+                _ => applied,
+            } - convergence;
+            let delta = wanted - applied;
+            if delta != 0.0 {
+                if s.azimuth.is_finite() && !s.azimuth_omitted {
+                    s.azimuth = crate::model::normalize_azimuth(s.azimuth + delta);
+                }
+                s.back_azimuth = s
+                    .back_azimuth
+                    .map(|b| crate::model::normalize_azimuth(b + delta));
+                s.declination = Some(wanted);
+            }
+        }
+        if mode == 'A' {
+            survey.declination_source = "igrf".into();
+            for t in &mut survey.trips {
+                t.declination_source = "igrf".into();
+            }
+        }
     }
 }
 
@@ -725,6 +879,63 @@ mod tests {
         assert_eq!(
             (s.back_azimuth, s.back_inclination),
             (Some(269.0), Some(-5.0))
+        );
+    }
+
+    /// One shot due east (magnetic) with the file's declination 2, an X flag and LRUD.
+    const DAT_FLAGS: &str = "CAVE\r\nSURVEY NAME: A\r\nSURVEY DATE: 7 10 2015  COMMENT:\r\nSURVEY TEAM:\r\nAnn\r\nDECLINATION: 2.00  FORMAT: DDDDLRUDLADNF\r\n\r\nFROM TO LENGTH BEARING INC LEFT UP DOWN RIGHT\r\n\r\nA1 A2 10.00 90.00 0.00 1 2 3 4 #|X#\r\n\u{0C}";
+
+    fn mak(settings: &str) -> Survey {
+        let text = format!("{settings}\n#a.dat,A1[M,450000,4100000,500];");
+        read_project(
+            ProjectFormat::CompassMak,
+            "cave.mak",
+            &text,
+            &reader(&[("a.dat", DAT_FLAGS)]),
+        )
+        .survey
+    }
+
+    #[test]
+    fn a_project_can_compute_the_declination_from_its_place_and_dates() {
+        // E (the default): the file's own 2 degrees
+        assert!((mak("").shots[0].azimuth - 92.0).abs() < 1e-9);
+        // I: none at all
+        assert!((mak("!I;").shots[0].azimuth - 90.0).abs() < 1e-9);
+        // A: the field at the base location on the survey's date
+        let s = mak("@450000,4100000,500,16,0;\n!GA;");
+        let (lat, lon) = cave_geomag::utm_to_latlon(450_000.0, 4_100_000.0, 16);
+        let want = cave_geomag::field(lat, lon, cave_geomag::decimal_year(2015, 7, 10), 0.5)
+            .unwrap()
+            .declination;
+        assert!(
+            (s.shots[0].azimuth - (90.0 + want)).abs() < 1e-9,
+            "{} vs {}",
+            s.shots[0].azimuth,
+            90.0 + want
+        );
+        assert_eq!(s.shots[0].declination, Some(want));
+        assert_eq!(s.declination_source, "igrf");
+        // V: and the grid convergence taken off
+        let v = mak("@450000,4100000,500,16,0.75;\n!GAV;");
+        assert!((v.shots[0].azimuth - (90.0 + want - 0.75)).abs() < 1e-9);
+    }
+
+    #[test]
+    fn a_project_can_override_lrud_and_switch_flags_off() {
+        // the file says F (from-station: A1's walls are the start's); !OT makes them A2's
+        let f = mak("");
+        assert!(f.shots[0].left.is_none() && f.start_lrud.is_some());
+        let t = mak("!OT;");
+        assert_eq!(t.shots[0].left, Some(1.0));
+        assert!(f.shots[0].exclude_from_all);
+        assert!(
+            !mak("!x;").shots[0].exclude_from_all,
+            "x switches total exclusion off"
+        );
+        assert!(
+            !mak("!s;").shots[0].exclude_from_all,
+            "s switches every shot flag off"
         );
     }
 
