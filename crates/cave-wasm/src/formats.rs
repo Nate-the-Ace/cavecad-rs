@@ -51,19 +51,34 @@ fn base(path: &str) -> &str {
 
 /// Finds a file among those picked: by path, then by path ignoring case, then by file name ignoring
 /// case (a browser hands over names without folders, and projects made on Windows do not keep case).
+/// Among files of one name in different folders, the one whose folders agree most with the path
+/// asked for wins (then the first by path), so the answer never depends on hash order.
 fn resolver(files: &HashMap<String, String>) -> impl Fn(&str) -> Option<String> + '_ {
-    let by_path: Vec<(String, &String)> = files.iter().map(|(k, v)| (tidy(k), v)).collect();
+    let mut by_path: Vec<(String, &String)> = files.iter().map(|(k, v)| (tidy(k), v)).collect();
+    by_path.sort_by(|a, b| a.0.cmp(&b.0));
     move |p: &str| {
         let p = tidy(p);
         let lower = p.to_lowercase();
-        by_path
+        if let Some((_, v)) = by_path
             .iter()
             .find(|(k, _)| *k == p)
             .or_else(|| by_path.iter().find(|(k, _)| k.to_lowercase() == lower))
-            .or_else(|| {
-                by_path
-                    .iter()
-                    .find(|(k, _)| base(k).to_lowercase() == base(&lower))
+        {
+            return Some(v.to_string());
+        }
+        let want: Vec<&str> = lower.rsplit('/').collect();
+        by_path
+            .iter()
+            .filter(|(k, _)| base(k).to_lowercase() == base(&lower))
+            .max_by_key(|(k, _)| {
+                let k = k.to_lowercase();
+                let agree = k
+                    .rsplit('/')
+                    .zip(&want)
+                    .take_while(|(a, b)| a == *b)
+                    .count();
+                // more folders agreeing first; among equals the first path (max_by_key keeps the last)
+                (agree, std::cmp::Reverse(k))
             })
             .map(|(_, v)| v.to_string())
     }
@@ -104,7 +119,9 @@ pub(crate) fn read_folder(files_json: &str) -> Result<(String, Survey), String> 
     let files: HashMap<String, String> =
         serde_json::from_str(files_json).map_err(|e| e.to_string())?;
     let mut names: Vec<&String> = files.keys().collect();
-    names.sort();
+    // the folder's own top file before any buried in sub-folders (a project keeps test and
+    // experimental configs further down), then by name
+    names.sort_by_key(|n| (tidy(n).matches('/').count(), n.to_string()));
     let others = files_json;
     if let Some(p) = names
         .iter()
@@ -405,6 +422,41 @@ mod tests {
             (last[0].as_f64().unwrap() - 9.0).abs() < 1e-6
                 && (last[1].as_f64().unwrap() - 11.0).abs() < 1e-6,
             "{wall}"
+        );
+    }
+
+    #[test]
+    fn of_two_files_named_alike_the_nearer_folder_wins() {
+        let files: HashMap<String, String> = [
+            ("a/scraps/p.th2".to_string(), "A".to_string()),
+            ("b/scraps/p.th2".to_string(), "B".to_string()),
+            ("c/p.th2".to_string(), "C".to_string()),
+        ]
+        .into();
+        let r = resolver(&files);
+        assert_eq!(r("x/b/scraps/p.th2").as_deref(), Some("B"));
+        assert_eq!(r("zz/scraps/P.TH2").as_deref(), Some("A"));
+        assert_eq!(r("c/p.th2").as_deref(), Some("C"));
+    }
+
+    #[test]
+    fn a_folder_opens_through_its_top_project_file() {
+        let th = |n: &str, len: u32| {
+            format!(
+                "survey {n}\ncentreline\ndata normal from to length compass clino\n1 2 {len} 0 0\nendcentreline\nendsurvey\n"
+            )
+        };
+        let files = serde_json::json!({
+            "cave/configs/a/old.thconfig": "source ../../x.th\n",
+            "cave/thconfig": "source main.th\n",
+            "cave/main.th": th("main", 10),
+            "cave/x.th": th("x", 20),
+        })
+        .to_string();
+        let (_, survey) = read_folder(&files).unwrap();
+        assert_eq!(
+            survey.shots[0].distance, 10.0,
+            "read the buried config instead"
         );
     }
 }

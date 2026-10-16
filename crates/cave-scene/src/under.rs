@@ -20,6 +20,8 @@ pub const MIN_HALF: f64 = 1.5;
 pub const CLEAR: f64 = 2.0;
 /// Sampling step along a line, metres.
 const STEP: f64 = 0.3;
+/// The most samples one leg is split into (a 600 m leg at `STEP`).
+const MAX_SAMPLES: usize = 2000;
 
 /// Drawn segments `[x1, y1, z1, x2, y2, z2]`, split by whether another passage lies over them.
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
@@ -157,7 +159,12 @@ impl Footprints {
             let (a, b) = (w[0], w[1]);
             let len =
                 ((b[0] - a[0]).powi(2) + (b[1] - a[1]).powi(2) + (b[2] - a[2]).powi(2)).sqrt();
-            let n = ((len / STEP).ceil() as usize).max(1);
+            // a leg kilometres long (a mistyped fix) is sampled more coarsely, never without end
+            let n = if len.is_finite() {
+                ((len / STEP).ceil() as usize).clamp(1, MAX_SAMPLES)
+            } else {
+                1
+            };
             let at = |i: usize| {
                 let t = i as f64 / n as f64;
                 [

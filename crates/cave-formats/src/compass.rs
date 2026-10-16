@@ -114,7 +114,35 @@ fn block_date(block: &str) -> String {
     if (yr, mo, da) == (1901, 1, 1) {
         return String::new();
     }
+    // a month or day that cannot be is no date at all (a declination worked out from it would be
+    // for a day that never was)
+    if !(1..=12).contains(&mo) || !(1..=31).contains(&da) {
+        return String::new();
+    }
     format!("{yr}-{mo:02}-{da:02}")
+}
+
+/// The file's surveys: each ends at a form feed, and a survey header that follows another survey's
+/// shots with no form feed (a hand-joined file) starts a new one at its cave-name line.
+fn blocks(content: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    for block in content.split('\u{0C}') {
+        let lines = split_lines(block);
+        let mut start = 0;
+        let mut seen_shots = false;
+        for (i, l) in lines.iter().enumerate() {
+            let lower = l.to_ascii_lowercase();
+            if lower.contains("survey name:") && seen_shots && i > start + 1 {
+                out.push(lines[start..i - 1].join("\n"));
+                start = i - 1;
+                seen_shots = false;
+            } else if lower.trim_start().starts_with("from") && lower.contains("to") {
+                seen_shots = true;
+            }
+        }
+        out.push(lines[start..].join("\n"));
+    }
+    out
 }
 
 /// The rest of the line after SURVEY NAME:, trimmed.
@@ -191,8 +219,13 @@ pub fn parse_keeping(content: &str, keep: &[String], lrud_to: Option<bool>) -> S
     let mut station_refs: JsObj<usize> = JsObj::new();
     let mut station_lrud: JsObj<Lrud> = JsObj::new();
 
-    for block in content.split('\u{0C}') {
-        if block.chars().all(crate::js::is_space) {
+    for block in &blocks(content) {
+        let block = block.as_str();
+        // DOS editors end a file with ^Z, which is not a survey
+        if block
+            .chars()
+            .all(|c| crate::js::is_space(c) || c == '\u{1A}')
+        {
             continue;
         }
         let decl_found = first_match(block, "DECLINATION:", decl_number);

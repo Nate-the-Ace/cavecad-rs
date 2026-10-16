@@ -378,6 +378,23 @@ pub fn parse_with_inputs(
     parse_inner(&text, findings)
 }
 
+/// Reads several Therion files (`(path, text)`, a thconfig's sources) as Therion does: one stream,
+/// so surveys in different files keep their own names and an `equate` may join them.
+pub fn parse_sources(
+    sources: &[(String, String)],
+    read: &dyn Fn(&str) -> Option<String>,
+) -> Survey {
+    let mut text = String::new();
+    let mut findings = Vec::new();
+    for (path, content) in sources {
+        let (t, f) = expand_inputs(content, path, read);
+        text.push_str(&t);
+        text.push('\n');
+        findings.extend(f);
+    }
+    parse_inner(&text, findings)
+}
+
 fn parse_inner(content: &str, input_findings: Vec<InputFinding>) -> Survey {
     let mut survey = Survey {
         distance_unit: None,
@@ -438,10 +455,14 @@ fn parse_inner(content: &str, input_findings: Vec<InputFinding>) -> Survey {
         let line = &l.text;
         if line.is_empty() {
             if let Some(path) = l.comment.strip_prefix(&SKETCH_MARK[2..]) {
-                survey.sketches.push(SketchInput {
+                let page = SketchInput {
                     path: path.to_string(),
                     survey: name_in(&prefix, "").trim_end_matches('.').to_string(),
-                });
+                };
+                // the same page pulled in twice would be drawn twice
+                if !survey.sketches.contains(&page) {
+                    survey.sketches.push(page);
+                }
             }
             continue;
         }
@@ -631,10 +652,15 @@ fn parse_inner(content: &str, input_findings: Vec<InputFinding>) -> Survey {
                         .map(|t| field_alias(&t.to_lowercase()).to_string())
                         .collect()
                 };
-                if style == "normal" {
+                if matches!(
+                    style.as_str(),
+                    "normal" | "topofil" | "diving" | "cartesian"
+                ) {
+                    // a thread counter, a depth gauge or offsets in place of tape, compass and
+                    // clino: brought to normal readings shot by shot
                     sc.style = "normal";
                     sc.normal = fields();
-                } else if style == "dimensions" || style == "topofil" {
+                } else if style == "dimensions" {
                     sc.style = "dimensions";
                     sc.dims = fields();
                 } else {
@@ -693,6 +719,7 @@ fn parse_inner(content: &str, input_findings: Vec<InputFinding>) -> Survey {
             for (k, v) in sc.normal.iter().zip(tokens.iter()) {
                 rec.set(k, v.clone());
             }
+            let derived = crate::survex::derive_readings(&mut rec, &sc.units, &sc.calib);
             let (Some(from), Some(to), Some(tape)) =
                 (rec.get("from"), rec.get("to"), rec.get("tape"))
             else {
@@ -725,8 +752,15 @@ fn parse_inner(content: &str, input_findings: Vec<InputFinding>) -> Survey {
                     }
                 }
             }
+            if let Some(c) = derived.clino {
+                clino = c;
+                plumbed = c.abs() >= 89.999;
+            }
             let mut compass = rec.get("compass").map_or(f64::NAN, |c| parse_float(c));
-            if compass.is_nan() && crate::survex::has_reading(rec.get("backcompass")) {
+            if let Some(b) = derived.bearing {
+                // offsets point at true north: the declination added below is taken off again
+                compass = b - sc.declination;
+            } else if compass.is_nan() && crate::survex::has_reading(rec.get("backcompass")) {
                 // only the backsight was read: it carries the bearing
             } else if compass.is_nan() {
                 if !plumbed {
@@ -752,7 +786,8 @@ fn parse_inner(content: &str, input_findings: Vec<InputFinding>) -> Survey {
             }
             shot_info.push((
                 survey.shots.len(),
-                !sc.declination_set,
+                // offsets are not magnetic: no declination is worked out for them
+                !sc.declination_set && derived.bearing.is_none(),
                 cur_date.clone(),
                 sc.cs.clone(),
             ));

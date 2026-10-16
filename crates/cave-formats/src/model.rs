@@ -678,6 +678,16 @@ impl Survey {
                 self.fixed.set(n, f.clone());
             }
         }
+        for (alias, kept) in other.aliases.iter() {
+            if !self.aliases.has(alias) {
+                self.aliases.set(alias, kept.clone());
+            }
+        }
+        for page in other.sketches {
+            if !self.sketches.contains(&page) {
+                self.sketches.push(page);
+            }
+        }
         for f in other.parse_findings.into_iter().flatten() {
             self.add_finding(&f.severity, &f.code, f.message);
         }

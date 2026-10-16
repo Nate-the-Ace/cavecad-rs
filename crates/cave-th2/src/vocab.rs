@@ -210,7 +210,12 @@ pub fn point_scale(word: Option<&str>) -> f64 {
         Some("s") => 0.7,
         Some("l") => 1.5,
         Some("xl") => 2.2,
-        Some(w) => w.parse::<f64>().ok().filter(|v| *v > 0.0).unwrap_or(1.0),
+        // a number is a multiplier too, held to what still reads as a symbol
+        Some(w) => w
+            .parse::<f64>()
+            .ok()
+            .filter(|v| v.is_finite() && *v > 0.0)
+            .map_or(1.0, |v| v.clamp(0.2, 5.0)),
         None => 1.0,
     }
 }

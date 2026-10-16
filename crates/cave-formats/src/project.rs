@@ -712,16 +712,21 @@ fn read_thconfig(path: &str, content: &str, read: &dyn Fn(&str) -> Option<String
             });
             match found {
                 Some((p, text)) => {
-                    parts.push(therion::parse_with_inputs(&text, &p, read));
+                    parts.push((p.clone(), text));
                     files.push(p);
                 }
                 None => missing(&mut notes, &project, name),
             }
         }
     }
+    let survey = if parts.is_empty() {
+        Survey::default()
+    } else {
+        therion::parse_sources(&parts, read)
+    };
     ProjectRead {
         format: ProjectFormat::Thconfig,
-        survey: merge(parts, notes),
+        survey: merge(vec![survey], notes),
         files,
     }
 }
@@ -762,6 +767,29 @@ mod tests {
             "metres become feet"
         );
         assert!(s.findings().is_empty());
+    }
+
+    #[test]
+    fn a_thconfig_keeps_every_sources_sketch_pages_and_joined_names() {
+        let a = "survey a\ninput a.th2\ncentreline\ndata normal from to length compass clino\n1 2 10 0 0\nendcentreline\nendsurvey\n";
+        let b = "survey b\ninput b.th2\nequate 1@b 2@a\ncentreline\ndata normal from to length compass clino\n1 2 10 0 0\nendcentreline\nendsurvey\n";
+        let r = read_project(
+            ProjectFormat::Thconfig,
+            "t/thconfig",
+            "source a.th\nsource b.th\n",
+            &reader(&[("t/a.th", a), ("t/b.th", b)]),
+        );
+        let pages: Vec<&str> = r.survey.sketches.iter().map(|s| s.path.as_str()).collect();
+        assert_eq!(pages, ["t/a.th2", "t/b.th2"]);
+        assert!(!r.survey.aliases.is_empty(), "{:?}", r.survey.aliases);
+        // two files' surveys keep their names, and the equate between them joins them
+        let names: Vec<String> = r
+            .survey
+            .shots
+            .iter()
+            .map(|s| format!("{}>{}", s.from, s.to))
+            .collect();
+        assert_eq!(names, ["a.1>b.1", "b.1>b.2"], "{:?}", r.survey.aliases);
     }
 
     #[test]

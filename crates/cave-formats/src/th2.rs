@@ -180,7 +180,8 @@ fn number(t: &str) -> Option<f64> {
     if i != b.len() {
         return None;
     }
-    t.parse().ok()
+    // 1e400 is a number this writes, and not one anything can be drawn at
+    t.parse().ok().filter(|v: &f64| v.is_finite())
 }
 
 /// A token that starts an option (`-name`).

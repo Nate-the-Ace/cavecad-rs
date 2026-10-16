@@ -14,7 +14,7 @@
 //! The residual reported is from before the bend: after it every marker is on its station by
 //! construction, which says nothing.
 
-use cave_formats::th2::{Scale, Scrap, Seg};
+use cave_formats::th2::{Scale, Scrap, Seg, StationTie};
 use cave_scans::{FitMode, Tps, fit, rubber};
 use std::collections::HashMap;
 
@@ -44,6 +44,24 @@ pub struct Placement {
     pub missing: Vec<String>,
 }
 
+/// A scrap's station markers: those the reader pulled out, and `station:fixed` and the like (a
+/// marker written with Therion's `type:subtype` shorthand, which the reader keeps as a point).
+pub fn ties(scrap: &Scrap) -> Vec<StationTie> {
+    let mut out = scrap.stations.clone();
+    for p in &scrap.points {
+        if crate::vocab::split(&p.kind, None).0 == "station"
+            && let Some(name) = p.options.get("name").filter(|n| !n.is_empty())
+        {
+            out.push(StationTie {
+                name: name.clone(),
+                x: p.x,
+                y: p.y,
+            });
+        }
+    }
+    out
+}
+
 /// Metres in one unit of a scrap's `-scale`.
 fn metres_per(unit: &str) -> f64 {
     match unit.to_ascii_lowercase().as_str() {
@@ -71,7 +89,7 @@ impl Placement {
     ) -> Result<Placement, Vec<String>> {
         let mut pairs = Vec::new();
         let mut missing = Vec::new();
-        for t in &scrap.stations {
+        for t in &ties(scrap) {
             match find(&t.name) {
                 // the fit works in scan pixels (y down): hand it the sketch with y turned over
                 Some(p) => pairs.push(((t.x, -t.y), (p[0], p[1]))),
@@ -273,7 +291,6 @@ impl<'a> Stations<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use cave_formats::th2::StationTie;
 
     fn scrap(ties: &[(&str, f64, f64)]) -> Scrap {
         Scrap {

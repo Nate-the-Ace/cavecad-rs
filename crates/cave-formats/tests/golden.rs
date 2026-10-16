@@ -138,6 +138,18 @@ fn the_old_unit_tests_calls() {
             }
             "parse" => {
                 let f = Format::from_id(c["format"].as_str().unwrap()).unwrap();
+                // deliberate divergence: diving readings are read now, where the old app skipped them
+                if input.as_str().unwrap().contains("data diving") {
+                    let s = f.parse(input.as_str().unwrap());
+                    r.check(
+                        format!("unit #{i} {} parse (diving)", f.id()),
+                        s.findings()
+                            .iter()
+                            .find(|x| x.code == "therion-data-style")
+                            .map(|x| x.message.clone()),
+                    );
+                    continue;
+                }
                 r.check(
                     format!("unit #{i} {} parse", f.id()),
                     parse_check(f, input.as_str().unwrap(), &c["output"]),

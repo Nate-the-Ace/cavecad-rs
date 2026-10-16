@@ -31,6 +31,71 @@ pub(crate) fn field_alias(w: &str) -> &str {
     }
 }
 
+/// What topofil, diving and cartesian readings say in place of the normal ones.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub(crate) struct Derived {
+    /// The slope, degrees, from a depth gauge (the change in depth over the tape) or from offsets.
+    pub(crate) clino: Option<f64>,
+    /// The bearing, degrees from true north, from cartesian offsets (no declination applies).
+    pub(crate) bearing: Option<f64>,
+}
+
+/// Brings topofil, diving and cartesian readings to the normal ones, in place: a thread counter's
+/// two readings give the tape (`fromcount`/`tocount`), a depth gauge's give the slope
+/// (`fromdepth`/`todepth` or `depthchange`, in length units; both Survex and Therion take a larger
+/// reading as higher, as their own results show), and offsets
+/// (`dx`/`dy`/`dz`, or easting/northing/altitude) give all three.
+pub(crate) fn derive_readings(rec: &mut JsObj<String>, units: &Units, calib: &Calib) -> Derived {
+    // metres in one unit of the tape as written (before its own calibration)
+    let tape_m = convert(units.length_scale, units.length_unit, "m");
+    let num =
+        |rec: &JsObj<String>, k: &str| rec.get(k).map(|v| parse_float(v)).filter(|v| v.is_finite());
+    let mut out = Derived::default();
+    if !rec.has("tape") {
+        if let (Some(a), Some(b)) = (num(rec, "fromcount"), num(rec, "tocount")) {
+            let (a, b) = (calib.count.apply(a), calib.count.apply(b));
+            rec.set(
+                "tape",
+                format!("{}", (b - a).abs() * units.count_m / tape_m),
+            );
+        }
+        let pick = |rec: &JsObj<String>, a: &str, b: &str| num(rec, a).or_else(|| num(rec, b));
+        if let (Some(dx), Some(dy), Some(dz)) = (
+            pick(rec, "dx", "easting"),
+            pick(rec, "dy", "northing"),
+            pick(rec, "dz", "altitude"),
+        ) {
+            let flat = dx.hypot(dy);
+            rec.set("tape", format!("{}", flat.hypot(dz)));
+            out.bearing = Some(if flat > 0.0 {
+                dx.atan2(dy).to_degrees().rem_euclid(360.0)
+            } else {
+                0.0
+            });
+            out.clino = Some(dz.atan2(flat).to_degrees());
+            return out;
+        }
+    }
+    if rec.has("clino") {
+        return out;
+    }
+    let depth = |v: f64| calib.depth.apply(v) * units.depth_m;
+    let change = match (num(rec, "fromdepth"), num(rec, "todepth")) {
+        (Some(a), Some(b)) => Some(depth(b) - depth(a)),
+        // Survex calibrates a change like a reading, zero error and all
+        _ => num(rec, "depthchange").map(depth),
+    };
+    let tape = num(rec, "tape").map(|t| calib.tape.apply(t) * tape_m);
+    if let (Some(d), Some(t)) = (change, tape) {
+        out.clino = Some(if t > 0.0 {
+            (d / t).clamp(-1.0, 1.0).asin().to_degrees()
+        } else {
+            0.0
+        });
+    }
+    out
+}
+
 const TEAM_ROLES: &[&str] = &[
     "tape",
     "length",
@@ -98,6 +163,9 @@ pub(crate) struct Units {
     /// Readings in minutes of arc.
     compass_minutes: bool,
     clino_minutes: bool,
+    /// Metres in one unit of a depth gauge's and a thread counter's readings.
+    pub(crate) depth_m: f64,
+    pub(crate) count_m: f64,
 }
 
 impl Default for Units {
@@ -111,6 +179,8 @@ impl Default for Units {
             clino_scale: 1.0,
             compass_minutes: false,
             clino_minutes: false,
+            depth_m: 1.0,
+            count_m: 1.0,
         }
     }
 }
@@ -168,6 +238,22 @@ impl Units {
                 self.length_unit = "m";
                 self.length_scale = factor;
             }
+        }
+        let metres = factor
+            * if unit_word.contains("feet") || feet_words.contains(&unit_word.as_str()) {
+                0.3048
+            } else if unit_word.contains("yard") {
+                0.9144
+            } else if unit_word.starts_with("centimet") || unit_word == "cm" {
+                0.01
+            } else {
+                1.0
+            };
+        if has("depth") {
+            self.depth_m = metres;
+        }
+        if has("count") || has("counter") {
+            self.count_m = metres;
         }
         let grads = unit_word.contains("grad") || unit_word.contains("mil");
         let minutes = unit_word.starts_with("minute");
@@ -270,6 +356,10 @@ pub(crate) struct Calib {
     pub(crate) clino: Correction,
     pub(crate) backcompass: Correction,
     pub(crate) backclino: Correction,
+    /// A thread counter's readings (topofil).
+    pub(crate) count: Correction,
+    /// A depth gauge's readings (diving).
+    pub(crate) depth: Correction,
 }
 
 /// Every setting Survex saves at `*begin` and restores at `*end`.
@@ -417,6 +507,21 @@ pub(crate) fn calibrate(calib: &mut Calib, units: &Units, args: &[String]) {
                         zero: angle(zero),
                         scale,
                         zero_after_scale: unit_word.is_some(),
+                    }
+                }
+                // in the reading's own units (a counter's or a gauge's), as Survex applies them
+                "count" | "counter" => {
+                    calib.count = Correction {
+                        zero,
+                        scale,
+                        zero_after_scale: false,
+                    }
+                }
+                "depth" => {
+                    calib.depth = Correction {
+                        zero,
+                        scale,
+                        zero_after_scale: false,
                     }
                 }
                 _ => {}
@@ -575,6 +680,7 @@ pub fn parse(content: &str) -> Survey {
     let mut spelled: HashMap<String, String> = HashMap::new();
     let mut team_dirty = false;
     let mut cur_date = String::new();
+    let mut reported_styles: Vec<String> = Vec::new();
     let mut cur_team = String::new();
     // A station's full name, with Survex's *case applied: by default (tolower) names differ only
     // in case are one station, shown as first written; toupper shows them upper case; preserve
@@ -709,7 +815,24 @@ pub fn parse(content: &str) -> Survey {
                                 .map(|t| field_alias(&t.to_lowercase()).to_string())
                                 .collect()
                         };
-                        if kind == "normal" {
+                        let per_station = tokens[2..]
+                            .iter()
+                            .any(|t| matches!(t.to_lowercase().as_str(), "station" | "newline"));
+                        if per_station && kind != "passage" {
+                            // one station per line, the leg running from the line before: not read
+                            st.style = "other";
+                            let what = format!("{kind} (one station per line)");
+                            if !reported_styles.contains(&what) {
+                                survey.add_finding(
+                                    "warning",
+                                    "survex-data-style",
+                                    format!("This file has \"*data {what}\" readings, which this reader does not understand -- those legs were skipped."),
+                                );
+                                reported_styles.push(what);
+                            }
+                        } else if matches!(kind.as_str(), "normal" | "topofil" | "diving") {
+                            // a thread counter or a depth gauge in place of the tape or clino:
+                            // the readings are brought to normal ones shot by shot
                             st.style = "normal";
                             st.normal = fields();
                         } else if kind == "passage" {
@@ -729,6 +852,14 @@ pub fn parse(content: &str) -> Survey {
                                 .collect();
                         } else {
                             st.style = "other";
+                            if !reported_styles.contains(&kind) {
+                                survey.add_finding(
+                                    "warning",
+                                    "survex-data-style",
+                                    format!("This file has \"*data {kind}\" readings, which this reader does not understand -- those legs were skipped."),
+                                );
+                                reported_styles.push(kind);
+                            }
                         }
                     }
                 }
@@ -919,6 +1050,7 @@ pub fn parse(content: &str) -> Survey {
             for (k, v) in data_fields(line, &st.normal, st.decimal_comma) {
                 rec.set(&k, v);
             }
+            let derived = derive_readings(&mut rec, &st.units, &st.calib);
             let (Some(from), Some(to), Some(tape)) =
                 (rec.get("from"), rec.get("to"), rec.get("tape"))
             else {
@@ -967,6 +1099,10 @@ pub fn parse(content: &str) -> Survey {
                         plumbed = clino.abs() >= 89.999;
                     }
                 }
+            }
+            if let Some(c) = derived.clino {
+                clino = c;
+                plumbed = c.abs() >= 89.999;
             }
             let mut compass = rec.get("compass").map_or(f64::NAN, |c| parse_float(c));
             let mut omitted = false;

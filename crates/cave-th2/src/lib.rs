@@ -36,6 +36,8 @@ pub struct Report {
     pub words: usize,
     #[allow(missing_docs)]
     pub fills: usize,
+    /// One-station scraps that declare no scale either (placed at one metre per sketch unit).
+    pub unscaled: usize,
     /// Plan scraps not placed: name and why.
     pub not_placed: Vec<(String, String)>,
     /// Scraps of views not drawn yet, by projection.
@@ -71,6 +73,30 @@ impl Report {
                 plural(*n),
                 if *n == 1 { "it is" } else { "they are" },
                 if *n == 1 { "its" } else { "their" }
+            ));
+        }
+        if self.unscaled > 0 {
+            out.push(format!(
+                "{} of them declare{} no scale either, so {} placed at one metre per sketch unit: {} size is a guess.",
+                self.unscaled,
+                if self.unscaled == 1 { "s" } else { "" },
+                if self.unscaled == 1 { "it is" } else { "they are" },
+                if self.unscaled == 1 { "its" } else { "their" }
+            ));
+        }
+        if let Some(n) = self.skipped.get("area-boundary-missing") {
+            out.push(format!(
+                "{file}: {n} area{} name{} a boundary line the scrap does not have, so {} not filled.",
+                plural(*n),
+                if *n == 1 { "s" } else { "" },
+                if *n == 1 { "it is" } else { "they are" }
+            ));
+        }
+        if let Some(n) = self.skipped.get("area-hole") {
+            out.push(format!(
+                "{file}: {n} area{} {} a hole (an island); it is filled over.",
+                plural(*n),
+                if *n == 1 { "has" } else { "have" }
             ));
         }
         for (name, why) in &self.not_placed {
@@ -165,9 +191,9 @@ pub fn import(
         let placement = match Placement::solve(scrap, &|n| stations.find(n)) {
             Ok(p) => p,
             Err(missing) => {
-                let why = if scrap.stations.is_empty() {
+                let why = if place::ties(scrap).is_empty() {
                     "it marks no stations, so nothing ties it to the cave.".to_string()
-                } else if missing.len() == scrap.stations.len() {
+                } else if missing.len() == place::ties(scrap).len() {
                     "none of the stations it marks are in the survey.".to_string()
                 } else {
                     "its station markers all sit in one place.".to_string()
@@ -184,6 +210,9 @@ pub fn import(
             place::Kind::Moved => "one-station",
         };
         *report.placed.entry(how).or_default() += 1;
+        if placement.kind == place::Kind::Moved && place::declared(scrap.scale.as_ref()).is_none() {
+            report.unscaled += 1;
+        }
         if report
             .worst
             .as_ref()
@@ -210,6 +239,10 @@ pub fn import(
 /// A line's points on the map, in the direction it was drawn (`-reverse` turned round).
 fn points_of(line: &Line, p: &Placement) -> Vec<[f64; 2]> {
     let mut pts = p.flatten(&line.segs, FLATNESS);
+    // a closed line drawn back to its start: the closing point is the first one again
+    if line.closed && pts.len() > 2 && pts[0] == pts[pts.len() - 1] {
+        pts.pop();
+    }
     if line.reversed {
         pts.reverse();
     }
@@ -298,19 +331,57 @@ fn draw_scrap(
                 "sketch"
             }
         };
-        let parts: Vec<Vec<[f64; 2]>> = area
+        let lines: Vec<&Line> = area
             .line_ids
             .iter()
-            .filter_map(|id| by_id.get(id.as_str()))
-            .map(|l| points_of(l, p))
-            .filter(|pts| pts.len() >= 2)
+            .filter_map(|id| by_id.get(id.as_str()).copied())
             .collect();
-        let outline = chain(parts);
-        if outline.len() >= 3 && add(kind, &outline, true, "", actions) {
-            if kind == "sketch" {
-                report.lines += 1;
+        if lines.len() < area.line_ids.len() || lines.is_empty() {
+            // a boundary line the scrap does not have: the outline would be a guess
+            *report.skipped.entry("area-boundary-missing").or_default() += 1;
+            continue;
+        }
+        // a closed boundary line is a ring of its own (an island in a lake is a second ring);
+        // the open ones join end to end into one
+        let mut rings: Vec<Vec<[f64; 2]>> = Vec::new();
+        let mut open = Vec::new();
+        for l in lines {
+            let pts = points_of(l, p);
+            if pts.len() < 2 {
+                continue;
+            }
+            if l.closed {
+                rings.push(pts);
             } else {
-                report.fills += 1;
+                open.push(pts);
+            }
+        }
+        if !open.is_empty() {
+            rings.push(chain(open));
+        }
+        // a ring inside another is a hole: the outer one is filled, the hole is not drawn over
+        let outer: Vec<&Vec<[f64; 2]>> = rings
+            .iter()
+            .filter(|r| r.len() >= 3)
+            .filter(|r| {
+                !rings.iter().any(|o| {
+                    !std::ptr::eq(*r, o)
+                        && o.len() >= 3
+                        && inside(r[0], o)
+                        && area_of(o) > area_of(r)
+                })
+            })
+            .collect();
+        if outer.len() < rings.iter().filter(|r| r.len() >= 3).count() {
+            *report.skipped.entry("area-hole").or_default() += 1;
+        }
+        for ring in outer {
+            if add(kind, ring, true, "", actions) {
+                if kind == "sketch" {
+                    report.lines += 1;
+                } else {
+                    report.fills += 1;
+                }
             }
         }
     }
@@ -391,30 +462,63 @@ fn stamp_words(
     )
 }
 
-/// Therion's text markup made plain: `<br>` breaks become spaces, other `<...>` tags go, and
-/// `[value units]` brackets lose their brackets.
+/// Therion's text markup made plain: `<br>` breaks become spaces, other `<...>` tags go, a text
+/// written in several languages (`<lang:en>Hall<lang:sl>Dvorana`) keeps its first, and
+/// `[value units]` brackets lose their brackets. A `<` that never closes is just a character.
 fn clean_text(t: &str) -> String {
     let mut out = String::new();
-    let mut tag = false;
-    let mut name = String::new();
-    for c in t.chars() {
-        match (tag, c) {
-            (false, '<') => {
-                tag = true;
-                name.clear();
+    let mut rest = t;
+    let mut langs = 0;
+    while let Some(i) = rest.find('<') {
+        out.push_str(&rest[..i]);
+        let Some(j) = rest[i..].find('>') else {
+            rest = &rest[i..];
+            break;
+        };
+        let tag = rest[i + 1..i + j].trim().to_ascii_lowercase();
+        rest = &rest[i + j + 1..];
+        if tag.starts_with("lang:") {
+            langs += 1;
+            if langs > 1 {
+                rest = "";
+                break;
             }
-            (true, '>') => {
-                tag = false;
-                if name.trim().eq_ignore_ascii_case("br") {
-                    out.push(' ');
-                }
-            }
-            (true, c) => name.push(c),
-            (false, '[' | ']') => {}
-            (false, c) => out.push(c),
+        } else if tag == "br" {
+            out.push(' ');
         }
     }
-    out.split_whitespace().collect::<Vec<_>>().join(" ")
+    out.push_str(rest);
+    let out: String = out.chars().filter(|c| !matches!(c, '[' | ']')).collect();
+    let out = out.split_whitespace().collect::<Vec<_>>().join(" ");
+    // an altitude's `[fix 1200]` is a statement about the number, not part of it
+    out.strip_prefix("fix ").map_or(out.clone(), str::to_string)
+}
+
+/// Twice-signed area of a ring, made positive.
+fn area_of(r: &[[f64; 2]]) -> f64 {
+    let n = r.len();
+    (0..n)
+        .map(|i| {
+            let (a, b) = (r[i], r[(i + 1) % n]);
+            a[0] * b[1] - b[0] * a[1]
+        })
+        .sum::<f64>()
+        .abs()
+}
+
+/// Whether `p` is inside the ring (even-odd).
+fn inside(p: [f64; 2], r: &[[f64; 2]]) -> bool {
+    let mut c = false;
+    let n = r.len();
+    for i in 0..n {
+        let (a, b) = (r[i], r[(i + n - 1) % n]);
+        if (a[1] > p[1]) != (b[1] > p[1])
+            && p[0] < (b[0] - a[0]) * (p[1] - a[1]) / (b[1] - a[1]) + a[0]
+        {
+            c = !c;
+        }
+    }
+    c
 }
 
 /// Pieces of an outline joined end to end, each turned round when that makes it meet the last.
@@ -462,6 +566,10 @@ mod tests {
         assert_eq!(clean_text("Big<br>Room"), "Big Room");
         assert_eq!(clean_text("<lang:en>Sump"), "Sump");
         assert_eq!(clean_text("[12.5 m]"), "12.5 m");
+        assert_eq!(clean_text("<lang:en>Hall<lang:sl>Dvorana"), "Hall");
+        assert_eq!(clean_text("depth <5 m"), "depth <5 m");
+        assert_eq!(clean_text("[fix 1200]"), "1200");
+        assert_eq!(clean_text("<br>"), "");
     }
 
     #[test]
