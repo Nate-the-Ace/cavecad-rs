@@ -669,6 +669,9 @@ pub fn parse(content: &str) -> Survey {
         }
 
         if line.starts_with('*') {
+            // "* begin" is "*begin": blanks may follow the star
+            let joined = format!("*{}", crate::js::trim_start(&line[1..]));
+            let line = joined.as_str();
             let tokens = split_ws(line);
             let cmd = tokens[0].to_lowercase();
             match cmd.as_str() {
@@ -744,8 +747,10 @@ pub fn parse(content: &str) -> Survey {
                     }
                 }
                 "*data" => {
-                    if tokens.len() == 1 {
+                    if tokens.len() == 1 || tokens[1].eq_ignore_ascii_case("default") {
+                        // "*data" / "*data default": back to normal readings in the usual order
                         st.style = "normal";
+                        st.normal = Settings::default().normal;
                     } else {
                         let kind = tokens[1].to_lowercase();
                         let fields = || {
@@ -815,6 +820,14 @@ pub fn parse(content: &str) -> Survey {
                             st.cs = Some(cs);
                         }
                     }
+                }
+                "*prefix" if tokens.len() > 1 => {
+                    // the old way to name a survey: replaces the prefix (from the root)
+                    prefix = tokens[1]
+                        .split('.')
+                        .filter(|p| !p.is_empty())
+                        .map(String::from)
+                        .collect();
                 }
                 "*cartesian" if tokens.len() > 1 => {
                     st.cart_north = match tokens[1].to_lowercase().as_str() {
