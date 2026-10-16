@@ -20,6 +20,8 @@ pub const MIN_HALF: f64 = 1.5;
 pub const CLEAR: f64 = 2.0;
 /// Sampling step along a line, metres.
 const STEP: f64 = 0.3;
+/// The most samples one leg is split into (a 600 m leg at `STEP`).
+const MAX_SAMPLES: usize = 2000;
 
 /// Drawn segments `[x1, y1, z1, x2, y2, z2]`, split by whether another passage lies over them.
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
@@ -58,6 +60,58 @@ pub struct Footprints {
     w: Pt,
     /// Where a perspective camera is; `None` for an orthographic one (parallel view rays).
     eye: Option<Pt>,
+    /// Which feet each cell of the view plane might hold (built on first use): asking every leg
+    /// about every point took a minute and a half on an 8,000-leg cave.
+    grid: std::cell::OnceCell<Grid>,
+}
+
+/// Side of a grid cell, metres in the view plane.
+const CELL: f64 = 8.0;
+/// A foot covering more cells than this is kept on a list asked about every point instead.
+const MAX_CELLS: i64 = 4096;
+
+/// Feet by grid cell, plus the few too big to file.
+#[derive(Default)]
+struct Grid {
+    cells: HashMap<(i64, i64), Vec<u32>>,
+    big: Vec<u32>,
+}
+
+impl Grid {
+    fn of(feet: &[Foot]) -> Grid {
+        let mut g = Grid::default();
+        let cell = |v: f64| (v / CELL).floor() as i64;
+        for (i, f) in feet.iter().enumerate() {
+            let (x0, x1) = (f.a[0].min(f.b[0]) - f.half, f.a[0].max(f.b[0]) + f.half);
+            let (y0, y1) = (f.a[1].min(f.b[1]) - f.half, f.a[1].max(f.b[1]) + f.half);
+            if ![x0, x1, y0, y1].iter().all(|v| v.is_finite()) {
+                g.big.push(i as u32);
+                continue;
+            }
+            let (cx0, cx1, cy0, cy1) = (cell(x0), cell(x1), cell(y0), cell(y1));
+            if (cx1 - cx0 + 1).saturating_mul(cy1 - cy0 + 1) > MAX_CELLS {
+                g.big.push(i as u32);
+                continue;
+            }
+            for cx in cx0..=cx1 {
+                for cy in cy0..=cy1 {
+                    g.cells.entry((cx, cy)).or_default().push(i as u32);
+                }
+            }
+        }
+        g
+    }
+
+    /// The feet that might cover a point at `(x, y)` in the view plane.
+    fn near(&self, x: f64, y: f64) -> impl Iterator<Item = u32> + '_ {
+        let key = ((x / CELL).floor() as i64, (y / CELL).floor() as i64);
+        let here: &[u32] = if x.is_finite() && y.is_finite() {
+            self.cells.get(&key).map_or(&[], Vec::as_slice)
+        } else {
+            &[]
+        };
+        here.iter().chain(&self.big).copied()
+    }
 }
 
 /// Looking straight down (plan view).
@@ -107,7 +161,14 @@ impl Footprints {
                 })
             })
             .collect();
-        Footprints { feet, u, v, w, eye }
+        Footprints {
+            feet,
+            u,
+            v,
+            w,
+            eye,
+            grid: std::cell::OnceCell::new(),
+        }
     }
 
     fn covers(&self, p: Pt, own: &HashSet<Id>) -> bool {
@@ -127,7 +188,9 @@ impl Footprints {
             });
         }
         let p = [dot(p, self.u), dot(p, self.v), dot(p, self.w)];
-        self.feet.iter().any(|f| {
+        let grid = self.grid.get_or_init(|| Grid::of(&self.feet));
+        grid.near(p[0], p[1]).any(|i| {
+            let f = &self.feet[i as usize];
             if own.contains(&f.from) || own.contains(&f.to) {
                 return false;
             }
@@ -157,7 +220,12 @@ impl Footprints {
             let (a, b) = (w[0], w[1]);
             let len =
                 ((b[0] - a[0]).powi(2) + (b[1] - a[1]).powi(2) + (b[2] - a[2]).powi(2)).sqrt();
-            let n = ((len / STEP).ceil() as usize).max(1);
+            // a leg kilometres long (a mistyped fix) is sampled more coarsely, never without end
+            let n = if len.is_finite() {
+                ((len / STEP).ceil() as usize).clamp(1, MAX_SAMPLES)
+            } else {
+                1
+            };
             let at = |i: usize| {
                 let t = i as f64 / n as f64;
                 [
@@ -342,6 +410,46 @@ mod tests {
             &mut under,
         );
         assert!(under.is_empty());
+    }
+
+    #[test]
+    fn the_grid_answers_as_asking_every_leg_would() {
+        // a tangle of legs at many heights and sizes (one kilometres long), and points all over
+        let mut seed = 12345u64;
+        let mut rnd = || {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            (seed % 10_000) as f64 / 100.0 - 50.0
+        };
+        let mut feet: Vec<Foot> = (0..300)
+            .map(|i| {
+                let a = [rnd(), rnd(), rnd() / 5.0];
+                let b = [a[0] + rnd() / 3.0, a[1] + rnd() / 3.0, a[2] + rnd() / 10.0];
+                let mut f = foot(a, b, i * 2, i * 2 + 1);
+                f.half = 1.5 + (rnd() + 50.0) / 20.0;
+                f
+            })
+            .collect();
+        feet.push(foot([-5000.0, 0.0, 40.0], [5000.0, 3.0, 40.0], 9001, 9002));
+        let f = fp(feet);
+        let none = HashSet::new();
+        for _ in 0..3000 {
+            let p = [rnd() * 1.2, rnd() * 1.2, rnd() / 4.0];
+            let brute = f.feet.iter().any(|g| {
+                let (dx, dy) = (g.b[0] - g.a[0], g.b[1] - g.a[1]);
+                let len2 = dx * dx + dy * dy;
+                let t = if len2 < 1e-12 {
+                    0.0
+                } else {
+                    (((p[0] - g.a[0]) * dx + (p[1] - g.a[1]) * dy) / len2).clamp(0.0, 1.0)
+                };
+                let (cx, cy) = (g.a[0] + t * dx, g.a[1] + t * dy);
+                let d = ((p[0] - cx).powi(2) + (p[1] - cy).powi(2)).sqrt();
+                d <= g.half && g.a[2] + t * (g.b[2] - g.a[2]) - p[2] >= CLEAR
+            });
+            assert_eq!(f.covers(p, &none), brute, "at {p:?}");
+        }
     }
 
     #[test]

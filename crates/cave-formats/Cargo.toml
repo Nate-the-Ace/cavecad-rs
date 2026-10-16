@@ -1,0 +1,18 @@
+[package]
+name = "cave-formats"
+edition.workspace = true
+version.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+cave-doc = { path = "../cave-doc" }
+cave-id = { path = "../cave-id" }
+cave-geomag = { path = "../cave-geomag" }
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["float_roundtrip"] }
+
+[dev-dependencies]
+cave-survey = { path = "../cave-survey" }
