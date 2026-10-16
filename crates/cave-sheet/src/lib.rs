@@ -7,6 +7,7 @@
 use serde::Serialize;
 
 pub mod tile;
+pub mod title;
 
 const M_PER_FT: f64 = 0.3048;
 const MM: f64 = 1.0 / 25.4;
