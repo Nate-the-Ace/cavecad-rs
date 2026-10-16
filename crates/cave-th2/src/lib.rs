@@ -336,7 +336,12 @@ fn draw_scrap(
             .iter()
             .filter_map(|id| by_id.get(id.as_str()).copied())
             .collect();
-        if lines.len() < area.line_ids.len() || lines.is_empty() {
+        if area.line_ids.is_empty() {
+            // an area with no boundary at all: an editor's leftover, nothing to fill
+            *report.skipped.entry("area-empty").or_default() += 1;
+            continue;
+        }
+        if lines.len() < area.line_ids.len() {
             // a boundary line the scrap does not have: the outline would be a guess
             *report.skipped.entry("area-boundary-missing").or_default() += 1;
             continue;

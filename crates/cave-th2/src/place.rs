@@ -42,6 +42,22 @@ pub struct Placement {
     pub used: usize,
     /// Tie names the survey has no station for.
     pub missing: Vec<String>,
+    /// Therion's `-flip`: the scrap mirrored (x, y multipliers) before anything else.
+    flip: [f64; 2],
+}
+
+/// A scrap's `-flip` (`horizontal` mirrors left-right, `vertical` top-bottom) as multipliers.
+fn flip_of(scrap: &Scrap) -> [f64; 2] {
+    match scrap
+        .options
+        .get("flip")
+        .map(|f| f.to_ascii_lowercase())
+        .as_deref()
+    {
+        Some("horizontal") => [-1.0, 1.0],
+        Some("vertical") => [1.0, -1.0],
+        _ => [1.0, 1.0],
+    }
 }
 
 /// A scrap's station markers: those the reader pulled out, and `station:fixed` and the like (a
@@ -89,10 +105,11 @@ impl Placement {
     ) -> Result<Placement, Vec<String>> {
         let mut pairs = Vec::new();
         let mut missing = Vec::new();
+        let flip = flip_of(scrap);
         for t in &ties(scrap) {
             match find(&t.name) {
                 // the fit works in scan pixels (y down): hand it the sketch with y turned over
-                Some(p) => pairs.push(((t.x, -t.y), (p[0], p[1]))),
+                Some(p) => pairs.push(((flip[0] * t.x, -flip[1] * t.y), (p[0], p[1]))),
                 None => missing.push(t.name.clone()),
             }
         }
@@ -109,6 +126,7 @@ impl Placement {
                 residual: 0.0,
                 used: 1,
                 missing,
+                flip,
             });
         }
         let warp = fit(&pairs, FitMode::Warp);
@@ -136,11 +154,13 @@ impl Placement {
             residual: f.rms,
             used: pairs.len(),
             missing,
+            flip,
         })
     }
 
     /// One sketch point on the map.
     pub fn at(&self, p: [f64; 2]) -> [f64; 2] {
+        let p = [p[0] * self.flip[0], p[1] * self.flip[1]];
         if let Some(t) = &self.bend {
             let (x, y) = t.at(p[0], -p[1]);
             return [x, y];
@@ -278,6 +298,11 @@ impl<'a> Stations<'a> {
             if let Some(p) = self.by_name.get(name) {
                 return Some(*p);
             }
+        }
+        // a bare name must match exactly: "1" ending some other survey's name is a guess. A
+        // qualified one ("1@nave") is specific enough to find as the one name ending in it.
+        if !tie.contains('@') {
+            return None;
         }
         let tail = format!(".{rel}");
         let mut hits = self.all.iter().filter(|(n, _)| n.ends_with(&tail));

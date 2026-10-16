@@ -149,3 +149,20 @@ mod import {
         assert_eq!(r.lines, 1);
     }
 }
+
+#[test]
+fn a_flipped_scrap_lands_mirrored() {
+    use cave_th2::place::Placement;
+    use std::collections::HashMap;
+    // two ties along x; a point above the line in the sketch is below it once flipped top-bottom
+    let s = cave_formats::th2::parse(
+        "scrap s -flip vertical\npoint 0 0 station -name a\npoint 100 0 station -name b\nendscrap\n",
+    );
+    let m: HashMap<&str, [f64; 2]> = [("a", [0.0, 0.0]), ("b", [10.0, 0.0])].into();
+    let p = Placement::solve(&s.scraps[0], &|n| m.get(n).copied()).unwrap();
+    let q = p.at([50.0, 20.0]);
+    assert!(
+        (q[0] - 5.0).abs() < 1e-9 && (q[1] + 2.0).abs() < 1e-9,
+        "{q:?}"
+    );
+}
