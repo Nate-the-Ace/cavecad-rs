@@ -161,6 +161,7 @@ pub fn parse(content: &str) -> Survey {
     let mut columns: Vec<String> = DEFAULT_COLUMNS.iter().map(|s| s.to_string()).collect();
     let sep = separator(content);
     let mut header_unit: Option<&'static str> = None;
+    let mut unit_said = false;
     let mut rows_seen = 0usize;
 
     for raw in split_lines(content) {
@@ -183,6 +184,7 @@ pub fn parse(content: &str) -> Survey {
                         }
                     }
                     "unit" => {
+                        unit_said = true;
                         let m = val.to_lowercase().starts_with('m');
                         survey.distance_unit = Some(if m { "m" } else { "ft" }.into());
                     }
@@ -361,10 +363,9 @@ pub fn parse(content: &str) -> Survey {
         shot.notes = get("notes").unwrap_or("").to_string();
         survey.shots.push(shot);
     }
-    if survey.distance_unit.is_none() || !content.contains("# unit:") {
-        if let Some(u) = header_unit {
-            survey.distance_unit = Some(u.into());
-        }
+    // a `# unit:` line says it outright; otherwise a unit in the distance column's header does
+    if !unit_said && let Some(u) = header_unit {
+        survey.distance_unit = Some(u.into());
     }
     if survey.shots.is_empty() && rows_seen > 0 && survey.findings().is_empty() {
         survey.add_finding(
