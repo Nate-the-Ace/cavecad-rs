@@ -6,6 +6,8 @@
 
 use serde::Serialize;
 
+pub mod tile;
+
 const M_PER_FT: f64 = 0.3048;
 const MM: f64 = 1.0 / 25.4;
 /// How much of the sheet is kept clear at every edge, in inches.
