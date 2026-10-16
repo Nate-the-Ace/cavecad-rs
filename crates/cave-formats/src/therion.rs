@@ -16,8 +16,8 @@ use crate::js::{
     JsObj, is_finite_str, parse_float, split_lines, to_fixed, trim, trim_end, trim_start,
 };
 use crate::model::{
-    Cs, Fixed, Lrud, Shot, Survey, Trip, applied_declination, grads_to_degrees, normalize_azimuth,
-    unknown_elevation_note,
+    Cs, Fixed, Lrud, Shot, SketchInput, Survey, Trip, applied_declination, grads_to_degrees,
+    normalize_azimuth, unknown_elevation_note,
 };
 use crate::survex::{Units, field_alias, into_survey_unit, read_date};
 
@@ -256,6 +256,10 @@ fn has_extension(name: &str) -> bool {
     }
 }
 
+/// The comment a `.th2` input is left as, followed by the page's path, so the reader can say which
+/// survey the page was pulled in inside.
+const SKETCH_MARK: &str = "# sketch page: ";
+
 /// Splices every `input` line's file into the text where it stands (Therion reads one stream).
 /// A `.th2` input is the drawing half and is left out.
 fn expand_inputs(
@@ -277,9 +281,12 @@ fn expand_inputs(
                 continue;
             };
             if name.to_lowercase().ends_with(".th2") {
-                out.push(format!(
-                    "# input {name} (a sketch page: offered separately)"
-                ));
+                let path = if is_absolute(&name) {
+                    name.clone()
+                } else {
+                    format!("{}/{name}", dir_of(here))
+                };
+                out.push(format!("{SKETCH_MARK}{path}"));
                 continue;
             }
             let base = if is_absolute(&name) {
@@ -430,6 +437,12 @@ fn parse_inner(content: &str, input_findings: Vec<InputFinding>) -> Survey {
     for (li, l) in lines.iter().enumerate() {
         let line = &l.text;
         if line.is_empty() {
+            if let Some(path) = l.comment.strip_prefix(&SKETCH_MARK[2..]) {
+                survey.sketches.push(SketchInput {
+                    path: path.to_string(),
+                    survey: name_in(&prefix, "").trim_end_matches('.').to_string(),
+                });
+            }
             continue;
         }
         let tokens = tokenize(line);

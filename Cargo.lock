@@ -290,6 +290,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "cave-th2"
+version = "0.0.1"
+dependencies = [
+ "cave-doc",
+ "cave-draw",
+ "cave-formats",
+ "cave-id",
+ "cave-scans",
+ "cave-scene",
+ "cave-style",
+ "cave-symbols",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "cave-walls"
 version = "0.0.1"
 dependencies = [

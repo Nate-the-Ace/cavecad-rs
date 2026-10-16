@@ -39,9 +39,12 @@ fn diff(expected: &Value, actual: &Value, at: &str) -> Option<String> {
                     return Some(d);
                 }
             }
-            // `aliases` (other names of joined stations) is new here: the old app had no such list
+            // `aliases` (other names of joined stations) and `sketches` (the .th2 pages a project pulls
+            // in) are new here: the old app had no such lists
             a.iter()
-                .find(|(k, v)| !e.contains_key(*k) && !is_default(v) && *k != "aliases")
+                .find(|(k, v)| {
+                    !e.contains_key(*k) && !is_default(v) && *k != "aliases" && *k != "sketches"
+                })
                 .map(|(k, v)| format!("{at}.{k}: not in the old output, got {v}"))
         }
         (Value::Array(e), Value::Array(a)) => {
@@ -216,6 +219,10 @@ fn a_therion_project_split_across_files_is_read_whole() {
     if let Some(d) = diff(&c["survey"], &got, "survey") {
         panic!("{d}");
     }
+    assert_eq!(
+        got["sketches"],
+        serde_json::json!([{"path": "therion_project/sketch.th2", "survey": ""}])
+    );
 }
 
 /// Each sketch in a .th2 answer key (tools/golden/gen_th2_golden.mjs) read the way the old app

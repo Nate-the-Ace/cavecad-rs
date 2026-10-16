@@ -289,6 +289,20 @@ pub struct Survey {
     /// Other names of joined stations (`*equate`, Therion `equate`): alias to the name kept.
     #[serde(skip_serializing_if = "JsObj::is_empty", deserialize_with = "nd")]
     pub aliases: JsObj<String>,
+    /// Sketch pages a Therion project pulls in (`input cave.th2`), read separately from the data.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub sketches: Vec<SketchInput>,
+}
+
+/// A sketch page a project pulls in, and where its station names start.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SketchInput {
+    /// The page's file, as the project's reader found it (relative to the folder read).
+    pub path: String,
+    /// The survey the page was pulled in inside, as this reader names surveys (`sub.inner`;
+    /// empty at the top): a station the page names `1` or `1@inner` is found from here.
+    pub survey: String,
 }
 
 impl Default for Survey {
@@ -309,6 +323,7 @@ impl Default for Survey {
             trips: Vec::new(),
             parse_findings: None,
             aliases: JsObj::new(),
+            sketches: Vec::new(),
         }
     }
 }
