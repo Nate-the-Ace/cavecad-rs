@@ -28,8 +28,10 @@ type Picker = {
 };
 const picker = window as unknown as Picker;
 /** The survey data files Open and Import read (Compass, Walls, Survex, Therion, CSV). */
-const SURVEY_EXTS = ['.dat', '.srv', '.svx', '.th', '.csv', '.txt'];
-const isSurveyFile = (name: string) => SURVEY_EXTS.some((e) => name.toLowerCase().endsWith(e));
+const SURVEY_EXTS = ['.dat', '.srv', '.svx', '.th', '.csv', '.txt', '.mak', '.wpj', '.thconfig'];
+/** A project file: one that names the survey files of a cave (Compass .mak, Walls .wpj, Therion thconfig). */
+const isProjectFile = (name: string) => /\.(mak|wpj|thconfig)$|(^|[\\/])thconfig(\.[^\\/]*)?$/i.test(name);
+const isSurveyFile = (name: string) => SURVEY_EXTS.some((e) => name.toLowerCase().endsWith(e)) || isProjectFile(name);
 const SURVEY_TYPES = [{ description: 'Survey data (Compass, Walls, Survex, Therion, CSV)', accept: { 'text/plain': SURVEY_EXTS } }];
 const OPEN_TYPES = [{ description: 'A CaveCAD cave, a DXF drawing, a survey data file, or a survey imported from an old drawing', accept: { 'application/zip': [EXT], 'application/dxf': ['.dxf'], 'application/json': ['.json'], 'text/plain': SURVEY_EXTS } }];
 const SAVE_TYPES = [{ description: 'CaveCAD cave', accept: { 'application/zip': [EXT] } }];
@@ -289,8 +291,8 @@ export async function importSurvey(): Promise<{ ok: boolean; message: string } |
   if (!picked?.length) return null;
   if (!confirmDiscard()) return null;
   const files = picked.map((f) => ({ name: f.name, text: new TextDecoder().decode(f.bytes) }));
-  // the file that pulls the others in is the one to read; otherwise the first
-  const main = files.find((f) => /^\s*input\s/im.test(f.text)) ?? files[0];
+  // a project file, or a Therion file that pulls the others in, is the one to read; otherwise the first
+  const main = files.find((f) => isProjectFile(f.name)) ?? files.find((f) => /^\s*input\s/im.test(f.text)) ?? files[0];
   const others = Object.fromEntries(files.filter((f) => f !== main).map((f) => [f.name, f.text]));
   const r = engine.importSurvey(main.name, main.text, others);
   if (!r.ok) return { ok: false, message: r.message };
@@ -301,12 +303,84 @@ export async function importSurvey(): Promise<{ ok: boolean; message: string } |
   cave.name = stem(main.name);
   shelf0();
   for (const w of r.warnings) engine.log('warn', 'import', w);
-  if (files.length > 1 && !/^\s*input\s/im.test(main.text)) engine.log('warn', 'import', `Only ${main.name} was read: the other files picked with it were not used.`);
+  if (files.length > 1 && !isProjectFile(main.name) && !/^\s*input\s/im.test(main.text)) engine.log('warn', 'import', `Only ${main.name} was read: the other files picked with it were not used.`);
   cave.opened += 1; // the canvas re-reads and re-frames
   changed();
   markUnsaved(); // nothing is a CaveCAD file yet
   void storeOpenCave(main.name);
   return { ok: true, message: `Imported ${main.name}: ${r.message}` };
+}
+
+/** The text files of a folder that could be survey data, by path inside it (largest file 20 MB). */
+async function chooseFolder(): Promise<{ name: string; files: Record<string, string> } | null> {
+  const wanted = (n: string) => isSurveyFile(n) || /\.th2$/i.test(n);
+  const files: Record<string, string> = {};
+  type Dir = { name: string; kind: 'directory'; values(): AsyncIterable<Dir | { name: string; kind: 'file'; getFile(): Promise<File> }> };
+  const pickDir = (window as unknown as { showDirectoryPicker?: () => Promise<Dir> }).showDirectoryPicker;
+  if (pickDir) {
+    let root: Dir;
+    try {
+      root = await pickDir();
+    } catch (e) {
+      if (isAbort(e)) return null;
+      throw e;
+    }
+    const walk = async (dir: Dir, at: string, depth: number) => {
+      if (depth > 8) return;
+      for await (const entry of dir.values()) {
+        const path = at ? `${at}/${entry.name}` : entry.name;
+        if (entry.kind === 'directory') await walk(entry, path, depth + 1);
+        else if (wanted(entry.name)) {
+          const f = await entry.getFile();
+          if (f.size < 20e6) files[path] = await f.text();
+        }
+      }
+    };
+    await walk(root, '', 0);
+    return { name: root.name, files };
+  }
+  return new Promise((resolve) => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    (input as HTMLInputElement & { webkitdirectory: boolean }).webkitdirectory = true;
+    input.onchange = async () => {
+      const list = [...(input.files ?? [])];
+      if (!list.length) return resolve(null);
+      for (const f of list) {
+        const path = (f as File & { webkitRelativePath?: string }).webkitRelativePath || f.name;
+        if (wanted(f.name) && f.size < 20e6) files[path.slice(path.indexOf('/') + 1)] = await f.text();
+      }
+      const first = (list[0] as File & { webkitRelativePath?: string }).webkitRelativePath ?? '';
+      resolve({ name: first.split('/')[0] || 'folder', files });
+    };
+    input.oncancel = () => resolve(null);
+    input.click();
+  });
+}
+
+/**
+ * Imports a whole survey folder as the cave: through its project file (Compass .mak, Walls .wpj,
+ * Therion thconfig) when it has one, else every survey file in it as one cave.
+ */
+export async function importSurveyFolder(): Promise<{ ok: boolean; message: string } | null> {
+  const picked = await chooseFolder();
+  if (!picked) return null;
+  if (!Object.keys(picked.files).length) return { ok: false, message: `${picked.name} holds no survey data files.` };
+  if (!confirmDiscard()) return null;
+  const r = engine.importFolder(picked.files);
+  if (!r.ok) return { ok: false, message: r.message };
+  leave(); // a different cave: stop sharing the old one
+  handle = null;
+  cave.fileName = `${safeName(picked.name)}${EXT}`;
+  cave.hasCave = true;
+  cave.name = picked.name;
+  shelf0();
+  for (const w of r.warnings) engine.log('warn', 'import', w);
+  cave.opened += 1;
+  changed();
+  markUnsaved();
+  void storeOpenCave(`folder:${picked.name}`);
+  return { ok: true, message: `Imported ${picked.name}: ${r.message}` };
 }
 
 /** Exports the survey in one of the standard cave data formats (an id from `engine.surveyFormats()`). */

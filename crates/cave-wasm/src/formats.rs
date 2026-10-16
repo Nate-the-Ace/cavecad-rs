@@ -49,37 +49,59 @@ fn base(path: &str) -> &str {
     path.rsplit(['/', '\\']).next().unwrap_or(path)
 }
 
-/// Reads a survey file. `others` is a JSON object of the other files picked with it (name to text),
-/// which a Therion file's `input` lines are looked up in -- by path, and failing that by file name,
-/// since a browser hands over names without folders.
+/// Finds a file among those picked: by path, then by path ignoring case, then by file name ignoring
+/// case (a browser hands over names without folders, and projects made on Windows do not keep case).
+fn resolver(files: &HashMap<String, String>) -> impl Fn(&str) -> Option<String> + '_ {
+    let by_path: Vec<(String, &String)> = files.iter().map(|(k, v)| (tidy(k), v)).collect();
+    move |p: &str| {
+        let p = tidy(p);
+        let lower = p.to_lowercase();
+        by_path
+            .iter()
+            .find(|(k, _)| *k == p)
+            .or_else(|| by_path.iter().find(|(k, _)| k.to_lowercase() == lower))
+            .or_else(|| {
+                by_path
+                    .iter()
+                    .find(|(k, _)| base(k).to_lowercase() == base(&lower))
+            })
+            .map(|(_, v)| v.to_string())
+    }
+}
+
+/// Reads a survey file, or a project file (Compass .mak, Walls .wpj, Therion thconfig) and the
+/// data files it names. `others` is a JSON object of the other files picked with it (name to text),
+/// which a project's files and a Therion file's `input` lines are looked up in. Returns what it was
+/// read as, and the survey.
 pub(crate) fn read_survey(
     file_name: &str,
     text: &str,
     others: &str,
-) -> Result<(Format, Survey), String> {
-    let Some(format) = cave_formats::detect(file_name, text) else {
-        return Err(format!(
-            "{file_name} is not a survey file CaveCAD can read. It reads Compass (.dat), Walls (.srv), Survex (.svx), Therion (.th) and CSV."
-        ));
-    };
+) -> Result<(String, Survey), String> {
     let files: HashMap<String, String> = serde_json::from_str(others).unwrap_or_default();
-    let mut survey = if format == Format::Therion && !files.is_empty() {
-        let by_path: HashMap<String, &String> = files.iter().map(|(k, v)| (tidy(k), v)).collect();
-        let read = |p: &str| {
-            let p = tidy(p);
-            by_path
-                .get(&p)
-                .or_else(|| {
-                    by_path
-                        .iter()
-                        .find(|(k, _)| base(k) == base(&p))
-                        .map(|(_, v)| v)
-                })
-                .map(|v| v.to_string())
-        };
-        therion::parse_with_inputs(text, file_name, &read)
+    let (label, mut survey) = if let Some(project) = cave_formats::detect_project(file_name, text) {
+        let r = cave_formats::read_project(project, file_name, text, &resolver(&files));
+        (
+            format!(
+                "{} ({} file{})",
+                project.label(),
+                r.files.len(),
+                if r.files.len() == 1 { "" } else { "s" }
+            ),
+            r.survey,
+        )
     } else {
-        format.parse(text)
+        let Some(format) = cave_formats::detect(file_name, text) else {
+            return Err(format!(
+                "{file_name} is not a survey file CaveCAD can read. It reads Compass (.dat, .mak), Walls (.srv, .wpj), Survex (.svx), Therion (.th, thconfig) and CSV."
+            ));
+        };
+        let survey = if format == Format::Therion && !files.is_empty() {
+            therion::parse_with_inputs(text, file_name, &resolver(&files))
+        } else {
+            format.parse(text)
+        };
+        (format.label().to_string(), survey)
     };
     if survey.cave_name.is_empty() && survey.name.is_empty() {
         // a file that names nothing is named after itself
@@ -87,25 +109,95 @@ pub(crate) fn read_survey(
         survey.cave_name = stem.rsplit_once('.').map_or(stem, |(s, _)| s).to_string();
     }
     if survey.shots.is_empty() {
+        let why = survey
+            .findings()
+            .first()
+            .map(|f| format!(" {}", f.message))
+            .unwrap_or_default();
         return Err(format!(
-            "No survey shots were found in {file_name}, read as {}.",
-            format.label()
+            "No survey shots were found in {file_name}, read as {label}.{why}"
         ));
     }
-    Ok((format, survey))
+    Ok((label, survey))
+}
+
+/// Reads a whole folder (path to text): through its project file when it has one (a Therion file
+/// that pulls others in counts), otherwise every survey file in it, merged into one cave in name order.
+pub(crate) fn read_folder(files_json: &str) -> Result<(String, Survey), String> {
+    let files: HashMap<String, String> =
+        serde_json::from_str(files_json).map_err(|e| e.to_string())?;
+    let mut names: Vec<&String> = files.keys().collect();
+    names.sort();
+    let others = files_json;
+    if let Some(p) = names
+        .iter()
+        .find(|n| cave_formats::detect_project(n, &files[**n]).is_some())
+    {
+        return read_survey(p, &files[*p], others);
+    }
+    let input = |t: &str| {
+        t.lines()
+            .any(|l| l.trim_start().to_ascii_lowercase().starts_with("input "))
+    };
+    if let Some(p) = names
+        .iter()
+        .find(|n| n.to_lowercase().ends_with(".th") && input(&files[**n]))
+    {
+        return read_survey(p, &files[*p], others);
+    }
+    // a .txt in a folder is a survey only when its content says so (CSV claims the extension)
+    let is_survey = |n: &str| {
+        if n.to_lowercase().ends_with(".txt") {
+            cave_formats::detect_by_content(&files[n]).is_some()
+        } else {
+            cave_formats::detect(n, &files[n]).is_some()
+        }
+    };
+    let surveys: Vec<&String> = names.into_iter().filter(|n| is_survey(n)).collect();
+    let Some(first) = surveys.first() else {
+        return Err(
+            "There is no survey data in this folder (Compass, Walls, Survex, Therion or CSV)."
+                .into(),
+        );
+    };
+    let (label, mut survey) = read_survey(first, &files[*first], "{}")?;
+    for n in &surveys[1..] {
+        match read_survey(n, &files[*n], "{}") {
+            Ok((_, s)) => survey.absorb(s),
+            Err(e) => survey.add_finding("warning", "folder-file", e),
+        }
+    }
+    let label = if surveys.len() == 1 {
+        label
+    } else {
+        format!("{} survey files", surveys.len())
+    };
+    Ok((label, survey))
+}
+
+/// Opens every survey file of a folder (JSON object, path to text) as one cave. Returns JSON
+/// `{ok, message, warnings}`, as [`import_survey`].
+#[wasm_bindgen]
+pub fn import_folder(files: &str) -> String {
+    finish_import("the folder", read_folder(files))
 }
 
 /// Opens a survey data file as the cave (replacing the one open). Returns JSON
 /// `{ok, message, warnings}`: what the reader could not use is in `warnings`.
 #[wasm_bindgen]
 pub fn import_survey(file_name: &str, text: &str, others: &str) -> String {
-    let result = match read_survey(file_name, text, others) {
+    finish_import(file_name, read_survey(file_name, text, others))
+}
+
+/// Makes what was read the open cave, and says how it went.
+fn finish_import(file_name: &str, read: Result<(String, Survey), String>) -> String {
+    let result = match read {
         Err(message) => OpenResult {
             ok: false,
             message,
             warnings: Vec::new(),
         },
-        Ok((format, survey)) => match cave_formats::to_document(&survey, ActorId(1)) {
+        Ok((label, survey)) => match cave_formats::to_document(&survey, ActorId(1)) {
             Err(e) => OpenResult {
                 ok: false,
                 message: format!("{file_name} could not be turned into a cave ({e})."),
@@ -115,7 +207,7 @@ pub fn import_survey(file_name: &str, text: &str, others: &str) -> String {
                 let scene = cave_scene::build(&doc, true);
                 let message = format!(
                     "{}: {} stations, {} legs, {} loop closures",
-                    format.label(),
+                    label,
                     scene.stations.len(),
                     scene.legs.len(),
                     scene.closures.len()
@@ -231,6 +323,31 @@ mod tests {
         let r: serde_json::Value =
             serde_json::from_str(&import_survey("notes.txt", "hello there", "{}")).unwrap();
         assert_eq!(r["ok"], false);
+    }
+
+    #[test]
+    fn a_compass_project_reads_the_files_picked_with_it() {
+        let dat = "CAVE\r\nSURVEY NAME: A\r\nSURVEY DATE: 7 10 2024  COMMENT:\r\nSURVEY TEAM:\r\nAnn\r\nDECLINATION: 0.00  FORMAT: DDDDLRUDLADNF\r\n\r\nFROM TO LENGTH BEARING INC LEFT UP DOWN RIGHT\r\n\r\nA1 A2 10.00 90.00 0.00 1 1 1 1\r\n\u{0C}";
+        // the project names it in upper case with a folder; the browser gave a bare lower-case name
+        let others = serde_json::json!({ "a.dat": dat }).to_string();
+        let (label, survey) =
+            read_survey("cave.mak", "#DATA\\A.DAT,A1[M,1,2,3];", &others).unwrap();
+        assert!(label.starts_with("Compass project"), "{label}");
+        assert_eq!(survey.shots.len(), 1);
+        assert!(survey.fixed.has("A1"));
+    }
+
+    #[test]
+    fn a_folder_without_a_project_file_is_every_survey_in_it() {
+        let files = serde_json::json!({
+            "cave/a.svx": "*data normal from to tape compass clino\n1 2 10 0 0\n",
+            "cave/b.svx": "*data normal from to tape compass clino\n2 3 10 90 0\n",
+            "cave/notes.txt": "nothing to see",
+        })
+        .to_string();
+        let (label, survey) = read_folder(&files).unwrap();
+        assert_eq!(label, "2 survey files");
+        assert_eq!(survey.shots.len(), 2);
     }
 
     #[test]

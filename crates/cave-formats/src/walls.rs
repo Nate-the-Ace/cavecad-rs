@@ -336,7 +336,7 @@ struct Reader {
 impl Reader {
     /// A distance in the survey's unit: the distance unit in force at the first one read decides
     /// it, whatever suffix that value carried.
-    fn to_survey(&mut self, (v, unit): (f64, &'static str)) -> f64 {
+    fn in_survey_unit(&mut self, (v, unit): (f64, &'static str)) -> f64 {
         if self.survey.distance_unit.is_none() {
             self.survey.distance_unit = Some(self.o.d_unit.into());
         }
@@ -344,7 +344,7 @@ impl Reader {
     }
 
     fn dist(&mut self, tok: &str, unit: &'static str) -> Option<f64> {
-        distance(tok, unit).map(|d| self.to_survey(d))
+        distance(tok, unit).map(|d| self.in_survey_unit(d))
     }
 
     /// A station name with the prefixes in force: each colon in it replaces one prefix level, from
@@ -678,14 +678,14 @@ impl Reader {
             }
         }
         if self.o.inch.0 != 0.0 {
-            rise += self.to_survey(self.o.inch);
+            rise += self.in_survey_unit(self.o.inch);
         }
 
         // corrections (none on a zero-length shot, only INCD on a vertical one)
         let d = d_m.unwrap_or(0.0);
         let vertical = inc.is_some_and(|i| i.abs() >= 90.0);
         let d = if d != 0.0 && self.o.incd.0 != 0.0 {
-            d + self.to_survey(self.o.incd)
+            d + self.in_survey_unit(self.o.incd)
         } else {
             d
         };

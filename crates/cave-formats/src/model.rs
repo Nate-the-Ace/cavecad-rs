@@ -644,7 +644,7 @@ impl Survey {
     pub fn absorb(&mut self, mut other: Survey) {
         self.ensure_trips();
         other.ensure_trips();
-        other.convert_units(&self.unit().to_string());
+        other.convert_units(self.unit());
         let offset = self.trips.len();
         for s in &mut other.shots {
             s.trip += offset;
