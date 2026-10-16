@@ -126,6 +126,9 @@ pub fn detect(file_name: &str, content: &str) -> Option<Format> {
             return match by_content {
                 None => Some(f),
                 Some(c) if c == f => Some(f),
+                // Walls' markers are "#units", "#fix"...: in a Therion file "#" starts a comment,
+                // so a commented-out "#fix" is not a reason to read a .th as Walls
+                Some(Format::Walls) if f == Format::Therion => Some(f),
                 Some(c) => Some(c),
             };
         }

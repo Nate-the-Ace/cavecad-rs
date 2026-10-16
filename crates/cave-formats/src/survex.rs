@@ -12,7 +12,7 @@
 
 use crate::js::{JsObj, is_finite_str, parse_float, split_lines, split_ws, to_fixed, trim};
 use crate::model::{
-    Fixed, Lrud, Shot, Survey, Trip, applied_declination, convert, grads_to_degrees,
+    Cs, Fixed, Lrud, Shot, Survey, Trip, applied_declination, convert, grads_to_degrees,
     normalize_azimuth, unknown_elevation_note,
 };
 use std::collections::HashMap;
@@ -236,7 +236,7 @@ pub(crate) fn read_date(t: &str, seps: &[u8]) -> Option<String> {
 /// explicit units, `reading * scale - zero` (Survex: the zero is then a real length or angle, not
 /// a reading).
 #[derive(Clone, Copy)]
-struct Correction {
+pub(crate) struct Correction {
     zero: f64,
     scale: f64,
     zero_after_scale: bool,
@@ -253,7 +253,7 @@ impl Default for Correction {
 }
 
 impl Correction {
-    fn apply(&self, v: f64) -> f64 {
+    pub(crate) fn apply(&self, v: f64) -> f64 {
         if self.zero_after_scale {
             v * self.scale - self.zero
         } else {
@@ -264,12 +264,12 @@ impl Correction {
 
 /// The corrections in force, per quantity.
 #[derive(Clone, Copy, Default)]
-struct Calib {
-    tape: Correction,
-    compass: Correction,
-    clino: Correction,
-    backcompass: Correction,
-    backclino: Correction,
+pub(crate) struct Calib {
+    pub(crate) tape: Correction,
+    pub(crate) compass: Correction,
+    pub(crate) clino: Correction,
+    pub(crate) backcompass: Correction,
+    pub(crate) backclino: Correction,
 }
 
 /// Every setting Survex saves at `*begin` and restores at `*end`.
@@ -302,63 +302,6 @@ struct Settings {
     decl_auto: Option<(f64, f64, f64)>,
 }
 
-/// A coordinate system Survex can name, as far as this reader converts them: UTM zones (south
-/// negative) and latitude/longitude. Anything else is kept by name and used as given.
-#[derive(Clone, Debug, PartialEq)]
-pub(crate) enum Cs {
-    Utm(i32),
-    LongLat,
-    Other(String),
-}
-
-impl Cs {
-    /// "UTM33", "utm33n", "UTM60S", "EPSG:32633", "EPSG:32733", "Long-Lat", "EPSG:4326".
-    fn parse(name: &str) -> Cs {
-        let u = name.to_ascii_uppercase();
-        if let Some(z) = u.strip_prefix("UTM") {
-            let (num, south) = match z.strip_suffix('S') {
-                Some(n) => (n, true),
-                None => (z.strip_suffix('N').unwrap_or(z), false),
-            };
-            if let Ok(n) = num.parse::<i32>()
-                && (1..=60).contains(&n)
-            {
-                return Cs::Utm(if south { -n } else { n });
-            }
-        }
-        if let Some(code) = u.strip_prefix("EPSG:").and_then(|c| c.parse::<i32>().ok()) {
-            match code {
-                32601..=32660 => return Cs::Utm(code - 32600),
-                32701..=32760 => return Cs::Utm(-(code - 32700)),
-                4326 => return Cs::LongLat,
-                _ => {}
-            }
-        }
-        if u == "LONG-LAT" {
-            return Cs::LongLat;
-        }
-        Cs::Other(name.to_string())
-    }
-
-    /// Latitude and longitude of a point given in this system.
-    fn to_latlon(&self, x: f64, y: f64) -> Option<(f64, f64)> {
-        match self {
-            Cs::Utm(z) => Some(cave_geomag::utm_to_latlon(x, y, *z)),
-            Cs::LongLat => Some((y, x)),
-            Cs::Other(_) => None,
-        }
-    }
-
-    /// A point in this system from latitude and longitude.
-    fn at_latlon(&self, lat: f64, lon: f64) -> Option<(f64, f64)> {
-        match self {
-            Cs::Utm(z) => Some(cave_geomag::latlon_to_utm(lat, lon, *z)),
-            Cs::LongLat => Some((lon, lat)),
-            Cs::Other(_) => None,
-        }
-    }
-}
-
 impl Default for Settings {
     fn default() -> Self {
         Settings {
@@ -389,13 +332,20 @@ impl Default for Settings {
 }
 
 impl Settings {
-    /// `*calibrate <quantities> <zero error> [<units>] [<scale>]`, or `*calibrate default`.
     fn calibrate(&mut self, args: &[String]) {
+        calibrate(&mut self.calib, &self.units, args);
+    }
+}
+
+/// `calibrate <quantities> <zero error> [<units>] [<scale>]`, or `calibrate default` (Survex and
+/// Therion write it the same way).
+pub(crate) fn calibrate(calib: &mut Calib, units: &Units, args: &[String]) {
+    {
         if args
             .first()
             .is_some_and(|a| a.eq_ignore_ascii_case("default"))
         {
-            self.calib = Calib::default();
+            *calib = Calib::default();
             return;
         }
         let Some(at) = args
@@ -426,44 +376,44 @@ impl Settings {
             };
             let length = |z: f64| match unit_word.as_deref() {
                 Some(u) if u.contains("feet") || u == "ft" => {
-                    crate::model::convert(z, "ft", self.units.length_unit)
+                    crate::model::convert(z, "ft", units.length_unit)
                 }
                 Some(u) if u.starts_with("met") || u == "m" => {
-                    crate::model::convert(z, "m", self.units.length_unit) / self.units.length_scale
+                    crate::model::convert(z, "m", units.length_unit) / units.length_scale
                 }
                 _ => z,
             };
             match q.as_str() {
                 "tape" | "length" => {
-                    self.calib.tape = Correction {
+                    calib.tape = Correction {
                         zero: length(zero),
                         scale,
                         zero_after_scale: unit_word.is_some(),
                     }
                 }
                 "compass" | "bearing" => {
-                    self.calib.compass = Correction {
+                    calib.compass = Correction {
                         zero: angle(zero),
                         scale,
                         zero_after_scale: unit_word.is_some(),
                     }
                 }
                 "clino" | "gradient" => {
-                    self.calib.clino = Correction {
+                    calib.clino = Correction {
                         zero: angle(zero),
                         scale,
                         zero_after_scale: unit_word.is_some(),
                     }
                 }
                 "backcompass" | "backbearing" => {
-                    self.calib.backcompass = Correction {
+                    calib.backcompass = Correction {
                         zero: angle(zero),
                         scale,
                         zero_after_scale: unit_word.is_some(),
                     }
                 }
                 "backclino" | "backgradient" => {
-                    self.calib.backclino = Correction {
+                    calib.backclino = Correction {
                         zero: angle(zero),
                         scale,
                         zero_after_scale: unit_word.is_some(),
@@ -1047,10 +997,7 @@ pub fn parse(content: &str) -> Survey {
                 let d = cave_geomag::decimal_year_of(&cur_date)
                     .and_then(|y| cave_geomag::field(lat, lon, y, alt / 1000.0))
                     .map_or(0.0, |f| f.declination);
-                let conv = match &cs_out {
-                    Some(Cs::Utm(z)) => cave_geomag::utm_convergence(lat, lon, *z),
-                    _ => 0.0,
-                };
+                let conv = cs_out.as_ref().map_or(0.0, |c| c.convergence(lat, lon));
                 st.declination = d - conv;
             }
             let anon = is_anonymous(&to, st.alias_dash);

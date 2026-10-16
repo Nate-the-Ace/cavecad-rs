@@ -34,18 +34,26 @@ pub fn decimal_year(year: i32, month: u32, day: u32) -> f64 {
     f64::from(year) + f64::from(doy - 1) / if leap { 366.0 } else { 365.0 }
 }
 
-/// A "YYYY-MM-DD" date as a decimal year.
+/// A date as a decimal year: "YYYY-MM-DD", or a whole month ("YYYY-MM", its middle) or a whole year
+/// ("YYYY", mid-year) as survey software writes an imprecise date. "." and "/" separate as "-" does.
 pub fn decimal_year_of(date: &str) -> Option<f64> {
-    let mut parts = date.trim().splitn(3, '-');
-    let y = parts.next()?.parse().ok()?;
-    let m = parts.next()?.parse().ok()?;
-    let d: String = parts
-        .next()?
-        .chars()
-        .take_while(char::is_ascii_digit)
-        .collect();
-    let d = d.parse().ok()?;
-    Some(decimal_year(y, m, d))
+    let parts: Vec<&str> = date.trim().split(['-', '.', '/']).collect();
+    let num = |s: &str| -> Option<u32> {
+        let d: String = s.chars().take_while(char::is_ascii_digit).collect();
+        d.parse().ok()
+    };
+    let y: i32 = num(parts.first()?)?.try_into().ok()?;
+    if y < 1000 {
+        return None;
+    }
+    match (
+        parts.get(1).and_then(|m| num(m)),
+        parts.get(2).and_then(|d| num(d)),
+    ) {
+        (Some(m), Some(d)) if (1..=12).contains(&m) => Some(decimal_year(y, m, d.clamp(1, 31))),
+        (Some(m), None) if (1..=12).contains(&m) => Some(decimal_year(y, m, 15)),
+        _ => Some(f64::from(y) + 0.5),
+    }
 }
 
 /// The field at a place and time.
@@ -186,15 +194,15 @@ pub fn declination(lat_deg: f64, lon_deg: f64, year: f64) -> Option<f64> {
     field(lat_deg, lon_deg, year, 0.0).map(|f| f.declination)
 }
 
-// ---- UTM ---------------------------------------------------------------------------------------
+// ---- Transverse Mercator grids: UTM and national grids ------------------------------------------
 //
-// Transverse Mercator on the WGS84 ellipsoid (Krüger's series to the third order, good to well
-// under a millimetre in the zone). NAD83 differs from WGS84 by about a metre, which changes a
-// declination by nothing anyone could measure.
+// Krüger's series to the third order on the WGS84 ellipsoid: good to well under a millimetre within a
+// zone. A national grid on another ellipsoid (Bessel, Airy) and datum is placed a few hundred metres
+// off by using WGS84 -- which changes a magnetic declination or a grid convergence by nothing anyone
+// could measure, and that is all these are used for (fixed points stay as written).
 
 const A: f64 = 6_378_137.0;
 const F: f64 = 1.0 / 298.257_223_563;
-const K0: f64 = 0.9996;
 
 fn series() -> (f64, [f64; 3], [f64; 3]) {
     let n = F / (2.0 - F);
@@ -212,69 +220,149 @@ fn series() -> (f64, [f64; 3], [f64; 3]) {
     (a_big, alpha, beta)
 }
 
+/// A Transverse Mercator grid: UTM zones and most national grids.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TransverseMercator {
+    /// Latitude of origin, degrees.
+    pub lat0: f64,
+    /// Central meridian, degrees east.
+    pub lon0: f64,
+    /// Scale on the central meridian.
+    pub k0: f64,
+    /// False easting, metres.
+    pub false_easting: f64,
+    /// False northing, metres.
+    pub false_northing: f64,
+}
+
+impl TransverseMercator {
+    /// A UTM zone (1..=60), negative for the southern hemisphere.
+    pub fn utm(zone: i32) -> Self {
+        TransverseMercator {
+            lat0: 0.0,
+            lon0: f64::from(zone.abs()) * 6.0 - 183.0,
+            k0: 0.9996,
+            false_easting: 500_000.0,
+            false_northing: if zone < 0 { 10_000_000.0 } else { 0.0 },
+        }
+    }
+
+    /// A grid by its EPSG code: UTM on WGS84 and ETRS89, and the national Transverse Mercator grids
+    /// cave surveys in Europe are commonly fixed in. `None` for anything else.
+    pub fn epsg(code: u32) -> Option<Self> {
+        let tm = |lat0, lon0, k0, fe, fn_| TransverseMercator {
+            lat0,
+            lon0,
+            k0,
+            false_easting: fe,
+            false_northing: fn_,
+        };
+        Some(match code {
+            32601..=32660 => Self::utm((code - 32600) as i32),
+            32701..=32760 => Self::utm(-((code - 32700) as i32)),
+            25828..=25838 => Self::utm((code - 25800) as i32), // ETRS89 / UTM
+            3912 | 3794 => tm(0.0, 15.0, 0.9999, 500_000.0, -5_000_000.0), // Slovenia
+            31254 => tm(0.0, 10.0 + 1.0 / 3.0, 1.0, 0.0, -5_000_000.0), // Austria GK West
+            31255 => tm(0.0, 13.0 + 1.0 / 3.0, 1.0, 0.0, -5_000_000.0), // Austria GK Central
+            31256 => tm(0.0, 16.0 + 1.0 / 3.0, 1.0, 0.0, -5_000_000.0), // Austria GK East
+            31257 => tm(0.0, 10.0 + 1.0 / 3.0, 1.0, 150_000.0, -5_000_000.0), // Austria M28
+            31258 => tm(0.0, 13.0 + 1.0 / 3.0, 1.0, 450_000.0, -5_000_000.0), // Austria M31
+            31259 => tm(0.0, 16.0 + 1.0 / 3.0, 1.0, 750_000.0, -5_000_000.0), // Austria M34
+            27700 => tm(49.0, -2.0, 0.999_601_271_7, 400_000.0, -100_000.0), // British National Grid
+            2180 => tm(0.0, 19.0, 0.9993, 500_000.0, -5_300_000.0),          // Poland CS92
+            3765 => tm(0.0, 16.5, 0.9999, 500_000.0, 0.0),                   // Croatia HTRS96/TM
+            _ => return None,
+        })
+    }
+
+    /// The northing of the latitude of origin, before the false northing.
+    fn origin_northing(&self) -> f64 {
+        if self.lat0 == 0.0 {
+            0.0
+        } else {
+            self.raw(self.lat0, self.lon0).1
+        }
+    }
+
+    /// Easting and northing without the false origin.
+    fn raw(&self, lat: f64, lon: f64) -> (f64, f64) {
+        let (a_big, alpha, _) = series();
+        let (phi, dl) = (lat.to_radians(), (lon - self.lon0).to_radians());
+        let e = (F * (2.0 - F)).sqrt();
+        let t = (phi.sin().atanh() - e * (e * phi.sin()).atanh()).sinh();
+        let xi_p = t.atan2(dl.cos());
+        let eta_p = (dl.sin() / (1.0 + t * t).sqrt()).atanh();
+        let (mut xi, mut eta) = (xi_p, eta_p);
+        for (j, a) in alpha.iter().enumerate() {
+            let k = 2.0 * (j as f64 + 1.0);
+            xi += a * (k * xi_p).sin() * (k * eta_p).cosh();
+            eta += a * (k * xi_p).cos() * (k * eta_p).sinh();
+        }
+        (self.k0 * a_big * eta, self.k0 * a_big * xi)
+    }
+
+    /// Latitude and longitude (degrees) to easting and northing.
+    pub fn forward(&self, lat: f64, lon: f64) -> (f64, f64) {
+        let (e, n) = self.raw(lat, lon);
+        (
+            e + self.false_easting,
+            n - self.origin_northing() + self.false_northing,
+        )
+    }
+
+    /// Easting and northing to latitude and longitude (degrees).
+    pub fn inverse(&self, easting: f64, northing: f64) -> (f64, f64) {
+        let (a_big, _, beta) = series();
+        let xi = (northing - self.false_northing + self.origin_northing()) / (self.k0 * a_big);
+        let eta = (easting - self.false_easting) / (self.k0 * a_big);
+        let (mut xi_p, mut eta_p) = (xi, eta);
+        for (j, b) in beta.iter().enumerate() {
+            let k = 2.0 * (j as f64 + 1.0);
+            xi_p -= b * (k * xi).sin() * (k * eta).cosh();
+            eta_p -= b * (k * xi).cos() * (k * eta).sinh();
+        }
+        let chi = (xi_p.sin() / eta_p.cosh()).asin();
+        let e = (F * (2.0 - F)).sqrt();
+        let mut phi = chi;
+        for _ in 0..8 {
+            let e_sin = e * phi.sin();
+            phi = 2.0
+                * (((1.0 + chi.sin()) / (1.0 - chi.sin())).sqrt()
+                    * ((1.0 + e_sin) / (1.0 - e_sin)).powf(e / 2.0))
+                .atan()
+                - std::f64::consts::FRAC_PI_2;
+        }
+        (
+            phi.to_degrees(),
+            self.lon0 + eta_p.sinh().atan2(xi_p.cos()).to_degrees(),
+        )
+    }
+
+    /// The grid convergence (degrees) at a place: grid north minus true north, positive when grid
+    /// north lies east of true north. A true bearing minus this is a grid bearing. Measured on the
+    /// projection itself (the grid direction of a short step due north).
+    pub fn convergence(&self, lat: f64, lon: f64) -> f64 {
+        let step = 1e-5;
+        let (e0, n0) = self.forward(lat - step, lon);
+        let (e1, n1) = self.forward(lat + step, lon);
+        -(e1 - e0).atan2(n1 - n0).to_degrees()
+    }
+}
+
 /// A UTM position to latitude and longitude (degrees). `zone` 1..=60, negative for the southern
 /// hemisphere (as Compass and Survex write it).
 pub fn utm_to_latlon(easting: f64, northing: f64, zone: i32) -> (f64, f64) {
-    let (a_big, _, beta) = series();
-    let south = zone < 0;
-    let zone = zone.abs();
-    let lon0 = (f64::from(zone) * 6.0 - 183.0).to_radians();
-    let xi = (northing - if south { 10_000_000.0 } else { 0.0 }) / (K0 * a_big);
-    let eta = (easting - 500_000.0) / (K0 * a_big);
-    let (mut xi_p, mut eta_p) = (xi, eta);
-    for (j, b) in beta.iter().enumerate() {
-        let k = 2.0 * (j as f64 + 1.0);
-        xi_p -= b * (k * xi).sin() * (k * eta).cosh();
-        eta_p -= b * (k * xi).cos() * (k * eta).sinh();
-    }
-    let chi = (xi_p.sin() / eta_p.cosh()).asin();
-    let e2 = F * (2.0 - F);
-    // conformal latitude to geodetic latitude, by iteration
-    let mut phi = chi;
-    for _ in 0..8 {
-        let e_sin = e2.sqrt() * phi.sin();
-        phi = 2.0
-            * (((1.0 + chi.sin()) / (1.0 - chi.sin())).sqrt()
-                * ((1.0 + e_sin) / (1.0 - e_sin)).powf(e2.sqrt() / 2.0))
-            .atan()
-            - std::f64::consts::FRAC_PI_2;
-    }
-    let lon = lon0 + eta_p.sinh().atan2(xi_p.cos());
-    (phi.to_degrees(), lon.to_degrees())
+    TransverseMercator::utm(zone).inverse(easting, northing)
 }
 
 /// Latitude and longitude (degrees) to UTM (easting, northing) in a zone (negative: southern).
 pub fn latlon_to_utm(lat: f64, lon: f64, zone: i32) -> (f64, f64) {
-    let (a_big, alpha, _) = series();
-    let south = zone < 0;
-    let lon0 = (f64::from(zone.abs()) * 6.0 - 183.0).to_radians();
-    let (phi, dl) = (lat.to_radians(), lon.to_radians() - lon0);
-    let e = (F * (2.0 - F)).sqrt();
-    let t = (phi.sin().atanh() - e * (e * phi.sin()).atanh()).sinh();
-    let xi_p = t.atan2(dl.cos());
-    let eta_p = (dl.sin() / (1.0 + t * t).sqrt()).atanh();
-    let (mut xi, mut eta) = (xi_p, eta_p);
-    for (j, a) in alpha.iter().enumerate() {
-        let k = 2.0 * (j as f64 + 1.0);
-        xi += a * (k * xi_p).sin() * (k * eta_p).cosh();
-        eta += a * (k * xi_p).cos() * (k * eta_p).sinh();
-    }
-    (
-        500_000.0 + K0 * a_big * eta,
-        K0 * a_big * xi + if south { 10_000_000.0 } else { 0.0 },
-    )
+    TransverseMercator::utm(zone).forward(lat, lon)
 }
 
-/// The grid convergence (degrees) at a place: grid north minus true north, positive when grid
-/// north lies east of true north. A true bearing minus this is a grid bearing. Measured on the
-/// projection itself (the grid direction of a short step due north), so it is as exact as the
-/// projection is.
+/// The UTM grid convergence (degrees) at a place; see [`TransverseMercator::convergence`].
 pub fn utm_convergence(lat: f64, lon: f64, zone: i32) -> f64 {
-    let step = 1e-5;
-    let (e0, n0) = latlon_to_utm(lat - step, lon, zone);
-    let (e1, n1) = latlon_to_utm(lat + step, lon, zone);
-    // true north points at this grid bearing; grid north is the same angle the other way
-    -(e1 - e0).atan2(n1 - n0).to_degrees()
+    TransverseMercator::utm(zone).convergence(lat, lon)
 }
 
 #[cfg(test)]
@@ -331,9 +419,32 @@ mod tests {
     }
 
     #[test]
+    fn national_grids_round_trip_and_have_their_origins() {
+        // British National Grid: the true origin (49 N, 2 W) is at 400 km E, -100 km N
+        let bng = TransverseMercator::epsg(27700).unwrap();
+        let (e, n) = bng.forward(49.0, -2.0);
+        assert!(
+            (e - 400_000.0).abs() < 1e-6 && (n + 100_000.0).abs() < 1e-6,
+            "{e},{n}"
+        );
+        for code in [3912, 31255, 27700, 2180, 25833] {
+            let g = TransverseMercator::epsg(code).unwrap();
+            let (e, n) = g.forward(46.25, 13.8);
+            let (lat, lon) = g.inverse(e, n);
+            assert!(
+                (lat - 46.25).abs() < 1e-8 && (lon - 13.8).abs() < 1e-8,
+                "{code}"
+            );
+        }
+        assert!(TransverseMercator::epsg(4326).is_none());
+    }
+
+    #[test]
     fn dates_read() {
         assert_eq!(decimal_year(2024, 1, 1), 2024.0);
         assert!((decimal_year_of("2024-07-10").unwrap() - decimal_year(2024, 7, 10)).abs() < 1e-12);
         assert!(decimal_year_of("").is_none());
+        assert_eq!(decimal_year_of("2012"), Some(2012.5));
+        assert!((decimal_year_of("2012.7").unwrap() - decimal_year(2012, 7, 15)).abs() < 1e-12);
     }
 }

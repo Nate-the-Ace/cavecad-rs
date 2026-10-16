@@ -39,8 +39,9 @@ fn diff(expected: &Value, actual: &Value, at: &str) -> Option<String> {
                     return Some(d);
                 }
             }
+            // `aliases` (other names of joined stations) is new here: the old app had no such list
             a.iter()
-                .find(|(k, v)| !e.contains_key(*k) && !is_default(v))
+                .find(|(k, v)| !e.contains_key(*k) && !is_default(v) && *k != "aliases")
                 .map(|(k, v)| format!("{at}.{k}: not in the old output, got {v}"))
         }
         (Value::Array(e), Value::Array(a)) => {

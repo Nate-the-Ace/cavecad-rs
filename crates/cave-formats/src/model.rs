@@ -696,3 +696,83 @@ impl GeoRef {
         cave_geomag::utm_convergence(self.lat, self.lon, self.zone)
     }
 }
+
+/// A coordinate system a survey file names for its fixed points, as far as CaveCAD converts them:
+/// Transverse Mercator grids (UTM zones and the national grids `TransverseMercator::epsg` knows) and
+/// latitude/longitude. Anything else is kept by name and its coordinates used as written.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) enum Cs {
+    Grid(cave_geomag::TransverseMercator),
+    /// Longitude first (Survex's Long-Lat) or latitude first (Therion's lat-long).
+    LongLat,
+    LatLong,
+    Other(String),
+}
+
+impl Cs {
+    /// "UTM33", "utm33n", "UTM60S", "EPSG:32633", "epsg:3912", "Long-Lat", "lat-long", "EPSG:4326".
+    pub(crate) fn parse(name: &str) -> Cs {
+        let u = name.trim_matches('"').to_ascii_uppercase();
+        if let Some(z) = u.strip_prefix("UTM") {
+            let (num, south) = match z.strip_suffix('S') {
+                Some(n) => (n, true),
+                None => (z.strip_suffix('N').unwrap_or(z), false),
+            };
+            if let Ok(n) = num.parse::<i32>()
+                && (1..=60).contains(&n)
+            {
+                return Cs::Grid(cave_geomag::TransverseMercator::utm(if south {
+                    -n
+                } else {
+                    n
+                }));
+            }
+        }
+        if let Some(code) = u.strip_prefix("EPSG:").and_then(|c| c.parse::<u32>().ok()) {
+            if code == 4326 {
+                return Cs::LatLong;
+            }
+            if let Some(g) = cave_geomag::TransverseMercator::epsg(code) {
+                return Cs::Grid(g);
+            }
+        }
+        match u.as_str() {
+            "LONG-LAT" => Cs::LongLat,
+            "LAT-LONG" => Cs::LatLong,
+            _ => Cs::Other(name.to_string()),
+        }
+    }
+
+    /// Latitude and longitude of a point given in this system.
+    pub(crate) fn to_latlon(&self, x: f64, y: f64) -> Option<(f64, f64)> {
+        match self {
+            Cs::Grid(g) => Some(g.inverse(x, y)),
+            Cs::LongLat => Some((y, x)),
+            Cs::LatLong => Some((x, y)),
+            Cs::Other(_) => None,
+        }
+    }
+
+    /// A point in this system from latitude and longitude.
+    pub(crate) fn at_latlon(&self, lat: f64, lon: f64) -> Option<(f64, f64)> {
+        match self {
+            Cs::Grid(g) => Some(g.forward(lat, lon)),
+            Cs::LongLat => Some((lon, lat)),
+            Cs::LatLong => Some((lat, lon)),
+            Cs::Other(_) => None,
+        }
+    }
+
+    /// Grid north's angle east of true north at a place (0 for latitude/longitude).
+    pub(crate) fn convergence(&self, lat: f64, lon: f64) -> f64 {
+        match self {
+            Cs::Grid(g) => g.convergence(lat, lon),
+            _ => 0.0,
+        }
+    }
+
+    /// Whether this reader converts it.
+    pub(crate) fn known(&self) -> bool {
+        !matches!(self, Cs::Other(_))
+    }
+}

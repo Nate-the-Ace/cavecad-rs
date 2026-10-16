@@ -16,7 +16,7 @@ use crate::js::{
     JsObj, is_finite_str, parse_float, split_lines, to_fixed, trim, trim_end, trim_start,
 };
 use crate::model::{
-    Fixed, Lrud, Shot, Survey, Trip, applied_declination, grads_to_degrees, normalize_azimuth,
+    Cs, Fixed, Lrud, Shot, Survey, Trip, applied_declination, grads_to_degrees, normalize_azimuth,
     unknown_elevation_note,
 };
 use crate::survex::{Units, field_alias, into_survey_unit, read_date};
@@ -343,6 +343,12 @@ struct Flags {
 struct Scope {
     units: Units,
     declination: f64,
+    /// A declination was given (else, with a coordinate system, Therion computes it).
+    declination_set: bool,
+    /// `declination [date value date value ... units]`: by date.
+    declination_dates: Vec<(String, f64)>,
+    cs: Option<Cs>,
+    calib: crate::survex::Calib,
     flags: Flags,
     style: &'static str,
     normal: Vec<String>,
@@ -374,12 +380,21 @@ fn parse_inner(content: &str, input_findings: Vec<InputFinding>) -> Survey {
         survey.add_finding("warning", f.code, f.text);
     }
     let mut station_lrud: JsObj<Lrud> = JsObj::new();
+    // for the declination worked out afterwards: (shot, computed by Therion, date, cs in force)
+    let mut shot_info: Vec<(usize, bool, String, Option<Cs>)> = Vec::new();
+    // the coordinate system each fix was given in
+    let mut fix_cs: Vec<(String, Option<Cs>)> = Vec::new();
+    let mut deferred_fixes: Vec<(String, Vec<String>, Fixed, Option<Cs>)> = Vec::new();
     let mut equates: Vec<(Vec<String>, Vec<String>)> = Vec::new();
     let lines = logical_lines(content);
     let mut prefix: Vec<String> = Vec::new();
     let mut sc = Scope {
         units: Units::default(),
         declination: 0.0,
+        declination_set: false,
+        declination_dates: Vec::new(),
+        cs: None,
+        calib: crate::survex::Calib::default(),
         flags: Flags::default(),
         style: "normal",
         normal: ["from", "to", "tape", "compass", "clino"]
@@ -458,6 +473,18 @@ fn parse_inner(content: &str, input_findings: Vec<InputFinding>) -> Survey {
                         survey.cave_name = t.clone();
                     }
                 }
+                // "-declination [...]" on the survey line holds for everything in it
+                if let Some(i) = tokens
+                    .iter()
+                    .position(|t| t.eq_ignore_ascii_case("-declination"))
+                    && let Some(spec) = tokens.get(i + 1)
+                {
+                    read_declination(std::slice::from_ref(spec), &mut sc);
+                    if sc.declination_set {
+                        survey.declination = sc.declination;
+                        survey.declination_source = "file".into();
+                    }
+                }
                 continue;
             }
             "endsurvey" => {
@@ -486,6 +513,31 @@ fn parse_inner(content: &str, input_findings: Vec<InputFinding>) -> Survey {
                 continue;
             }
             _ => {}
+        }
+        // declination and cs hold for a whole survey or one centreline
+        if cmd == "declination" {
+            read_declination(&tokens[1..], &mut sc);
+            if sc.declination_set {
+                survey.declination = sc.declination;
+                survey.declination_source = "file".into();
+            }
+            continue;
+        }
+        if cmd == "calibrate" && tokens.len() > 1 {
+            crate::survex::calibrate(&mut sc.calib, &sc.units, &tokens[1..]);
+            continue;
+        }
+        if cmd == "cs" && tokens.len() > 1 {
+            let cs = Cs::parse(&tokens[1]);
+            if !cs.known() {
+                survey.add_finding(
+                    "warning",
+                    "therion-cs",
+                    format!("The coordinate system \"{}\" is not one CaveCAD converts (it converts UTM, the common national Transverse Mercator grids and latitude/longitude), so fixed points in it are used exactly as written and the declination is not worked out from them.", tokens[1]),
+                );
+            }
+            sc.cs = Some(cs);
+            continue;
         }
         if !in_centreline {
             if cmd == "input" && !reported_input {
@@ -537,24 +589,6 @@ fn parse_inner(content: &str, input_findings: Vec<InputFinding>) -> Survey {
             }
             "units" if tokens.len() > 2 => {
                 sc.units.apply(&tokens, &["ft", "foot"]);
-                continue;
-            }
-            "declination" if tokens.len() > 1 => {
-                let mut d = parse_float(tokens[1].strip_prefix('[').unwrap_or(&tokens[1]));
-                if !d.is_nan() {
-                    let unit = if tokens.len() > 2 {
-                        let u = tokens[2].to_lowercase();
-                        u.strip_suffix(']').map(str::to_string).unwrap_or(u)
-                    } else {
-                        "degrees".into()
-                    };
-                    if unit.contains("grad") || unit.contains("mil") {
-                        d = grads_to_degrees(d);
-                    }
-                    sc.declination = d;
-                    survey.declination = d;
-                    survey.declination_source = "file".into();
-                }
                 continue;
             }
             "flags" => {
@@ -619,14 +653,24 @@ fn parse_inner(content: &str, input_findings: Vec<InputFinding>) -> Survey {
                     } else {
                         into_survey_unit(&mut survey, &sc.units, fz)
                     };
-                    survey
-                        .fixed
-                        .set(&name_in(&prefix, &tokens[1]), Fixed::at(x, y, z));
+                    if tokens[1].contains('@') {
+                        // "fix 1@entrance.m16 ...": resolved once every station is known
+                        deferred_fixes.push((
+                            tokens[1].clone(),
+                            prefix.clone(),
+                            Fixed::at(x, y, z),
+                            sc.cs.clone(),
+                        ));
+                    } else {
+                        let name = name_in(&prefix, &tokens[1]);
+                        survey.fixed.set(&name, Fixed::at(x, y, z));
+                        fix_cs.push((name, sc.cs.clone()));
+                    }
                 }
                 continue;
             }
             "extend" | "station" | "mark" | "break" | "group" | "endgroup" | "cs" | "sd"
-            | "grade" | "calibrate" | "infer" | "copyright" | "instrument" | "explo-date"
+            | "grade" | "infer" | "copyright" | "instrument" | "explo-date"
             | "declination-auto" => continue,
             _ => {}
         }
@@ -645,6 +689,7 @@ fn parse_inner(content: &str, input_findings: Vec<InputFinding>) -> Survey {
             if tape.is_nan() {
                 continue;
             }
+            let tape = sc.calib.tape.apply(tape);
             let (from, to) = (from.clone(), to.clone());
             let mut clino = 0.0;
             let mut plumbed = false;
@@ -657,7 +702,7 @@ fn parse_inner(content: &str, input_findings: Vec<InputFinding>) -> Survey {
                     None => {
                         let v = parse_float(c);
                         clino = if !v.is_nan() {
-                            sc.units.clino(v)
+                            sc.calib.clino.apply(sc.units.clino(v))
                         } else if crate::survex::has_reading(rec.get("backclino")) {
                             f64::NAN // the backsight carries it
                         } else {
@@ -676,10 +721,28 @@ fn parse_inner(content: &str, input_findings: Vec<InputFinding>) -> Survey {
                 }
                 compass = 0.0;
             } else {
-                compass = sc.units.compass(compass);
+                compass = sc.calib.compass.apply(sc.units.compass(compass));
             }
             let anon = is_anonymous(&to);
             let distance = into_survey_unit(&mut survey, &sc.units, tape);
+            // a declination given by date: the last one on or before this survey's date
+            if !sc.declination_dates.is_empty() {
+                let mut pick = sc.declination_dates[0].1;
+                for (d, v) in &sc.declination_dates {
+                    if d == "-" && cur_date.is_empty()
+                        || (!cur_date.is_empty() && d.as_str() <= cur_date.as_str() && d != "-")
+                    {
+                        pick = *v;
+                    }
+                }
+                sc.declination = pick;
+            }
+            shot_info.push((
+                survey.shots.len(),
+                !sc.declination_set,
+                cur_date.clone(),
+                sc.cs.clone(),
+            ));
             let mut shot = Shot {
                 splay: anon || sc.flags.splay,
                 from: name_in(&prefix, &from),
@@ -699,8 +762,9 @@ fn parse_inner(content: &str, input_findings: Vec<InputFinding>) -> Survey {
             if let Some(bc) = rec.get("backcompass") {
                 let v = parse_float(bc);
                 if !v.is_nan() {
-                    shot.back_azimuth =
-                        Some(normalize_azimuth(sc.units.compass(v) + sc.declination));
+                    shot.back_azimuth = Some(normalize_azimuth(
+                        sc.calib.backcompass.apply(sc.units.compass(v)) + sc.declination,
+                    ));
                 }
             }
             if let Some(bc) = rec.get("backclino") {
@@ -709,7 +773,8 @@ fn parse_inner(content: &str, input_findings: Vec<InputFinding>) -> Survey {
                     None => {
                         let v = parse_float(bc);
                         if !v.is_nan() {
-                            shot.back_inclination = Some(sc.units.clino(v));
+                            shot.back_inclination =
+                                Some(sc.calib.backclino.apply(sc.units.clino(v)));
                         }
                     }
                 }
@@ -767,6 +832,20 @@ fn parse_inner(content: &str, input_findings: Vec<InputFinding>) -> Survey {
         }
     }
 
+    if !deferred_fixes.is_empty() {
+        let mut known: JsObj<()> = JsObj::new();
+        for s in &survey.shots {
+            known.set(&s.from, ());
+            if !s.to.is_empty() {
+                known.set(&s.to, ());
+            }
+        }
+        for (token, scope, f, cs) in deferred_fixes {
+            let name = resolve_ref(&token, &scope, &known, &name_in);
+            survey.fixed.set(&name, f);
+            fix_cs.push((name, cs));
+        }
+    }
     if !equates.is_empty() {
         apply_equates(&mut survey, &mut station_lrud, &equates, &name_in);
     }
@@ -787,11 +866,36 @@ fn parse_inner(content: &str, input_findings: Vec<InputFinding>) -> Survey {
         survey.start_lrud = Some(start.clone());
         survey.trips[0].start_lrud = Some(start);
     }
+    geo_declination(&mut survey, &shot_info, &fix_cs);
     if survey.distance_unit.is_none() {
         survey.distance_unit = Some(sc.units.length_unit.into());
     }
     survey.ensure_trips();
     survey
+}
+
+/// A station reference as Therion writes it (`5`, `5@inner`, `5@inner.outer`) to our full name: the
+/// path is tried inside the current survey, then from the root, preferring whichever names a
+/// station some shot uses.
+fn resolve_ref(
+    token: &str,
+    scope: &[String],
+    known: &JsObj<()>,
+    name_in: &dyn Fn(&[String], &str) -> String,
+) -> String {
+    let Some(at) = token.find('@') else {
+        return name_in(scope, token);
+    };
+    let st = &token[..at];
+    let path: Vec<String> = token[at + 1..].split('.').rev().map(String::from).collect();
+    let mut full_scope = scope.to_vec();
+    full_scope.extend(path.iter().cloned());
+    let rel = name_in(&full_scope, st);
+    if known.has(&rel) {
+        return rel;
+    }
+    let abs = name_in(&path, st);
+    if known.has(&abs) { abs } else { rel }
 }
 
 /// "equate 5@b 12@a": those are one place. Every member of a class is renamed to one name -- the
@@ -823,21 +927,7 @@ fn apply_equates(
             n = gp;
         }
     }
-    let resolve = |token: &str, scope: &[String]| -> String {
-        let Some(at) = token.find('@') else {
-            return name_in(scope, token);
-        };
-        let st = &token[..at];
-        let path: Vec<String> = token[at + 1..].split('.').rev().map(String::from).collect();
-        let mut full_scope = scope.to_vec();
-        full_scope.extend(path.iter().cloned());
-        let rel = name_in(&full_scope, st);
-        if known.has(&rel) {
-            return rel;
-        }
-        let abs = name_in(&path, st);
-        if known.has(&abs) { abs } else { rel }
-    };
+    let resolve = |token: &str, scope: &[String]| resolve_ref(token, scope, &known, name_in);
     let mut unknown: Vec<String> = Vec::new();
     for (refs, scope) in equates {
         let mut first: Option<String> = None;
@@ -884,6 +974,9 @@ fn apply_equates(
         {
             rename.set(o, target.clone());
         }
+    }
+    for (alias, kept) in rename.iter() {
+        survey.aliases.set(alias, kept.clone());
     }
     let re = |n: &str| rename.get(n).cloned().unwrap_or_else(|| n.to_string());
     for s in &mut survey.shots {
@@ -1114,4 +1207,147 @@ fn split_commas(s: &str) -> Vec<String> {
             p.to_string()
         })
         .collect()
+}
+
+/// `declination` arguments: `[value units]`, `value units`, `[date value date value ... units]`
+/// (`-` for undated), or `[]` / nothing to clear it.
+fn read_declination(args: &[String], sc: &mut Scope) {
+    let words: Vec<String> = args
+        .iter()
+        .flat_map(|a| {
+            a.trim_start_matches('[')
+                .trim_end_matches(']')
+                .split_whitespace()
+                .map(String::from)
+                .collect::<Vec<_>>()
+        })
+        .collect();
+    if words.is_empty() {
+        sc.declination_set = false;
+        sc.declination = 0.0;
+        sc.declination_dates.clear();
+        return;
+    }
+    let units = words.last().map(|u| u.to_lowercase()).unwrap_or_default();
+    let has_units = parse_float(&units).is_nan() && units != "-";
+    let nums = if has_units {
+        &words[..words.len() - 1]
+    } else {
+        &words[..]
+    };
+    let scale = |v: f64| {
+        if units.contains("grad") || units.contains("mil") {
+            grads_to_degrees(v)
+        } else if units.starts_with("min") {
+            v / 60.0
+        } else {
+            v
+        }
+    };
+    if nums.len() == 1 {
+        let d = parse_float(&nums[0]);
+        if !d.is_nan() {
+            sc.declination = scale(d);
+            sc.declination_set = true;
+            sc.declination_dates.clear();
+        }
+        return;
+    }
+    sc.declination_dates = nums
+        .chunks(2)
+        .filter(|c| c.len() == 2)
+        .filter_map(|c| {
+            let v = parse_float(&c[1]);
+            let date = if c[0] == "-" {
+                "-".to_string()
+            } else {
+                // a year alone holds from its first day
+                read_date(&c[0], b".-/").unwrap_or_else(|| {
+                    let d = c[0].replace(['.', '/'], "-");
+                    if d.len() == 4 {
+                        format!("{d}-01-01")
+                    } else {
+                        d
+                    }
+                })
+            };
+            (!v.is_nan()).then(|| (date, scale(v)))
+        })
+        .collect();
+    sc.declination_set = !sc.declination_dates.is_empty();
+    if let Some((_, v)) = sc.declination_dates.first() {
+        sc.declination = *v;
+    }
+}
+
+/// Therion's geodetic part, once everything is read: where the cave is (its first fixed point that
+/// is in a coordinate system CaveCAD converts); the declination Therion computes for shots that were
+/// given none (IGRF on each survey's date, 0 when undated); and the grid convergence of the system
+/// the fixes are in, taken off every bearing so the survey lands on the grid its fixes are in.
+fn geo_declination(
+    survey: &mut Survey,
+    shots: &[(usize, bool, String, Option<Cs>)],
+    fix_cs: &[(String, Option<Cs>)],
+) {
+    // the output system: the first grid a fix is given in
+    let grid = fix_cs
+        .iter()
+        .find_map(|(_, c)| c.clone().filter(|c| matches!(c, Cs::Grid(_))));
+    // latitude/longitude fixes go onto that grid, as Therion puts them
+    if let Some(g) = &grid {
+        for (name, c) in fix_cs {
+            if let Some(c @ (Cs::LatLong | Cs::LongLat)) = c
+                && let Some(f) = survey.fixed.get(name).cloned()
+                && let (Some(x), Some(y)) = (f.x, f.y)
+                && let Some((lat, lon)) = c.to_latlon(x, y)
+                && let Some((e, n)) = g.at_latlon(lat, lon)
+            {
+                survey.fixed.set(
+                    name,
+                    Fixed {
+                        x: Some(e),
+                        y: Some(n),
+                        z: f.z,
+                    },
+                );
+            }
+        }
+    }
+    let place = fix_cs.iter().find_map(|(name, c)| {
+        let c = c.as_ref().filter(|c| c.known())?;
+        let f = survey.fixed.get(name)?;
+        let c = if matches!(c, Cs::LatLong | Cs::LongLat) {
+            grid.as_ref().unwrap_or(c)
+        } else {
+            c
+        };
+        c.to_latlon(f.x?, f.y?)
+    });
+    let Some((lat, lon)) = place else { return };
+    let conv = grid.as_ref().map_or(0.0, |g| g.convergence(lat, lon));
+    let mut computed = false;
+    for (i, auto, date, _) in shots {
+        let decl = if *auto {
+            computed = true;
+            cave_geomag::decimal_year_of(date)
+                .and_then(|y| cave_geomag::declination(lat, lon, y))
+                .unwrap_or(0.0)
+        } else {
+            0.0
+        };
+        let delta = decl - conv;
+        let s = &mut survey.shots[*i];
+        if delta != 0.0 {
+            if s.azimuth.is_finite() && !s.azimuth_omitted {
+                s.azimuth = crate::model::normalize_azimuth(s.azimuth + delta);
+            }
+            s.back_azimuth = s
+                .back_azimuth
+                .map(|b| crate::model::normalize_azimuth(b + delta));
+            s.declination = Some(s.declination.unwrap_or(0.0) + delta);
+        }
+    }
+    if computed {
+        survey.declination_source = "igrf".into();
+    }
 }

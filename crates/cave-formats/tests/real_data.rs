@@ -36,24 +36,81 @@ fn read_fs(p: &str) -> Option<String> {
         .map(|t| String::from_utf8_lossy(&t).into_owned())
 }
 
-/// What Survex makes of a file: station name to position (metres).
+/// Is this a Therion file (checked by Therion rather than Survex)?
+fn is_therion(root: &Path) -> bool {
+    let n = root
+        .file_name()
+        .map(|n| n.to_string_lossy().to_lowercase())
+        .unwrap_or_default();
+    n.ends_with(".th") || n.contains("thconfig")
+}
+
+/// A Therion configuration exporting the station positions of `root` to `out` (a .th file, or the
+/// sources of a thconfig).
+fn therion_config(root: &Path, out: &Path) -> String {
+    let dir = root.parent().unwrap_or(Path::new("."));
+    let mut sources = Vec::new();
+    if root
+        .extension()
+        .is_some_and(|e| e.eq_ignore_ascii_case("th"))
+    {
+        sources.push(root.to_path_buf());
+    } else {
+        for l in std::fs::read_to_string(root).unwrap_or_default().lines() {
+            let t = l.split('#').next().unwrap_or("").trim();
+            if let Some(rest) = t.strip_prefix("source") {
+                for f in rest.split_whitespace() {
+                    sources.push(dir.join(f.trim_matches('"')));
+                }
+            }
+        }
+    }
+    let mut cfg = String::from("encoding utf-8\n");
+    for s in sources {
+        cfg += &format!("source \"{}\"\n", s.display());
+    }
+    cfg += &format!("export model -fmt survex -o \"{}\"\n", out.display());
+    cfg
+}
+
+/// What Survex (or, for Therion files, Therion) makes of a file: station name to position (metres).
 fn survex(root: &Path) -> Result<HashMap<String, [f64; 3]>, String> {
     let bin = PathBuf::from(std::env::var("SURVEX_BIN").map_err(|_| "SURVEX_BIN not set")?);
     let out = std::env::temp_dir().join(format!("cavecad-real-{}", std::process::id()));
-    let run = Command::new(bin.join("cavern"))
-        .arg(format!("--output={}", out.display()))
-        .arg(root)
-        .current_dir(root.parent().unwrap_or(Path::new(".")))
-        .output()
-        .map_err(|e| e.to_string())?;
+    let (program, run) = if is_therion(root) {
+        let therion = PathBuf::from(std::env::var("THERION").map_err(|_| "THERION not set")?);
+        let cfg = out.with_extension("thconfig");
+        std::fs::write(&cfg, therion_config(root, &out.with_extension("3d")))
+            .map_err(|e| e.to_string())?;
+        (
+            "therion",
+            Command::new(therion)
+                .arg(&cfg)
+                .current_dir(std::env::temp_dir())
+                .output()
+                .map_err(|e| e.to_string())?,
+        )
+    } else {
+        (
+            "cavern",
+            Command::new(bin.join("cavern"))
+                .arg(format!("--output={}", out.display()))
+                .arg(root)
+                .current_dir(root.parent().unwrap_or(Path::new(".")))
+                .output()
+                .map_err(|e| e.to_string())?,
+        )
+    };
     if !run.status.success() {
-        let err = String::from_utf8_lossy(&run.stdout)
+        let text = String::from_utf8_lossy(&run.stdout).to_string()
+            + &String::from_utf8_lossy(&run.stderr);
+        let err = text
             .lines()
             .filter(|l| l.contains("error"))
             .take(3)
             .collect::<Vec<_>>()
             .join(" | ");
-        return Err(format!("cavern failed: {err}"));
+        return Err(format!("{program} failed: {err}"));
     }
     let dump = Command::new(bin.join("dump3d"))
         .arg(out.with_extension("3d"))
@@ -157,8 +214,22 @@ fn real_data_against_survex() {
             let n = n.to_lowercase();
             aliases.get(&n).cloned().unwrap_or(n)
         };
-        let want: HashMap<String, [f64; 3]> = want.into_iter().map(|(k, v)| (key(&k), v)).collect();
+        let mut want: HashMap<String, [f64; 3]> =
+            want.into_iter().map(|(k, v)| (key(&k), v)).collect();
         let got: HashMap<String, [f64; 3]> = got.into_iter().map(|(k, v)| (key(&k), v)).collect();
+        // Therion names a station with every survey around it; ours leave out a file's single
+        // outermost survey (it is the cave). Drop it from the reference when that matches better.
+        if is_therion(&root) {
+            let stripped: HashMap<String, [f64; 3]> = want
+                .iter()
+                .map(|(k, v)| (key(k.split_once('.').map_or(k.as_str(), |(_, r)| r)), *v))
+                .collect();
+            let hits =
+                |m: &HashMap<String, [f64; 3]>| m.keys().filter(|k| got.contains_key(*k)).count();
+            if hits(&stripped) > hits(&want) {
+                want = stripped;
+            }
+        }
         let mut common: Vec<&String> = want.keys().filter(|k| got.contains_key(*k)).collect();
         common.sort();
         let Some(first) = common.first() else {
@@ -267,6 +338,28 @@ fn real_data_against_survex() {
             }
         }
         legs.sort_by(|a, b| b.0.total_cmp(&a.0));
+        // the typical turn between their legs and ours: a declination difference shows here
+        let mut turns: Vec<f64> = Vec::new();
+        for s in survey.shots.iter().filter(|s| !s.splay && !s.to.is_empty()) {
+            let (f, t) = (key(&s.from), key(&s.to));
+            if let (Some(wf), Some(wt), Some(gf), Some(gt)) =
+                (want.get(&f), want.get(&t), got.get(&f), got.get(&t))
+            {
+                let (wx, wy, gx, gy) = (wt[0] - wf[0], wt[1] - wf[1], gt[0] - gf[0], gt[1] - gf[1]);
+                if wx.hypot(wy) > 5.0 && gx.hypot(gy) > 5.0 {
+                    let d = (wx.atan2(wy) - gx.atan2(gy)).to_degrees();
+                    turns.push((d + 540.0) % 360.0 - 180.0);
+                }
+            }
+        }
+        if !turns.is_empty() {
+            turns.sort_by(f64::total_cmp);
+            println!(
+                "  typical leg turn (theirs - ours), median of {}: {:.3} degrees",
+                turns.len(),
+                turns[turns.len() / 2]
+            );
+        }
         let legs_within = |m: f64| legs.iter().filter(|l| l.0 <= m).count();
         println!(
             "  legs compared {}: vector within 1 cm {}, 10 cm {}, 1 m {}",
