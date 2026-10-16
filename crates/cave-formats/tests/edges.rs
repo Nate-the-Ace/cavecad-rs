@@ -143,5 +143,38 @@ fn a_csv_nothing_can_be_read_from_says_so() {
 #[test]
 fn a_tab_separated_file_is_read_as_csv() {
     let t = "From\tTo\tDistance\tAzimuth\tInclination\nA1\tA2\t10\t90\t0\n";
-    assert_eq!(cave_formats::read_any("x.tsv", t, &|_| None).unwrap().1.shots.len(), 1);
+    assert_eq!(
+        cave_formats::read_any("x.tsv", t, &|_| None)
+            .unwrap()
+            .1
+            .shots
+            .len(),
+        1
+    );
+}
+
+#[test]
+fn include_paths_written_on_windows_or_with_dots_are_found() {
+    let read = |p: &str| (p == "cave/data/sub.svx").then(|| "1 2 10 90 0\n".to_string());
+    for main in ["*include data\\sub.svx\n", "*include ./data/../data/sub\n"] {
+        assert_eq!(
+            cave_formats::read_any("cave/main.svx", main, &read)
+                .unwrap()
+                .1
+                .shots
+                .len(),
+            1,
+            "{main}"
+        );
+    }
+    let read = |p: &str| {
+        (p == "cave/data/sub.th").then(|| "survey s\ncentreline\ndata normal from to length compass clino\n1 2 10 90 0\nendcentreline\nendsurvey\n".to_string())
+    };
+    let (_, s) = cave_formats::read_any(
+        "cave/main.th",
+        "survey m\ninput data\\sub.th\nendsurvey\n",
+        &read,
+    )
+    .unwrap();
+    assert_eq!(s.shots.len(), 1);
 }

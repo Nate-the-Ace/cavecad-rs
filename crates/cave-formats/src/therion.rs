@@ -207,15 +207,6 @@ fn dir_of(p: &str) -> String {
     }
 }
 
-fn is_absolute(p: &str) -> bool {
-    let b = p.as_bytes();
-    matches!(b.first(), Some(b'/' | b'\\'))
-        || (b.len() >= 3
-            && b[0].is_ascii_alphabetic()
-            && b[1] == b':'
-            && matches!(b[2], b'/' | b'\\'))
-}
-
 /// A finding from following `input` lines.
 struct InputFinding {
     code: &'static str,
@@ -281,19 +272,12 @@ fn expand_inputs(
                 continue;
             };
             if name.to_lowercase().ends_with(".th2") {
-                let path = if is_absolute(&name) {
-                    name.clone()
-                } else {
-                    format!("{}/{name}", dir_of(here))
-                };
+                let path = crate::project::join(&dir_of(here), &name);
                 out.push(format!("{SKETCH_MARK}{path}"));
                 continue;
             }
-            let base = if is_absolute(&name) {
-                name.clone()
-            } else {
-                format!("{}/{name}", dir_of(here))
-            };
+            // `./`, `../` and Windows separators worked out, so any reader finds the file
+            let base = crate::project::join(&dir_of(here), &name);
             let candidates = if has_extension(&name) {
                 vec![base.clone()]
             } else {

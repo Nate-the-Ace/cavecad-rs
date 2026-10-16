@@ -73,7 +73,7 @@ pub fn detect_project(file_name: &str, content: &str) -> Option<ProjectFormat> {
 }
 
 /// `dir/rel` with `.` and `..` worked out; `rel` as it is when it is absolute.
-fn join(dir: &str, rel: &str) -> String {
+pub(crate) fn join(dir: &str, rel: &str) -> String {
     let rel = rel.replace('\\', "/");
     let absolute = rel.starts_with('/') || (rel.len() > 2 && rel.as_bytes()[1] == b':');
     let full = if absolute || dir.is_empty() {

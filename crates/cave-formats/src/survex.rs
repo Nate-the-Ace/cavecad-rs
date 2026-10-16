@@ -582,11 +582,8 @@ fn include_candidates(dir: &str, name: &str) -> Vec<String> {
     variants.push(name.to_uppercase());
     let mut out = Vec::new();
     for v in variants {
-        let base = if v.starts_with('/') || dir.is_empty() {
-            v.clone()
-        } else {
-            format!("{dir}/{v}")
-        };
+        // `./`, `../` and Windows separators worked out, so any reader finds the file
+        let base = crate::project::join(dir, &v);
         if !has_ext {
             out.push(format!("{base}.svx"));
             out.push(format!("{base}.SVX"));
