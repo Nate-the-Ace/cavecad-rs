@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { openDb, setSetting } from '../src/db.ts';
-import { addDrive, cancelInvite, createInvite, hashToken, listDrives, listInvites, listMembers, removeDrive, removeMember, resendInvite, resolve, setRole, type Identity } from '../src/members.ts';
+import { addDrive, cancelInvite, createInvite, hashToken, listDrives, listInvites, listMembers, removeDrive, removeMember, resendInvite, resolve, setRole, updateProfile, type Role, type Identity } from '../src/members.ts';
 
 const DAY = 86_400_000;
 const T0 = 1_800_000_000_000;
@@ -98,7 +98,7 @@ test('admin rules', () => {
   assert.throws(() => removeMember(db, admin, mid, T0), /not-admin/);
 });
 
-test('the last admin cannot be demoted or removed', () => {
+test('an admin cannot demote or remove themselves, so one admin always remains', () => {
   const { db, admin } = setup();
   createInvite(db, admin, 'n@example.com', 'admin', T0);
   const n = resolve(db, who('n@example.com'), { adminEmail: ADMIN, now: T0 });
@@ -130,4 +130,61 @@ test('drives belong to one member', () => {
   removeDrive(db, admin, d.id);
   assert.equal(listDrives(db, admin).length, 0);
   assert.throws(() => addDrive(db, admin, 'icloud' as 'gdrive', '', T0), /bad-provider/);
+});
+
+test('setRole refuses a role that is not admin or member', () => {
+  const { db, admin } = setup();
+  createInvite(db, admin, 'p@example.com', 'member', T0);
+  const p = resolve(db, who('p@example.com'), { adminEmail: ADMIN, now: T0 });
+  const pid = p.status === 'member' ? p.member.id : '';
+  assert.throws(() => setRole(db, admin, pid, 'owner' as Role), /bad-role/);
+  assert.equal(listMembers(db).find((x) => x.id === pid)?.role, 'member');
+});
+
+test('display names lose control characters; bad types are refused', () => {
+  const { db, admin } = setup();
+  assert.equal(updateProfile(db, admin, { displayName: 'Nat\nBcc: x' }).displayName, 'Nat Bcc: x');
+  assert.throws(() => updateProfile(db, admin, { displayName: 5 as unknown as string }), /bad-name/);
+  assert.throws(() => updateProfile(db, admin, { colour: 5 as unknown as string }), /bad-colour/);
+  const m = resolve(db, who('q@example.com', 'Q\r\nX'), { adminEmail: ADMIN, now: T0 });
+  assert.equal(m.status, 'not-invited');
+  setSetting(db, 'signups', 'open');
+  const r = resolve(db, who('q@example.com', 'Q\r\nX'), { adminEmail: ADMIN, now: T0 });
+  assert.equal(r.status === 'member' && r.member.displayName, 'Q  X');
+});
+
+test('a removed member is refused even when sign-ups are open', () => {
+  const { db, admin } = setup();
+  createInvite(db, admin, 'r@example.com', 'member', T0);
+  const r = resolve(db, who('r@example.com'), { adminEmail: ADMIN, now: T0 });
+  removeMember(db, admin, r.status === 'member' ? r.member.id : '', T0);
+  setSetting(db, 'signups', 'open');
+  assert.equal(resolve(db, who('r@example.com'), { adminEmail: ADMIN, now: T0 + 1 }).status, 'removed');
+});
+
+test('re-inviting a removed member as admin makes them an admin on a first visit', () => {
+  const { db, admin } = setup();
+  createInvite(db, admin, 's@example.com', 'member', T0);
+  const s = resolve(db, who('s@example.com'), { adminEmail: ADMIN, now: T0 });
+  removeMember(db, admin, s.status === 'member' ? s.member.id : '', T0);
+  createInvite(db, admin, 's@example.com', 'admin', T0 + 1);
+  const back = resolve(db, who('s@example.com'), { adminEmail: ADMIN, now: T0 + 2 });
+  assert.equal(back.status === 'member' && back.member.role, 'admin');
+  assert.equal(back.status === 'member' && back.firstVisit, true);
+});
+
+test('ADMIN_EMAIL in mixed case still makes the first admin', () => {
+  const db = openDb(':memory:');
+  const r = resolve(db, who('nathan@example.com', 'Nathan'), { adminEmail: 'Nathan@Example.com', now: T0 });
+  assert.equal(r.status === 'member' && r.member.role, 'admin');
+});
+
+test('a non-admin cannot cancel or resend an invite', () => {
+  const { db, admin } = setup();
+  const inv = createInvite(db, admin, 't@example.com', 'member', T0).invite;
+  createInvite(db, admin, 'u@example.com', 'member', T0);
+  const u = resolve(db, who('u@example.com'), { adminEmail: ADMIN, now: T0 });
+  const uid = u.status === 'member' ? u.member.id : '';
+  assert.throws(() => cancelInvite(db, uid, inv.id, T0), /not-admin/);
+  assert.throws(() => resendInvite(db, uid, inv.id, T0), /not-admin/);
 });

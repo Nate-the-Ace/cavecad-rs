@@ -10,5 +10,5 @@ const file = process.argv[2];
 if (!file) throw new Error('usage: node tools/make-pass-key.mjs <path>');
 if (existsSync(file)) throw new Error(`${file} exists; delete it first if you mean to replace the key`);
 const { privateKey, publicKey } = generateKeyPairSync('ed25519');
-writeFileSync(file, JSON.stringify(privateKey.export({ format: 'jwk' })), { mode: 0o600 });
+writeFileSync(file, JSON.stringify(privateKey.export({ format: 'jwk' })), { mode: 0o600, flag: 'wx' });
 console.log('VITE_PASS_PUBLIC_KEY=' + publicKey.export({ format: 'jwk' }).x);

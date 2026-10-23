@@ -25,6 +25,7 @@ type MemberRow = { id: string; email: string; display_name: string; colour: stri
 type InviteRow = { id: string; email: string; role: Role; token_hash: string; invited_by: string; created_at: number; expires_at: number; used_at: number | null; cancelled_at: number | null };
 
 const norm = (email: string) => email.trim().toLowerCase();
+const cleanName = (n: string) => n.replace(/[\x00-\x1f\x7f]/g, ' ').trim();
 const fail = (code: string): never => { throw new Error(code); };
 /** The SHA-256 of an invite token, which is all the database keeps. */
 export const hashToken = (token: string) => createHash('sha256').update(token).digest('hex');
@@ -44,13 +45,13 @@ function requireAdmin(db: Db, actorId: string): MemberRow {
 function addMember(db: Db, who: Identity, role: Role, invitedBy: string | null, now: number): MemberRow {
   const existing = memberByEmail(db, who.email);
   if (existing) {
-    db.prepare('UPDATE members SET removed_at = NULL, role = ?, invited_by = ?, welcomed_at = NULL WHERE id = ?').run(role, invitedBy, existing.id);
+    db.prepare('UPDATE members SET removed_at = NULL, role = ?, invited_by = ?, welcomed_at = NULL, provider = COALESCE(?, provider) WHERE id = ?').run(role, invitedBy, who.provider, existing.id);
     return memberById(db, existing.id)!;
   }
   const id = randomUUID();
   const colour = COLOURS[[...norm(who.email)].reduce((n, c) => n + c.charCodeAt(0), 0) % COLOURS.length];
   db.prepare('INSERT INTO members (id, email, display_name, colour, role, provider, invited_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
-    .run(id, norm(who.email), (who.name || who.email.split('@')[0]).slice(0, 40), colour, role, who.provider, invitedBy, now);
+    .run(id, norm(who.email), (cleanName(who.name || '') || who.email.split('@')[0]).slice(0, 40), colour, role, who.provider, invitedBy, now);
   return memberById(db, id)!;
 }
 
@@ -70,8 +71,16 @@ export function resolve(db: Db, who: Identity, opts: { adminEmail: string; now: 
     const noMembers = (db.prepare('SELECT COUNT(*) AS n FROM members').get() as { n: number }).n === 0;
     if (noMembers && email === norm(opts.adminEmail)) row = addMember(db, who, 'admin', null, now);
     else if (live) {
-      row = addMember(db, who, live.role, live.invited_by, now);
-      db.prepare('UPDATE invites SET used_at = ? WHERE id = ?').run(now, live.id);
+      // One step: a crash must not leave a member made but the invite still waiting.
+      db.exec('BEGIN');
+      try {
+        row = addMember(db, who, live.role, live.invited_by, now);
+        db.prepare('UPDATE invites SET used_at = ? WHERE id = ?').run(now, live.id);
+        db.exec('COMMIT');
+      } catch (e) {
+        db.exec('ROLLBACK');
+        throw e;
+      }
     } else if (getSetting(db, 'signups') === 'open') row = addMember(db, who, 'member', null, now);
     else return notInvited(db, email, opts.token, now);
   }
@@ -96,12 +105,13 @@ export function markWelcomed(db: Db, memberId: string, now: number): void {
 /** Changes a member's own display name and colour. */
 export function updateProfile(db: Db, memberId: string, p: { displayName?: string; colour?: string }): Member {
   if (p.displayName !== undefined) {
-    const n = p.displayName.trim().slice(0, 40);
+    if (typeof p.displayName !== 'string') fail('bad-name');
+    const n = cleanName(p.displayName).slice(0, 40);
     if (!n) fail('bad-name');
     db.prepare('UPDATE members SET display_name = ? WHERE id = ?').run(n, memberId);
   }
   if (p.colour !== undefined) {
-    if (!/^#[0-9a-f]{6}$/i.test(p.colour)) fail('bad-colour');
+    if (typeof p.colour !== 'string' || !/^#[0-9a-f]{6}$/i.test(p.colour)) fail('bad-colour');
     db.prepare('UPDATE members SET colour = ? WHERE id = ?').run(p.colour, memberId);
   }
   return toMember(memberById(db, memberId)!);
@@ -115,9 +125,11 @@ export function listMembers(db: Db): Member[] {
 /** Changes another member's role. The last admin cannot be demoted. */
 export function setRole(db: Db, actorId: string, memberId: string, role: Role): Member {
   requireAdmin(db, actorId);
+  if (role !== 'admin' && role !== 'member') fail('bad-role');
   if (actorId === memberId) fail('self');
   const m = memberById(db, memberId);
   if (!m || m.removed_at !== null) fail('not-found');
+  // Backstop: the actor is an active admin and a different person, so a target admin means two or more admins.
   if (m!.role === 'admin' && role === 'member' && activeAdmins(db) <= 1) fail('last-admin');
   db.prepare('UPDATE members SET role = ? WHERE id = ?').run(role, memberId);
   return toMember(memberById(db, memberId)!);
@@ -129,6 +141,7 @@ export function removeMember(db: Db, actorId: string, memberId: string, now: num
   if (actorId === memberId) fail('self');
   const m = memberById(db, memberId);
   if (!m || m.removed_at !== null) fail('not-found');
+  // Backstop: the actor is an active admin and a different person, so a target admin means two or more admins.
   if (m!.role === 'admin' && activeAdmins(db) <= 1) fail('last-admin');
   db.prepare('UPDATE members SET removed_at = ? WHERE id = ?').run(now, memberId);
   db.prepare('DELETE FROM drives WHERE member_id = ?').run(memberId);
@@ -178,9 +191,10 @@ export function listDrives(db: Db, memberId: string): Drive[] {
 /** Records a drive the member connected (which provider and whose account; never a key). */
 export function addDrive(db: Db, memberId: string, provider: DriveProvider, accountLabel: string, now: number): Drive {
   if (!PROVIDERS.includes(provider)) fail('bad-provider');
+  const label = typeof accountLabel === 'string' ? accountLabel : '';
   const id = randomUUID();
-  db.prepare('INSERT INTO drives (id, member_id, provider, account_label, created_at) VALUES (?, ?, ?, ?, ?)').run(id, memberId, provider, accountLabel.slice(0, 200), now);
-  return { id, provider, accountLabel: accountLabel.slice(0, 200), createdAt: now };
+  db.prepare('INSERT INTO drives (id, member_id, provider, account_label, created_at) VALUES (?, ?, ?, ?, ?)').run(id, memberId, provider, label.slice(0, 200), now);
+  return { id, provider, accountLabel: label.slice(0, 200), createdAt: now };
 }
 
 /** Forgets one of the member's own drives. */

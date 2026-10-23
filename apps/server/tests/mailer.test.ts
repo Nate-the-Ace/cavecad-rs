@@ -11,3 +11,12 @@ test('true only when the script says ok', async () => {
   assert.equal(await sendInvite({ url: 'https://s', key: 'K', fetch: (async () => { throw new Error('offline'); }) as typeof fetch }, args), false);
   assert.equal(await sendInvite({ url: '', key: '', fetch: reply({ ok: true }) }, args), false, 'no mailer set up');
 });
+
+test('a mailer that never answers is given up on', async () => {
+  const hang = ((_u: string, init: RequestInit) => new Promise((_res, rej) => {
+    init.signal?.addEventListener('abort', () => rej(new Error('aborted')));
+  })) as unknown as typeof fetch;
+  const t = Date.now();
+  assert.equal(await sendInvite({ url: 'https://s', key: 'K', fetch: hang, timeoutMs: 50 }, args), false);
+  assert.ok(Date.now() - t < 2000);
+});
