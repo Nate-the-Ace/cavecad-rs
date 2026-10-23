@@ -1,7 +1,5 @@
-# Publishes the web app to GitHub Pages and rebuilds it on every push to main:
-#   https://nate-the-ace.github.io/cavecad-rs/
-# It is the same app the desktop shell wraps. Only the synthetic sample caves are in it: real caves and
-# scans stay on each person's own machine (the browser keeps them; peer-to-peer sharing is direct).
+# Publishes a page that sends people to the hosted CaveCAD (cave.schonegg.stream), where they sign in.
+
 name: pages
 
 on:
@@ -25,37 +23,11 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 22
-
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: wasm32-unknown-unknown
-
-      - uses: swatinem/rust-cache@v2
-
-      - name: Install wasm-pack (the engine is built with it)
-        run: npm install -g wasm-pack
-
-      - name: Build the web app
-        env:
-          VITE_RELAY_URL: ${{ secrets.RELAY_URL }}
-          VITE_FEEDBACK_ENDPOINT: ${{ secrets.FEEDBACK_ENDPOINT }}
-          VITE_FEEDBACK_KEY: ${{ secrets.FEEDBACK_KEY }}
-          VITE_SIGNAL_ENDPOINT: ${{ secrets.SIGNAL_ENDPOINT }}
-          VITE_SIGNAL_KEY: ${{ secrets.SIGNAL_KEY }}
-        run: |
-          npm ci --prefix apps/web
-          # Relative URLs: the site lives under /cavecad-rs/, not at the root.
-          cd apps/web && npx vite build --base=./
-          rm -rf dist/local
-
       - uses: actions/configure-pages@v6
 
       - uses: actions/upload-pages-artifact@v5
         with:
-          path: apps/web/dist
+          path: tools/pages-redirect
 
   deploy:
     needs: build
