@@ -8,7 +8,7 @@ import { openDb } from './db.ts';
 import { handleApi } from './api.ts';
 import { serveStatic } from './static.ts';
 import { makeWhoIs, discoveredKeys } from './identity.ts';
-import { makeDesktopToken } from './desktop-token.ts';
+import { makeDesktopConfig, makeDesktopToken } from './desktop-token.ts';
 
 const env = process.env;
 const need = (k: string) => env[k] || (() => { throw new Error(`${k} is not set`); })();
@@ -34,6 +34,7 @@ const deps = {
   mailer: { url: env.MAILER_URL ?? '', key: env.MAILER_KEY ?? '' },
   whoIs: makeWhoIs({ edgeAddress, gateSecret, oidc, devIdentity }),
   desktopToken: oidc ? makeDesktopToken({ issuer: oidc.issuer, clientId: oidc.audience, clientSecret: env.OIDC_CLIENT_SECRET ?? '' }) : undefined,
+  desktopConfig: oidc ? makeDesktopConfig({ issuer: oidc.issuer, clientId: oidc.audience }) : undefined,
 };
 const dist = resolve(env.DIST_DIR ?? '../web/dist');
 

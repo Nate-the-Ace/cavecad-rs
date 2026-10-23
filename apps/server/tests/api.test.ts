@@ -11,12 +11,13 @@ import { serveStatic } from '../src/static.ts';
 
 const ADMIN = 'nathan@example.com';
 
-async function start(mailOk = true) {
+async function start(mailOk = true, extra: Partial<ApiDeps> = {}) {
   const db = openDb(':memory:');
   const deps: ApiDeps = {
     db, adminEmail: ADMIN, passKey: generateKeyPairSync('ed25519').privateKey, publicUrl: 'https://cave.test',
     mailer: { url: 'https://mail', key: 'K', fetch: (async () => ({ json: async () => ({ ok: mailOk }) })) as unknown as typeof fetch },
     whoIs: async (r) => { const e = r.headers['x-test-user']; return e ? { email: String(e), name: String(e).split('@')[0], provider: null, subject: '' } : null; },
+    ...extra,
   };
   const root = mkdtempSync(join(tmpdir(), 'cave-dist-'));
   writeFileSync(join(root, 'index.html'), '<html>app</html>');
@@ -146,6 +147,42 @@ test('cross-site and non-JSON writes are refused', async () => {
     assert.equal((await call(null, 'POST', '/api/desktop-token', { code: 'c' }, { 'Sec-Fetch-Site': 'cross-site', Origin: 'https://evil.example' })).status, 403, 'still no foreign origins');
   } finally {
     server.close();
+  }
+});
+
+test('desktop config: public, read from discovery, absent without OIDC', async () => {
+  const { makeDesktopConfig } = await import('../src/desktop-token.ts');
+  let reads = 0;
+  const fake = (async (url: string) => {
+    reads++;
+    assert.equal(url, 'https://auth.test/.well-known/openid-configuration');
+    return { ok: true, json: async () => ({ authorization_endpoint: 'https://auth.test/authorize', token_endpoint: 'https://auth.test/token' }) };
+  }) as unknown as typeof fetch;
+  const { server, call } = await start(true, { desktopConfig: makeDesktopConfig({ issuer: 'https://auth.test/', clientId: 'cavecad-desktop', fetch: fake }) });
+  try {
+    const desk = { 'Sec-Fetch-Site': 'cross-site', Origin: 'tauri://localhost' };
+    const a = await call(null, 'GET', '/api/desktop-config', undefined, desk);
+    assert.equal(a.status, 200, 'no sign-in and cross-site from the desktop app');
+    assert.deepEqual(a.json, { authorizationEndpoint: 'https://auth.test/authorize', clientId: 'cavecad-desktop' });
+    assert.equal(a.headers.get('access-control-allow-origin'), 'tauri://localhost');
+    assert.equal(a.headers.get('access-control-allow-credentials'), null, 'never credentialed cross-origin');
+    await call(null, 'GET', '/api/desktop-config');
+    assert.equal(reads, 1, 'the discovery document is read once');
+    assert.equal((await call(null, 'POST', '/api/desktop-config', {})).status, 401, 'only GET is the public route');
+  } finally {
+    server.close();
+  }
+  const down = await start(true, { desktopConfig: makeDesktopConfig({ issuer: 'https://auth.test', clientId: 'c', fetch: (async () => { throw new Error('down'); }) as unknown as typeof fetch }) });
+  try {
+    assert.equal((await down.call(null, 'GET', '/api/desktop-config')).status, 502, 'TinyAuth unreachable');
+  } finally {
+    down.server.close();
+  }
+  const none = await start();
+  try {
+    assert.equal((await none.call(null, 'GET', '/api/desktop-config')).status, 404, 'no OIDC configured');
+  } finally {
+    none.server.close();
   }
 });
 

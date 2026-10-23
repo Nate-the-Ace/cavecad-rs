@@ -18,6 +18,8 @@ export type ApiDeps = {
   mailer: MailerConfig;
   /** Exchanges a desktop sign-in code with TinyAuth (Task 11); absent until configured. */
   desktopToken?: (body: Record<string, string>) => Promise<{ status: number; body: unknown }>;
+  /** Where the desktop app sends the browser to sign in (from TinyAuth's discovery document); absent until configured. */
+  desktopConfig?: () => Promise<{ authorizationEndpoint: string; clientId: string } | null>;
   now?: () => number;
 };
 
@@ -89,6 +91,12 @@ export async function handleApi(d: ApiDeps, req: IncomingMessage, res: ServerRes
   if (refusedCrossSite(d, req, res, method, origin, path)) return;
 
   try {
+    // Read-only and public: the same for everyone, and a GET, so the cross-site checks above let it through.
+    if (path === '/api/desktop-config' && method === 'GET') {
+      if (!d.desktopConfig) return send(res, 404, { error: 'not-found' });
+      const conf = await d.desktopConfig();
+      return conf ? send(res, 200, conf) : send(res, 502, { error: 'unavailable' });
+    }
     if (path === '/api/desktop-token' && method === 'POST') {
       if (!d.desktopToken) return send(res, 404, { error: 'not-found' });
       const out = await d.desktopToken((await readJson(req)) as Record<string, string>);
