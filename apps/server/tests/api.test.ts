@@ -137,6 +137,13 @@ test('cross-site and non-JSON writes are refused', async () => {
     assert.equal((await call(ADMIN, 'POST', '/api/admin/invites', body, { 'Sec-Fetch-Site': 'same-origin', Origin: 'https://cave.test' })).status, 200, 'the web app');
     assert.equal((await call(ADMIN, 'POST', '/api/admin/invites', { email: 'iris@example.com', role: 'member' }, { 'Sec-Fetch-Site': 'cross-site', Origin: 'tauri://localhost', Authorization: 'Bearer x' })).status, 200, 'the desktop app');
     assert.equal((await call(ADMIN, 'POST', '/api/admin/invites', { email: 'ann@example.com', role: 'member' })).status, 200, 'no browser headers at all');
+
+    const desk = { 'Sec-Fetch-Site': 'cross-site', Origin: 'tauri://localhost' };
+    const token = await call(null, 'POST', '/api/desktop-token', { code: 'c' }, desk);
+    assert.notEqual(token.status, 403, 'the desktop app getting its token has no bearer yet');
+    assert.equal(token.headers.get('access-control-allow-origin'), 'tauri://localhost');
+    assert.equal((await call(null, 'POST', '/api/desktop-token', 'code=c', { ...desk, 'Content-Type': 'text/plain' })).status, 415, 'still JSON only');
+    assert.equal((await call(null, 'POST', '/api/desktop-token', { code: 'c' }, { 'Sec-Fetch-Site': 'cross-site', Origin: 'https://evil.example' })).status, 403, 'still no foreign origins');
   } finally {
     server.close();
   }

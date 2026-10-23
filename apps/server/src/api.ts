@@ -58,14 +58,16 @@ const originOf = (u: string) => {
 };
 
 /** Refuses state-changing requests a browser could have sent from another site. Returns true when it answered. */
-function refusedCrossSite(d: ApiDeps, req: IncomingMessage, res: ServerResponse, method: string, origin: string): boolean {
+function refusedCrossSite(d: ApiDeps, req: IncomingMessage, res: ServerResponse, method: string, origin: string, path: string): boolean {
   if (SAFE.includes(method)) return false;
   const type = String(req.headers['content-type'] ?? '').toLowerCase();
   if (!type.startsWith('application/json')) return send(res, 415, { error: 'bad-request' }), true;
   const desktop = DESKTOP_ORIGINS.includes(origin);
   const bearer = /^Bearer \S/.test(String(req.headers.authorization ?? ''));
   const site = req.headers['sec-fetch-site'];
-  if (site !== undefined && site !== 'same-origin' && site !== 'none' && !(desktop && bearer)) return send(res, 403, { error: 'cross-site' }), true;
+  // The desktop app fetches its token from /api/desktop-token, so it has no bearer there yet.
+  const desktopTrusted = desktop && (bearer || (path === '/api/desktop-token' && method === 'POST'));
+  if (site !== undefined && site !== 'same-origin' && site !== 'none' && !desktopTrusted) return send(res, 403, { error: 'cross-site' }), true;
   if (req.headers.origin !== undefined && origin !== originOf(d.publicUrl) && !desktop) return send(res, 403, { error: 'cross-site' }), true;
   return false;
 }
@@ -84,7 +86,7 @@ export async function handleApi(d: ApiDeps, req: IncomingMessage, res: ServerRes
   const url = new URL(req.url ?? '/', 'http://x');
   const path = url.pathname;
   const method = req.method ?? 'GET';
-  if (refusedCrossSite(d, req, res, method, origin)) return;
+  if (refusedCrossSite(d, req, res, method, origin, path)) return;
 
   try {
     if (path === '/api/desktop-token' && method === 'POST') {
