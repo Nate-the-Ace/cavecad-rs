@@ -12,9 +12,15 @@
   import { resetLayout } from '../lib/workspace.svelte';
   import { snapshotPage } from '../lib/snapshot';
   import { KIND_LABEL, buildReport, download, logText, send, type FeedbackKind } from '../lib/feedback';
+  import { account, saveProfile } from '../lib/account.svelte';
+  import AccountSection from './account/AccountSection.svelte';
+  import DrivesSection from './account/DrivesSection.svelte';
+  import AdminSection from './account/AdminSection.svelte';
 
   let open = $state(false);
-  let tab = $state<'people' | 'options' | 'feedback'>('people');
+  let tab = $state<'account' | 'drives' | 'people' | 'options' | 'feedback' | 'admin'>('account');
+  const isAdmin = $derived(account.member?.role === 'admin');
+  const SECTIONS = [['account', 'Account'], ['drives', 'Drives'], ['people', 'People'], ['options', 'Options'], ['feedback', 'Feedback']] as const;
   let root: HTMLDivElement;
 
   const initials = (name: string) => {
@@ -127,17 +133,28 @@
       <div class="head">
         <span class="face big" style="--c:{me.color}">{initials(me.name)}</span>
         <div class="who">
-          <input class="name" value={me.name} aria-label="Your name" maxlength="40" onchange={(e) => rename(e.currentTarget.value)} />
+          <input class="name" value={me.name} aria-label="Your name" maxlength="40" onchange={(e) => { rename(e.currentTarget.value); void saveProfile({ displayName: e.currentTarget.value }).catch(() => {}); }} />
           <span class="sub">{shared ? `Live in ${live.room}` : 'Working on your own'}</span>
         </div>
       </div>
-      <div class="tabs" role="tablist">
-        {#each [['people', 'People'], ['options', 'Options'], ['feedback', 'Feedback']] as [id, label]}
-          <button role="tab" aria-selected={tab === id} class:on={tab === id} onclick={() => (tab = id as typeof tab)}>{label}</button>
+      <div class="body">
+      <div class="tabs" role="tablist" aria-orientation="vertical">
+        {#each SECTIONS as [id, label]}
+          <button role="tab" aria-selected={tab === id} class:on={tab === id} onclick={() => (tab = id)}>{label}</button>
         {/each}
+        {#if isAdmin}
+          <hr />
+          <button role="tab" aria-selected={tab === 'admin'} class:on={tab === 'admin'} onclick={() => (tab = 'admin')}>Admin</button>
+        {/if}
       </div>
-
-      {#if tab === 'people'}
+      <div class="content">
+      {#if tab === 'account'}
+        <AccountSection />
+      {:else if tab === 'drives'}
+        <DrivesSection />
+      {:else if tab === 'admin' && isAdmin}
+        <AdminSection />
+      {:else if tab === 'people'}
         <div class="pane">
           {#if p2p.role !== 'none'}
             <ul class="list" aria-label="People in this session">
@@ -258,6 +275,8 @@
           {#if note}<div class="status" role="status">{note}</div>{/if}
         </div>
       {/if}
+      </div>
+      </div>
     </div>
   {/if}
 </div>
@@ -270,15 +289,23 @@
   .face { width: 26px; height: 26px; box-sizing: border-box; display: grid; place-items: center; border-radius: 50%; background: var(--c); color: #fff; font-size: 11px; font-weight: 600; user-select: none; flex: none; }
   .face.big { width: 40px; height: 40px; font-size: 15px; }
   .badge { position: absolute; right: -4px; bottom: -4px; min-width: 15px; height: 15px; padding: 0 3px; box-sizing: border-box; border-radius: 8px; background: var(--accent); color: #fff; font-size: 10px; line-height: 15px; text-align: center; }
-  .win { position: fixed; top: 44px; right: 8px; z-index: 60; width: 370px; max-height: calc(100vh - 56px); overflow: auto; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: 0 8px 28px rgb(0 0 0 / 0.35); color: var(--text); font-size: 13px; }
+  .win { position: fixed; top: 44px; right: 8px; z-index: 60; width: 520px; max-width: calc(100vw - 16px); max-height: calc(100vh - 56px); overflow: auto; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: 0 8px 28px rgb(0 0 0 / 0.35); color: var(--text); font-size: 13px; }
   .head { display: flex; align-items: center; gap: 12px; padding: 14px 14px 10px; }
   .who { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
   .name { font: inherit; font-size: 15px; font-weight: 600; color: var(--text-strong); background: none; border: 1px solid transparent; border-radius: 6px; padding: 2px 6px; margin-left: -6px; }
   .name:hover, .name:focus { border-color: var(--line); background: var(--panel-2); outline: none; }
   .sub { color: var(--muted); font-size: 12px; }
-  .tabs { display: flex; gap: 2px; padding: 0 10px; border-bottom: 1px solid var(--line); }
-  .tabs button { background: none; border: 0; padding: 7px 12px; color: var(--muted); cursor: pointer; border-bottom: 2px solid transparent; font: inherit; }
-  .tabs button.on { color: var(--text-strong); border-bottom-color: var(--accent); }
+  .body { display: grid; grid-template-columns: 120px minmax(0, 1fr); border-top: 1px solid var(--line); }
+  .tabs { display: flex; flex-direction: column; gap: 2px; padding: 8px 6px; border-right: 1px solid var(--line); }
+  .tabs hr { border: 0; border-top: 1px solid var(--line); margin: 6px 0; width: 100%; }
+  .tabs button { background: none; border: 0; padding: 6px 10px; color: var(--muted); cursor: pointer; border-radius: var(--radius); text-align: left; font: inherit; }
+  .tabs button.on { color: var(--text-strong); background: var(--accent-bg); }
+  .content { min-width: 0; }
+  @media (max-width: 560px) {
+    .body { grid-template-columns: minmax(0, 1fr); }
+    .tabs { flex-direction: row; flex-wrap: wrap; border-right: 0; border-bottom: 1px solid var(--line); }
+    .tabs hr { display: none; }
+  }
   .pane { display: flex; flex-direction: column; gap: 10px; padding: 12px 14px 14px; }
   .list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
   .list li { display: flex; align-items: center; gap: 10px; }
