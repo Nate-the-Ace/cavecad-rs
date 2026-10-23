@@ -13,6 +13,9 @@ export type WhoIsOptions = {
   gateSecret: string;
   /** TinyAuth's OIDC provider, for bearer tokens from the desktop app. `keys(kid)` may refetch for an unknown kid. */
   oidc?: { issuer: string; audience: string; keys: (kid?: string) => Promise<JsonWebKey[]> };
+  /** Reached through `tailscale serve` on this machine: its Tailscale-User-* headers are believed from 127.0.0.1 alone
+   *  (serve deletes any a visitor sends). Until CaveCAD has a public address. */
+  tailnet?: boolean;
   /** For local development only: everyone on this machine is this email. */
   devIdentity?: string;
   nowSeconds?: () => number;
@@ -30,6 +33,13 @@ const utf8Header = (r: RequestLike, name: string) => {
   const decoded = Buffer.from(v, 'latin1').toString('utf8');
   return decoded.includes('�') ? v : decoded;
 };
+/** A header value tailscale serve wrote: plain ASCII, or RFC 2047 Q-encoded UTF-8 (`=?utf-8?q?Jos=C3=A9?=`). */
+function qDecoded(v: string): string {
+  const m = /^=\?utf-8\?q\?(.*)\?=$/i.exec(v);
+  if (!m) return v;
+  const bytes = m[1].replace(/_/g, ' ').replace(/=([0-9A-Fa-f]{2})/g, (_, h: string) => String.fromCharCode(parseInt(h, 16)));
+  return Buffer.from(bytes, 'latin1').toString('utf8');
+}
 const local = (addr: string) => addr === '127.0.0.1' || addr === '::1';
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 
@@ -52,6 +62,11 @@ export function makeWhoIs(o: WhoIsOptions): (r: RequestLike) => Promise<Identity
       const email = utf8Header(r, 'remote-email').toLowerCase();
       if (!email) return null;
       return { email, name: utf8Header(r, 'remote-name') || email.split('@')[0], provider: null, subject: utf8Header(r, 'remote-sub') };
+    }
+    if (o.tailnet && local(addr)) {
+      const email = header(r, 'tailscale-user-login').toLowerCase();
+      if (!email) return null;
+      return { email, name: qDecoded(header(r, 'tailscale-user-name')) || email.split('@')[0], provider: null, subject: 'tailnet:' + email };
     }
     if (o.devIdentity && local(addr)) return { email: o.devIdentity.toLowerCase(), name: o.devIdentity.split('@')[0], provider: null, subject: 'dev' };
     return null;

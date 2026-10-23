@@ -230,6 +230,8 @@ Where the build differs from the spec above:
 - The last-admin guard is a backstop: `self` plus `not-admin` already make it unreachable through the API.
 - Edge: each Caddy site is one `route { }`, so the header wipe runs before `forward_auth` (Caddy's own order would run `forward_auth` first and the wipe would delete TinyAuth's headers).
 - The old GitHub Pages address sends people on, but first offers the caves its Cave Shelf kept in that browser as DXF files (that storage belongs to the old address, so the new site cannot see it).
+- Until the public address the server can run on the tailnet only (`TAILNET_IDENTITY=1`, behind `tailscale serve` on its own container, listening on 127.0.0.1): `Tailscale-User-Login` is the email.
+- TinyAuth sends only printable ASCII in its headers (`SanitizeHeader`), so a name like José arrives as Jos; the person can fix it in Account.
 
 ## Not built
 

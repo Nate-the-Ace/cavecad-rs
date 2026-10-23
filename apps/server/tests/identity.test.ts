@@ -146,3 +146,13 @@ test('dev identity only on localhost', async () => {
   assert.equal(await whoIs(req('192.168.1.9', {})), null);
   assert.equal(await makeWhoIs({ edgeAddress: EDGE, gateSecret: SECRET })(req('127.0.0.1', {})), null);
 });
+
+test('tailnet identity: tailscale serve headers, believed only from this machine and only when switched on', async () => {
+  const whoIs = makeWhoIs({ edgeAddress: '', gateSecret: '', tailnet: true });
+  const ts = { 'tailscale-user-login': 'Nathan@Example.com', 'tailscale-user-name': 'Nathan S' };
+  assert.deepEqual(await whoIs(req('127.0.0.1', ts)), { email: 'nathan@example.com', name: 'Nathan S', provider: null, subject: 'tailnet:nathan@example.com' });
+  assert.equal((await whoIs(req('::1', { 'tailscale-user-login': 'a@b.c', 'tailscale-user-name': '=?utf-8?q?Jos=C3=A9_N=C3=BA=C3=B1ez?=' })))?.name, 'José Núñez', 'a Q-encoded name');
+  assert.equal(await whoIs(req('192.168.86.13', ts)), null, 'not from this machine');
+  assert.equal(await whoIs(req('127.0.0.1', {})), null, 'no header: a tagged device or a funnel visitor');
+  assert.equal(await makeWhoIs({ edgeAddress: '', gateSecret: '' })(req('127.0.0.1', ts)), null, 'switched off');
+});

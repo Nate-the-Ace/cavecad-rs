@@ -20,8 +20,15 @@ if (devIdentity) {
   const host = (() => { try { return new URL(need('PUBLIC_URL')).hostname; } catch { return ''; } })();
   if (host !== 'localhost' && host !== '127.0.0.1') throw new Error(`DEV_IDENTITY needs a localhost PUBLIC_URL, not ${env.PUBLIC_URL}`);
 }
-const edgeAddress = devIdentity ? env.EDGE_ADDRESS ?? '' : need('EDGE_ADDRESS');
-const gateSecret = devIdentity ? env.GATE_SECRET ?? '' : need('GATE_SECRET');
+// TAILNET_IDENTITY=1: reached only through `tailscale serve` on this machine (until there is a public address).
+// The server must then listen on 127.0.0.1, or anyone who can reach the port could claim any email.
+const tailnet = env.TAILNET_IDENTITY === '1';
+if (tailnet) {
+  if (devIdentity) throw new Error('DEV_IDENTITY and TAILNET_IDENTITY cannot run together');
+  if (env.HOST !== '127.0.0.1') throw new Error('TAILNET_IDENTITY needs HOST=127.0.0.1');
+}
+const edgeAddress = devIdentity || tailnet ? env.EDGE_ADDRESS ?? '' : need('EDGE_ADDRESS');
+const gateSecret = devIdentity || tailnet ? env.GATE_SECRET ?? '' : need('GATE_SECRET');
 
 const db = openDb(env.DB_PATH ?? 'cavecad.sqlite');
 const passKey = createPrivateKey({ key: JSON.parse(readFileSync(need('PASS_KEY_FILE'), 'utf8')), format: 'jwk' });
@@ -32,7 +39,7 @@ const deps = {
   adminEmail: need('ADMIN_EMAIL'),
   publicUrl: need('PUBLIC_URL'),
   mailer: { url: env.MAILER_URL ?? '', key: env.MAILER_KEY ?? '' },
-  whoIs: makeWhoIs({ edgeAddress, gateSecret, oidc, devIdentity }),
+  whoIs: makeWhoIs({ edgeAddress, gateSecret, oidc, tailnet, devIdentity }),
   desktopToken: oidc ? makeDesktopToken({ issuer: oidc.issuer, clientId: oidc.audience, clientSecret: env.OIDC_CLIENT_SECRET ?? '' }) : undefined,
   desktopConfig: oidc ? makeDesktopConfig({ issuer: oidc.issuer, clientId: oidc.audience }) : undefined,
 };

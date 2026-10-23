@@ -13,7 +13,7 @@ media-server-setup, gaming-vm-plan, feedback-inventory-before-changing-server.
    mode-600 file. `tools/make-pass-key.mjs` is in the repository root, not in `apps/server`: copy it over
    first, then
 
-       sudo -u cavecad node /opt/cavecad/make-pass-key.mjs /var/lib/cavecad/pass-key.json
+       runuser -u cavecad -- node /opt/cavecad/make-pass-key.mjs /var/lib/cavecad/pass-key.json
 
    It prints `VITE_PASS_PUBLIC_KEY=...` (public, not a secret). Put that value in the GitHub secret
    PASS_PUBLIC_KEY; the web build in the next step needs it.
@@ -54,3 +54,14 @@ media-server-setup, gaming-vm-plan, feedback-inventory-before-changing-server.
     VITE_PASS_PUBLIC_KEY and VITE_SIGNOUT_URL as the web build (the build stops without them; the GitHub
     desktop workflow needs them in its environment too), sign in through the browser round trip. The app
     learns TinyAuth's sign-in address from the server (`/api/desktop-config`), so it needs no issuer setting.
+
+## For now: on the tailnet only (2026-10-23, Nathan)
+
+Until the public address, CaveCAD runs in CT 209 `cavecad` (192.168.86.14) and is reached only at
+https://cavecad.tailbe4f4a.ts.net through `tailscale serve` (tailscaled in userspace mode, no tun device).
+The server listens on 127.0.0.1 with `TAILNET_IDENTITY=1`: it believes `Tailscale-User-Login`, which serve
+sets and strips from visitors. Steps 6 to 12 wait; the web build has `VITE_SIGNOUT_URL=/` (signing out
+means nothing on the tailnet). Only tailnet members the Tailscale ACL lets reach `cavecad` can use it.
+Going public: rebuild with the TinyAuth sign-out address, set HOST=0.0.0.0, EDGE_ADDRESS, GATE_SECRET and
+drop TAILNET_IDENTITY in /etc/cavecad/server.env, then steps 6 to 12. Nathan chose (2026-10-23): keep
+play/games on their own login (no Google there), and TinyAuth sessions of 30 days.
