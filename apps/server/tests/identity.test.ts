@@ -13,6 +13,13 @@ test('TinyAuth headers from the edge on the gated site', async () => {
   assert.deepEqual(await whoIs(req('::ffff:' + EDGE, gated)), { email: 'rick@example.com', name: 'Rick', provider: null, subject: 'abc' });
 });
 
+test('a name TinyAuth sends as UTF-8 reads right (Node hands header bytes over as latin1)', async () => {
+  const whoIs = makeWhoIs({ edgeAddress: EDGE, gateSecret: SECRET });
+  const asNodeSeesIt = Buffer.from('José Núñez', 'utf8').toString('latin1');
+  assert.equal((await whoIs(req(EDGE, { ...gated, 'remote-name': asNodeSeesIt })))?.name, 'José Núñez');
+  assert.equal((await whoIs(req(EDGE, { ...gated, 'remote-name': 'Ren\xe9' })))?.name, 'Ren\xe9', 'bytes that are not UTF-8 are kept as they came');
+});
+
 test('the same headers from anywhere else are ignored', async () => {
   const whoIs = makeWhoIs({ edgeAddress: EDGE, gateSecret: SECRET });
   assert.equal(await whoIs(req('10.0.0.5', gated)), null);

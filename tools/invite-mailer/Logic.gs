@@ -22,7 +22,7 @@ var InviteLogic = {
     return {
       subject: inviter + " invited you to CaveCAD",
       body: inviter + " invited you to CaveCAD, the cave survey and mapping app.\n\n" +
-        "Sign in with " + p.to + " (Google or Microsoft). The link works once, for that address, for 7 days.\n\n" +
+        "Sign in with " + p.to + " (Google). The link works once, for that address, for 7 days.\n\n" +
         p.link + "\n\n" +
         "CaveCAD never saves your cave data on its server in a form it can read: your caves stay on your " +
         "devices and in the drives you connect.\n"

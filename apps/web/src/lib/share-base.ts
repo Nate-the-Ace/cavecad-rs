@@ -3,7 +3,7 @@
 // development. Those links open the hosted copy of CaveCAD instead, which does the joining the same way.
 
 /** Where the hosted copy lives (set when the site is built; this is the default). */
-const HOSTED = ((import.meta.env?.VITE_PAGES_URL as string | undefined) ?? 'https://nate-the-ace.github.io/cavecad-rs/').trim();
+const HOSTED = ((import.meta.env?.VITE_PAGES_URL as string | undefined) ?? 'https://cave.schonegg.stream/').trim();
 
 /** True when this page is the desktop app (or opened from a file), whose own address means nothing to anyone else. */
 export function isShell(): boolean {

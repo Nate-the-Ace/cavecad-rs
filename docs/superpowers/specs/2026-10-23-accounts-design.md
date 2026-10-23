@@ -228,3 +228,9 @@ Where the build differs from the spec above:
 - Offline: an expired pass makes the cave read-only through a separate account lock (the classroom has its own). A pass that fails its signature, or a build with no key, signs the device out.
 - The web and desktop builds fail without `VITE_PASS_PUBLIC_KEY` and `VITE_SIGNOUT_URL`. `.github/workflows/desktop.yml` does not set either yet; it needs both from secrets before it builds this branch.
 - The last-admin guard is a backstop: `self` plus `not-admin` already make it unreachable through the API.
+- Edge: each Caddy site is one `route { }`, so the header wipe runs before `forward_auth` (Caddy's own order would run `forward_auth` first and the wipe would delete TinyAuth's headers).
+- The old GitHub Pages address sends people on, but first offers the caves its Cave Shelf kept in that browser as DXF files (that storage belongs to the old address, so the new site cannot see it).
+
+## Not built
+
+- **A browser cannot open CaveCAD from nothing without the network.** There is no service worker and `index.html` is never cached (the refresh-is-enough rule in CLAUDE.md). The offline pass works in a tab that was already open when the network went, and in the desktop app, which carries its own copy of the web app. Underground, use one of those. An app-shell service worker would fix it but conflicts with refresh-always-fresh; build it only if Nathan asks.

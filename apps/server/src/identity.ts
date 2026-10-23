@@ -24,6 +24,12 @@ const header = (r: RequestLike, name: string) => {
   const v = r.headers[name];
   return (Array.isArray(v) ? v[0] : v)?.trim() ?? '';
 };
+/** A header TinyAuth wrote as UTF-8: Node hands its bytes over as latin1. Bytes that are not UTF-8 stay as they came. */
+const utf8Header = (r: RequestLike, name: string) => {
+  const v = header(r, name);
+  const decoded = Buffer.from(v, 'latin1').toString('utf8');
+  return decoded.includes('�') ? v : decoded;
+};
 const local = (addr: string) => addr === '127.0.0.1' || addr === '::1';
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 
@@ -43,9 +49,9 @@ export function makeWhoIs(o: WhoIsOptions): (r: RequestLike) => Promise<Identity
     const bearer = /^Bearer (.+)$/.exec(header(r, 'authorization'))?.[1];
     if (bearer && o.oidc) return fromIdToken(bearer, o.oidc, now());
     if (o.edgeAddress && o.gateSecret && addr === o.edgeAddress && sameSecret(header(r, 'x-cave-gate'), o.gateSecret)) {
-      const email = header(r, 'remote-email').toLowerCase();
+      const email = utf8Header(r, 'remote-email').toLowerCase();
       if (!email) return null;
-      return { email, name: header(r, 'remote-name') || email.split('@')[0], provider: null, subject: header(r, 'remote-sub') };
+      return { email, name: utf8Header(r, 'remote-name') || email.split('@')[0], provider: null, subject: utf8Header(r, 'remote-sub') };
     }
     if (o.devIdentity && local(addr)) return { email: o.devIdentity.toLowerCase(), name: o.devIdentity.split('@')[0], provider: null, subject: 'dev' };
     return null;

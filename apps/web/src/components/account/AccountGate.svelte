@@ -6,6 +6,7 @@
   import { account, finishWelcome } from '../../lib/account.svelte';
   import { isDesktop } from '../../lib/desktop';
   import { startDesktopSignIn } from '../../lib/desktop-signin';
+  import { flush } from '../../lib/shelf.svelte';
 
   let { openDrives }: { openDrives: () => void } = $props();
   // The name field starts as the account's name once it is known; after that it is the person's to change (even to empty).
@@ -41,13 +42,20 @@
     }
   }
   // Signing in again, or as someone else, goes through TinyAuth: a reload of the page after its sign-out.
-  const signInAgain = () => {
+  // The open cave is stored first, so the reload cannot lose an edit made in the last moment.
+  const signInAgain = async () => {
     error = '';
     account.signInError = '';
     if (isDesktop()) void startDesktopSignIn().catch(() => (error = "Couldn't open the sign-in. Check your connection and try again."));
-    else location.reload();
+    else {
+      await flush().catch(() => {});
+      location.reload();
+    }
   };
-  const otherAccount = () => (location.href = (import.meta.env.VITE_SIGNOUT_URL as string | undefined) || '/');
+  const otherAccount = async () => {
+    await flush().catch(() => {});
+    location.href = (import.meta.env.VITE_SIGNOUT_URL as string | undefined) || '/';
+  };
 </script>
 
 {#if account.phase === 'offline'}
@@ -91,7 +99,7 @@
         <div class="row"><button class="btn primary" onclick={signInAgain}>Sign in again</button></div>
       {:else}
         <h2>Sign in to CaveCAD</h2>
-        <p>Sign in with your Google or Microsoft account.</p>
+        <p>Sign in with your Google account.</p>
         <div class="row"><button class="btn primary" onclick={signInAgain}>Sign in</button></div>
       {/if}
       {#if account.signInError && !error}<p class="hint bad" role="alert">{account.signInError}</p>{/if}

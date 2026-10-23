@@ -84,7 +84,7 @@
 
 <div class="pane">
   <div class="row">
-    <div class="grow"><div class="sec">Sign-ups</div><div class="hint">{account.signups === 'invite' ? 'Only people you invite can make an account.' : 'Anyone with a Google or Microsoft account can join.'}</div></div>
+    <div class="grow"><div class="sec">Sign-ups</div><div class="hint">{account.signups === 'invite' ? 'Only people you invite can make an account.' : 'Anyone with a Google account can join.'}</div></div>
     <select value={account.signups} onchange={(e) => setSignups(e.currentTarget)} aria-label="Who can sign up">
       <option value="invite">Invite only</option>
       <option value="open">Open to anyone</option>

@@ -2,6 +2,7 @@
   // Account: who you are signed in as, the name and colour others see in live sessions, and Sign out.
   import { account, saveProfile, signOut } from '../../lib/account.svelte';
   import { COLORS } from '../../lib/sync.svelte';
+  import { flush } from '../../lib/shelf.svelte';
 
   const m = $derived(account.member);
   const by = $derived(m?.provider === 'google' ? 'Google' : m?.provider === 'microsoft' ? 'Microsoft' : '');
@@ -21,7 +22,7 @@
     <div class="row">
       <span class="lab">Signed in</span>
       <span class="val">{by ? `with ${by} · ` : ''}{m.email}</span>
-      <button class="btn" onclick={signOut}>Sign out</button>
+      <button class="btn" onclick={() => flush().catch(() => {}).then(signOut)}>Sign out</button>
     </div>
     <label class="row"><span class="lab">Display name</span>
       <input class="field" value={m.displayName} maxlength="40" onchange={(e) => save({ displayName: e.currentTarget.value })} />
