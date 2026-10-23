@@ -1,0 +1,27 @@
+# CaveCAD on the edge VM. The web app and its API sit behind TinyAuth; the desktop app's API host does not
+# (it sends a TinyAuth ID token the server checks itself). Both wipe identity headers a visitor sends, so
+# only TinyAuth's answer can say who someone is.
+cave.schonegg.stream {
+	request_header -Remote-User
+	request_header -Remote-Email
+	request_header -Remote-Name
+	request_header -Remote-Groups
+	request_header -Remote-Sub
+	request_header -X-Cave-Gate
+	forward_auth 127.0.0.1:3000 {
+		uri /api/auth/caddy
+		copy_headers Remote-User Remote-Email Remote-Name Remote-Groups Remote-Sub
+	}
+	request_header X-Cave-Gate {env.CAVE_GATE_SECRET}
+	reverse_proxy CAVECAD_CT:8787
+}
+
+cave-api.schonegg.stream {
+	request_header -Remote-User
+	request_header -Remote-Email
+	request_header -Remote-Name
+	request_header -Remote-Groups
+	request_header -Remote-Sub
+	request_header -X-Cave-Gate
+	reverse_proxy CAVECAD_CT:8787
+}
