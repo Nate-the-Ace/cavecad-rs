@@ -11,6 +11,8 @@ media-server-setup, gaming-vm-plan, feedback-inventory-before-changing-server.
    Firewall: accept 8787 from the edge VM only.
 3. Copy `apps/server` to /opt/cavecad/server and the web build (`npx vite build` with the production
    VITE_PASS_PUBLIC_KEY, VITE_SIGNOUT_URL=https://auth.schonegg.stream/logout) to /opt/cavecad/web.
+   The build stops if either is missing. Check that VITE_SIGNOUT_URL really ends the TinyAuth session
+   (sign out, reload, you must see TinyAuth's sign-in); adjust to TinyAuth v5's logout address if not.
 4. Make the pass key on the container: `node tools/make-pass-key.mjs /var/lib/cavecad/pass-key.json`;
    put the printed value in the GitHub secret PASS_PUBLIC_KEY and the build.
 5. **(Nathan)** Write /etc/cavecad/server.env (mode 600) from `apps/server/.env.example` (ADMIN_EMAIL = his
@@ -29,5 +31,7 @@ media-server-setup, gaming-vm-plan, feedback-inventory-before-changing-server.
 10. Run `bash deploy/check-edge.sh` until it prints `edge: all ok`.
 11. **(Nathan)** Sign in, invite a second address of his own, open the email on another device, sign in
     with it, then sign in on a tablet, switch to airplane mode and reopen CaveCAD.
-12. **(Nathan)** Desktop app: build with VITE_ACCOUNT_BASE=https://cave-api.schonegg.stream,
-    VITE_OIDC_ISSUER=https://auth.schonegg.stream, sign in through the browser round trip.
+12. **(Nathan)** Desktop app: build with VITE_ACCOUNT_BASE=https://cave-api.schonegg.stream and the same
+    VITE_PASS_PUBLIC_KEY and VITE_SIGNOUT_URL as the web build (the build stops without them; the GitHub
+    desktop workflow needs them in its environment too), sign in through the browser round trip. The app
+    learns TinyAuth's sign-in address from the server (`/api/desktop-config`), so it needs no issuer setting.
