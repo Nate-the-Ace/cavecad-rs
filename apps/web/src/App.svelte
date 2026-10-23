@@ -25,6 +25,8 @@
   import { scans } from './lib/scans.svelte';
   import { autosaveSoon, flush, loadShelf, shelf } from './lib/shelf.svelte';
   import { checkRemembered } from './lib/scans.svelte';
+  import AccountGate from './components/account/AccountGate.svelte';
+  import { startAccount } from './lib/account.svelte';
 
   let version = $state('loading engine…');
   let info = $state<BuildInfo | null>(null);
@@ -64,6 +66,7 @@
   };
 
   onMount(() => {
+    void startAccount();
     window.addEventListener('keydown', noPageSelectAll);
     window.addEventListener('copy', onCopy);
     window.addEventListener('cut', onCut);
@@ -157,6 +160,7 @@
     {#if dirty}<span class="unsaved" title="Changes since the cave was opened or last saved. Save with Ctrl/Cmd+S.">Unsaved changes</span>{/if}
     {#if info}<span>build {info.git}{info.dirty ? '+' : ''} · {built}</span>{/if}
   </footer>
+  <AccountGate openDrives={() => window.dispatchEvent(new CustomEvent('cavecad:open-user', { detail: 'drives' }))} />
 </div>
 
 <style>

@@ -117,7 +117,14 @@
   function outside(e: PointerEvent) {
     if (open && root && !root.contains(e.target as Node)) open = false;
   }
-  onMount(() => () => shotUrl && URL.revokeObjectURL(shotUrl));
+  onMount(() => {
+    const show = (e: Event) => { open = true; tab = (e as CustomEvent).detail ?? 'account'; };
+    addEventListener('cavecad:open-user', show);
+    return () => {
+      removeEventListener('cavecad:open-user', show);
+      if (shotUrl) URL.revokeObjectURL(shotUrl);
+    };
+  });
 </script>
 
 <svelte:window onpointerdown={outside} onkeydown={(e) => e.key === 'Escape' && open && (open = false)} onpaste={paste} />
