@@ -16,6 +16,8 @@ export type ApiDeps = {
   passKey: KeyObject;
   publicUrl: string;
   mailer: MailerConfig;
+  /** Reached through `tailscale serve` only: /api/me says so, and the page hides sign-out and switching account. */
+  tailnet?: boolean;
   /** Exchanges a desktop sign-in code with TinyAuth (Task 11); absent until configured. */
   desktopToken?: (body: Record<string, string>) => Promise<{ status: number; body: unknown }>;
   /** Where the desktop app sends the browser to sign in (from TinyAuth's discovery document); absent until configured. */
@@ -111,12 +113,13 @@ export async function handleApi(d: ApiDeps, req: IncomingMessage, res: ServerRes
   if (!who) return send(res, 401, { error: 'signed-out' });
   const token = String(req.headers['x-cave-signup'] ?? '') || undefined;
   const r = M.resolve(d.db, who, { adminEmail: d.adminEmail, now, token });
-  if (r.status !== 'member') return path === '/api/me' && method === 'GET' ? send(res, 200, r) : send(res, 403, { error: r.status });
+  const via = d.tailnet ? { via: 'tailnet' } : {};
+  if (r.status !== 'member') return path === '/api/me' && method === 'GET' ? send(res, 200, { ...r, ...via }) : send(res, 403, { error: r.status });
   const me = r.member;
 
   try {
     if (path === '/api/me' && method === 'GET') {
-      return send(res, 200, { status: 'member', member: me, drives: M.listDrives(d.db, me.id), firstVisit: r.firstVisit, signups: getSetting(d.db, 'signups'), pass: signPass(d.passKey, { memberId: me.id, email: me.email, role: me.role }, now) });
+      return send(res, 200, { status: 'member', member: me, drives: M.listDrives(d.db, me.id), firstVisit: r.firstVisit, signups: getSetting(d.db, 'signups'), ...via, pass: signPass(d.passKey, { memberId: me.id, email: me.email, role: me.role }, now) });
     }
     if (path === '/api/me' && method === 'PATCH') {
       const b = await readJson(req);

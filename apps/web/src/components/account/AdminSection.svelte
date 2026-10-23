@@ -98,6 +98,7 @@
     <button class="btn" onclick={send} disabled={!email.trim()}>Send invite</button>
   </div>
   <p class="hint">They get an email from CaveCAD with a link. It works once, for that email only, for 7 days.</p>
+  {#if account.tailnet}<p class="hint">This private copy is on your Tailscale network: only people on it can open an invite link. Inviting others waits for the public address.</p>{/if}
   {#if result}
     <div class="note">
       {#if result.emailed}Invite emailed to {result.email}.{:else}The email didn't send. Copy the link and send it yourself.{/if}

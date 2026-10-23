@@ -88,11 +88,12 @@
       {:else if account.phase === 'not-invited'}
         <h2>CaveCAD is invite only for now</h2>
         <p>You're signed in as {account.email}, {REASONS[account.reason] ?? REASONS.none}</p>
-        <div class="row"><button class="btn" onclick={otherAccount}>Use another account</button></div>
+        {#if account.tailnet}<p class="hint">This private copy knows you by your Tailscale account. To use another, sign in to Tailscale with it.</p>
+        {:else}<div class="row"><button class="btn" onclick={otherAccount}>Use another account</button></div>{/if}
       {:else if account.phase === 'removed'}
         <h2>Your CaveCAD account was removed</h2>
         <p>You're signed in as {account.email}. Ask an admin if this is a mistake.</p>
-        <div class="row"><button class="btn" onclick={otherAccount}>Use another account</button></div>
+        {#if !account.tailnet}<div class="row"><button class="btn" onclick={otherAccount}>Use another account</button></div>{/if}
       {:else if account.expired}
         <h2>Your sign-in expired</h2>
         <p>Sign in again to keep working. Your work on this device is kept.</p>

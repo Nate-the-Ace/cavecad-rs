@@ -27,7 +27,9 @@
 <div class="pane">
   {#if account.drives.length === 0}
     <p class="hint">Connect the drive where you keep your cave folders: Google Drive, OneDrive, Dropbox or a WebDAV server.</p>
-  {:else}
+  {/if}
+  <p class="hint">Coming soon: opening caves from a drive. For now this only remembers which drives you use.</p>
+  {#if account.drives.length > 0}
     <ul class="list">
       {#each account.drives as d (d.id)}
         <li class:warn={asking === d.id}>
@@ -42,7 +44,7 @@
             </div>
           {:else}
             <div class="who"><span>{NAMES[d.provider]}</span><span class="sub">{d.accountLabel}</span></div>
-            {#if connectedHere(d)}<span class="badge">Connected here</span>{:else}<button class="btn">Reconnect</button>{/if}
+            {#if connectedHere(d)}<span class="badge">Connected here</span>{:else}<button class="btn" disabled title="Coming soon: drive connections">Reconnect</button>{/if}
             <button class="btn" onclick={() => (asking = d.id)}>Disconnect</button>
           {/if}
         </li>

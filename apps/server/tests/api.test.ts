@@ -211,3 +211,19 @@ test('a non-member gets 403 everywhere but GET /api/me', async () => {
     server.close();
   }
 });
+
+test('on the tailnet /api/me says so, for members and for the not-invited', async () => {
+  const { server, call } = await start(true, { tailnet: true });
+  try {
+    assert.equal((await call(ADMIN, 'GET', '/api/me')).json.via, 'tailnet');
+    assert.equal((await call('rick@example.com', 'GET', '/api/me')).json.via, 'tailnet');
+  } finally {
+    server.close();
+  }
+  const plain = await start();
+  try {
+    assert.equal((await plain.call(ADMIN, 'GET', '/api/me')).json.via, undefined);
+  } finally {
+    plain.server.close();
+  }
+});

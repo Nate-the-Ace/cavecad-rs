@@ -15,6 +15,8 @@ export const account = $state({
   member: null as Member | null,
   drives: [] as Drive[],
   signups: 'invite' as 'invite' | 'open',
+  /** Reached through Tailscale (the private copy): who you are is your Tailscale account, so there is no signing out here. */
+  tailnet: false,
   /** Not-invited and removed pages: the email they signed in with, why, and who sent the invite. */
   email: '',
   reason: 'none' as NotInvitedReason,
@@ -138,6 +140,7 @@ export const startAccount: () => Promise<void> = singleFlight(async () => {
     useMember(r.member);
     account.drives = r.drives;
     account.signups = r.signups;
+    account.tailnet = r.via === 'tailnet';
     account.expired = false;
     account.signInError = '';
     account.phase = r.firstVisit ? 'welcome' : 'ready';
@@ -152,6 +155,7 @@ export const startAccount: () => Promise<void> = singleFlight(async () => {
   }
   await forgetPass();
   account.member = null;
+  account.tailnet = r.via === 'tailnet';
   if (r.kind === 'not-invited') Object.assign(account, { phase: 'not-invited', email: r.email, reason: r.reason, inviter: r.inviter ?? '' });
   else Object.assign(account, { phase: 'removed', email: r.email });
 });

@@ -22,7 +22,8 @@
     <div class="row">
       <span class="lab">Signed in</span>
       <span class="val">{by ? `with ${by} · ` : ''}{m.email}</span>
-      <button class="btn" onclick={() => flush().catch(() => {}).then(signOut)}>Sign out</button>
+      {#if account.tailnet}<span class="hint" title="This private copy knows you by your Tailscale account">through Tailscale</span>
+      {:else}<button class="btn" onclick={() => flush().catch(() => {}).then(signOut)}>Sign out</button>{/if}
     </div>
     <label class="row"><span class="lab">Display name</span>
       <input class="field" value={m.displayName} maxlength="40" onchange={(e) => save({ displayName: e.currentTarget.value })} />

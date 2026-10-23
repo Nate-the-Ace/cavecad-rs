@@ -7,9 +7,9 @@ export type Drive = { id: string; provider: DriveProvider; accountLabel: string;
 export type Invite = { id: string; email: string; role: Role; invitedBy: string; createdAt: number; expiresAt: number };
 export type NotInvitedReason = 'none' | 'expired' | 'used' | 'cancelled' | 'other-email';
 export type MeResult =
-  | { kind: 'member'; member: Member; drives: Drive[]; firstVisit: boolean; signups: 'invite' | 'open'; pass: string }
-  | { kind: 'not-invited'; email: string; reason: NotInvitedReason; inviter?: string }
-  | { kind: 'removed'; email: string }
+  | { kind: 'member'; member: Member; drives: Drive[]; firstVisit: boolean; signups: 'invite' | 'open'; pass: string; via?: 'tailnet' }
+  | { kind: 'not-invited'; email: string; reason: NotInvitedReason; inviter?: string; via?: 'tailnet' }
+  | { kind: 'removed'; email: string; via?: 'tailnet' }
   | { kind: 'signed-out' }
   | { kind: 'offline' };
 export type InviteMade = { invite: Invite; link: string; emailed: boolean };
@@ -88,8 +88,9 @@ export function accountApi(c: ApiConfig) {
       }
       if (!out || typeof out !== 'object') return { kind: 'offline' };
       if (out.status === 'member') return { kind: 'member', ...(out as unknown as Omit<Extract<MeResult, { kind: 'member' }>, 'kind'>) };
-      if (out.status === 'removed') return { kind: 'removed', email: String(out.email) };
-      return { kind: 'not-invited', email: String(out.email), reason: out.reason as NotInvitedReason, inviter: out.inviter as string | undefined };
+      const via = out.via === 'tailnet' ? { via: 'tailnet' as const } : {};
+      if (out.status === 'removed') return { kind: 'removed', email: String(out.email), ...via };
+      return { kind: 'not-invited', email: String(out.email), reason: out.reason as NotInvitedReason, inviter: out.inviter as string | undefined, ...via };
     },
     updateMe: (p: { displayName?: string; colour?: string; welcomed?: boolean }) => call<{ member: Member }>('PATCH', '/api/me', p),
     addDrive: (provider: DriveProvider, accountLabel: string) => call<{ drive: Drive }>('POST', '/api/me/drives', { provider, accountLabel }),

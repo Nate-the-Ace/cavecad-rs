@@ -39,6 +39,7 @@ const deps = {
   adminEmail: need('ADMIN_EMAIL'),
   publicUrl: need('PUBLIC_URL'),
   mailer: { url: env.MAILER_URL ?? '', key: env.MAILER_KEY ?? '' },
+  tailnet,
   whoIs: makeWhoIs({ edgeAddress, gateSecret, oidc, tailnet, devIdentity }),
   desktopToken: oidc ? makeDesktopToken({ issuer: oidc.issuer, clientId: oidc.audience, clientSecret: env.OIDC_CLIENT_SECRET ?? '' }) : undefined,
   desktopConfig: oidc ? makeDesktopConfig({ issuer: oidc.issuer, clientId: oidc.audience }) : undefined,
