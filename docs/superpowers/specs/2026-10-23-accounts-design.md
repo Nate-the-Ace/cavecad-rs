@@ -211,3 +211,20 @@ Becomes a page that sends people to `cave.schonegg.stream`. The build no longer 
 Drive connectors (piece 2), live sessions and the locked edit history (piece 3), hosting setup steps
 (piece 4), CaveCAD passwords, member-sent invites, per-device drive disconnect, a signed-in devices
 list.
+
+## As built
+
+Where the build differs from the spec above:
+
+- Members have a `welcomed_at` column, so the first-sign-in welcome shows once. A removed member who is re-invited has it cleared and sees the welcome again.
+- The invite link parameter is `?signup=`, not `?invite=` (relay rooms already use `invite`). The web app keeps the token in `sessionStorage` until the sign-in succeeds, then forgets it.
+- A live invite is accepted by matching the signed-in email even when the link token is missing. The token is only used to explain why a link failed (used, expired, cancelled).
+- The gate header `X-Cave-Gate` carries a shared secret (`GATE_SECRET` on the server, `CAVE_GATE_SECRET` on the edge), compared in constant time. Identity headers are believed only from `EDGE_ADDRESS`.
+- The desktop app uses a second host, `cave-api.schonegg.stream`, with no `forward_auth` and a bearer ID token. `/api/desktop-token` exchanges the sign-in code on the server (keeps the client secret off the desktop). `/api/desktop-config` gives the app TinyAuth's sign-in address, so the app never calls TinyAuth itself.
+- Writes need `Content-Type: application/json` and a same-origin request (CSRF), except the desktop app with a bearer and the desktop token exchange.
+- Bearer tokens: RS256 or EdDSA, each tied to its key type; `email_verified` must not be false; 60 seconds of clock leeway.
+- Microsoft sign-in stays off at launch until its email claim is one Microsoft verifies (nOAuth); Google only.
+- The server refuses to start with `DEV_IDENTITY` beside `EDGE_ADDRESS` or `OIDC_ISSUER`, or with a non-localhost `PUBLIC_URL`.
+- Offline: an expired pass makes the cave read-only through a separate account lock (the classroom has its own). A pass that fails its signature, or a build with no key, signs the device out.
+- The web and desktop builds fail without `VITE_PASS_PUBLIC_KEY` and `VITE_SIGNOUT_URL`. `.github/workflows/desktop.yml` does not set either yet; it needs both from secrets before it builds this branch.
+- The last-admin guard is a backstop: `self` plus `not-admin` already make it unreachable through the API.
