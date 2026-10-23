@@ -20,6 +20,7 @@
   import ClassroomAlerts from './components/ClassroomAlerts.svelte';
   import { classroom, keepsCave, openJoinUrl, readClassLinkFromUrl } from './lib/classroom.svelte';
   import { listenForLinks } from './lib/desktop';
+  import { finishDesktopSignIn } from './lib/desktop-signin';
   import { syncDrawing } from './lib/drawing';
   import { viewChanged } from './lib/p2p.svelte';
   import { scans } from './lib/scans.svelte';
@@ -75,7 +76,10 @@
     installDiagnostics();
     readInviteFromUrl();
     readClassLinkFromUrl();
-    listenForLinks(openJoinUrl); // in the desktop app, a link that opened it
+    listenForLinks((url) => {
+      if (url.startsWith('cavecad://auth')) void finishDesktopSignIn(url).then((ok) => { if (ok) void startAccount(); });
+      else openJoinUrl(url);
+    }); // in the desktop app, a link that opened it
     void checkRemembered(); // the scans kept from last time come back before any panel is opened
     const unguard = guardUnload();
     document.addEventListener('visibilitychange', keepNow);

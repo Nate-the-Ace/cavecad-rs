@@ -77,6 +77,15 @@ fn reveal(root: String, rel: String) -> Result<(), String> {
     tauri_plugin_opener::reveal_item_in_dir(path).map_err(|e| e.to_string())
 }
 
+/// Opens an address in the system browser (the desktop sign-in). Only https addresses.
+#[tauri::command]
+fn open_url(url: String) -> Result<(), String> {
+    if !url.starts_with("https://") {
+        return Err("only https addresses open".into());
+    }
+    tauri_plugin_opener::open_url(url, None::<&str>).map_err(|e| e.to_string())
+}
+
 /// Starts the app.
 pub fn run() {
     let builder = tauri::Builder::default();
@@ -103,6 +112,7 @@ pub fn run() {
             list_scans,
             read_scan,
             reveal,
+            open_url,
             take_links
         ])
         .run(tauri::generate_context!())

@@ -2,6 +2,8 @@
   // Sign-in is required. Until the account is known this covers the whole page: loading, the first-sign-in
   // welcome, not invited, removed, or signed out. Offline it shows a strip instead and lets the app run.
   import { account, finishWelcome } from '../../lib/account.svelte';
+  import { isDesktop } from '../../lib/desktop';
+  import { startDesktopSignIn } from '../../lib/desktop-signin';
 
   let { openDrives }: { openDrives: () => void } = $props();
   let name = $state(account.member?.displayName ?? '');
@@ -29,7 +31,7 @@
     }
   }
   // Signing in again, or as someone else, goes through TinyAuth: a reload of the page after its sign-out.
-  const signInAgain = () => location.reload();
+  const signInAgain = () => (isDesktop() ? void startDesktopSignIn().catch(() => (error = "Couldn't open the sign-in. Check your connection and try again.")) : location.reload());
   const otherAccount = () => (location.href = (import.meta.env.VITE_SIGNOUT_URL as string | undefined) || '/');
 </script>
 

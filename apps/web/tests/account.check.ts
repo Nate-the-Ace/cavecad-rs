@@ -62,5 +62,16 @@ let sent: Headers | undefined;
 await accountApi({ base, fetch: (async (_u: string, init: RequestInit) => { sent = new Headers(init.headers); throw new Error('x'); }) as unknown as typeof fetch, bearer: () => 'T' }).me('S');
 ok(sent?.get('authorization') === 'Bearer T' && sent?.get('x-cave-signup') === 'S', 'bearer and sign-up headers are sent');
 
+// ---- desktop sign-in helpers ----
+import { authorizeUrl, challengeFor, pkcePair, readAuthLink } from '../src/lib/desktop-signin.ts';
+ok((await challengeFor('dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk')) === 'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM', 'S256 challenge matches RFC 7636');
+const pair = await pkcePair();
+ok(pair.verifier.length >= 43 && pair.challenge === (await challengeFor(pair.verifier)), 'a fresh PKCE pair');
+const az = new URL(authorizeUrl('https://auth.test/authorize', 'cavecad-desktop', pair.challenge, 'ST'));
+ok(az.searchParams.get('response_type') === 'code' && az.searchParams.get('redirect_uri') === 'cavecad://auth' && az.searchParams.get('code_challenge_method') === 'S256' && az.searchParams.get('state') === 'ST' && az.searchParams.get('scope') === 'openid email profile', 'authorize URL');
+ok(readAuthLink('cavecad://auth?code=C1&state=ST', 'ST') === 'C1', 'the returning link gives the code');
+ok(readAuthLink('cavecad://auth?code=C1&state=XX', 'ST') === null, 'a wrong state is refused');
+ok(readAuthLink('cavecad://join?live=abc', 'ST') === null, 'a join link is not a sign-in');
+
 console.log(bad ? `account: ${bad} failed` : 'account: all ok');
 process.exit(bad ? 1 : 0);

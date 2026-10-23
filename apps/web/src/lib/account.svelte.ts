@@ -5,7 +5,8 @@ import { accountApi, type AccountApi, type Drive, type Member, type NotInvitedRe
 import { verifyPass } from './pass';
 import { me } from './sync.svelte';
 import { readOnly } from './readonly';
-import { desktopBearer } from './desktop-signin';
+import { desktopBearer, refreshDesktop, signOutDesktop } from './desktop-signin';
+import { isDesktop } from './desktop';
 
 export type Phase = 'loading' | 'ready' | 'welcome' | 'not-invited' | 'removed' | 'signed-out' | 'offline' | 'offline-expired';
 
@@ -65,6 +66,7 @@ function useMember(m: Member) {
 
 /** Asks the server who is signed in and sets `account.phase`. Call once at start-up and after signing in. */
 export async function startAccount(): Promise<void> {
+  if (isDesktop()) await refreshDesktop();
   const r = await api.me(takeSignupToken());
   if (r.kind === 'member') {
     useMember(r.member);
@@ -126,5 +128,11 @@ export async function disconnectDrive(id: string): Promise<void> {
 /** Signs out: forgets the pass and sends the browser through TinyAuth's sign-out. */
 export async function signOut(): Promise<void> {
   await forgetPass();
+  signOutDesktop();
+  if (isDesktop()) {
+    account.member = null;
+    account.phase = 'signed-out';
+    return;
+  }
   location.href = (import.meta.env.VITE_SIGNOUT_URL as string | undefined) || '/';
 }
