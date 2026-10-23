@@ -13,7 +13,7 @@ export default defineConfig({
   plugins: [caveWasm(), caveSync(), svelte()],
   // The demo caves live with the Rust tests, outside this folder.
   // host: true so a tablet or second laptop on the same network can open this one's address.
-  server: { host: true, port: 5173, strictPort: true, headers: noStore, fs: { allow: [path.resolve(__dirname, '../..')] } },
+  server: { host: true, port: 5173, strictPort: true, headers: noStore, fs: { allow: [path.resolve(__dirname, '../..')] }, proxy: { '/api': 'http://localhost:8787' } },
   preview: { host: true, port: 4173, strictPort: true, headers: noStore },
   build: { target: 'es2022' },
 });

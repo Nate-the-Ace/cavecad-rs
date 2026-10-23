@@ -15,7 +15,7 @@ export interface Person {
 }
 
 const NAME_KEY = 'cavecad.name';
-const COLORS = ['#3b82f6', '#e5484d', '#2fb86a', '#f0a020', '#8e6cef', '#14b8c4', '#e0559a', '#7c8a3a'];
+export const COLORS = ['#3b82f6', '#e5484d', '#2fb86a', '#f0a020', '#8e6cef', '#14b8c4', '#e0559a', '#7c8a3a'];
 const deviceName = () => (/iPad|Android(?!.*Mobile)/.test(navigator.userAgent) || (navigator.maxTouchPoints > 1 && /Mac/.test(navigator.platform)) ? 'iPad' : /Mobi/.test(navigator.userAgent) ? 'Phone' : 'Laptop');
 const savedName = () => {
   try {
