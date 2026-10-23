@@ -11,6 +11,8 @@
   let error = $state('');
   // Piece 2 (drive connectors) answers this per device; until then no device holds a key.
   const connectedHere = (_d: Drive) => false;
+  // How many caves on the shelf come from this drive: piece 2 (drive connectors) fills this in.
+  const cavesFrom = (_d: Drive) => 0;
 
   async function run(f: () => Promise<void>) {
     error = '';
@@ -32,7 +34,7 @@
           {#if asking === d.id}
             <div class="ask">
               <strong>Disconnect {NAMES[d.provider]}{d.accountLabel ? ` (${d.accountLabel})` : ''}?</strong>
-              <span>CaveCAD stops using it on every device. Your caves stay in your {NAMES[d.provider]}, untouched.</span>
+              <span>CaveCAD stops using it on every device. Your caves stay in your {NAMES[d.provider]}, untouched.{#if cavesFrom(d) > 0} {cavesFrom(d)} {cavesFrom(d) === 1 ? 'cave on your shelf comes' : 'caves on your shelf come'} from it.{/if}</span>
               <div class="row end">
                 <button class="btn" onclick={() => (asking = null)}>Keep it</button>
                 <button class="btn danger" onclick={() => run(async () => { await disconnectDrive(d.id); asking = null; })}>Disconnect</button>

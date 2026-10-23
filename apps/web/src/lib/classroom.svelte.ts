@@ -17,7 +17,7 @@ import { cave, changed, filter } from './cave.svelte';
 import { applyMirror, captureMirror, forgetMirror, registerMirror } from './classroom-mirror';
 import { clearScans } from './scans.svelte';
 import { classLink, desktopLink, liveLink, mergeEntries, readClassLink, readJoinLink, readLiveLink, transcript, transcriptName, type ChatEntry, type Hand } from './classroom-log';
-import { readOnly } from './readonly';
+import { readOnly, setClassLock } from './readonly';
 import { shelf } from './shelf.svelte';
 import { joinViaLink, openClassLink, p2p, sendClass, startClassHosting } from './p2p.svelte';
 import { shareBase } from './share-base';
@@ -316,7 +316,7 @@ setRoomHooks({
     classroom.error = '';
     if (c.role === 'student') {
       // Only watching: the engine refuses writes, the page ignores the mouse and keys, and the teacher's view is put on.
-      readOnly.on = true;
+      setClassLock(true);
       classroom.private = c.private !== false; // a class from an older build is private too
       readOnly.noKeep = classroom.private;
       cave.hasCave = true;
@@ -370,7 +370,7 @@ setRoomHooks({
     stopMirroring();
     unblock?.();
     unblock = null;
-    readOnly.on = false;
+    setClassLock(false);
     const clear = wasStudent && readOnly.noKeep;
     readOnly.noKeep = false;
     forgetMirror();

@@ -20,14 +20,13 @@
   import ClassroomAlerts from './components/ClassroomAlerts.svelte';
   import { classroom, keepsCave, openJoinUrl, readClassLinkFromUrl } from './lib/classroom.svelte';
   import { listenForLinks } from './lib/desktop';
-  import { finishDesktopSignIn } from './lib/desktop-signin';
   import { syncDrawing } from './lib/drawing';
   import { viewChanged } from './lib/p2p.svelte';
   import { scans } from './lib/scans.svelte';
   import { autosaveSoon, flush, loadShelf, shelf } from './lib/shelf.svelte';
   import { checkRemembered } from './lib/scans.svelte';
   import AccountGate from './components/account/AccountGate.svelte';
-  import { startAccount } from './lib/account.svelte';
+  import { account, handleAuthLink, startAccount } from './lib/account.svelte';
 
   let version = $state('loading engine…');
   let info = $state<BuildInfo | null>(null);
@@ -77,8 +76,7 @@
     readInviteFromUrl();
     readClassLinkFromUrl();
     listenForLinks((url) => {
-      if (url.startsWith('cavecad://auth')) void finishDesktopSignIn(url).then((ok) => { if (ok) void startAccount(); });
-      else openJoinUrl(url);
+      void handleAuthLink(url).then((signIn) => { if (!signIn) openJoinUrl(url); });
     }); // in the desktop app, a link that opened it
     void checkRemembered(); // the scans kept from last time come back before any panel is opened
     const unguard = guardUnload();
@@ -138,10 +136,26 @@
     document.title = `${dirty ? '• ' : ''}CaveCAD`; // a dot in the tab says there is something unsaved
   });
 
+  // While the sign-in gate covers the page, the app behind it is inert, and the keyboard shortcuts and
+  // clipboard handlers listening on the window don't hear keys meant for (or outside) the gate.
+  const open = $derived(account.phase === 'ready' || account.phase === 'offline' || account.phase === 'offline-expired');
+  $effect(() => {
+    if (open) return;
+    const TYPES = ['keydown', 'keyup', 'keypress', 'copy', 'cut', 'paste'];
+    const stop = (e: Event) => {
+      if ((e.target as Element | null)?.closest?.('[data-account-gate]')) return;
+      e.stopImmediatePropagation();
+    };
+    for (const t of TYPES) window.addEventListener(t, stop, { capture: true });
+    return () => {
+      for (const t of TYPES) window.removeEventListener(t, stop, { capture: true });
+    };
+  });
+
   const built = $derived(info?.builtAt ? new Date(info.builtAt).toLocaleTimeString() : '');
 </script>
 
-<div class="shell">
+<div class="shell" inert={!open}>
   <Ribbon />
   <SnapMenu />
   <NewCave />
@@ -164,8 +178,8 @@
     {#if dirty}<span class="unsaved" title="Changes since the cave was opened or last saved. Save with Ctrl/Cmd+S.">Unsaved changes</span>{/if}
     {#if info}<span>build {info.git}{info.dirty ? '+' : ''} · {built}</span>{/if}
   </footer>
-  <AccountGate openDrives={() => window.dispatchEvent(new CustomEvent('cavecad:open-user', { detail: 'drives' }))} />
 </div>
+<AccountGate openDrives={() => window.dispatchEvent(new CustomEvent('cavecad:open-user', { detail: 'drives' }))} />
 
 <style>
   .shell { display: flex; flex-direction: column; height: 100%; }

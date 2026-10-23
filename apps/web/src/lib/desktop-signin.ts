@@ -1,11 +1,10 @@
 // The desktop app's sign-in: the system browser opens TinyAuth's sign-in (Google or Microsoft), TinyAuth sends
 // the browser back to cavecad://auth with a code, and the CaveCAD server swaps the code for an ID token, which
 // the app sends with every API call. In a browser none of this runs: the TinyAuth cookie does the work.
+// The app never talks to TinyAuth itself: where to sign in comes from the CaveCAD server (/api/desktop-config).
 import { isDesktop, openUrlNative } from './desktop.ts';
 
 const KEY = 'cavecad-desktop-signin';
-const ISSUER = (import.meta.env?.VITE_OIDC_ISSUER as string | undefined) ?? '';
-const CLIENT = (import.meta.env?.VITE_OIDC_CLIENT_ID as string | undefined) ?? 'cavecad-desktop';
 const BASE = (import.meta.env?.VITE_ACCOUNT_BASE as string | undefined) ?? '';
 const b64url = (b: ArrayBuffer | Uint8Array) => btoa(String.fromCharCode(...new Uint8Array(b))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 
@@ -32,11 +31,20 @@ export function authorizeUrl(endpoint: string, clientId: string, challenge: stri
   Object.entries({ response_type: 'code', client_id: clientId, redirect_uri: 'cavecad://auth', scope: 'openid email profile', code_challenge: challenge, code_challenge_method: 'S256', state }).forEach(([k, v]) => u.searchParams.set(k, v));
   return u.toString();
 }
-/** The code from a returning `cavecad://auth` link, or null when it is not ours. */
-export function readAuthLink(link: string, state: string): string | null {
-  if (!link.startsWith('cavecad://auth')) return null;
-  const q = new URL(link.replace('cavecad://auth', 'https://x/auth')).searchParams;
-  return q.get('state') === state ? q.get('code') : null;
+export type AuthLink = { kind: 'code'; code: string } | { kind: 'failed' };
+/** What a returning `cavecad://auth` link says: the code, or that the sign-in didn't finish (an `error=`, a
+ *  wrong or missing state, no code). Null when the link is not a sign-in link at all. */
+export function readAuthLink(link: string, state: string | null): AuthLink | null {
+  let u: URL;
+  try {
+    u = new URL(link);
+  } catch {
+    return null;
+  }
+  if (u.protocol !== 'cavecad:' || u.host !== 'auth') return null;
+  const code = u.searchParams.get('code');
+  if (!state || u.searchParams.has('error') || u.searchParams.get('state') !== state || !code) return { kind: 'failed' };
+  return { kind: 'code', code };
 }
 
 /** The desktop app's current sign-in token, or null in a browser or when signed out. */
@@ -45,8 +53,9 @@ export function desktopBearer(): string | null {
   return saved.until > Date.now() ? saved.idToken : null;
 }
 
-function keep(out: { id_token: string; refresh_token: string | null; expires_in: number }) {
-  saved = { idToken: out.id_token, refresh: out.refresh_token, until: Date.now() + Math.max(60, out.expires_in - 60) * 1000 };
+/** Keeps a new token. TinyAuth may not send a new refresh token with a refresh: the old one still works then. */
+export function keep(out: { id_token: string; refresh_token: string | null; expires_in: number }) {
+  saved = { idToken: out.id_token, refresh: out.refresh_token ?? saved?.refresh ?? null, until: Date.now() + Math.max(60, out.expires_in - 60) * 1000 };
   try {
     localStorage.setItem(KEY, JSON.stringify(saved));
   } catch {
@@ -65,9 +74,10 @@ async function exchange(body: Record<string, string>): Promise<boolean> {
   }
 }
 
-/** Refreshes an expired token if TinyAuth gave a refresh token. True when signed in afterwards. */
-export async function refreshDesktop(): Promise<boolean> {
-  if (desktopBearer()) return true;
+/** Refreshes an expired token if TinyAuth gave a refresh token. True when signed in afterwards. `force`
+ *  refreshes even a token that has not run out (the server refused it). */
+export async function refreshDesktop(force = false): Promise<boolean> {
+  if (!force && desktopBearer()) return true;
   return !!saved?.refresh && exchange({ refresh: saved.refresh });
 }
 
@@ -75,22 +85,27 @@ let pending: { verifier: string; state: string } | null = null;
 
 /** Opens the system browser on TinyAuth's sign-in. The answer arrives as a cavecad://auth link. */
 export async function startDesktopSignIn(): Promise<void> {
-  const conf = (await (await fetch(ISSUER.replace(/\/$/, '') + '/.well-known/openid-configuration')).json()) as { authorization_endpoint: string };
+  const res = await fetch(BASE + '/api/desktop-config');
+  if (!res.ok) throw new Error('no-config');
+  const conf = (await res.json()) as { authorizationEndpoint: string; clientId: string };
   const { verifier, challenge } = await pkcePair();
   const state = b64url(crypto.getRandomValues(new Uint8Array(16)));
   pending = { verifier, state };
-  await openUrlNative(authorizeUrl(conf.authorization_endpoint, CLIENT, challenge, state));
+  await openUrlNative(authorizeUrl(conf.authorizationEndpoint, conf.clientId, challenge, state));
 }
 
-/** Handles a cavecad://auth link. True when it signed this app in. */
-export async function finishDesktopSignIn(link: string): Promise<boolean> {
-  if (!pending) return false;
-  const code = readAuthLink(link, pending.state);
-  if (!code) return false;
-  const ok = await exchange({ code, verifier: pending.verifier });
+/** Handles a cavecad://auth link: 'signed-in', 'failed' (show "Sign-in didn't finish"), or 'not-ours'. */
+export async function finishDesktopSignIn(link: string): Promise<'signed-in' | 'failed' | 'not-ours'> {
+  const read = readAuthLink(link, pending?.state ?? null);
+  if (!read) return 'not-ours';
+  const p = pending;
   pending = null;
-  return ok;
+  if (read.kind === 'failed' || !p) return 'failed';
+  return (await exchange({ code: read.code, verifier: p.verifier })) ? 'signed-in' : 'failed';
 }
+
+/** The kept sign-in, for tests. */
+export const keptSignIn = () => saved;
 
 /** Forgets the desktop sign-in. */
 export function signOutDesktop(): void {

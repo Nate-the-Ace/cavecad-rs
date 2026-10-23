@@ -21,12 +21,15 @@
     'bad-email': "That doesn't look like an email address.",
     'not-admin': 'Only admins can do that.',
   };
-  async function run(f: () => Promise<void>) {
+  /** Runs an admin action; false (with the reason shown) when it failed. */
+  async function run(f: () => Promise<void>): Promise<boolean> {
     error = '';
     try {
       await f();
+      return true;
     } catch (e) {
       error = e instanceof AccountError ? WORDS[e.code] ?? "Couldn't do that. Try again." : "Couldn't reach CaveCAD. Check your connection.";
+      return false;
     }
   }
   const refresh = () => run(async () => { [members, invites] = await Promise.all([api.members(), api.invites()]); });
@@ -54,15 +57,35 @@
   });
   const resend = (id: string) => run(async () => { const made = await api.resend(id); links[made.invite.id] = made.link; await refresh(); });
   const cancel = (id: string) => run(async () => { await api.cancel(id); await refresh(); });
-  const changeRole = (id: string, r: Role) => run(async () => { await api.setRole(id, r); await refresh(); });
+  // A refused change leaves the dropdown showing what the server has, not what was picked.
+  async function changeRole(id: string, sel: HTMLSelectElement) {
+    if (await run(async () => { await api.setRole(id, sel.value as Role); await refresh(); })) return;
+    try {
+      members = await api.members();
+    } catch {
+      // still unreachable: the list stays as it was
+    }
+    sel.value = members.find((m) => m.id === id)?.role ?? sel.value;
+  }
   const remove = (id: string) => run(async () => { await api.removeMember(id); removing = null; await refresh(); });
-  const setSignups = (v: 'invite' | 'open') => run(async () => { await api.setSignups(v); account.signups = v; });
+  async function setSignups(sel: HTMLSelectElement) {
+    const v = sel.value as 'invite' | 'open';
+    if (await run(async () => { await api.setSignups(v); account.signups = v; })) return;
+    const r = await api.me();
+    if (r.kind === 'member') account.signups = r.signups;
+    try {
+      members = await api.members();
+    } catch {
+      // still unreachable
+    }
+    sel.value = account.signups;
+  }
 </script>
 
 <div class="pane">
   <div class="row">
     <div class="grow"><div class="sec">Sign-ups</div><div class="hint">{account.signups === 'invite' ? 'Only people you invite can make an account.' : 'Anyone with a Google or Microsoft account can join.'}</div></div>
-    <select value={account.signups} onchange={(e) => setSignups(e.currentTarget.value as 'invite' | 'open')} aria-label="Who can sign up">
+    <select value={account.signups} onchange={(e) => setSignups(e.currentTarget)} aria-label="Who can sign up">
       <option value="invite">Invite only</option>
       <option value="open">Open to anyone</option>
     </select>
@@ -111,7 +134,7 @@
             <button class="btn" onclick={() => (removing = null)}>Keep</button>
             <button class="btn danger" onclick={() => remove(m.id)}>Remove</button>
           {:else}
-            <select value={m.role} onchange={(e) => changeRole(m.id, e.currentTarget.value as Role)} aria-label="Role of {m.displayName}"><option value="member">Member</option><option value="admin">Admin</option></select>
+            <select value={m.role} onchange={(e) => changeRole(m.id, e.currentTarget)} aria-label="Role of {m.displayName}"><option value="member">Member</option><option value="admin">Admin</option></select>
             <button class="btn" onclick={() => (removing = m.id)}>Remove</button>
           {/if}
         {/if}

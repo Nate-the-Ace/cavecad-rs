@@ -153,13 +153,33 @@ export const READS: readonly string[] = [
   'editState',
 ];
 
-/** Whether the engine refuses writes, and what it says. Set by the classroom for students. */
+const CLASS_WHY = 'This is a class: only the teacher can change the cave.';
+
+/** Whether the engine refuses writes, and what it says. Two things can lock it: watching a class
+ *  (`setClassLock`) and an offline pass over 30 days old (`setAccountLock`). `on` is what the engine checks. */
 export const readOnly = {
   on: false,
   /** The teacher asked that the cave not be kept: saving, exporting and printing are off, and it is cleared when the student leaves. */
   noKeep: false,
-  why: 'This is a class: only the teacher can change the cave.',
+  why: CLASS_WHY,
 };
+
+const locks = { class: { on: false, why: CLASS_WHY }, account: { on: false, why: '' } };
+function settle() {
+  readOnly.on = locks.class.on || locks.account.on;
+  // The class's reason first: a student can't edit whatever the account says.
+  readOnly.why = locks.class.on ? locks.class.why : locks.account.on ? locks.account.why : CLASS_WHY;
+}
+/** The classroom's lock: on while a person is only watching a class. */
+export function setClassLock(on: boolean, why = CLASS_WHY): void {
+  locks.class = { on, why };
+  settle();
+}
+/** The account's lock: on while the offline pass is too old to keep editing. */
+export function setAccountLock(on: boolean, why = ''): void {
+  locks.account = { on, why };
+  settle();
+}
 
 const writes = new Set(WRITES);
 
