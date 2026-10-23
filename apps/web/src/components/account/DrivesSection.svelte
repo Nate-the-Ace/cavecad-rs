@@ -83,7 +83,8 @@
   .field { font: inherit; background: var(--panel-2); color: var(--text); border: 1px solid var(--line); border-radius: var(--radius); padding: 5px 8px; }
   .badge { font-size: 12px; padding: 2px 8px; border-radius: var(--radius); background: var(--accent-bg); }
   .btn { display: inline-flex; align-items: center; gap: 6px; padding: 5px 10px; background: var(--panel-2); color: var(--text); border: 1px solid var(--line); border-radius: var(--radius); cursor: pointer; font: inherit; font-size: 12px; }
-  .btn:hover { background: var(--accent-bg); }
+  .btn:hover:not(:disabled) { background: var(--accent-bg); }
+  .btn:disabled { opacity: 0.5; cursor: default; }
   .btn.danger { color: var(--danger); border-color: var(--danger); }
   .hint { margin: 0; color: var(--muted); font-size: 12px; }
   .bad { color: var(--danger); }
