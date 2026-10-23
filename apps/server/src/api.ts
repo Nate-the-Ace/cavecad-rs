@@ -29,13 +29,45 @@ function send(res: ServerResponse, status: number, body: unknown) {
   res.end(JSON.stringify(body));
 }
 
+class BadBody extends SyntaxError {}
+
+/** Reads a JSON object body of at most 64 KB; anything else throws a SyntaxError (answered 400). */
 async function readJson(req: IncomingMessage): Promise<Record<string, unknown>> {
-  let s = '';
+  const chunks: Buffer[] = [];
+  let size = 0;
   for await (const chunk of req) {
-    s += chunk;
-    if (s.length > 64 * 1024) throw new Error('too-big');
+    const b = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    size += b.length;
+    if (size > 64 * 1024) throw new BadBody('too-big');
+    chunks.push(b);
   }
-  return s ? JSON.parse(s) : {};
+  const s = Buffer.concat(chunks).toString('utf8');
+  if (!s) return {};
+  const v: unknown = JSON.parse(s);
+  if (typeof v !== 'object' || v === null || Array.isArray(v)) throw new BadBody('not-an-object');
+  return v as Record<string, unknown>;
+}
+
+const SAFE = ['GET', 'HEAD', 'OPTIONS'];
+const originOf = (u: string) => {
+  try {
+    return new URL(u).origin;
+  } catch {
+    return '';
+  }
+};
+
+/** Refuses state-changing requests a browser could have sent from another site. Returns true when it answered. */
+function refusedCrossSite(d: ApiDeps, req: IncomingMessage, res: ServerResponse, method: string, origin: string): boolean {
+  if (SAFE.includes(method)) return false;
+  const type = String(req.headers['content-type'] ?? '').toLowerCase();
+  if (!type.startsWith('application/json')) return send(res, 415, { error: 'bad-request' }), true;
+  const desktop = DESKTOP_ORIGINS.includes(origin);
+  const bearer = /^Bearer \S/.test(String(req.headers.authorization ?? ''));
+  const site = req.headers['sec-fetch-site'];
+  if (site !== undefined && site !== 'same-origin' && site !== 'none' && !(desktop && bearer)) return send(res, 403, { error: 'cross-site' }), true;
+  if (req.headers.origin !== undefined && origin !== originOf(d.publicUrl) && !desktop) return send(res, 403, { error: 'cross-site' }), true;
+  return false;
 }
 
 /** Handles one `/api/...` request. */
@@ -52,18 +84,24 @@ export async function handleApi(d: ApiDeps, req: IncomingMessage, res: ServerRes
   const url = new URL(req.url ?? '/', 'http://x');
   const path = url.pathname;
   const method = req.method ?? 'GET';
+  if (refusedCrossSite(d, req, res, method, origin)) return;
 
-  if (path === '/api/desktop-token' && method === 'POST') {
-    if (!d.desktopToken) return send(res, 404, { error: 'not-found' });
-    const out = await d.desktopToken((await readJson(req)) as Record<string, string>);
-    return send(res, out.status, out.body);
+  try {
+    if (path === '/api/desktop-token' && method === 'POST') {
+      if (!d.desktopToken) return send(res, 404, { error: 'not-found' });
+      const out = await d.desktopToken((await readJson(req)) as Record<string, string>);
+      return send(res, out.status, out.body);
+    }
+  } catch (e) {
+    if (e instanceof SyntaxError) return send(res, 400, { error: 'bad-request' });
+    throw e;
   }
 
   const who = await d.whoIs(req as unknown as RequestLike);
   if (!who) return send(res, 401, { error: 'signed-out' });
   const token = String(req.headers['x-cave-signup'] ?? '') || undefined;
   const r = M.resolve(d.db, who, { adminEmail: d.adminEmail, now, token });
-  if (r.status !== 'member') return send(res, path === '/api/me' && method === 'GET' ? 200 : 403, path === '/api/me' ? r : { error: r.status });
+  if (r.status !== 'member') return path === '/api/me' && method === 'GET' ? send(res, 200, r) : send(res, 403, { error: r.status });
   const me = r.member;
 
   try {
@@ -123,7 +161,7 @@ export async function handleApi(d: ApiDeps, req: IncomingMessage, res: ServerRes
   } catch (e) {
     const code = e instanceof Error ? e.message : 'error';
     if (STATUS[code]) return send(res, STATUS[code], { error: code });
-    if (e instanceof SyntaxError || code === 'too-big') return send(res, 400, { error: 'bad-request' });
+    if (e instanceof SyntaxError) return send(res, 400, { error: 'bad-request' });
     throw e;
   }
 }

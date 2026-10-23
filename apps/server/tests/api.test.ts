@@ -26,7 +26,8 @@ async function start(mailOk = true) {
   await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
   const base = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
   const call = async (user: string | null, method: string, path: string, body?: unknown, extra: Record<string, string> = {}) => {
-    const res = await fetch(base + path, { method, headers: { ...(user ? { 'x-test-user': user } : {}), 'Content-Type': 'application/json', ...extra }, body: body ? JSON.stringify(body) : undefined });
+    const raw = typeof body === 'string' ? body : body ? JSON.stringify(body) : undefined;
+    const res = await fetch(base + path, { method, headers: { ...(user ? { 'x-test-user': user } : {}), 'Content-Type': 'application/json', ...extra }, body: raw });
     return { status: res.status, headers: res.headers, json: res.headers.get('content-type')?.includes('json') ? await res.json() : await res.text() };
   };
   return { server, call };
@@ -98,8 +99,9 @@ test('static files and cache rules', async () => {
     // fetch would tidy a ".." away before sending, so send the raw path with node:http
     const { get } = await import('node:http');
     const port = (server.address() as { port: number }).port;
-    const status = await new Promise<number>((r) => get({ host: '127.0.0.1', port, path: '/assets/..%2f..%2fsecret' }, (res) => { res.resume(); r(res.statusCode ?? 0); }));
-    assert.equal(status, 400);
+    const raw = (path: string) => new Promise<number>((r) => get({ host: '127.0.0.1', port, path }, (res) => { res.resume(); r(res.statusCode ?? 0); }));
+    assert.equal(await raw('/assets/..%2f..%2fsecret'), 400);
+    assert.equal(await raw('/%E0%A4%A'), 400, 'a broken percent escape');
   } finally {
     server.close();
   }
@@ -110,6 +112,57 @@ test('CORS only for the desktop app', async () => {
   try {
     assert.equal((await call(null, 'OPTIONS', '/api/me', undefined, { Origin: 'tauri://localhost' })).headers.get('access-control-allow-origin'), 'tauri://localhost');
     assert.equal((await call(null, 'GET', '/api/me', undefined, { Origin: 'https://evil.example' })).headers.get('access-control-allow-origin'), null);
+  } finally {
+    server.close();
+  }
+});
+
+test('cross-site and non-JSON writes are refused', async () => {
+  const { server, call } = await start();
+  try {
+    await call(ADMIN, 'GET', '/api/me');
+    const body = { email: 'rick@example.com', role: 'member' };
+    const plainText = await call(ADMIN, 'POST', '/api/admin/invites', JSON.stringify(body), { 'Content-Type': 'text/plain' });
+    assert.equal(plainText.status, 415);
+    assert.deepEqual(plainText.json, { error: 'bad-request' });
+    assert.equal((await call(ADMIN, 'GET', '/api/admin/invites')).json.invites.length, 0, 'no invite made');
+
+    const sameSite = await call(ADMIN, 'POST', '/api/admin/invites', body, { 'Sec-Fetch-Site': 'same-site' });
+    assert.equal(sameSite.status, 403);
+    assert.deepEqual(sameSite.json, { error: 'cross-site' });
+    assert.equal((await call(ADMIN, 'POST', '/api/admin/invites', body, { Origin: 'https://play.schonegg.stream' })).status, 403);
+    assert.equal((await call(ADMIN, 'POST', '/api/admin/invites', body, { 'Sec-Fetch-Site': 'cross-site', Origin: 'tauri://localhost' })).status, 403, 'desktop origin without a bearer');
+    assert.equal((await call(ADMIN, 'GET', '/api/admin/invites')).json.invites.length, 0, 'still no invite');
+
+    assert.equal((await call(ADMIN, 'POST', '/api/admin/invites', body, { 'Sec-Fetch-Site': 'same-origin', Origin: 'https://cave.test' })).status, 200, 'the web app');
+    assert.equal((await call(ADMIN, 'POST', '/api/admin/invites', { email: 'iris@example.com', role: 'member' }, { 'Sec-Fetch-Site': 'cross-site', Origin: 'tauri://localhost', Authorization: 'Bearer x' })).status, 200, 'the desktop app');
+    assert.equal((await call(ADMIN, 'POST', '/api/admin/invites', { email: 'ann@example.com', role: 'member' })).status, 200, 'no browser headers at all');
+  } finally {
+    server.close();
+  }
+});
+
+test('bad bodies are 400', async () => {
+  const { server, call } = await start();
+  try {
+    await call(ADMIN, 'GET', '/api/me');
+    assert.equal((await call(ADMIN, 'POST', '/api/admin/invites', 'null')).status, 400, 'null');
+    assert.equal((await call(ADMIN, 'POST', '/api/admin/invites', '[1]')).status, 400, 'an array');
+    assert.equal((await call(ADMIN, 'POST', '/api/admin/invites', '{"email":')).status, 400, 'malformed');
+    assert.equal((await call(ADMIN, 'PATCH', '/api/me', 'x'.repeat(70 * 1024))).status, 400, 'too big');
+  } finally {
+    server.close();
+  }
+});
+
+test('a non-member gets 403 everywhere but GET /api/me', async () => {
+  const { server, call } = await start();
+  try {
+    await call(ADMIN, 'GET', '/api/me');
+    assert.equal((await call('rick@example.com', 'GET', '/api/me')).status, 200);
+    const patch = await call('rick@example.com', 'PATCH', '/api/me', { displayName: 'Rick' });
+    assert.equal(patch.status, 403);
+    assert.deepEqual(patch.json, { error: 'not-invited' });
   } finally {
     server.close();
   }

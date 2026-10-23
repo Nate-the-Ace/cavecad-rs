@@ -8,7 +8,14 @@ const TYPES: Record<string, string> = { '.html': 'text/html; charset=utf-8', '.j
 
 /** Answers one GET for a file under `root`. */
 export async function serveStatic(root: string, req: IncomingMessage, res: ServerResponse): Promise<void> {
-  const path = decodeURIComponent(new URL(req.url ?? '/', 'http://x').pathname);
+  let path: string;
+  try {
+    path = decodeURIComponent(new URL(req.url ?? '/', 'http://x').pathname);
+  } catch (e) {
+    if (!(e instanceof URIError)) throw e;
+    res.writeHead(400).end();
+    return;
+  }
   if (path.split('/').includes('..')) {
     res.writeHead(400).end();
     return;
