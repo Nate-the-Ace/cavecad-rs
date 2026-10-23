@@ -1,0 +1,11 @@
+{
+  "name": "cavecad-server",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=26" },
+  "scripts": {
+    "start": "node src/main.ts",
+    "dev": "node --watch src/main.ts",
+    "test": "node --test"
+  }
+}
