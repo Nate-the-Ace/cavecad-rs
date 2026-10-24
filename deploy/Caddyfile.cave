@@ -6,6 +6,7 @@
 # forward_auth before request_header, and the wipe would delete the headers TinyAuth just set (every
 # sign-in would get 401). Check with `caddy adapt --pretty`: the delete handler must come first.
 cave.schonegg.stream {
+	import hardening
 	route {
 		request_header -Remote-User
 		request_header -Remote-Email
@@ -23,6 +24,7 @@ cave.schonegg.stream {
 }
 
 cave-api.schonegg.stream {
+	import hardening
 	route {
 		request_header -Remote-User
 		request_header -Remote-Email
