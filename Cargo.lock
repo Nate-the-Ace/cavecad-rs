@@ -63,8 +63,20 @@ name = "cave-fixture"
 version = "0.0.1"
 dependencies = [
  "cave-doc",
+ "cave-formats",
+ "cave-survey",
+ "serde_json",
+]
+
+[[package]]
+name = "cave-formats"
+version = "0.0.1"
+dependencies = [
+ "cave-doc",
+ "cave-geomag",
  "cave-id",
  "cave-survey",
+ "serde",
  "serde_json",
 ]
 
@@ -73,6 +85,13 @@ name = "cave-geom"
 version = "0.0.1"
 dependencies = [
  "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "cave-geomag"
+version = "0.0.1"
+dependencies = [
  "serde_json",
 ]
 
@@ -271,6 +290,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "cave-th2"
+version = "0.0.1"
+dependencies = [
+ "cave-doc",
+ "cave-draw",
+ "cave-formats",
+ "cave-id",
+ "cave-scans",
+ "cave-scene",
+ "cave-style",
+ "cave-symbols",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "cave-walls"
 version = "0.0.1"
 dependencies = [
@@ -290,6 +325,7 @@ dependencies = [
  "cave-dxf",
  "cave-fill",
  "cave-fixture",
+ "cave-formats",
  "cave-geom",
  "cave-id",
  "cave-instrument",
@@ -306,6 +342,7 @@ dependencies = [
  "cave-snap",
  "cave-style",
  "cave-symbols",
+ "cave-th2",
  "js-sys",
  "serde",
  "serde_json",

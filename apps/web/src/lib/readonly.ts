@@ -47,6 +47,8 @@ export const WRITES: readonly string[] = [
   'scanSetComplete',
   'newCave',
   'openDxf',
+  'importSurvey',
+  'importFolder',
   'openNative',
   'addSectionSketch',
   'placeSection',
@@ -133,6 +135,8 @@ export const READS: readonly string[] = [
   'scene',
   'shading',
   'saveDxf',
+  'surveyFormats',
+  'exportSurvey',
   'saveNative',
   'sectionStations',
   'sectionAt',
@@ -186,7 +190,7 @@ const writes = new Set(WRITES);
 /** What a refused call gives back, in the shape its caller expects. */
 function refusal(name: string): unknown {
   if (name === 'undo' || name === 'redo') return false;
-  if (name === 'openDxf') return { ok: false, message: readOnly.why, warnings: [] as string[] };
+  if (name === 'openDxf' || name === 'importSurvey' || name === 'importFolder') return { ok: false, message: readOnly.why, warnings: [] as string[] };
   return `error: ${readOnly.why}`;
 }
 
