@@ -65,3 +65,11 @@ means nothing on the tailnet). Only tailnet members the Tailscale ACL lets reach
 Going public: rebuild with the TinyAuth sign-out address, set HOST=0.0.0.0, EDGE_ADDRESS, GATE_SECRET and
 drop TAILNET_IDENTITY in /etc/cavecad/server.env, then steps 6 to 12. Nathan chose (2026-10-23): keep
 play/games on their own login (no Google there), and TinyAuth sessions of 30 days.
+
+## Updating the web app (2026-10-24)
+
+Build it on GitHub so the settings kept in its secrets go in (the live relay, feedback and class-link
+mailboxes; the account values are repository variables PASS_PUBLIC_KEY, SIGNOUT_URL, ACCOUNT_BASE):
+`gh workflow run web.yml`, then `gh run download <run> -n cavecad-web -D <empty folder>`. On CT 209: back up
+/opt/cavecad/web (`cp -a web web.bak-before-<what>`), empty it, unpack the build there. No restart needed.
+The desktop workflow (`desktop.yml`) takes the same values.

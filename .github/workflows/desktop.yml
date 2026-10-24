@@ -66,6 +66,10 @@ jobs:
           VITE_FEEDBACK_KEY: ${{ secrets.FEEDBACK_KEY }}
           VITE_SIGNAL_ENDPOINT: ${{ secrets.SIGNAL_ENDPOINT }}
           VITE_SIGNAL_KEY: ${{ secrets.SIGNAL_KEY }}
+          # accounts: the offline pass's public key, TinyAuth's sign-out page, and the API host the desktop app calls
+          VITE_PASS_PUBLIC_KEY: ${{ vars.PASS_PUBLIC_KEY }}
+          VITE_SIGNOUT_URL: ${{ vars.SIGNOUT_URL }}
+          VITE_ACCOUNT_BASE: ${{ vars.ACCOUNT_BASE }}
         with:
           projectPath: apps/desktop
           tagName: desktop-latest
