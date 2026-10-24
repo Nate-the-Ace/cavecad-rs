@@ -8,6 +8,7 @@ import * as M from './members.ts';
 import { signPass } from './pass.ts';
 import { sendInvite, type MailerConfig } from './mailer.ts';
 import type { RequestLike } from './identity.ts';
+import { serveStatic } from './static.ts';
 
 export type ApiDeps = {
   db: Db;
@@ -16,6 +17,8 @@ export type ApiDeps = {
   passKey: KeyObject;
   publicUrl: string;
   mailer: MailerConfig;
+  /** TinyAuth's sign-out page, offered on the not-invited page to try another account; empty for none. */
+  signoutUrl?: string;
   /** Reached through `tailscale serve` only: /api/me says so, and the page hides sign-out and switching account. */
   tailnet?: boolean;
   /** Exchanges a desktop sign-in code with TinyAuth (Task 11); absent until configured. */
@@ -177,4 +180,28 @@ export async function handleApi(d: ApiDeps, req: IncomingMessage, res: ServerRes
     if (e instanceof SyntaxError) return send(res, 400, { error: 'bad-request' });
     throw e;
   }
+}
+
+const esc = (t: string) => t.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
+// The page someone gets instead of the app: plain, self-contained, nothing of the app in it.
+function refusal(d: ApiDeps, res: ServerResponse, status: number, title: string, text: string): void {
+  const out = d.signoutUrl ? `<p><a href="${esc(d.signoutUrl)}">Use another account</a></p>` : '';
+  res.writeHead(status, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' }).end(`<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>CaveCAD</title>
+<style>:root{color-scheme:light dark}body{font:16px/1.5 system-ui,sans-serif;max-width:32rem;margin:4rem auto;padding:0 16px}</style></head>
+<body><h1>${esc(title)}</h1><p>${text}</p>${out}<p><a href="/privacy.html">Privacy</a></p></body></html>`);
+}
+
+/**
+ * Serves the web app, but only to someone who may use it (`M.mayLoadApp`): a stranger who signed in with
+ * Google gets a short page saying CaveCAD is invite only, and none of the app. The privacy page is for anyone.
+ */
+export async function serveApp(d: ApiDeps, dist: string, req: IncomingMessage, res: ServerResponse): Promise<void> {
+  if ((req.url ?? '/').split('?')[0] === '/privacy.html') return serveStatic(dist, req, res);
+  const who = await d.whoIs(req as unknown as RequestLike);
+  if (!who) return refusal(d, res, 401, 'Sign in to CaveCAD', 'Open <a href="https://cave.schonegg.stream/">cave.schonegg.stream</a> to sign in.');
+  const may = M.mayLoadApp(d.db, who, { adminEmail: d.adminEmail, now: (d.now ?? Date.now)() });
+  if (may === 'removed') return refusal(d, res, 403, 'Your CaveCAD account was removed', `You're signed in as ${esc(who.email)}. Ask an admin if this is a mistake.`);
+  if (may === 'not-invited') return refusal(d, res, 403, 'CaveCAD is invite only for now', `You're signed in as ${esc(who.email)}, which hasn't been invited. If you were invited at another address, sign in with that one.`);
+  return serveStatic(dist, req, res);
 }

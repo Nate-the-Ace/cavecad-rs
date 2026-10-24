@@ -6,8 +6,7 @@ import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { openDb } from '../src/db.ts';
-import { handleApi, type ApiDeps } from '../src/api.ts';
-import { serveStatic } from '../src/static.ts';
+import { handleApi, serveApp, type ApiDeps } from '../src/api.ts';
 
 const ADMIN = 'nathan@example.com';
 
@@ -21,9 +20,10 @@ async function start(mailOk = true, extra: Partial<ApiDeps> = {}) {
   };
   const root = mkdtempSync(join(tmpdir(), 'cave-dist-'));
   writeFileSync(join(root, 'index.html'), '<html>app</html>');
+  writeFileSync(join(root, 'privacy.html'), '<html>privacy</html>');
   mkdirSync(join(root, 'assets'));
   writeFileSync(join(root, 'assets', 'a.js'), 'x');
-  const server: Server = createServer((req, res) => void ((req.url ?? '').startsWith('/api/') ? handleApi(deps, req, res) : serveStatic(root, req, res)));
+  const server: Server = createServer((req, res) => void ((req.url ?? '').startsWith('/api/') ? handleApi(deps, req, res) : serveApp(deps, root, req, res)));
   await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
   const base = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
   const call = async (user: string | null, method: string, path: string, body?: unknown, extra: Record<string, string> = {}) => {
@@ -91,16 +91,16 @@ test('an invite still exists when the email fails', async () => {
 test('static files and cache rules', async () => {
   const { server, call } = await start();
   try {
-    const home = await call(null, 'GET', '/');
+    const home = await call(ADMIN, 'GET', '/');
     assert.equal(home.headers.get('cache-control'), 'no-store');
     assert.equal(home.json, '<html>app</html>');
-    assert.equal((await call(null, 'GET', '/some/deep/link')).json, '<html>app</html>');
-    assert.equal((await call(null, 'GET', '/assets/a.js')).headers.get('cache-control'), 'public, max-age=31536000, immutable');
-    assert.equal((await call(null, 'GET', '/assets/missing.js')).status, 404);
+    assert.equal((await call(ADMIN, 'GET', '/some/deep/link')).json, '<html>app</html>');
+    assert.equal((await call(ADMIN, 'GET', '/assets/a.js')).headers.get('cache-control'), 'public, max-age=31536000, immutable');
+    assert.equal((await call(ADMIN, 'GET', '/assets/missing.js')).status, 404);
     // fetch would tidy a ".." away before sending, so send the raw path with node:http
     const { get } = await import('node:http');
     const port = (server.address() as { port: number }).port;
-    const raw = (path: string) => new Promise<number>((r) => get({ host: '127.0.0.1', port, path }, (res) => { res.resume(); r(res.statusCode ?? 0); }));
+    const raw = (path: string) => new Promise<number>((r) => get({ host: '127.0.0.1', port, path, headers: { 'x-test-user': ADMIN } }, (res) => { res.resume(); r(res.statusCode ?? 0); }));
     assert.equal(await raw('/assets/..%2f..%2fsecret'), 400);
     assert.equal(await raw('/%E0%A4%A'), 400, 'a broken percent escape');
   } finally {
@@ -225,5 +225,37 @@ test('on the tailnet /api/me says so, for members and for the not-invited', asyn
     assert.equal((await plain.call(ADMIN, 'GET', '/api/me')).json.via, undefined);
   } finally {
     plain.server.close();
+  }
+});
+
+test('the app itself is only for members and people with an invite waiting', async () => {
+  const { server, call } = await start();
+  try {
+    assert.equal((await call(ADMIN, 'GET', '/')).json, '<html>app</html>', 'the first admin');
+    const stranger = await call('stranger@example.com', 'GET', '/');
+    assert.equal(stranger.status, 403);
+    assert.match(stranger.json, /invite only/);
+    assert.match(stranger.json, /stranger@example\.com/);
+    assert.doesNotMatch(stranger.json, /<html>app<\/html>/);
+    assert.equal((await call('stranger@example.com', 'GET', '/assets/a.js')).status, 403, 'no app code either');
+    assert.equal((await call(null, 'GET', '/')).status, 401, 'not signed in');
+    assert.equal((await call(null, 'GET', '/privacy.html')).json, '<html>privacy</html>', 'the privacy page is for anyone');
+    assert.equal((await call('<b>x</b>@example.com', 'GET', '/')).json.includes('<b>x</b>'), false, 'the email is escaped');
+
+    await call(ADMIN, 'POST', '/api/admin/invites', { email: 'rick@example.com', role: 'member' });
+    assert.equal((await call('rick@example.com', 'GET', '/')).json, '<html>app</html>', 'an invite waiting for that email');
+    assert.equal((await call('rick@example.com', 'GET', '/')).status, 200, 'loading the app does not use the invite up');
+    assert.equal((await call('rick@example.com', 'GET', '/api/me')).json.status, 'member');
+
+    const members = (await call(ADMIN, 'GET', '/api/admin/members')).json.members as { id: string; email: string }[];
+    await call(ADMIN, 'DELETE', `/api/admin/members/${members.find((m) => m.email === 'rick@example.com')!.id}`);
+    const removed = await call('rick@example.com', 'GET', '/');
+    assert.equal(removed.status, 403);
+    assert.match(removed.json, /removed/);
+
+    await call(ADMIN, 'PUT', '/api/admin/settings/signups', { signups: 'open' });
+    assert.equal((await call('anyone@example.com', 'GET', '/')).status, 200, 'sign-ups open: anyone');
+  } finally {
+    server.close();
   }
 });

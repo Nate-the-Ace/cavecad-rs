@@ -232,6 +232,7 @@ Where the build differs from the spec above:
 - The old GitHub Pages address sends people on, but first offers the caves its Cave Shelf kept in that browser as DXF files (that storage belongs to the old address, so the new site cannot see it).
 - Until the public address the server can run on the tailnet only (`TAILNET_IDENTITY=1`, behind `tailscale serve` on its own container, listening on 127.0.0.1): `Tailscale-User-Login` is the email.
 - TinyAuth sends only printable ASCII in its headers (`SanitizeHeader`), so a name like José arrives as Jos; the person can fix it in Account.
+- The app itself is withheld (Nathan, 2026-10-24): the server serves the web app only to a member, someone with an invite waiting for their email, or anyone while sign-ups are open (`mayLoadApp`). Anyone else who signs in with Google gets a short "invite only" page with no app code. The privacy page stays open to all.
 
 ## Not built
 

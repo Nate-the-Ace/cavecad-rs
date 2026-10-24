@@ -5,8 +5,7 @@ import { readFileSync } from 'node:fs';
 import { createPrivateKey } from 'node:crypto';
 import { resolve } from 'node:path';
 import { openDb } from './db.ts';
-import { handleApi } from './api.ts';
-import { serveStatic } from './static.ts';
+import { handleApi, serveApp } from './api.ts';
 import { makeWhoIs, discoveredKeys } from './identity.ts';
 import { makeDesktopConfig, makeDesktopToken } from './desktop-token.ts';
 
@@ -39,6 +38,7 @@ const deps = {
   adminEmail: need('ADMIN_EMAIL'),
   publicUrl: need('PUBLIC_URL'),
   mailer: { url: env.MAILER_URL ?? '', key: env.MAILER_KEY ?? '' },
+  signoutUrl: env.SIGNOUT_URL ?? '',
   tailnet,
   whoIs: makeWhoIs({ edgeAddress, gateSecret, oidc, tailnet, devIdentity }),
   desktopToken: oidc ? makeDesktopToken({ issuer: oidc.issuer, clientId: oidc.audience, clientSecret: env.OIDC_CLIENT_SECRET ?? '' }) : undefined,
@@ -47,7 +47,7 @@ const deps = {
 const dist = resolve(env.DIST_DIR ?? '../web/dist');
 
 createServer((req, res) => {
-  const p = (req.url ?? '/').startsWith('/api/') ? handleApi(deps, req, res) : serveStatic(dist, req, res);
+  const p = (req.url ?? '/').startsWith('/api/') ? handleApi(deps, req, res) : serveApp(deps, dist, req, res);
   p.catch((e) => {
     console.error(e);
     if (!res.headersSent) res.writeHead(500, { 'Content-Type': 'application/json' }).end('{"error":"server"}');

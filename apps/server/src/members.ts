@@ -89,6 +89,20 @@ export function resolve(db: Db, who: Identity, opts: { adminEmail: string; now: 
   return { status: 'member', member, firstVisit: member.welcomedAt === null };
 }
 
+/**
+ * Whether `who` may load the web app at all: a member, someone with an invite waiting for their email,
+ * the first admin, or anyone while sign-ups are open. Read only: joining happens through `resolve`.
+ */
+export function mayLoadApp(db: Db, who: Identity, opts: { adminEmail: string; now: number }): 'yes' | 'not-invited' | 'removed' {
+  const email = norm(who.email);
+  const row = memberByEmail(db, email);
+  if (row && row.removed_at === null) return 'yes';
+  const live = db.prepare('SELECT 1 FROM invites WHERE email = ? AND used_at IS NULL AND cancelled_at IS NULL AND expires_at > ?').get(email, opts.now);
+  if (live || getSetting(db, 'signups') === 'open') return 'yes';
+  if (!row && email === norm(opts.adminEmail) && (db.prepare('SELECT COUNT(*) AS n FROM members').get() as { n: number }).n === 0) return 'yes';
+  return row ? 'removed' : 'not-invited';
+}
+
 function notInvited(db: Db, email: string, token: string | undefined, now: number): Resolved {
   if (!token) return { status: 'not-invited', email, reason: 'none' };
   const inv = db.prepare('SELECT * FROM invites WHERE token_hash = ?').get(hashToken(token)) as InviteRow | undefined;
