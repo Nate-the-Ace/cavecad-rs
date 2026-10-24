@@ -28,11 +28,12 @@ write them in the form the existing compose file uses (environment variables or 
     TINYAUTH_AUTH_SESSIONEXPIRY=2592000
     TINYAUTH_OAUTH_PROVIDERS_GOOGLE_CLIENTID=<from /opt/edge/tinyauth/google-client-id>
     TINYAUTH_OAUTH_PROVIDERS_GOOGLE_CLIENTSECRETFILE=/data/google-client-secret
+    TINYAUTH_OAUTH_PROVIDERS_GOOGLE_WHITELIST=/.*/
     TINYAUTH_APPS_CAVE_CONFIG_DOMAIN=cave.schonegg.stream
     TINYAUTH_APPS_CAVE_OAUTH_WHITELIST=/.*/
     TINYAUTH_APPS_CAVE_PATH_ALLOW=^/privacy\.html$$
 
-The edge's ACL policy is `deny`: an OAuth user is let in only where an app's OAuth whitelist matches
+The provider whitelist is needed: under the `deny` policy an empty one refuses every Google account at sign-in ("Email not whitelisted"). Then an OAuth user is let in only where an app's OAuth whitelist matches
 (an empty whitelist abstains, so deny), so Google accounts reach cave. and nothing else; local users are
 refused on cave. (empty users allow list). One TinyAuth session per browser covers every site.
 `/opt/edge/save-google-client` (root, 700) saves a new Google client id and secret, the secret typed hidden.
