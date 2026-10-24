@@ -38,4 +38,17 @@ The provider whitelist is needed: under the `deny` policy an empty one refuses e
 refused on cave. (empty users allow list). One TinyAuth session per browser covers every site.
 `/opt/edge/save-google-client` (root, 700) saves a new Google client id and secret, the secret typed hidden.
 Google project `cavecad` under cavecad.app@gmail.com, client "TinyAuth", in production, no logo yet
-(a logo needs Google's brand review). The desktop OIDC client is not set up yet.
+(a logo needs Google's brand review). Desktop sign-in (2026-10-24):
+
+    TINYAUTH_OIDC_PRIVATEKEYPATH=/data/oidc_key
+    TINYAUTH_OIDC_PUBLICKEYPATH=/data/oidc_key.pub
+    TINYAUTH_OIDC_CLIENTS_CAVECAD_CLIENTID=cavecad-desktop
+    TINYAUTH_OIDC_CLIENTS_CAVECAD_CLIENTSECRETFILE=/data/cavecad-desktop-secret
+    TINYAUTH_OIDC_CLIENTS_CAVECAD_TRUSTEDREDIRECTURIS=cavecad://auth
+    TINYAUTH_OIDC_CLIENTS_CAVECAD_NAME=CaveCAD desktop
+
+The key pair is made by TinyAuth on first start at those paths (kept in /data so restarts keep it). The client
+secret is the same value as the server's OIDC_CLIENT_SECRET, made on the container and copied over unseen.
+TinyAuth v5.2.0 supports PKCE S256 (it does not advertise it in discovery), client_secret_post, and refresh
+tokens; ID tokens are RS256 and last the session expiry (30 days). Any TinyAuth user may get a token: CaveCAD's
+member list decides, as on the web.
