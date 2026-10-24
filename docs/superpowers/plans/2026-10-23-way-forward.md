@@ -82,6 +82,15 @@ Order matters; each server step is shown to Nathan before it is made, with a bac
 1. Spike first: under Google's narrow `drive.file` permission, does picking a folder in the Google Picker
    give access to the files inside it? The answer decides the whole Drive design. Needs Drive enabled
    on the same Google Cloud project.
+   **Answered 2026-10-24 (Nathan ran the test page):** no. With `drive.file`, a folder picked in the
+   Google Picker is visible to the app but its files and subfolders are not (`'<folder>' in parents`
+   lists nothing, so nothing inside can be read). Set up for the test in Google Cloud project `cavecad`:
+   Drive API and Picker API enabled, `drive.file` added under Data Access (non-sensitive), web client
+   "CaveCAD Drive (web)" (origins https://cave.schonegg.stream and http://localhost:5199), browser API key
+   "CaveCAD Picker (browser)" limited to the Picker API and those two sites. So the design must choose:
+   picking files (Picker multi-select) under `drive.file`, a broader restricted scope (`drive.readonly`
+   or `drive`: Google's warning screen and a 100-user cap until a yearly security review), or the desktop
+   app's synced-folder route only. Nathan decides.
 2. Then the Drive connector in the browser (keys stay on the device), Reconnect and "N caves come from
    it" made real, caves on the Cave Shelf from Drive.
 3. Then OneDrive, Dropbox, WebDAV, each its own small spec. Each needs a developer app under cavecad.app
