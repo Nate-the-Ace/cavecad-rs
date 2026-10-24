@@ -22,6 +22,15 @@ function doPost(e) {
   }
 }
 
+/** Run once from the editor: makes the shared KEY (kept here and in the server's MAILER_KEY) and sets SITE. */
+function setUp() {
+  var props = PropertiesService.getScriptProperties();
+  if (!props.getProperty("KEY")) props.setProperty("KEY", Utilities.getUuid().replace(/-/g, "") + Utilities.getUuid().replace(/-/g, ""));
+  props.setProperty("SITE", "https://cave.schonegg.stream");
+  MailApp.getRemainingDailyQuota(); // asks for the send-email permission now, not on the first invite
+  Logger.log("Set up. Copy KEY from Project Settings > Script properties into the server.");
+}
+
 function answer(o) {
   return ContentService.createTextOutput(JSON.stringify(o)).setMimeType(ContentService.MimeType.JSON);
 }
