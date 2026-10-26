@@ -210,3 +210,13 @@ nothing new; then a watcher room whose cursors never appear in the team room.
 
 Storage limits (phase 6), the per-cave server-reading switch (phase 7), voice (phase 3), the driver seat
 and claims (phase 2).
+
+## As built (step 1)
+- Live delivery is a streamed HTTP response (newline-delimited JSON over `fetch`), not a WebSocket.
+- The stream always replays from a given entry number; the client fetches the snapshot itself.
+- Snapshots are locked JSON `{upTo, ops}`; the `upTo` inside the lock is authoritative and must match the server's copy.
+- Entries are locked JSON `{c: clientId, ops}`; a client skips its own entries by `c`.
+- Device public keys are unique per member, not globally (another member holding the same key gets a device of their own).
+- Streams are capped at 20 per member (the oldest is closed first).
+- New-device approval is deferred (Nathan, 2026-10-25); devices trust the server-listed device list for now.
+- Save as keeps the same room (it is the same cave written elsewhere); a future copy feature must clear the room id.
