@@ -14,7 +14,8 @@ CREATE TABLE IF NOT EXISTS members (
   created_at INTEGER NOT NULL,
   last_seen_at INTEGER,
   welcomed_at INTEGER,
-  removed_at INTEGER
+  removed_at INTEGER,
+  notice_version INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS invites (
   id TEXT PRIMARY KEY,
@@ -114,6 +115,9 @@ export function openDb(path: string): Db {
   if (!cols.some((c) => c.name === 'storage')) {
     db.exec("ALTER TABLE caves ADD COLUMN storage TEXT NOT NULL DEFAULT 'locked' CHECK (storage IN ('locked','open'))");
   }
+  // The newest one-time notice each member has seen (0: none; see members.ts CURRENT_NOTICE).
+  const memberCols = db.prepare('PRAGMA table_info(members)').all() as { name: string }[];
+  if (!memberCols.some((c) => c.name === 'notice_version')) db.exec('ALTER TABLE members ADD COLUMN notice_version INTEGER NOT NULL DEFAULT 0');
   return db;
 }
 

@@ -1,9 +1,9 @@
 <script lang="ts">
   // Sign-in is required. Until the account is known this covers the whole page: loading, the first-sign-in
-  // welcome, not invited, removed, or signed out. Offline it shows a strip instead and lets the app run.
+  // welcome, the one-time "Where your caves live" notice, not invited, removed, or signed out. Offline it shows a strip instead and lets the app run.
   import { untrack } from 'svelte';
   import { Lock } from '@lucide/svelte';
-  import { account, finishWelcome } from '../../lib/account.svelte';
+  import { account, finishWelcome, seeNotice } from '../../lib/account.svelte';
   import { isDesktop } from '../../lib/desktop';
   import { startDesktopSignIn } from '../../lib/desktop-signin';
   import { flush } from '../../lib/shelf.svelte';
@@ -39,6 +39,17 @@
       busy = false;
     }
   }
+  async function noticeOk() {
+    busy = true;
+    error = '';
+    try {
+      await seeNotice();
+    } catch {
+      error = "Couldn't save that. Check your connection and try again.";
+    } finally {
+      busy = false;
+    }
+  }
   // Signing in again, or as someone else, goes through TinyAuth: a reload of the page after its sign-out.
   // The open cave is stored first, so the reload cannot lose an edit made in the last moment.
   const signInAgain = async () => {
@@ -56,6 +67,11 @@
   };
 </script>
 
+{#snippet whereCavesLive()}
+  <p>Your caves are stored on CaveCAD's server and synced to your devices so you can work offline. Only people you give a seat in a cave's room can open it. The server's admins can technically read everything stored on it.</p>
+  <p>The server also knows your name, email, and when edits happened.</p>
+{/snippet}
+
 {#if account.phase === 'offline'}
   <div class="strip" role="status">Offline: working on what's on this device</div>
 {:else if account.phase === 'offline-expired'}
@@ -72,13 +88,17 @@
         <div class="note">
           <Lock size={18} aria-hidden="true" />
           <strong>Where your caves live</strong>
-          <p>Your caves are stored on CaveCAD's server and synced to your devices so you can work offline. Only people you give a seat in a cave's room can open it. The server's admins can technically read everything stored on it.</p>
-          <p>The server also knows your name, email, and when edits happened.</p>
+          {@render whereCavesLive()}
         </div>
         <label class="lab" for="welcome-name">Name shown to others</label>
         <input id="welcome-name" class="field" bind:value={name} maxlength="40" />
         <!-- Connecting a cloud drive is for a later release (DrivesSection.svelte waits for it). -->
         <div class="row"><button class="btn primary" disabled={busy} onclick={done}>Continue</button></div>
+      {:else if account.phase === 'notice'}
+        <!-- Shown once to members welcomed under the old note, which said the server could not read their caves. -->
+        <h2>Where your caves live</h2>
+        <div class="note">{@render whereCavesLive()}</div>
+        <div class="row"><button class="btn primary" disabled={busy} onclick={noticeOk}>OK</button></div>
       {:else if account.phase === 'not-invited'}
         <h2>CaveCAD is invite only for now</h2>
         <p>You're signed in as {account.email}, {REASONS[account.reason] ?? REASONS.none}</p>

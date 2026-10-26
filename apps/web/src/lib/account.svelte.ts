@@ -1,14 +1,14 @@
 // Who is signed in to CaveCAD, for the whole page. Sign-in is required: the app starts by asking the server
 // (startAccount); with no network it opens on the offline pass this device was given last time it was online.
 // The display name and colour are the ones others see (`me` in me.svelte.ts).
-import { accountApi, offlinePhase, passMember, singleFlight, type AccountApi, type Drive, type Member, type NotInvitedReason } from './account-api';
+import { accountApi, arrivalPhase, offlinePhase, passMember, singleFlight, type AccountApi, type Drive, type Member, type NotInvitedReason } from './account-api';
 import { verifyPass } from './pass';
 import { me } from './me.svelte';
 import { setAccountLock } from './readonly';
 import { desktopBearer, finishDesktopSignIn, refreshDesktop, signOutDesktop } from './desktop-signin';
 import { isDesktop } from './desktop';
 
-export type Phase = 'loading' | 'ready' | 'welcome' | 'not-invited' | 'removed' | 'signed-out' | 'offline' | 'offline-expired';
+export type Phase = 'loading' | 'ready' | 'welcome' | 'notice' | 'not-invited' | 'removed' | 'signed-out' | 'offline' | 'offline-expired';
 
 export const account = $state({
   phase: 'loading' as Phase,
@@ -143,7 +143,7 @@ export const startAccount: () => Promise<void> = singleFlight(async () => {
     account.tailnet = r.via === 'tailnet';
     account.expired = false;
     account.signInError = '';
-    account.phase = r.firstVisit ? 'welcome' : 'ready';
+    account.phase = arrivalPhase(r);
     await savePass(r.pass, r.member);
     return;
   }
@@ -190,6 +190,13 @@ export async function handleAuthLink(url: string): Promise<boolean> {
 /** Leaves the first-sign-in page, keeping the name the person typed. */
 export async function finishWelcome(displayName: string): Promise<void> {
   const { member } = await api.updateMe({ welcomed: true, displayName });
+  useMember(member);
+  account.phase = 'ready';
+}
+
+/** Leaves the one-time "Where your caves live" notice: marked seen, so it is not shown again. */
+export async function seeNotice(): Promise<void> {
+  const { member } = await api.updateMe({ noticeSeen: true });
   useMember(member);
   account.phase = 'ready';
 }

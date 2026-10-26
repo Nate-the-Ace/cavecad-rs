@@ -111,9 +111,26 @@ function notInvited(db: Db, email: string, token: string | undefined, now: numbe
   return { status: 'not-invited', email, reason, inviter: nameOf(db, inv.invited_by) };
 }
 
-/** Marks the first-sign-in page as seen. */
+/**
+ * The newest one-time notice. 1: "Where your caves live" (server caves, 2026-10-26), shown again to members who
+ * were welcomed under the old note saying the server could not read their caves.
+ */
+export const CURRENT_NOTICE = 1;
+
+/** Marks the first-sign-in page as seen; it carries the current notice's wording, so that is marked seen too. */
 export function markWelcomed(db: Db, memberId: string, now: number): void {
-  db.prepare('UPDATE members SET welcomed_at = ? WHERE id = ?').run(now, memberId);
+  db.prepare('UPDATE members SET welcomed_at = ?, notice_version = MAX(notice_version, ?) WHERE id = ?').run(now, CURRENT_NOTICE, memberId);
+}
+
+/** Whether the member has seen the current one-time notice. */
+export function noticeSeen(db: Db, memberId: string): boolean {
+  const r = db.prepare('SELECT notice_version FROM members WHERE id = ?').get(memberId) as { notice_version: number } | undefined;
+  return !!r && r.notice_version >= CURRENT_NOTICE;
+}
+
+/** Marks the current one-time notice as seen. */
+export function markNoticeSeen(db: Db, memberId: string): void {
+  db.prepare('UPDATE members SET notice_version = MAX(notice_version, ?) WHERE id = ?').run(CURRENT_NOTICE, memberId);
 }
 
 /** Changes a member's own display name and colour. */

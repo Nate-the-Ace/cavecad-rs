@@ -7,7 +7,7 @@ export type Drive = { id: string; provider: DriveProvider; accountLabel: string;
 export type Invite = { id: string; email: string; role: Role; invitedBy: string; createdAt: number; expiresAt: number };
 export type NotInvitedReason = 'none' | 'expired' | 'used' | 'cancelled' | 'other-email';
 export type MeResult =
-  | { kind: 'member'; member: Member; drives: Drive[]; firstVisit: boolean; signups: 'invite' | 'open'; pass: string; via?: 'tailnet' }
+  | { kind: 'member'; member: Member; drives: Drive[]; firstVisit: boolean; noticeSeen?: boolean; signups: 'invite' | 'open'; pass: string; via?: 'tailnet' }
   | { kind: 'not-invited'; email: string; reason: NotInvitedReason; inviter?: string; via?: 'tailnet' }
   | { kind: 'removed'; email: string; via?: 'tailnet' }
   | { kind: 'signed-out' }
@@ -92,7 +92,7 @@ export function accountApi(c: ApiConfig) {
       if (out.status === 'removed') return { kind: 'removed', email: String(out.email), ...via };
       return { kind: 'not-invited', email: String(out.email), reason: out.reason as NotInvitedReason, inviter: out.inviter as string | undefined, ...via };
     },
-    updateMe: (p: { displayName?: string; colour?: string; welcomed?: boolean }) => call<{ member: Member }>('PATCH', '/api/me', p),
+    updateMe: (p: { displayName?: string; colour?: string; welcomed?: boolean; noticeSeen?: boolean }) => call<{ member: Member }>('PATCH', '/api/me', p),
     addDrive: (provider: DriveProvider, accountLabel: string) => call<{ drive: Drive }>('POST', '/api/me/drives', { provider, accountLabel }),
     removeDrive: (id: string) => call<{ ok: true }>('DELETE', `/api/me/drives/${encodeURIComponent(id)}`),
     members: async () => (await call<{ members: Member[] }>('GET', '/api/admin/members')).members,
@@ -119,6 +119,14 @@ export function offlinePhase(why: 'ok' | 'expired' | 'no-key' | 'malformed' | 's
  *  from the copy kept beside it (which nothing vouches for). */
 export function passMember(kept: Member, claims: { memberId: string; email: string; role: Role }): Member {
   return { ...kept, id: claims.memberId, email: claims.email, role: claims.role };
+}
+
+/**
+ * Where a member lands: the first-sign-in page, the one-time "Where your caves live" notice (welcomed before it
+ * existed and not seen it yet), or the app. A server that does not report the notice shows none.
+ */
+export function arrivalPhase(r: { firstVisit: boolean; noticeSeen?: boolean }): 'welcome' | 'notice' | 'ready' {
+  return r.firstVisit ? 'welcome' : r.noticeSeen === false ? 'notice' : 'ready';
 }
 
 /** Wraps an async job so a call while one is running gets that same run instead of starting another. */

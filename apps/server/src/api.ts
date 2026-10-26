@@ -101,11 +101,12 @@ export async function handleApi(d: ApiDeps, req: IncomingMessage, res: ServerRes
   try {
     if (path === '/api/devices' || path === '/api/caves' || path.startsWith('/api/caves/')) return await handleRooms(d.db, me.id, req, res, now);
     if (path === '/api/me' && method === 'GET') {
-      return send(res, 200, { status: 'member', member: me, drives: M.listDrives(d.db, me.id), firstVisit: r.firstVisit, signups: getSetting(d.db, 'signups'), ...via, pass: signPass(d.passKey, { memberId: me.id, email: me.email, role: me.role }, now) });
+      return send(res, 200, { status: 'member', member: me, drives: M.listDrives(d.db, me.id), firstVisit: r.firstVisit, noticeSeen: M.noticeSeen(d.db, me.id), signups: getSetting(d.db, 'signups'), ...via, pass: signPass(d.passKey, { memberId: me.id, email: me.email, role: me.role }, now) });
     }
     if (path === '/api/me' && method === 'PATCH') {
       const b = await readJson(req);
       if (b.welcomed === true) M.markWelcomed(d.db, me.id, now);
+      if (b.noticeSeen === true) M.markNoticeSeen(d.db, me.id);
       return send(res, 200, { member: M.updateProfile(d.db, me.id, { displayName: b.displayName as string | undefined, colour: b.colour as string | undefined }) });
     }
     if (path === '/api/me/drives' && method === 'POST') {

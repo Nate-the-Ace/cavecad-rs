@@ -26,7 +26,7 @@ ok(!(await verifyPass(pass, '', now)).ok, 'no key in the build is refused');
 import { createServer } from 'node:http';
 import { openDb } from '../../server/src/db.ts';
 import { handleApi } from '../../server/src/api.ts';
-import { accountApi, AccountError } from '../src/lib/account-api.ts';
+import { accountApi, AccountError, arrivalPhase } from '../src/lib/account-api.ts';
 
 const db = openDb(':memory:');
 let user: string | null = 'nathan@example.com';
@@ -41,6 +41,18 @@ const api = accountApi({ base, fetch });
 
 const m = await api.me();
 ok(m.kind === 'member' && m.member.role === 'admin' && m.firstVisit, 'first admin arrives as a member on first visit');
+ok(m.kind === 'member' && m.noticeSeen === false && arrivalPhase(m) === 'welcome', 'a new member sees the welcome page first');
+await api.updateMe({ welcomed: true });
+const m2 = await api.me();
+ok(m2.kind === 'member' && m2.noticeSeen === true && arrivalPhase(m2) === 'ready', 'the welcome page marks the notice too');
+// A member welcomed before the notice existed: shown it once, then OK marks it.
+db.prepare('UPDATE members SET notice_version = 0').run();
+const m3 = await api.me();
+ok(m3.kind === 'member' && !m3.firstVisit && arrivalPhase(m3) === 'notice', 'an already-welcomed member who has not seen the notice gets it');
+await api.updateMe({ noticeSeen: true });
+const m4 = await api.me();
+ok(m4.kind === 'member' && arrivalPhase(m4) === 'ready', 'after OK the notice is not shown again');
+ok(arrivalPhase({ firstVisit: false }) === 'ready', 'a server that does not report the notice shows none');
 const made = await api.invite('rick@example.com', 'member');
 ok(made.emailed === false && made.link.startsWith('https://cave.test/?signup='), 'invite made, not emailed with no mailer');
 user = 'rick@example.com';

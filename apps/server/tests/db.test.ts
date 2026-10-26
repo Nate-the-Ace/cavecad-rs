@@ -29,3 +29,15 @@ test('indexes for the rooms lookups', () => {
     assert.ok(idx.some((s) => s.startsWith(`${table}:`) && s.includes(`(${col})`)), `${table}(${col})`);
   }
 });
+
+test('an existing database without notice_version on members gains it at 0 on start', async () => {
+  const { DatabaseSync } = await import('node:sqlite');
+  const file = join(mkdtempSync(join(tmpdir(), 'cave-db-')), 'old.sqlite');
+  const old = new DatabaseSync(file);
+  old.exec("CREATE TABLE members (id TEXT PRIMARY KEY, email TEXT NOT NULL UNIQUE, display_name TEXT NOT NULL, colour TEXT NOT NULL, role TEXT NOT NULL, provider TEXT, invited_by TEXT, created_at INTEGER NOT NULL, last_seen_at INTEGER, welcomed_at INTEGER, removed_at INTEGER); INSERT INTO members (id, email, display_name, colour, role, created_at, welcomed_at) VALUES ('m1', 'a@b.c', 'A', '#000000', 'member', 1, 1);");
+  old.close();
+  const db = openDb(file);
+  assert.equal(db.prepare("SELECT notice_version FROM members WHERE id = 'm1'").get().notice_version, 0);
+  db.close();
+  openDb(file).close(); // and a second start leaves it be
+});

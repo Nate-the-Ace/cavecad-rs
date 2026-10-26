@@ -31,7 +31,7 @@ async function start(mailOk = true, extra: Partial<ApiDeps> = {}) {
     const res = await fetch(base + path, { method, headers: { ...(user ? { 'x-test-user': user } : {}), 'Content-Type': 'application/json', ...extra }, body: raw });
     return { status: res.status, headers: res.headers, json: res.headers.get('content-type')?.includes('json') ? await res.json() : await res.text() };
   };
-  return { server, call };
+  return { server, call, db };
 }
 
 test('me, invites, admin rules over HTTP', async () => {
@@ -255,6 +255,35 @@ test('the app itself is only for members and people with an invite waiting', asy
 
     await call(ADMIN, 'PUT', '/api/admin/settings/signups', { signups: 'open' });
     assert.equal((await call('anyone@example.com', 'GET', '/')).status, 200, 'sign-ups open: anyone');
+  } finally {
+    server.close();
+  }
+});
+
+test('the "where your caves live" notice: shown once to members welcomed before it, marked with the welcome for new ones', async () => {
+  const { server, call, db } = await start();
+  try {
+    const first = (await call(ADMIN, 'GET', '/api/me')).json;
+    assert.equal(first.firstVisit, true);
+    assert.equal(first.noticeSeen, false);
+    // A new member: seeing the welcome page marks the notice too.
+    await call(ADMIN, 'PATCH', '/api/me', { welcomed: true });
+    const after = (await call(ADMIN, 'GET', '/api/me')).json;
+    assert.deepEqual([after.firstVisit, after.noticeSeen], [false, true]);
+
+    // A member welcomed before the notice existed (notice_version 0) sees it until they say OK.
+    await call(ADMIN, 'PUT', '/api/admin/settings/signups', { signups: 'open' });
+    await call('old@example.com', 'GET', '/api/me');
+    await call('old@example.com', 'PATCH', '/api/me', { welcomed: true });
+    db.prepare("UPDATE members SET notice_version = 0 WHERE email = 'old@example.com'").run();
+    const old = (await call('old@example.com', 'GET', '/api/me')).json;
+    assert.deepEqual([old.firstVisit, old.noticeSeen], [false, false]);
+    assert.equal((await call('old@example.com', 'PATCH', '/api/me', { noticeSeen: true })).status, 200);
+    assert.equal((await call('old@example.com', 'GET', '/api/me')).json.noticeSeen, true);
+    // Only true marks it; anything else changes nothing.
+    db.prepare("UPDATE members SET notice_version = 0 WHERE email = 'old@example.com'").run();
+    await call('old@example.com', 'PATCH', '/api/me', { noticeSeen: false });
+    assert.equal((await call('old@example.com', 'GET', '/api/me')).json.noticeSeen, false);
   } finally {
     server.close();
   }
