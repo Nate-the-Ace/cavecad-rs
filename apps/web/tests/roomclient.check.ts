@@ -5,7 +5,9 @@ import { createHash, generateKeyPairSync } from 'node:crypto';
 import { openDb } from '../../server/src/db.ts';
 import { handleApi } from '../../server/src/api.ts';
 import { lock, makeCaveKey, makeDeviceKeys, wrapCaveKey } from '../src/lib/room-crypto.ts';
-import { RoomClient, QUARANTINE_INFO, downloadCave, handOverKeys, listMyCaves, type ServerAccess, type CaveEngine, type KeySeen, type Pending, type RoomClientOptions, type RoomStatus } from '../src/lib/room-client.ts';
+import { createInvite } from '../../server/src/members.ts';
+import { addRoom, removeGuest, setGuest } from '../../server/src/rooms.ts';
+import { RoomClient, QUARANTINE_INFO, REMOVED, type Role, downloadCave, handOverKeys, listMyCaves, type ServerAccess, type CaveEngine, type KeySeen, type Pending, type RoomClientOptions, type RoomStatus } from '../src/lib/room-client.ts';
 
 let bad = 0;
 const ok = (c: boolean, m: string) => { if (!c) { bad++; console.log('FAIL', m); } };
@@ -35,15 +37,19 @@ function fakeEngine(): Fake {
 const db = openDb(':memory:');
 const server = createServer((req, res) => void handleApi({
   db, adminEmail: 'nathan@example.com', passKey: generateKeyPairSync('ed25519').privateKey, publicUrl: 'http://127.0.0.1', mailer: { url: '', key: '' },
-  whoIs: async () => ({ email: 'nathan@example.com', name: 'Nathan', provider: null, subject: '' }),
+  // Nathan unless a test names another member (a guest) in X-Test-User.
+  whoIs: async (r) => {
+    const e = String(r.headers['x-test-user'] ?? 'nathan@example.com');
+    return { email: e, name: e.split('@')[0], provider: null, subject: '' };
+  },
 }, req, res));
 await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
 const base = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
 
 type Dev = { id: string; privateKey: CryptoKey; publicKey: string };
-async function device(): Promise<Dev> {
+async function device(user = ''): Promise<Dev> {
   const keys = await makeDeviceKeys();
-  const res = await fetch(base + '/api/devices', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ publicKey: keys.publicKey }) });
+  const res = await fetch(base + '/api/devices', { method: 'POST', headers: { 'Content-Type': 'application/json', ...(user ? { 'x-test-user': user } : {}) }, body: JSON.stringify({ publicKey: keys.publicKey }) });
   return { id: (await res.json()).device.id as string, privateKey: keys.privateKey, publicKey: keys.publicKey };
 }
 /** What each device keeps between runs (IndexedDB in the app), per cave: newest key seen, unposted entries, synced hash. */
@@ -700,6 +706,81 @@ const storageOf = (id: string) => (db.prepare('SELECT storage FROM caves WHERE i
   ok(!bs.includes('error'), `L6: no error (${bw.join(';')})`);
   bc.stop();
   ac2.stop();
+}
+
+// ---- guests: an editor syncs both ways, a watcher only follows, a removed guest stops ------------------------
+{
+  const ANA = 'ana@example.com';
+  const nathan = (db.prepare("SELECT id FROM members WHERE email = 'nathan@example.com'").get() as { id: string }).id;
+  createInvite(db, nathan, ANA, 'member', Date.now());
+  const anaDev = await device(ANA);
+  const ana = (db.prepare('SELECT id FROM members WHERE email = ?').get(ANA) as { id: string }).id;
+  const asAna = { headers: () => ({ 'x-test-user': ANA }) };
+
+  const ownerDev = await device();
+  const mine = fakeEngine();
+  mine.add('entrance');
+  const os: RoomStatus[] = [];
+  const oc = client(mine, ownerDev, os);
+  await oc.open();
+  ok(await until(() => os.includes('synced')), 'G: the owner is synced');
+  const shared = mine.roomId();
+  const team = addRoom(db, nathan, shared, 'Team', Date.now());
+
+  // Not a guest yet: Ana's copy of the file gets a room of her own, as any stranger's would.
+  ok((await listMyCaves({ base, fetch, device: anaDev, ...asAna, loadKeySeen: async () => null, saveKeySeen: async () => {} })).length === 0, 'G: a stranger lists nothing');
+
+  setGuest(db, nathan, shared, team, ana, 'editor', Date.now());
+  const access: ServerAccess = { base, fetch, device: anaDev, ...asAna, loadKeySeen: async () => null, saveKeySeen: async () => {} };
+  const listed = await listMyCaves(access);
+  ok(listed.length === 1 && listed[0].id === shared && listed[0].role === 'editor' && listed[0].ownerName === 'nathan', `G1: the shared cave is on Ana's list as Nathan's (${JSON.stringify(listed.map((c) => [c.role, c.ownerName]))})`);
+  const got = await downloadCave(access, shared);
+  ok(got.status === 'ok', 'G1: Ana fetches the shared cave');
+
+  const hers = fakeEngine();
+  hers.setRoomId(shared);
+  const as: RoomStatus[] = [];
+  const roles: Role[] = [];
+  const reasons: string[] = [];
+  const ac = client(hers, anaDev, as, { ...asAna, onRole: (r) => roles.push(r), reasons });
+  await ac.open();
+  ok(await until(() => hers.ops.has('entrance')), 'G2: the editor gets the cave');
+  ok(roles[0] === 'editor', `G2: and is told she is an editor (${roles.join(',')})`);
+  hers.add('her survey');
+  ok(await until(() => mine.ops.has('her survey')), 'G2: an editor\'s edit reaches the owner');
+  mine.add('his survey');
+  ok(await until(() => hers.ops.has('his survey')), 'G2: and the owner\'s reaches her');
+  ok(hers.roomId() === shared, 'G2: the guest never makes a room of her own');
+
+  // Made a watcher: the server closes her stream, her client reads the new seat, posts nothing, still follows.
+  setGuest(db, nathan, shared, team, ana, 'watcher', Date.now());
+  const { closeMember } = await import('../../server/src/streams.ts');
+  closeMember(shared, ana);
+  ok(await until(() => roles.at(-1) === 'watcher', 6000), `G3: the client hears it is now watching (${roles.join(',')})`);
+  const before = rows(shared);
+  hers.add('a watcher edit');
+  await sleep(300);
+  ok(rows(shared) === before, 'G3: a watcher posts nothing');
+  mine.add('more from the owner');
+  ok(await until(() => hers.ops.has('more from the owner'), 6000), 'G3: a watcher still gets edits');
+  ok(!as.includes('error'), `G3: no error for a watcher (${reasons.join(';')})`);
+
+  // Taken off: sync stops with the removal note, and no new room is made of the copy.
+  removeGuest(db, nathan, shared, team, ana, Date.now());
+  closeMember(shared, ana);
+  ok(await until(() => as.at(-1) === 'error', 6000), `G4: a removed guest's sync stops (${as.slice(-3).join(',')})`);
+  ok(reasons.at(-1) === REMOVED, `G4: with the removal note (${reasons.at(-1)})`);
+  ok(hers.roomId() === shared, 'G4: the copy keeps its room id: no new room');
+  ac.stop();
+
+  // Opening the cave again after removal: stops at once with the same note.
+  const again: string[] = [];
+  const ac2 = client(fakeEngine(), anaDev, [], { ...asAna, reasons: again });
+  (ac2 as unknown as { o: { engine: CaveEngine } }).o.engine.setRoomId(shared);
+  await ac2.open();
+  ok(again.at(-1) === REMOVED, `G5: reopening a cave one was taken off stops with the note (${again.join(';')})`);
+  ac2.stop();
+  oc.stop();
 }
 
 server.close();

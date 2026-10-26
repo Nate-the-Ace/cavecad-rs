@@ -1,176 +1,244 @@
 <script lang="ts">
-  // The Rooms panel: everything about keeping caves in step through the CaveCAD server, in one place. This
-  // computer (signed in, its code), the open cave's sync state, every cave of yours on the server with an Open
-  // button, your computers, and Send keys now (gives your other computers the cave keys this one has, so they can
-  // open those caves). It reads; it never changes a cave except by opening one.
-  import { RefreshCw, KeyRound } from '@lucide/svelte';
+  // The Rooms panel: who the open cave is shared with. Left, the cave's rooms (Private first: owners only); right,
+  // the picked room's guest list. Owners add, rename and remove rooms, add members as Editor or Watcher, change a
+  // guest's seat and take guests off. Guests see the rooms they are in, read-only. The server enforces the rules
+  // (lib/cave-rooms.svelte.ts says what it refused). People are managed, never their computers.
+  import { Lock, Users, Plus, Trash2, Pencil, X, UserPlus, RefreshCw } from '@lucide/svelte';
   import { account } from '../lib/account.svelte';
   import { cave } from '../lib/cave.svelte';
-  import { loadEngine } from '../lib/engine';
+  import { engine, loadEngine } from '../lib/engine';
   import { ROOM_TEXT, room } from '../lib/room.svelte';
-  import { shelf } from '../lib/shelf.svelte';
-  import { openServerCave, refreshServerCaves, sendKeysNow, serverCaves } from '../lib/server-caves.svelte';
-
-  let message = $state('');
-  let busy = $state(false);
+  import { addRoom, caveRooms, matches, readRooms, removeGuest, removeRoom, renameRoom, setGuest, type Member, type Seat } from '../lib/cave-rooms.svelte';
 
   const signedIn = $derived((account.phase === 'ready' || account.phase === 'offline') && !!account.member);
 
-  // Read now and every 15 s while the panel is showing (signing in reads it again).
+  // The open cave's id on the server: read again when a cave opens, the account changes, or sync reaches a new state
+  // (a new cave gets its id when its room is made).
+  let caveId = $state('');
   $effect(() => {
-    void account.phase;
+    void cave.opened;
+    void cave.hasCave;
+    void room.status;
     void account.member?.id;
-    void loadEngine().then(() => refreshServerCaves());
-    const t = setInterval(() => void refreshServerCaves(), 15_000);
+    void loadEngine().then(() => (caveId = cave.hasCave && signedIn ? engine.roomId() : ''));
+  });
+  // Read now, and every 20 s while the panel shows (someone else may change the lists).
+  $effect(() => {
+    const id = caveId;
+    void readRooms(id);
+    const t = setInterval(() => void readRooms(id), 20_000);
     return () => clearInterval(t);
   });
 
-  async function refresh() {
-    busy = true;
-    await refreshServerCaves();
-    busy = false;
+  const owner = $derived(caveRooms.you === 'owner');
+  let picked = $state('');
+  const selected = $derived(caveRooms.rooms.find((r) => r.id === picked) ?? caveRooms.rooms.find((r) => r.kind === 'shared') ?? caveRooms.rooms[0] ?? null);
+
+  let adding = $state(false);
+  let newName = $state('');
+  async function add() {
+    const id = await addRoom(newName);
+    if (id) {
+      picked = id;
+      adding = false;
+      newName = '';
+    }
   }
 
-  async function open(id: string) {
-    message = await openServerCave(id);
+  let renaming = $state(false);
+  let rename = $state('');
+  async function doRename() {
+    if (selected && (await renameRoom(selected.id, rename))) renaming = false;
+  }
+  async function remove() {
+    if (!selected) return;
+    const n = selected.guests.length;
+    const who = n === 0 ? '' : ` Its ${n} guest${n === 1 ? '' : 's'} stop getting new edits unless they are in another room of this cave.`;
+    if (window.confirm(`Remove the “${selected.name}” room?${who}`)) await removeRoom(selected.id);
   }
 
-  const openNowId = $derived(shelf.records.find((r) => r.id === shelf.currentId)?.roomId ?? '');
-  const here = $derived(serverCaves.computers.find((c) => c.here) ?? null);
-
-  const date = (ms: number) => (ms ? new Date(ms).toLocaleDateString(undefined, { dateStyle: 'medium' }) : '—');
-  function ago(ms: number | null): string {
-    if (!ms) return 'never';
-    const s = Math.max(0, (Date.now() - ms) / 1000);
-    if (s < 90) return 'just now';
-    if (s < 3600) return `${Math.round(s / 60)} min ago`;
-    if (s < 86400 * 2) return `${Math.round(s / 3600)} h ago`;
-    return date(ms);
+  let typed = $state('');
+  let seat = $state<Seat>('editor');
+  let chosen = $state<Member | null>(null);
+  const found = $derived(chosen ? [] : matches(typed, selected));
+  function choose(m: Member) {
+    chosen = m;
+    typed = `${m.name} (${m.email})`;
+  }
+  async function addGuest() {
+    const m = chosen ?? (matches(typed, selected).length === 1 ? matches(typed, selected)[0] : null);
+    if (!selected || !m) {
+      caveRooms.problem = 'Pick a CaveCAD member from the list as you type.';
+      return;
+    }
+    if (await setGuest(selected.id, m.id, seat)) {
+      typed = '';
+      chosen = null;
+    }
   }
 
-  /** What one cave is to this computer, in words. */
-  function where(c: (typeof serverCaves.all)[number]): string {
-    if (c.id === openNowId && cave.hasCave) return 'open now';
-    if (c.shelfId) return 'on this computer';
-    if (serverCaves.opening === c.id) return 'fetching…';
-    if (!c.hasKey) return serverCaves.waitingFor === c.id ? 'waiting for a key: opens by itself when it arrives' : 'waiting for a key';
-    return 'not on this computer yet';
-  }
-
-  /** The open cave's state in words, including why a cave does not sync at all. */
-  const openState = $derived(
-    !cave.hasCave
-      ? 'No cave is open.'
-      : room.info
-        ? room.info
-        : room.status
-          ? ROOM_TEXT[room.status] + (room.status === 'error' && room.reason ? ` (${room.reason})` : '')
-          : !signedIn
-            ? 'Not signed in: this cave is kept only on this computer.'
-            : 'Not syncing: samples never sync.',
-  );
+  const roleText: Record<string, string> = { owner: 'you own this cave', editor: "you're an editor", watcher: "you're watching" };
+  const syncText = $derived(room.info || (room.status ? ROOM_TEXT[room.status] + (room.status === 'error' && room.reason ? `: ${room.reason}` : '') : ''));
 </script>
 
 <div class="panel">
   <div class="bar">
-    <button onclick={refresh} disabled={busy || !signedIn} title="Read the list from the server again"><RefreshCw size={14} /> Refresh</button>
-    <button onclick={() => void sendKeysNow()} disabled={!signedIn} title="Give your other computers the keys this one has, so they can open those caves"><KeyRound size={14} /> Send keys now</button>
-    {#if serverCaves.sent}<span class="note">{serverCaves.sent}</span>{/if}
+    {#if cave.hasCave}<b>{cave.name}</b>{/if}
+    {#if caveRooms.you}<span class="muted">· {roleText[caveRooms.you]}</span>{/if}
+    <span class="sync" class:err={room.status === 'error'}>{syncText}</span>
+    <button class="icon" onclick={() => void readRooms(caveId)} disabled={!caveId} title="Read the rooms from the server again" aria-label="Refresh"><RefreshCw size={14} /></button>
   </div>
 
-  <div class="body">
-    <section>
-      <h3>This computer</h3>
-      {#if !signedIn}
-        <p>Not signed in. Sign in (top right) to keep your caves in step across your computers.</p>
-      {:else}
-        <p>Signed in as <b>{account.member?.displayName}</b> ({account.member?.email}){account.phase === 'offline' ? ' · offline' : ''}</p>
-        {#if here}
-          <p class="muted">Computer code <span class="code">{here.code}</span> · added {date(here.createdAt)}</p>
-        {:else if serverCaves.loaded}
-          <p class="muted">This computer is not registered with the server yet.</p>
+  {#if !cave.hasCave}
+    <p class="note">Open a cave to see its rooms.</p>
+  {:else if !signedIn}
+    <p class="note">Sign in (top right) to share this cave.</p>
+  {:else if !caveId && !room.status}
+    <p class="note">This cave isn't kept on the server, so it can't be shared. Samples never are: make a new cave, or open one of your own.</p>
+  {:else if !caveRooms.loaded}
+    <p class="note">{caveRooms.problem || 'Reading…'}</p>
+  {:else}
+    <div class="body">
+      <div class="rooms" role="listbox" aria-label="Rooms">
+        <div class="head">Rooms</div>
+        {#each caveRooms.rooms as r (r.id)}
+          <button class="room" class:sel={selected?.id === r.id} role="option" aria-selected={selected?.id === r.id} onclick={() => ((picked = r.id), (renaming = false), (typed = ''), (chosen = null))}>
+            {#if r.kind === 'private'}<Lock size={13} />{:else}<Users size={13} />{/if}
+            <span class="rname">{r.name}</span>
+            <span class="count">{r.kind === 'private' ? 'owners' : r.guests.length}</span>
+          </button>
+        {/each}
+        {#if owner}
+          {#if adding}
+            <form class="addroom" onsubmit={(e) => (e.preventDefault(), void add())}>
+              <!-- svelte-ignore a11y_autofocus -->
+              <input bind:value={newName} placeholder="Survey team" maxlength="60" aria-label="New room name" autofocus onkeydown={(e) => e.key === 'Escape' && (adding = false)} />
+              <div class="row"><button type="submit" disabled={caveRooms.busy || !newName.trim()}>Add</button><button type="button" onclick={() => (adding = false)}>Cancel</button></div>
+            </form>
+          {:else}
+            <button class="addbtn" onclick={() => ((adding = true), (newName = ''))}><Plus size={13} /> Add a room</button>
+          {/if}
         {/if}
-      {/if}
-      {#if serverCaves.problem}<p class="err">{serverCaves.problem}</p>{/if}
-    </section>
+      </div>
 
-    <section>
-      <h3>Open cave</h3>
-      <p>{#if cave.hasCave}<b class="cave">{cave.name}</b>{/if}{openState}</p>
-    </section>
+      <div class="detail">
+        {#if selected}
+          <div class="title">
+            {#if renaming}
+              <form class="rename" onsubmit={(e) => (e.preventDefault(), void doRename())}>
+                <!-- svelte-ignore a11y_autofocus -->
+                <input bind:value={rename} maxlength="60" aria-label="Room name" autofocus onkeydown={(e) => e.key === 'Escape' && (renaming = false)} />
+                <button type="submit" disabled={caveRooms.busy || !rename.trim()}>Save</button>
+                <button type="button" onclick={() => (renaming = false)}>Cancel</button>
+              </form>
+            {:else}
+              <h3>{selected.name}</h3>
+              {#if owner && selected.kind === 'shared'}
+                <button class="icon" onclick={() => ((renaming = true), (rename = selected.name))} title="Rename this room" aria-label="Rename this room"><Pencil size={13} /></button>
+                <span class="grow"></span>
+                <button class="danger" onclick={() => void remove()} disabled={caveRooms.busy}><Trash2 size={13} /> Remove room</button>
+              {/if}
+            {/if}
+          </div>
 
-    <section>
-      <h3>Your caves on the server</h3>
-      {#if !signedIn}
-        <p class="muted">Sign in to see them.</p>
-      {:else if !serverCaves.loaded}
-        <p class="muted">Reading…</p>
-      {:else if serverCaves.all.length === 0}
-        <p class="muted">None yet. A cave you make or open while signed in is kept here (samples are not).</p>
-      {:else}
-        <table>
-          <thead><tr><th>Cave</th><th>Here</th><th>Made</th><th></th></tr></thead>
-          <tbody>
-            {#each serverCaves.all as c (c.id)}
-              <tr>
-                <td>{c.name ?? 'A cave from another computer'}</td>
-                <td class:wait={!c.hasKey && !c.shelfId}>{where(c)}</td>
-                <td class="muted">{date(c.createdAt)}</td>
-                <td class="act">
-                  <button onclick={() => void open(c.id)} disabled={(c.id === openNowId && cave.hasCave) || !!serverCaves.opening || serverCaves.waitingFor === c.id}>{serverCaves.opening === c.id ? 'Opening…' : 'Open'}</button>
-                </td>
-              </tr>
-            {/each}
-          </tbody>
-        </table>
-        {#if serverCaves.all.some((c) => !c.hasKey && !c.shelfId)}
-          <p class="muted">A cave waiting for a key opens once one of your other computers runs CaveCAD and hands its key on (or press Send keys now there).</p>
+          {#if selected.kind === 'private'}
+            <p class="muted">Only this cave's owners are in the Private room.</p>
+            <ul class="people">
+              {#each caveRooms.owners as o (o.memberId)}
+                <li><span class="who">{o.name} <span class="muted">{o.email}</span></span><span class="seat">Owner</span></li>
+              {/each}
+            </ul>
+            {#if owner}<p class="muted">To share this cave, add a room and put people on its guest list.</p>{/if}
+          {:else}
+            <div class="head">Guests</div>
+            <ul class="people">
+              {#each selected.guests as g (g.memberId)}
+                <li>
+                  <span class="who">{g.name} <span class="muted">{g.email}</span></span>
+                  {#if owner}
+                    <select value={g.seat} aria-label="Seat for {g.name}" disabled={caveRooms.busy} onchange={(e) => void setGuest(selected.id, g.memberId, (e.currentTarget as HTMLSelectElement).value as Seat)}>
+                      <option value="editor">Editor</option>
+                      <option value="watcher">Watcher</option>
+                    </select>
+                    <button class="icon" onclick={() => void removeGuest(selected.id, g.memberId)} disabled={caveRooms.busy} title="Take {g.name} off this room" aria-label="Take {g.name} off this room"><X size={14} /></button>
+                  {:else}
+                    <span class="seat">{g.seat === 'editor' ? 'Editor' : 'Watcher'}</span>
+                  {/if}
+                </li>
+              {:else}
+                <li class="muted">No guests yet.</li>
+              {/each}
+            </ul>
+
+            {#if owner}
+              <form class="addguest" onsubmit={(e) => (e.preventDefault(), void addGuest())}>
+                <div class="pick">
+                  <input bind:value={typed} oninput={() => (chosen = null)} placeholder="Type a member's name or email" aria-label="Member to add" autocomplete="off" />
+                  {#if found.length}
+                    <div class="drop" role="listbox" aria-label="Matching members">
+                      {#each found as m (m.id)}
+                        <button type="button" role="option" aria-selected="false" onclick={() => choose(m)}>{m.name} <span class="muted">{m.email}</span></button>
+                      {/each}
+                    </div>
+                  {/if}
+                </div>
+                <select bind:value={seat} aria-label="Seat for the new guest">
+                  <option value="editor">Editor</option>
+                  <option value="watcher">Watcher</option>
+                </select>
+                <button type="submit" disabled={caveRooms.busy || !typed.trim()}><UserPlus size={13} /> Add</button>
+              </form>
+              <p class="muted">Editors can change the cave; watchers can only look. Only CaveCAD members can be added: an admin invites new people first. Someone taken off keeps the copy already on their computer but gets no new edits.</p>
+            {/if}
+          {/if}
         {/if}
-      {/if}
-      {#if message}<p class="err">{message}</p>{/if}
-    </section>
-
-    <section>
-      <h3>Your computers</h3>
-      {#if serverCaves.computers.length === 0}
-        <p class="muted">{signedIn ? 'Reading…' : 'Sign in to see them.'}</p>
-      {:else}
-        <table>
-          <thead><tr><th>Computer</th><th>Code</th><th>Added</th><th>Last seen</th></tr></thead>
-          <tbody>
-            {#each serverCaves.computers as d, i (d.id)}
-              <tr>
-                <td>{d.here ? 'This computer' : `Computer ${i + 1}`}</td>
-                <td class="code">{d.code}</td>
-                <td class="muted">{date(d.createdAt)}</td>
-                <td class="muted">{d.here ? 'now' : ago(d.lastSeen)}</td>
-              </tr>
-            {/each}
-          </tbody>
-        </table>
-        <p class="muted">Each browser counts as a computer: it keeps its own key. The code is shown on that computer's own Rooms panel, so you can tell which is which.</p>
-      {/if}
-    </section>
-  </div>
+        {#if caveRooms.problem}<p class="err" role="alert">{caveRooms.problem}</p>{/if}
+      </div>
+    </div>
+  {/if}
 </div>
 
 <style>
   .panel { display: flex; flex-direction: column; height: 100%; background: var(--panel); color: var(--text); font-size: 13px; }
-  .bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 6px 10px; border-bottom: 1px solid var(--line); }
-  .bar button, .act button { display: inline-flex; align-items: center; gap: 5px; font: inherit; font-size: 12px; padding: 4px 10px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel-2); color: var(--text); cursor: pointer; }
+  .bar { display: flex; align-items: center; gap: 6px; padding: 6px 10px; border-bottom: 1px solid var(--line); min-height: 32px; }
+  .sync { margin-left: auto; color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .sync.err { color: var(--danger); white-space: normal; }
+  button { display: inline-flex; align-items: center; gap: 5px; font: inherit; font-size: 12px; padding: 4px 10px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel-2); color: var(--text); cursor: pointer; }
+  button.icon { padding: 4px 6px; background: transparent; border-color: transparent; }
+  button.icon:hover:not(:disabled) { background: var(--hover); }
+  button.danger { color: var(--danger); }
   button:disabled { opacity: 0.5; cursor: default; }
-  .body { flex: 1; overflow: auto; padding: 4px 12px 12px; }
-  section { padding: 8px 0; border-bottom: 1px solid var(--line); }
-  section:last-child { border-bottom: none; }
-  h3 { margin: 0 0 4px; font-size: 12px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
-  p { margin: 2px 0; }
-  .muted, .note { color: var(--muted); font-size: 12px; }
-  .err { color: var(--danger); font-size: 12px; }
-  .code { font-family: ui-monospace, monospace; font-size: 12px; white-space: nowrap; }
-  .cave { margin-right: 8px; }
-  table { border-collapse: collapse; width: 100%; font-size: 12px; margin-top: 4px; }
-  th { text-align: left; color: var(--muted); font-weight: 600; padding: 3px 6px; border-bottom: 1px solid var(--line); }
-  td { padding: 4px 6px; border-bottom: 1px solid var(--line); }
-  td.wait { color: var(--accent); }
-  .act { text-align: right; width: 1%; white-space: nowrap; }
+  input, select { font: inherit; font-size: 12px; padding: 4px 6px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--field); color: var(--text); }
+  .note { padding: 12px; color: var(--muted); margin: 0; }
+  .body { flex: 1; display: grid; grid-template-columns: minmax(130px, 34%) minmax(0, 1fr); min-height: 0; }
+  .rooms { border-right: 1px solid var(--line); padding: 8px; overflow: auto; display: flex; flex-direction: column; gap: 2px; }
+  .head { color: var(--muted); font-size: 12px; margin: 0 0 4px 2px; }
+  .room { width: 100%; border: none; background: transparent; justify-content: flex-start; padding: 6px 8px; }
+  .room:hover { background: var(--hover); }
+  .room.sel { background: var(--accent-bg); color: var(--accent); }
+  .rname { flex: 1; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .count { color: var(--muted); font-size: 11px; }
+  .room.sel .count { color: var(--accent); }
+  .addbtn { margin-top: 6px; justify-content: center; }
+  .addroom { display: flex; flex-direction: column; gap: 4px; margin-top: 6px; }
+  .row { display: flex; gap: 4px; }
+  .detail { padding: 8px 12px; overflow: auto; min-width: 0; }
+  .title { display: flex; align-items: center; gap: 4px; margin-bottom: 8px; }
+  .grow { flex: 1; }
+  h3 { margin: 0; font-size: 15px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .rename { display: flex; gap: 4px; flex: 1; }
+  .rename input { flex: 1; min-width: 0; }
+  .people { list-style: none; margin: 0 0 10px; padding: 0; }
+  .people li { display: flex; align-items: center; gap: 6px; padding: 5px 0; border-bottom: 1px solid var(--line); }
+  .who { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .seat { color: var(--muted); font-size: 12px; }
+  .addguest { display: flex; gap: 6px; align-items: flex-start; }
+  .pick { flex: 1; position: relative; min-width: 0; }
+  .pick input { width: 100%; box-sizing: border-box; }
+  .drop { position: absolute; left: 0; right: 0; top: 100%; z-index: 5; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: 0 4px 14px rgb(0 0 0 / 12%); display: flex; flex-direction: column; margin-top: 2px; }
+  .drop button { border: none; border-radius: 0; background: transparent; justify-content: flex-start; padding: 6px 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .drop button:hover { background: var(--hover); }
+  .muted { color: var(--muted); font-size: 12px; }
+  p.muted { margin: 6px 0; }
+  .err { color: var(--danger); font-size: 12px; margin: 8px 0 0; }
 </style>

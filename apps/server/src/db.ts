@@ -99,6 +99,22 @@ CREATE TABLE IF NOT EXISTS cave_labels (
   locked TEXT NOT NULL,
   updated_at INTEGER NOT NULL
 );
+-- A room's guests (owners are in every room and never listed here). The Private room has none.
+CREATE TABLE IF NOT EXISTS room_guests (
+  room_id TEXT NOT NULL REFERENCES rooms(id),
+  member_id TEXT NOT NULL REFERENCES members(id),
+  seat TEXT NOT NULL CHECK (seat IN ('editor','watcher')),
+  added_at INTEGER NOT NULL,
+  PRIMARY KEY (room_id, member_id)
+);
+-- People taken off every room of a cave, so their app stops syncing it instead of making it a new cave of theirs.
+CREATE TABLE IF NOT EXISTS cave_gone (
+  cave_id TEXT NOT NULL REFERENCES caves(id),
+  member_id TEXT NOT NULL REFERENCES members(id),
+  at INTEGER NOT NULL,
+  PRIMARY KEY (cave_id, member_id)
+);
+CREATE INDEX IF NOT EXISTS room_guests_member ON room_guests(member_id);
 CREATE INDEX IF NOT EXISTS rooms_cave ON rooms(cave_id);
 CREATE INDEX IF NOT EXISTS cave_owners_member ON cave_owners(member_id);
 CREATE INDEX IF NOT EXISTS devices_member ON devices(member_id);

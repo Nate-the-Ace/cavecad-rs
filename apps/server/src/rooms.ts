@@ -1,7 +1,8 @@
-// Rooms: each cave's Private room. An open cave (the default since server caves) keeps its history, snapshot and
+// Rooms: each cave's Private room, and the rooms its owners add with their guest lists (`room_guests`). An open cave (the default since server caves) keeps its history, snapshot and
 // label as plain JSON text the server can read. A locked cave (from before) keeps devices' public keys, its lock
 // key wrapped for each device (which the server cannot open), and base64 locked entries until its keyed device
-// converts it to open. Only a cave's owner can reach it.
+// converts it to open. A cave's owners and its guests can read it; owners and editors write it; a watcher only reads.
+// Only owners change rooms and guest lists, and guests are let into open caves only.
 import { randomUUID } from 'node:crypto';
 import type { Db } from './db.ts';
 
@@ -20,7 +21,17 @@ export type MyCave = {
   label: { keyVersion: number; locked: string } | null;
   needsKeys: boolean;
   storage: 'locked' | 'open';
+  /** What the member is in this cave: an owner, or a guest with their best seat. */
+  role: Access;
+  /** The first owner's name, for listing a cave shared with the member ("Nathan's"). */
+  ownerName: string;
 };
+/** What a member is in a cave: an owner, or a guest whose best seat across its rooms is editor or watcher. */
+export type Access = 'owner' | Seat;
+export type Seat = 'editor' | 'watcher';
+export type Guest = { memberId: string; name: string; email: string; seat: Seat };
+export type Room = { id: string; name: string; kind: 'private' | 'shared'; guests: Guest[] };
+export type Person = { memberId: string; name: string; email: string };
 export type Entry = { number: number; keyVersion: number; locked: string; authorMember: string; authorDevice: string; receivedAt: number };
 
 const fail = (code: string): never => {
@@ -48,6 +59,25 @@ const isOwner = (db: Db, memberId: string, caveId: string) => !!db.prepare('SELE
 function requireOwner(db: Db, memberId: string, caveId: string): void {
   if (!isOwner(db, memberId, caveId)) fail('not-found');
 }
+/** The member's best seat as a guest of any of the cave's rooms, or null. */
+function guestSeat(db: Db, memberId: string, caveId: string): Seat | null {
+  const r = db
+    .prepare("SELECT MIN(CASE g.seat WHEN 'editor' THEN 0 ELSE 1 END) AS s FROM room_guests g JOIN rooms r ON r.id = g.room_id WHERE r.cave_id = ? AND g.member_id = ?")
+    .get(caveId, memberId) as { s: number | null };
+  return r.s === null ? null : r.s === 0 ? 'editor' : 'watcher';
+}
+/** What the member is in the cave, or null when they have no way in. */
+export function accessOf(db: Db, memberId: string, caveId: string): Access | null {
+  return isOwner(db, memberId, caveId) ? 'owner' : guestSeat(db, memberId, caveId);
+}
+/** Owners and guests read a cave; anyone else is told it does not exist. */
+function requireReader(db: Db, memberId: string, caveId: string): Access {
+  return accessOf(db, memberId, caveId) ?? fail('not-found');
+}
+/** Owners and editors write a cave; a watcher is refused (`watcher`). */
+function requireWriter(db: Db, memberId: string, caveId: string): void {
+  if (requireReader(db, memberId, caveId) === 'watcher') fail('watcher');
+}
 function requireOwnDevice(db: Db, memberId: string, deviceId: string): void {
   const row = db.prepare('SELECT member_id FROM devices WHERE id = ?').get(deviceId) as { member_id: string } | undefined;
   if (!row || row.member_id !== memberId) fail('bad-device');
@@ -58,9 +88,9 @@ export function checkDevice(db: Db, memberId: string, deviceId: string, now: num
   db.prepare('UPDATE devices SET last_seen_at = ? WHERE id = ?').run(now, deviceId);
 }
 export type Storage = 'locked' | 'open';
-/** The cave's storage (owner only, `not-found` otherwise). Open caves hold plain JSON text and have no keys. */
+/** The cave's storage (owners and guests, `not-found` otherwise). Open caves hold plain JSON text and have no keys. */
 export function caveStorage(db: Db, memberId: string, caveId: string): Storage {
-  requireOwner(db, memberId, caveId);
+  requireReader(db, memberId, caveId);
   return (db.prepare('SELECT storage FROM caves WHERE id = ?').get(caveId) as { storage: Storage }).storage;
 }
 /** The highest entry number the cave has had: its history's last, or the snapshot's when conversion emptied the history. */
@@ -77,6 +107,7 @@ const keyVersion = (db: Db, caveId: string) => (db.prepare('SELECT key_version F
  * "locked" before the cave converted can never land locked text in an open cave.
  */
 function requireVersionFits(db: Db, memberId: string, caveId: string, version: number): void {
+  requireWriter(db, memberId, caveId);
   if (caveStorage(db, memberId, caveId) === 'open' ? version !== 0 : version < 1) fail('bad-request');
 }
 
@@ -99,21 +130,27 @@ export function createCave(db: Db, memberId: string, caveId: string, wrapped: Wr
   }
 }
 
-/** The member's caves, each with this device's wrapped key for the current version (null when it has none yet). */
+/**
+ * The member's caves (their own, then those shared with them as a guest), each with this device's wrapped key for
+ * the current version (null when it has none yet; shared caves are open and need none).
+ */
 export function myCaves(db: Db, memberId: string, deviceId: string): MyCave[] {
   const rows = db
     .prepare(
       `SELECT c.id, c.key_version, c.storage, c.created_at, w.wrapped, r.id AS room, l.key_version AS label_version, l.locked AS label,
          c.storage = 'locked' AND EXISTS (SELECT 1 FROM devices d WHERE d.member_id = ? AND NOT EXISTS
-           (SELECT 1 FROM wrapped_keys k WHERE k.cave_id = c.id AND k.key_version = c.key_version AND k.device_id = d.id)) AS needs_keys
+           (SELECT 1 FROM wrapped_keys k WHERE k.cave_id = c.id AND k.key_version = c.key_version AND k.device_id = d.id)) AS needs_keys,
+         EXISTS (SELECT 1 FROM cave_owners o WHERE o.cave_id = c.id AND o.member_id = ?) AS owner,
+         (SELECT m.display_name FROM cave_owners o JOIN members m ON m.id = o.member_id WHERE o.cave_id = c.id ORDER BY m.created_at LIMIT 1) AS owner_name
        FROM caves c
-       JOIN cave_owners o ON o.cave_id = c.id AND o.member_id = ?
        JOIN rooms r ON r.cave_id = c.id AND r.kind = 'private'
        LEFT JOIN wrapped_keys w ON w.cave_id = c.id AND w.key_version = c.key_version AND w.device_id = ?
        LEFT JOIN cave_labels l ON l.cave_id = c.id
+       WHERE EXISTS (SELECT 1 FROM cave_owners o WHERE o.cave_id = c.id AND o.member_id = ?)
+          OR EXISTS (SELECT 1 FROM room_guests g JOIN rooms gr ON gr.id = g.room_id WHERE gr.cave_id = c.id AND g.member_id = ?)
        ORDER BY c.created_at`,
     )
-    .all(memberId, memberId, deviceId) as {
+    .all(memberId, memberId, deviceId, memberId, memberId) as {
     id: string;
     key_version: number;
     storage: Storage;
@@ -123,6 +160,8 @@ export function myCaves(db: Db, memberId: string, deviceId: string): MyCave[] {
     label_version: number | null;
     label: string | null;
     needs_keys: number;
+    owner: number;
+    owner_name: string | null;
   }[];
   return rows.map((r) => ({
     id: r.id,
@@ -133,7 +172,14 @@ export function myCaves(db: Db, memberId: string, deviceId: string): MyCave[] {
     label: r.label === null || r.label_version === null ? null : { keyVersion: r.label_version, locked: r.label },
     needsKeys: !!r.needs_keys,
     storage: r.storage,
+    role: r.owner ? 'owner' : (guestSeat(db, memberId, r.id) ?? 'watcher'),
+    ownerName: r.owner_name ?? '',
   }));
+}
+
+/** Caves the member was taken off (every seat removed) and has not been given back: their app stops syncing them. */
+export function goneCaves(db: Db, memberId: string): string[] {
+  return (db.prepare('SELECT cave_id FROM cave_gone WHERE member_id = ? ORDER BY at').all(memberId) as { cave_id: string }[]).map((r) => r.cave_id);
 }
 
 /** Keeps the cave's locked label (its name and summary for cave lists), locked under the current key version. */
@@ -160,6 +206,7 @@ export function myDevices(db: Db, memberId: string): { id: string; publicKey: st
 
 /** The owner's devices that have no wrapped key for the cave's current version. */
 export function devicesMissingKey(db: Db, memberId: string, caveId: string): { id: string; publicKey: string }[] {
+  requireOwner(db, memberId, caveId);
   if (caveStorage(db, memberId, caveId) === 'open') return [];
   return db
     .prepare(
@@ -172,6 +219,7 @@ export function devicesMissingKey(db: Db, memberId: string, caveId: string): { i
 
 /** Stores wrapped copies of the cave's current key version for the owner's own devices. */
 export function putWrappedKeys(db: Db, memberId: string, caveId: string, version: number, wrapped: Wrapped[]): void {
+  requireOwner(db, memberId, caveId);
   if (caveStorage(db, memberId, caveId) === 'open') fail('bad-request');
   if (version !== keyVersion(db, caveId)) fail('bad-request');
   for (const w of wrapped) requireOwnDevice(db, memberId, w.device);
@@ -196,7 +244,7 @@ export function appendEntry(db: Db, memberId: string, deviceId: string, caveId: 
 
 /** Entries after `after`, oldest first, at most `limit`, stopping once their locked text reaches `maxBytes` (always at least one). */
 export function entriesAfter(db: Db, memberId: string, caveId: string, after: number, limit: number, maxBytes = Infinity): Entry[] {
-  requireOwner(db, memberId, caveId);
+  requireReader(db, memberId, caveId);
   const out: Entry[] = [];
   let bytes = 0;
   const rows = db.prepare('SELECT number, key_version, locked, author_member, author_device, received_at FROM history WHERE cave_id = ? AND number > ? ORDER BY number LIMIT ?').iterate(caveId, after, limit);
@@ -228,7 +276,7 @@ export function putSnapshot(db: Db, memberId: string, caveId: string, upTo: numb
  * snapshot covers no more than that, so a client that is already past it does not download it again.
  */
 export function latestSnapshot(db: Db, memberId: string, caveId: string, after?: number): { upTo: number; keyVersion: number; locked: string } | null {
-  requireOwner(db, memberId, caveId);
+  requireReader(db, memberId, caveId);
   const r = db.prepare('SELECT up_to, key_version, locked FROM snapshots WHERE cave_id = ?').get(caveId) as { up_to: number; key_version: number; locked: string } | undefined;
   if (!r || (after !== undefined && r.up_to <= after)) return null;
   return { upTo: r.up_to, keyVersion: r.key_version, locked: r.locked };
@@ -239,6 +287,7 @@ export function latestSnapshot(db: Db, memberId: string, caveId: string, after?:
  * everything locked. `upTo` must be the cave's last entry number. Numbering carries on after it.
  */
 export function openCave(db: Db, memberId: string, caveId: string, upTo: number, snapshot: string, now: number): void {
+  requireOwner(db, memberId, caveId);
   if (caveStorage(db, memberId, caveId) !== 'locked') fail('bad-request');
   if (upTo !== topNumber(db, caveId)) fail('bad-request');
   db.exec('BEGIN');
@@ -254,4 +303,116 @@ export function openCave(db: Db, memberId: string, caveId: string, upTo: number,
     db.exec('ROLLBACK');
     throw e;
   }
+}
+
+/**
+ * The cave's rooms as the member may see them: owners get every room with its guests; a guest gets only the rooms
+ * they are in. Also who owns the cave and what the member is in it.
+ */
+export function caveRooms(db: Db, memberId: string, caveId: string): { you: Access; owners: Person[]; rooms: Room[] } {
+  const you = requireReader(db, memberId, caveId);
+  const owners = (
+    db.prepare('SELECT m.id, m.display_name, m.email FROM cave_owners o JOIN members m ON m.id = o.member_id WHERE o.cave_id = ? ORDER BY m.created_at').all(caveId) as {
+      id: string;
+      display_name: string;
+      email: string;
+    }[]
+  ).map((m) => ({ memberId: m.id, name: m.display_name, email: m.email }));
+  const rows = db.prepare("SELECT id, name, kind FROM rooms WHERE cave_id = ? ORDER BY kind = 'shared', created_at, name").all(caveId) as { id: string; name: string; kind: 'private' | 'shared' }[];
+  const guestsOf = db.prepare('SELECT g.member_id, g.seat, m.display_name, m.email FROM room_guests g JOIN members m ON m.id = g.member_id WHERE g.room_id = ? ORDER BY m.display_name COLLATE NOCASE');
+  const rooms: Room[] = [];
+  for (const r of rows) {
+    const guests = (guestsOf.all(r.id) as { member_id: string; seat: Seat; display_name: string; email: string }[]).map((g) => ({ memberId: g.member_id, name: g.display_name, email: g.email, seat: g.seat }));
+    if (you !== 'owner' && !guests.some((g) => g.memberId === memberId)) continue;
+    rooms.push({ id: r.id, name: r.name, kind: r.kind, guests });
+  }
+  return { you, owners, rooms };
+}
+
+/** A room name: trimmed, 1 to 60 characters, no control characters. */
+function roomName(name: unknown): string {
+  const n = typeof name === 'string' ? name.trim().replace(/\s+/g, ' ') : '';
+  if (!n || n.length > 60 || /[\u0000-\u001f\u007f]/.test(n)) fail('bad-name');
+  return n;
+}
+function requireNameFree(db: Db, caveId: string, name: string, except = ''): void {
+  if (db.prepare('SELECT 1 FROM rooms WHERE cave_id = ? AND name = ? COLLATE NOCASE AND id != ?').get(caveId, name, except)) fail('name-taken');
+}
+/** A shared room of the cave (owner only). The Private room is refused with `private`. */
+function sharedRoom(db: Db, memberId: string, caveId: string, roomId: string): void {
+  requireOwner(db, memberId, caveId);
+  const r = db.prepare('SELECT kind FROM rooms WHERE id = ? AND cave_id = ?').get(roomId, caveId) as { kind: string } | undefined;
+  if (!r) fail('not-found');
+  if (r!.kind === 'private') fail('private');
+}
+
+/** Adds a room to the cave (owner only); gives back its id. */
+export function addRoom(db: Db, memberId: string, caveId: string, name: unknown, now: number): string {
+  requireOwner(db, memberId, caveId);
+  const n = roomName(name);
+  requireNameFree(db, caveId, n);
+  const id = randomUUID();
+  db.prepare("INSERT INTO rooms (id, cave_id, name, kind, created_at) VALUES (?, ?, ?, 'shared', ?)").run(id, caveId, n, now);
+  return id;
+}
+
+/** Renames one of the cave's rooms (owner only; not the Private room). */
+export function renameRoom(db: Db, memberId: string, caveId: string, roomId: string, name: unknown): void {
+  sharedRoom(db, memberId, caveId, roomId);
+  const n = roomName(name);
+  requireNameFree(db, caveId, n, roomId);
+  db.prepare('UPDATE rooms SET name = ? WHERE id = ?').run(n, roomId);
+}
+
+/**
+ * After a change to people's seats in a cave: those left with no seat at all are recorded as gone from it, and
+ * those who still have one are no longer gone. Gives back everyone whose seats changed, so their streams are closed.
+ */
+function settle(db: Db, caveId: string, people: string[], now: number): string[] {
+  for (const p of people) {
+    if (accessOf(db, p, caveId)) db.prepare('DELETE FROM cave_gone WHERE cave_id = ? AND member_id = ?').run(caveId, p);
+    else db.prepare('INSERT OR REPLACE INTO cave_gone (cave_id, member_id, at) VALUES (?, ?, ?)').run(caveId, p, now);
+  }
+  return people;
+}
+
+/** Removes one of the cave's rooms and its guest list (owner only; not the Private room). Gives back the guests it had. */
+export function removeRoom(db: Db, memberId: string, caveId: string, roomId: string, now: number): string[] {
+  sharedRoom(db, memberId, caveId, roomId);
+  const guests = (db.prepare('SELECT member_id FROM room_guests WHERE room_id = ?').all(roomId) as { member_id: string }[]).map((g) => g.member_id);
+  db.exec('BEGIN');
+  try {
+    db.prepare('DELETE FROM room_guests WHERE room_id = ?').run(roomId);
+    db.prepare('DELETE FROM rooms WHERE id = ?').run(roomId);
+    settle(db, caveId, guests, now);
+    db.exec('COMMIT');
+  } catch (e) {
+    db.exec('ROLLBACK');
+    throw e;
+  }
+  return guests;
+}
+
+/**
+ * Puts a member on a room's guest list with a seat, or changes their seat (owner only). Only current members, never
+ * an owner of the cave, and only in a cave stored open (`locked`: its owner opens it once to convert it first).
+ */
+export function setGuest(db: Db, memberId: string, caveId: string, roomId: string, guestId: string, seat: unknown, now: number): void {
+  sharedRoom(db, memberId, caveId, roomId);
+  if (seat !== 'editor' && seat !== 'watcher') fail('bad-request');
+  if (!db.prepare('SELECT 1 FROM members WHERE id = ? AND removed_at IS NULL').get(guestId)) fail('no-member');
+  if (isOwner(db, guestId, caveId)) fail('is-owner');
+  if (caveStorage(db, memberId, caveId) !== 'open') fail('locked');
+  db.prepare(
+    `INSERT INTO room_guests (room_id, member_id, seat, added_at) VALUES (?, ?, ?, ?)
+     ON CONFLICT(room_id, member_id) DO UPDATE SET seat = excluded.seat`,
+  ).run(roomId, guestId, seat, now);
+  settle(db, caveId, [guestId], now);
+}
+
+/** Takes a member off a room's guest list (owner only). */
+export function removeGuest(db: Db, memberId: string, caveId: string, roomId: string, guestId: string, now: number): void {
+  sharedRoom(db, memberId, caveId, roomId);
+  if (db.prepare('DELETE FROM room_guests WHERE room_id = ? AND member_id = ?').run(roomId, guestId).changes === 0) fail('not-found');
+  settle(db, caveId, [guestId], now);
 }

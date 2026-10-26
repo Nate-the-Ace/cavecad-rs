@@ -113,6 +113,10 @@ export async function handleApi(d: ApiDeps, req: IncomingMessage, res: ServerRes
       const b = await readJson(req);
       return send(res, 200, { drive: M.addDrive(d.db, me.id, b.provider as M.DriveProvider, String(b.accountLabel ?? ''), now) });
     }
+    // Every current member's name and email, for an owner picking guests for a cave's room.
+    if (path === '/api/members/directory' && method === 'GET') {
+      return send(res, 200, { members: M.listMembers(d.db).map((m) => ({ id: m.id, name: m.displayName, email: m.email })) });
+    }
     const drive = /^\/api\/me\/drives\/([^/]+)$/.exec(path);
     if (drive && method === 'DELETE') {
       M.removeDrive(d.db, me.id, drive[1]);

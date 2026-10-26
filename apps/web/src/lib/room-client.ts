@@ -1,4 +1,4 @@
-// Keeps one open cave in step with its room on the CaveCAD server (the Private room, the owner's own devices).
+// Keeps one open cave in step with its rooms on the CaveCAD server (its owners' devices and its guests').
 // Edits are posted; the server numbers them and passes them to the cave's other open streams. Pure: the engine,
 // fetch and the device's keys are passed in, so node tests run it against the real server.
 //
@@ -35,6 +35,12 @@
 //     itself whole, once, on the next open. The merge is last-writer-wins by stamp, so re-applying is harmless.
 //     Whether it changed is told by a hash of the cave saved when everything local was known to be in the room.
 // A stopped client never touches the engine again.
+//
+// Guests (2026-10-26): the listing says what this member is in the cave (`role`). A watcher's client posts nothing
+// (no entries, snapshot or label; its edits stay pending) and only follows the room; the caller locks the engine
+// (`onRole`). A seat change closes this member's streams on the server, so every reconnect reads the role again. A
+// member taken off every room finds the cave under `gone`: the client stops with `REMOVED` and never makes the cave
+// a new room of theirs.
 //
 // Beside the client, for the Cave Shelf: `listMyCaves` (the member's caves with their labels, so a cave made on
 // another device can be listed by name), `downloadCave` (a cave's snapshot and history, to open it on a device that
@@ -81,6 +87,8 @@ export type RoomClientOptions = {
   label?: () => string | null;
   /** A one-off note for the user (a new room was started for this cave). */
   onInfo?: (message: string) => void;
+  /** What this member is in the cave, when it is first read and whenever it changes (a watcher's engine is locked). */
+  onRole?: (role: Role) => void;
   /** The cave changed under the views (entries from the room were applied). Called once after catch-up, then per entry. */
   changed?: () => void;
   flushMs?: number;
@@ -98,7 +106,19 @@ export type RoomClientOptions = {
 
 type DeviceInfo = { id: string; publicKey: string };
 /** One cave as `GET /api/caves` lists it for this device. */
-type ListedCave = { id: string; keyVersion: number; wrapped: string | null; createdAt: number; label: { keyVersion: number; locked: string } | null; needsKeys: boolean; storage?: CaveStorage };
+type ListedCave = {
+  id: string;
+  keyVersion: number;
+  wrapped: string | null;
+  createdAt: number;
+  label: { keyVersion: number; locked: string } | null;
+  needsKeys: boolean;
+  storage?: CaveStorage;
+  role?: Role;
+  ownerName?: string;
+};
+/** What this member is in a cave: an owner, or a guest with their best seat. */
+export type Role = 'owner' | 'editor' | 'watcher';
 /** How the server keeps a cave: plain text (`open`) or locked with a cave key (rooms step 1). */
 export type CaveStorage = 'open' | 'locked';
 const storageOf = (c: ListedCave): CaveStorage => (c.storage === 'open' ? 'open' : 'locked');
@@ -108,7 +128,7 @@ export type ServerAccess = Pick<RoomClientOptions, 'base' | 'fetch' | 'device' |
  * One of the member's caves for the shelf. `hasKey`: it can be opened here now (always, for an open cave). `label` is
  * null until a device sets one (for a locked cave, also when this device has no key).
  */
-export type ServerCave = { id: string; createdAt: number; hasKey: boolean; open: boolean; label: string | null };
+export type ServerCave = { id: string; createdAt: number; hasKey: boolean; open: boolean; label: string | null; role: Role; ownerName: string };
 /** A cave fetched whole from its room: the snapshot's ops (null when the room has none) and each later entry's ops, in order. */
 export type Downloaded = { status: 'ok'; snapshot: string | null; entries: string[] } | { status: 'waiting' } | { status: 'unknown' };
 type StreamLine = { t: string; number?: number; keyVersion?: number; locked?: string; authorDevice?: string };
@@ -123,6 +143,8 @@ const mb = (n: number) => (n / (1024 * 1024)).toFixed(1) + ' MB';
 /** Told once when kept locked edits could not be read and this device's whole copy was sent instead. */
 export const QUARANTINE_INFO = 'Some edits made offline were re-sent from this device\'s copy of the cave.';
 export const NEW_ROOM_INFO = "This cave's room belonged to another account or device; started a new room";
+/** Why sync stops for a member taken off every room of the cave. */
+export const REMOVED = "You're no longer on this cave's guest list. Your copy stays on this computer but gets no new edits.";
 /** Answers on a post that mean "never", not "not now": the entry is kept, and sync stops with `error`. */
 const REFUSALS = new Set([400, 403, 404, 409, 410, 413, 422]);
 
@@ -134,7 +156,8 @@ class Stopped extends Error {}
 class Waiting extends Error {}
 /** The stream must be read again from the snapshot (the cave just turned open under it). */
 class Reconnect extends Error {}
-class HttpError extends Error {
+/** A request the server answered with an error status; `code` is its error word. */
+export class HttpError extends Error {
   readonly status: number;
   readonly code: string;
   constructor(status: number, code: string) {
@@ -186,7 +209,15 @@ async function request<T>(o: ServerAccess, method: string, path: string, body?: 
   return out;
 }
 
-const listCaves = async (o: ServerAccess) => (await request<{ caves: ListedCave[] }>(o, 'GET', '/api/caves')).caves;
+/** The member's caves, and those they were taken off (`gone`). */
+const listing = async (o: ServerAccess) => {
+  const r = await request<{ caves: ListedCave[]; gone?: string[] }>(o, 'GET', '/api/caves');
+  return { caves: r.caves, gone: r.gone ?? [] };
+};
+const listCaves = async (o: ServerAccess) => (await listing(o)).caves;
+
+/** One JSON request to the member's part of the server, with this device's headers (for the Rooms panel). */
+export const callServer = <T>(o: ServerAccess, method: string, path: string, body?: unknown): Promise<T> => request<T>(o, method, path, body);
 
 /**
  * Opens this device's wrapped key for a listed cave (which must have one), checked against the newest key seen for
@@ -299,7 +330,7 @@ export async function listMyCaves(o: ServerAccess): Promise<ServerCave[]> {
   const out: ServerCave[] = [];
   for (const c of await listCaves(o)) {
     if (storageOf(c) === 'open') {
-      out.push({ id: c.id, createdAt: c.createdAt, hasKey: true, open: true, label: c.label?.locked ?? null });
+      out.push({ id: c.id, createdAt: c.createdAt, hasKey: true, open: true, label: c.label?.locked ?? null, role: c.role ?? 'owner', ownerName: c.ownerName ?? '' });
       continue;
     }
     let label: string | null = null;
@@ -311,7 +342,7 @@ export async function listMyCaves(o: ServerAccess): Promise<ServerCave[]> {
         label = null;
       }
     }
-    out.push({ id: c.id, createdAt: c.createdAt, hasKey: !!c.wrapped, open: false, label });
+    out.push({ id: c.id, createdAt: c.createdAt, hasKey: !!c.wrapped, open: false, label, role: c.role ?? 'owner', ownerName: c.ownerName ?? '' });
   }
   return out;
 }
@@ -403,6 +434,8 @@ export class RoomClient {
   /** This client (one per tab and open cave): entries it posted carry it inside the lock, so it skips only its own. */
   private readonly clientId = hex(8);
   private cave = '';
+  /** What this member is in the cave (read with the listing on every open and reconnect). */
+  private role: Role = 'owner';
   /** How the server keeps this cave: `open` needs no key; `locked` until this client (or another) converts it. */
   private mode: CaveStorage = 'open';
   /** The cave key for locking and unlocking (locked caves only): non-extractable. */
@@ -626,10 +659,12 @@ export class RoomClient {
    * cave is not this member's, `waiting` when it is locked and has no key here yet.
    */
   private async loadRoom(): Promise<'ok' | 'waiting' | 'unknown'> {
-    const caves = await listCaves(this.o);
+    const { caves, gone } = await listing(this.o);
     this.alive();
     const mine = caves.find((c) => c.id === this.cave);
+    if (!mine && gone.includes(this.cave)) throw new Refused(REMOVED);
     if (!mine) return 'unknown';
+    this.setRole(mine.role ?? 'owner');
     if (storageOf(mine) === 'open') {
       this.mode = 'open';
       this.key = null;
@@ -657,6 +692,31 @@ export class RoomClient {
     return 'ok';
   }
 
+  private setRole(role: Role): void {
+    if (role === this.role && this.roleTold) return;
+    this.role = role;
+    this.roleTold = true;
+    this.o.onRole?.(role);
+  }
+  private roleTold = false;
+  private get watching(): boolean {
+    return this.role === 'watcher';
+  }
+
+  /** Reads this member's role in the cave again (a dropped stream may mean a seat change); taken off: stops. */
+  private async recheckRole(): Promise<void> {
+    let got;
+    try {
+      got = await listing(this.o);
+    } catch {
+      return; // offline: tried again on the next reconnect
+    }
+    this.alive();
+    const mine = got.caves.find((c) => c.id === this.cave);
+    if (mine) this.setRole(mine.role ?? 'owner');
+    else if (got.gone.includes(this.cave)) throw new Refused(REMOVED);
+  }
+
   private async handKeysToMyOtherDevices(): Promise<void> {
     if (this.mode === 'locked' && this.wrappedMine) await handKeys(this.o, this.cave, this.version, this.wrappedMine);
     this.alive();
@@ -665,7 +725,7 @@ export class RoomClient {
   /** Keeps the cave's label on the server when it differs from the one kept there. Best effort: it only names the cave in lists. */
   private async keepLabel(): Promise<void> {
     try {
-      if (!this.o.label || !this.ready() || this.converting || this.eng.roomId() !== this.cave) return;
+      if (!this.o.label || !this.ready() || this.converting || this.watching || this.eng.roomId() !== this.cave) return;
       const text = this.o.label();
       if (!text || text === this.labelKept) return;
       if (this.mode === 'open') await this.call('PUT', `/api/caves/${this.cave}/label`, { locked: text });
@@ -705,6 +765,7 @@ export class RoomClient {
 
   /** Posts this copy whole when it changed since it was last known to be all in the room (once per open). */
   private async checkLocalCopy(): Promise<void> {
+    if (this.watching) return void (this.localChecked = true); // a watcher's copy is the room's, never sent back
     const local = this.eng.snapshot();
     const hash = await sha256(local);
     this.alive();
@@ -740,6 +801,7 @@ export class RoomClient {
 
   /** Uploads a whole-cave snapshot covering entries up to `upTo` (the number is inside it too; locked for a locked cave). */
   private async putSnapshot(upTo: number): Promise<void> {
+    if (this.watching) return;
     const body = JSON.stringify({ upTo, ops: this.eng.snapshot() });
     if (this.mode === 'open') return void (await this.call('PUT', `/api/caves/${this.cave}/snapshot`, { upTo, locked: body }));
     const locked = await lock(this.key!, body, this.lockCtx('snapshot', this.o.device.id));
@@ -946,8 +1008,15 @@ export class RoomClient {
         this.live = false;
         continue;
       }
-      // The stream ended, went quiet, or the server dropped a client that fell behind: reconnect after <last>.
+      // The stream ended, went quiet, or the server dropped a client that fell behind (or this member's seat
+      // changed): read the role again, then reconnect after <last>.
       this.live = false;
+      try {
+        await this.recheckRole();
+      } catch (e) {
+        if (this.stopped || e instanceof Stopped) return;
+        if (e instanceof Refused) return this.fail(e.message);
+      }
       this.status('offline');
       await sleep(this.o.reconnectMs ?? 3_000);
     }
@@ -1013,6 +1082,11 @@ export class RoomClient {
         this.alive();
       }
       if (Date.now() < this.nextTry) return;
+      if (this.watching) {
+        // Nothing is posted: edits kept from before the seat changed wait for an editor's seat.
+        if (this.live) this.status('synced');
+        return;
+      }
       while (this.pending.length) {
         const p = this.pending[0];
         try {
@@ -1024,6 +1098,8 @@ export class RoomClient {
             this.restartStream();
             continue;
           }
+          // Made a watcher meanwhile: the edit is kept, and nothing more is posted.
+          if (e instanceof HttpError && e.status === 403 && e.code === 'watcher') return this.setRole('watcher');
           if (e instanceof HttpError && REFUSALS.has(e.status)) return this.fail(`The server refused an edit (${e.status} ${e.code}); it is kept on this device`);
           return this.offline(); // 401 (signed out), 5xx, or no network
         }

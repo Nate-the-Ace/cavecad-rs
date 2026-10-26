@@ -103,6 +103,16 @@ export function broadcast(caveId: string, line: Line): void {
   for (const l of [...(byCave.get(caveId) ?? [])]) l.deliver(line, text);
 }
 
+/** Closes a member's open streams of one cave (their seats changed: their app reconnects and reads its seat again). */
+export function closeMember(caveId: string, memberId: string): void {
+  const cave = byCave.get(caveId);
+  for (const l of [...(byMember.get(memberId) ?? [])]) {
+    if (!cave?.has(l)) continue;
+    l.stop();
+    l.res.destroy();
+  }
+}
+
 /** How many streams are open for a cave (for tests). */
 export function listeners(caveId: string): number {
   return byCave.get(caveId)?.size ?? 0;
