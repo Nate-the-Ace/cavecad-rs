@@ -20,6 +20,11 @@ const text = (v: unknown, max: number): string => {
   if (typeof v !== 'string' || v.length === 0 || v.length > max || !/^[A-Za-z0-9+/=_-]+$/.test(v)) throw new Error('bad-request');
   return v;
 };
+/** Open caves hold plain JSON text: any non-empty string within the cap. */
+const plain = (v: unknown, max: number): string => {
+  if (typeof v !== 'string' || v.length === 0 || v.length > max) throw new Error('bad-request');
+  return v;
+};
 const int = (v: unknown): number => {
   if (typeof v !== 'number' || !Number.isInteger(v) || v < 0) throw new Error('bad-request');
   return v;
@@ -50,12 +55,22 @@ export async function handleRooms(db: Db, memberId: string, req: IncomingMessage
     if (path === '/api/caves' && method === 'GET') return send(res, 200, { caves: R.myCaves(db, memberId, device) });
     if (path === '/api/caves' && method === 'POST') {
       const b = await readJson(req);
-      R.createCave(db, memberId, text(b.id, 64), wrappedList(b.wrapped), now);
+      if (b.storage !== undefined && b.storage !== 'open' && b.storage !== 'locked') throw new Error('bad-request');
+      if (b.storage === 'open') {
+        if (b.wrapped !== undefined) throw new Error('bad-request');
+        R.createCave(db, memberId, text(b.id, 64), [], now, 'open');
+      } else R.createCave(db, memberId, text(b.id, 64), wrappedList(b.wrapped), now);
       return send(res, 200, { ok: true });
     }
-    const m = /^\/api\/caves\/([A-Za-z0-9_-]{8,64})\/(missing|keys|entries|stream|snapshot|label)$/.exec(path);
+    const m = /^\/api\/caves\/([A-Za-z0-9_-]{8,64})\/(missing|keys|entries|stream|snapshot|label|open)$/.exec(path);
     if (!m) return send(res, 404, { error: 'not-found' });
     const [, cave, what] = m;
+    if (what === 'open' && method === 'POST') {
+      const b = await readJson(req, 64 * 1024 * 1024);
+      R.openCave(db, memberId, cave, int(b.upTo), plain(b.snapshot, 64 * 1024 * 1024), now);
+      return send(res, 200, { ok: true });
+    }
+    const open = what !== 'stream' && R.caveStorage(db, memberId, cave) === 'open';
     if (what === 'missing' && method === 'GET') return send(res, 200, { devices: R.devicesMissingKey(db, memberId, cave) });
     if (what === 'keys' && method === 'POST') {
       const b = await readJson(req);
@@ -64,20 +79,20 @@ export async function handleRooms(db: Db, memberId: string, req: IncomingMessage
     }
     if (what === 'entries' && method === 'POST') {
       const b = await readJson(req, 2 * 1024 * 1024);
-      const version = int(b.version);
-      const locked = text(b.locked, 2 * 1024 * 1024);
+      const version = open ? 0 : int(b.version);
+      const locked = open ? plain(b.locked, 2 * 1024 * 1024) : text(b.locked, 2 * 1024 * 1024);
       const number = R.appendEntry(db, memberId, device, cave, version, locked, now);
       broadcast(cave, { t: 'entry', number, keyVersion: version, locked, authorDevice: device });
       return send(res, 200, { number });
     }
     if (what === 'snapshot' && method === 'PUT') {
       const b = await readJson(req, 64 * 1024 * 1024);
-      R.putSnapshot(db, memberId, cave, int(b.upTo), int(b.version), text(b.locked, 64 * 1024 * 1024), now);
+      R.putSnapshot(db, memberId, cave, int(b.upTo), open ? 0 : int(b.version), open ? plain(b.locked, 64 * 1024 * 1024) : text(b.locked, 64 * 1024 * 1024), now);
       return send(res, 200, { ok: true });
     }
     if (what === 'label' && method === 'PUT') {
       const b = await readJson(req, 512 * 1024);
-      R.putLabel(db, memberId, cave, int(b.version), text(b.locked, 256 * 1024), now);
+      R.putLabel(db, memberId, cave, open ? 0 : int(b.version), open ? plain(b.locked, 256 * 1024) : text(b.locked, 256 * 1024), now);
       return send(res, 200, { ok: true });
     }
     if (what === 'snapshot' && method === 'GET') {

@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { openDb } from '../src/db.ts';
 import { resolve, createInvite } from '../src/members.ts';
-import { appendEntry, checkDevice, createCave, devicesMissingKey, entriesAfter, latestSnapshot, myCaves, putSnapshot, putWrappedKeys, registerDevice } from '../src/rooms.ts';
+import { openCave, putLabel, caveStorage, appendEntry, checkDevice, createCave, devicesMissingKey, entriesAfter, latestSnapshot, myCaves, putSnapshot, putWrappedKeys, registerDevice } from '../src/rooms.ts';
 
 const T = 1_800_000_000_000;
 function setup() {
@@ -159,4 +159,72 @@ test('a snapshot asked for "after" a number is null unless it covers more', () =
   assert.equal(latestSnapshot(db, owner, 'cave-aaaa', 7), null);
   assert.equal(latestSnapshot(db, owner, 'cave-aaaa', 4)?.upTo, 5);
   assert.equal(latestSnapshot(db, owner, 'cave-aaaa')?.upTo, 5);
+});
+
+const PLAIN = '{"ops":"[{\\"op\\":\\"add\\"}]","entrance":"37.123,-83.456"}';
+
+test('an open cave stores plain text for entries, snapshot and label, with no keys', () => {
+  const { db, owner } = setup();
+  const d = registerDevice(db, owner, 'PUB1'.padEnd(43, 'x'), T);
+  assert.throws(() => createCave(db, owner, 'cave-open1', [{ device: d.id, wrapped: 'W' }], T, 'open'), /bad-request/);
+  createCave(db, owner, 'cave-open1', [], T, 'open');
+  assert.equal(caveStorage(db, owner, 'cave-open1'), 'open');
+  assert.equal(appendEntry(db, owner, d.id, 'cave-open1', 0, PLAIN, T), 1);
+  assert.equal(appendEntry(db, owner, d.id, 'cave-open1', 0, PLAIN, T), 2);
+  assert.equal(entriesAfter(db, owner, 'cave-open1', 0, 10)[0].locked, PLAIN);
+  putSnapshot(db, owner, 'cave-open1', 2, 0, PLAIN, T);
+  assert.equal(latestSnapshot(db, owner, 'cave-open1')?.locked, PLAIN);
+  putLabel(db, owner, 'cave-open1', 0, '{"name":"X"}', T);
+  const c = myCaves(db, owner, d.id)[0];
+  assert.equal(c.label?.locked, '{"name":"X"}');
+  assert.equal(c.wrapped, null);
+  assert.equal(c.needsKeys, false);
+  assert.throws(() => putWrappedKeys(db, owner, 'cave-open1', 1, []), /bad-request/);
+  assert.equal(devicesMissingKey(db, owner, 'cave-open1').length, 0);
+});
+
+test('a locked cave stays locked by default and keeps its checks', () => {
+  const { db, owner } = setup();
+  const d = registerDevice(db, owner, 'PUB1'.padEnd(43, 'x'), T);
+  createCave(db, owner, 'cave-lock1', [{ device: d.id, wrapped: 'W' }], T);
+  assert.equal(caveStorage(db, owner, 'cave-lock1'), 'locked');
+  assert.throws(() => appendEntry(db, owner, d.id, 'cave-lock1', 2, 'AAA', T), /bad-request/);
+  assert.equal(myCaves(db, owner, d.id)[0].keyVersion, 1);
+});
+
+test('converting a locked cave to open drops the locked data and keeps numbering', () => {
+  const { db, owner, other } = setup();
+  const d = registerDevice(db, owner, 'PUB1'.padEnd(43, 'x'), T);
+  createCave(db, owner, 'cave-conv1', [{ device: d.id, wrapped: 'W' }], T);
+  for (const t of ['A', 'B', 'C']) appendEntry(db, owner, d.id, 'cave-conv1', 1, t, T);
+  putSnapshot(db, owner, 'cave-conv1', 2, 1, 'SNAP', T);
+  putLabel(db, owner, 'cave-conv1', 1, 'LABEL', T);
+  assert.throws(() => openCave(db, other, 'cave-conv1', 3, PLAIN, T), /not-found/);
+  assert.throws(() => openCave(db, owner, 'cave-conv1', 2, PLAIN, T), /bad-request/);
+  assert.throws(() => openCave(db, owner, 'cave-conv1', 4, PLAIN, T), /bad-request/);
+  openCave(db, owner, 'cave-conv1', 3, PLAIN, T);
+  assert.equal(caveStorage(db, owner, 'cave-conv1'), 'open');
+  assert.equal(entriesAfter(db, owner, 'cave-conv1', 0, 10).length, 0);
+  const snap = latestSnapshot(db, owner, 'cave-conv1');
+  assert.deepEqual([snap?.upTo, snap?.locked], [3, PLAIN]);
+  const c = myCaves(db, owner, d.id)[0];
+  assert.equal(c.wrapped, null);
+  assert.equal(c.label, null);
+  assert.equal(c.needsKeys, false);
+  assert.equal((db.prepare('SELECT COUNT(*) AS n FROM wrapped_keys').get() as { n: number }).n, 0);
+  assert.equal(appendEntry(db, owner, d.id, 'cave-conv1', 0, PLAIN, T), 4);
+  assert.throws(() => openCave(db, owner, 'cave-conv1', 4, PLAIN, T), /bad-request/);
+});
+
+test('an existing database without the storage column gains it on start', async () => {
+  const { DatabaseSync } = await import('node:sqlite');
+  const { mkdtempSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const path = mkdtempSync(tmpdir() + '/cave-db-') + '/old.db';
+  const old = new DatabaseSync(path);
+  old.exec('CREATE TABLE caves (id TEXT PRIMARY KEY, key_version INTEGER NOT NULL DEFAULT 1, created_at INTEGER NOT NULL); INSERT INTO caves (id, created_at) VALUES (\'old-cave1\', 1);');
+  old.close();
+  const db = openDb(path);
+  assert.equal((db.prepare("SELECT storage FROM caves WHERE id = 'old-cave1'").get() as { storage: string }).storage, 'locked');
+  db.close();
 });

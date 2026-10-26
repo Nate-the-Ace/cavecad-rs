@@ -46,7 +46,8 @@ CREATE TABLE IF NOT EXISTS devices (
 CREATE TABLE IF NOT EXISTS caves (
   id TEXT PRIMARY KEY,
   key_version INTEGER NOT NULL DEFAULT 1,
-  created_at INTEGER NOT NULL
+  created_at INTEGER NOT NULL,
+  storage TEXT NOT NULL DEFAULT 'locked' CHECK (storage IN ('locked','open'))
 );
 CREATE TABLE IF NOT EXISTS cave_owners (
   cave_id TEXT NOT NULL REFERENCES caves(id),
@@ -108,6 +109,11 @@ export function openDb(path: string): Db {
   const db = new DatabaseSync(path);
   db.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;');
   db.exec(SCHEMA);
+  // CREATE TABLE IF NOT EXISTS never adds a column to an older table.
+  const cols = db.prepare('PRAGMA table_info(caves)').all() as { name: string }[];
+  if (!cols.some((c) => c.name === 'storage')) {
+    db.exec("ALTER TABLE caves ADD COLUMN storage TEXT NOT NULL DEFAULT 'locked' CHECK (storage IN ('locked','open'))");
+  }
   return db;
 }
 

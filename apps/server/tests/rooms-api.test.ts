@@ -253,3 +253,29 @@ test('a cave list shows the locked label, when it was made, and whether another 
     server.close();
   }
 });
+
+test('open caves over HTTP: plain text, storage listed, and conversion of a locked cave', async () => {
+  const { server, call } = await start();
+  try {
+    const dev = (await call(ADMIN, 'POST', '/api/devices', { publicKey: PUB(1) })).json.device.id;
+    const plain = '{"ops":"x y","entrance":"37.1,-83.4"}';
+    assert.equal((await call(ADMIN, 'POST', '/api/caves', { id: 'cave-open1', storage: 'open', wrapped: [{ device: dev, wrapped: 'W' }] }, dev)).status, 400);
+    assert.equal((await call(ADMIN, 'POST', '/api/caves', { id: 'cave-open1', storage: 'open' }, dev)).status, 200);
+    assert.equal((await call(ADMIN, 'POST', '/api/caves/cave-open1/entries', { locked: plain }, dev)).json.number, 1);
+    assert.equal((await call(ADMIN, 'PUT', '/api/caves/cave-open1/snapshot', { upTo: 1, locked: plain }, dev)).status, 200);
+    assert.equal((await call(ADMIN, 'PUT', '/api/caves/cave-open1/label', { locked: plain }, dev)).status, 200);
+    assert.equal((await call(ADMIN, 'GET', '/api/caves/cave-open1/snapshot', undefined, dev)).json.snapshot.locked, plain);
+    // locked cave: base64 check still applies, then conversion
+    assert.equal((await call(ADMIN, 'POST', '/api/caves', { id: 'cave-lock1', wrapped: [{ device: dev, wrapped: 'W' }] }, dev)).status, 200);
+    assert.equal((await call(ADMIN, 'POST', '/api/caves/cave-lock1/entries', { version: 1, locked: plain }, dev)).status, 400);
+    assert.equal((await call(ADMIN, 'POST', '/api/caves/cave-lock1/entries', { version: 1, locked: 'AAA' }, dev)).json.number, 1);
+    assert.equal((await call(ADMIN, 'POST', '/api/caves/cave-lock1/open', { upTo: 0, snapshot: plain }, dev)).status, 400);
+    assert.equal((await call(ADMIN, 'POST', '/api/caves/cave-lock1/open', { upTo: 1, snapshot: plain }, dev)).status, 200);
+    assert.equal((await call(ADMIN, 'POST', '/api/caves/cave-lock1/open', { upTo: 1, snapshot: plain }, dev)).status, 400);
+    assert.equal((await call(ADMIN, 'POST', '/api/caves/cave-lock1/entries', { locked: plain }, dev)).json.number, 2);
+    const list = (await call(ADMIN, 'GET', '/api/caves', undefined, dev)).json.caves;
+    assert.deepEqual(list.map((c: { id: string; storage: string; wrapped: unknown; needsKeys: boolean }) => [c.id, c.storage, c.wrapped, c.needsKeys]).sort(), [['cave-lock1', 'open', null, false], ['cave-open1', 'open', null, false]]);
+  } finally {
+    server.close();
+  }
+});
