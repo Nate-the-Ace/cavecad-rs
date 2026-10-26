@@ -44,6 +44,7 @@
   import DrawingScale from './DrawingScale.svelte';
   import type { PickKind } from '../lib/cave.svelte';
   import UserMenu from './UserMenu.svelte';
+  import RoomStatus from './RoomStatus.svelte';
   import { isStampKind, symbolDef } from '../lib/symbols';
   import { fillLabel, isFillKind } from '../lib/fills';
   import { onMount, untrack } from 'svelte';
@@ -333,7 +334,10 @@
     {#if mode}
       <button class="ctx" class:on={active === CONTEXT} onclick={() => (active = CONTEXT)}>{contextName}</button>
     {/if}
-    <UserMenu />
+    <div class="account">
+      <RoomStatus />
+      <UserMenu />
+    </div>
   </nav>
   <div class="bar" bind:clientWidth={barW}>
     {#each shownGroups as g, i (g.name)}
@@ -387,6 +391,7 @@
 <style>
   header { background: var(--panel); }
   .tabs { display: flex; gap: 2px; padding: 6px 10px 0; align-items: flex-end; }
+  .account { margin-left: auto; align-self: center; display: flex; align-items: center; min-width: 0; }
   .tabs button { background: none; border: 0; padding: 6px 14px; color: var(--muted); border-radius: var(--radius) var(--radius) 0 0; cursor: pointer; }
   .tabs button.ctx { color: var(--accent); margin-left: 10px; box-shadow: inset 0 2px 0 var(--accent); }
   .tabs button.on { color: var(--text); background: var(--accent-bg); font-weight: 500; }
