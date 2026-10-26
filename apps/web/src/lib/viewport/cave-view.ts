@@ -13,7 +13,7 @@ import { drawAperture, drawSnap } from '../snap-draw';
 import { sceneThings } from '../snap-scene';
 import { cameraOf, planFrame, type SnapScene } from '../snap-types';
 import { withAttach } from '../line-style-text';
-import { drawStampHalo, liveWords, stampEditSpot, drawStamp, drawStationMarker, hitsLabelNote, hitsStamp, isStampKind, leaderLook, placement } from '../symbols';
+import { drawStampHalo, liveWords, stampEditSpot, drawStamp, drawStationMarker, hitsLabelNote, hitsStamp, isStampKind, leaderLook, placement, withLabelSpots } from '../symbols';
 import { paintCopy } from '../copy-ghost';
 import type { ClipLine } from '../clip';
 import { drawMarks, isFillKind, marksFor } from '../fills';
@@ -1176,7 +1176,8 @@ export class CaveView {
   }
 
   setMapLines(list: ProfileSketch3d[]) {
-    this.mapLines = list;
+    // a labelled symbol always has its label's note point, so the label has a grip and can be pulled away
+    this.mapLines = withLabelSpots(list);
     this.requestRender();
   }
 
