@@ -18,7 +18,7 @@ import { cave, changed } from './cave.svelte';
 import { flush as keepOnShelf } from './shelf.svelte';
 import { account } from './account.svelte';
 import { desktopBearer } from './desktop-signin';
-import { deviceKey, keySeen, pendingEntries, syncedHash } from './device-key';
+import { deviceKey, keySeen, pendingEntries, quarantinedEntries, syncedHash } from './device-key';
 import { RoomClient, handOverKeys, type RoomStatus, type ServerAccess } from './room-client';
 
 /** Each status in plain words (the label beside the user icon, and the Rooms panel). */
@@ -134,6 +134,7 @@ async function startClient(member: string, mine: number): Promise<void> {
     saveKeySeen: keySeen.save,
     loadPending: pendingEntries.load,
     savePending: pendingEntries.save,
+    saveQuarantine: quarantinedEntries.save,
     loadSynced: syncedHash.load,
     saveSynced: syncedHash.save,
     onStatus: (s, reason) => {

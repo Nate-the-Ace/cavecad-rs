@@ -27,6 +27,10 @@
 //     live session survives; the next open of that cave posts them.
 //   - Every open starts from the room's snapshot (no entry number is kept between opens: a cave copy can be older
 //     or newer than any number kept beside it). The number is kept in memory for reconnects within one open.
+//   - Locked entries kept for a cave that turned open, which this device cannot read (no key: it was offline across
+//     the conversion), are moved out of `pending` into a quarantine kept per cave (never deleted), and this device's
+//     whole copy is sent as one open entry in their place, whatever the synced hash says. The merge is last-writer-wins
+//     by stamp, so the offline edits arrive; the user is told once (`QUARANTINE_INFO`), and sync carries on open.
 //   - A copy changed while its room was closed (signed out, a live session, a reload that lost the outbox) posts
 //     itself whole, once, on the next open. The merge is last-writer-wins by stamp, so re-applying is harmless.
 //     Whether it changed is told by a hash of the cave saved when everything local was known to be in the room.
@@ -63,6 +67,11 @@ export type RoomClientOptions = {
   loadPending: (cave: string) => Promise<Pending[]>;
   /** Keeps this client's unposted entries for a cave (an empty list removes them). */
   savePending: (cave: string, client: string, entries: Pending[]) => Promise<void>;
+  /**
+   * Sets aside, for good, locked entries this device can no longer read (the cave turned open while it was offline,
+   * and it has no key): added to what is already kept for the cave, never removed by the client.
+   */
+  saveQuarantine: (cave: string, entries: Pending[]) => Promise<void>;
   /** A hash of the cave as it was when everything in it was known to be in the room (null when none yet). */
   loadSynced: (cave: string) => Promise<string | null>;
   saveSynced: (cave: string, hash: string) => Promise<void>;
@@ -111,6 +120,8 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const sha256 = async (s: string) => Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', enc.encode(s))), (b) => b.toString(16).padStart(2, '0')).join('');
 const mb = (n: number) => (n / (1024 * 1024)).toFixed(1) + ' MB';
 
+/** Told once when kept locked edits could not be read and this device's whole copy was sent instead. */
+export const QUARANTINE_INFO = 'Some edits made offline were re-sent from this device\'s copy of the cave.';
 export const NEW_ROOM_INFO = "This cave's room belonged to another account or device; started a new room";
 /** Answers on a post that mean "never", not "not now": the entry is kept, and sync stops with `error`. */
 const REFUSALS = new Set([400, 403, 404, 409, 410, 413, 422]);
@@ -423,6 +434,7 @@ export class RoomClient {
   /** The label the server keeps for this cave, as text (null when none, or not readable). */
   private labelKept: string | null = null;
   private infoShown = false;
+  private quarantineShown = false;
   private flushing = false;
   private live = false;
   private stopped = false;
@@ -528,9 +540,14 @@ export class RoomClient {
         await this.savePending();
       }
     }
-    // Entries kept in the locked format for a cave that is open now, with no key here to read them: kept, not dropped.
-    if (this.mode === 'open' && this.pending.some((p) => p.version !== 0)) {
-      throw new Refused('Edits kept on this device are locked with a key this device no longer has; they are kept here, not synced');
+    // Entries kept in the locked format for a cave that is open now, with no key here to read them: set aside, not
+    // dropped, and this copy is sent whole in their place.
+    if (this.mode === 'open') {
+      const unreadable = this.pending.filter((p) => p.version !== 0);
+      if (unreadable.length) {
+        await this.setAside(unreadable);
+        this.alive();
+      }
     }
     if (!this.localChecked) await this.checkLocalCopy();
     this.alive();
@@ -661,6 +678,29 @@ export class RoomClient {
     }
   }
 
+  /**
+   * Moves locked entries this device cannot read out of `pending` into the quarantine (kept first, then removed), and
+   * queues this copy whole as an open entry in their place, whatever the synced hash says. When the quarantine cannot
+   * be kept, the entries stay pending and sync stops with `error`.
+   */
+  private async setAside(unreadable: Pending[]): Promise<void> {
+    // The copy is taken first: once stopped this throws, and the entries stay pending for the next open to set aside.
+    const local = this.eng.snapshot();
+    try {
+      await this.o.saveQuarantine(this.cave, unreadable);
+    } catch {
+      throw new Refused('Edits kept on this device are locked and could not be read or set aside; they are kept here, not synced');
+    }
+    this.pending = this.pending.filter((p) => !unreadable.includes(p));
+    if (local !== '[]') await this.queue(local); // keeps pending too
+    else await this.savePending();
+    this.localChecked = true;
+    if (!this.quarantineShown) {
+      this.quarantineShown = true;
+      this.o.onInfo?.(QUARANTINE_INFO);
+    }
+  }
+
   /** Posts this copy whole when it changed since it was last known to be all in the room (once per open). */
   private async checkLocalCopy(): Promise<void> {
     const local = this.eng.snapshot();
@@ -730,6 +770,7 @@ export class RoomClient {
       this.sinceSnapshot = 0;
       this.authoredSinceSnapshot = false;
       this.needSnapshot = false;
+      const unreadable: Pending[] = [];
       for (let i = 0; i < this.pending.length; i++) {
         const p = this.pending[i];
         if (p.version === 0) continue;
@@ -740,13 +781,24 @@ export class RoomClient {
           const b = JSON.parse(plain) as { c?: unknown; ops?: unknown };
           if (typeof b?.c !== 'string' || typeof b.ops !== 'string') throw new Error('malformed');
         } catch {
-          this.fail('Edits kept on this device are locked and could not be read after the cave moved to open storage; they are kept here, not synced');
-          return false;
+          unreadable.push(p); // set aside below, and this copy sent whole in their place
+          continue;
         }
         const at = this.pending.indexOf(p);
         if (at >= 0) this.pending[at] = { version: 0, locked: plain };
       }
-      await this.savePending();
+      if (unreadable.length) {
+        try {
+          await this.setAside(unreadable);
+        } catch (e) {
+          if (this.stopped || e instanceof Stopped) {
+            await this.savePending(); // the ones made open are kept so; the rest stay pending for the next open to set aside
+            return false;
+          }
+          this.fail(e instanceof Error ? e.message : 'Edits kept on this device could not be set aside');
+          return false;
+        }
+      } else await this.savePending();
       return true;
     })();
     return this.switching;

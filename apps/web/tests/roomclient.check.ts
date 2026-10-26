@@ -1,11 +1,11 @@
 // Two devices of one member keep a cave in step through the real server code, in this process. New caves are open
 // (plain text on the server, no keys); caves locked during rooms step 1 convert when a device with their key opens them.
 import { createServer } from 'node:http';
-import { generateKeyPairSync } from 'node:crypto';
+import { createHash, generateKeyPairSync } from 'node:crypto';
 import { openDb } from '../../server/src/db.ts';
 import { handleApi } from '../../server/src/api.ts';
 import { lock, makeCaveKey, makeDeviceKeys, wrapCaveKey } from '../src/lib/room-crypto.ts';
-import { RoomClient, downloadCave, handOverKeys, listMyCaves, type ServerAccess, type CaveEngine, type KeySeen, type Pending, type RoomClientOptions, type RoomStatus } from '../src/lib/room-client.ts';
+import { RoomClient, QUARANTINE_INFO, downloadCave, handOverKeys, listMyCaves, type ServerAccess, type CaveEngine, type KeySeen, type Pending, type RoomClientOptions, type RoomStatus } from '../src/lib/room-client.ts';
 
 let bad = 0;
 const ok = (c: boolean, m: string) => { if (!c) { bad++; console.log('FAIL', m); } };
@@ -47,10 +47,10 @@ async function device(): Promise<Dev> {
   return { id: (await res.json()).device.id as string, privateKey: keys.privateKey, publicKey: keys.publicKey };
 }
 /** What each device keeps between runs (IndexedDB in the app), per cave: newest key seen, unposted entries, synced hash. */
-type Kept = { seen: Map<string, KeySeen>; pending: Map<string, Pending[]>; synced: Map<string, string> };
+type Kept = { seen: Map<string, KeySeen>; pending: Map<string, Pending[]>; synced: Map<string, string>; quarantine: Map<string, Pending[]> };
 const kept = new Map<string, Kept>();
 const keptFor = (dev: Dev): Kept => {
-  const k = kept.get(dev.id) ?? { seen: new Map(), pending: new Map(), synced: new Map() };
+  const k = kept.get(dev.id) ?? { seen: new Map(), pending: new Map(), synced: new Map(), quarantine: new Map() };
   kept.set(dev.id, k);
   return k;
 };
@@ -68,6 +68,7 @@ function client(engine: CaveEngine, dev: Dev, status: RoomStatus[], extra: Extra
     },
     savePending: async (c, who, list) => void (list.length ? k.pending.set(c + '|' + who, [...list]) : k.pending.delete(c + '|' + who)),
     loadSynced: async (c) => k.synced.get(c) ?? null, saveSynced: async (c, h) => void k.synced.set(c, h),
+    saveQuarantine: async (c, list) => void k.quarantine.set(c, [...(k.quarantine.get(c) ?? []), ...list]),
     onStatus: (s, why) => (status.push(s), why && reasons?.push(why)),
     onInfo: (m) => infos?.push(m),
     ...opts,
@@ -606,20 +607,33 @@ const storageOf = (id: string) => (db.prepare('SELECT storage FROM caves WHERE i
   fc.stop();
   lcl.stop();
 
-  // L5: an open cave with locked entries kept on a device that has no key any more: error, and they stay kept.
+  // L5: an open cave with locked entries kept on a device that has no key (offline across the conversion). They are
+  // moved aside into quarantine, never deleted; the device's whole copy is sent as an open entry instead (even though
+  // its synced hash says nothing changed), the user is told, and sync carries on open.
   const stray = await device();
   keptFor(stray).pending.set(old.id + '|gone-tab', [{ version: 1, locked: pendingLocked }]);
   const es = fakeEngine();
   es.setRoomId(old.id);
+  es.add('stray offline edit');
+  es.outbox(); // already in the copy, as after a reload: only the whole-copy resend can carry it
+  keptFor(stray).synced.set(old.id, createHash('sha256').update(es.snapshot()).digest('hex'));
   const ss: RoomStatus[] = [];
   const sw: string[] = [];
-  const sc = client(es, stray, ss, { reasons: sw });
+  const si: string[] = [];
+  const sc = client(es, stray, ss, { reasons: sw, infos: si });
   await sc.open();
-  ok(await until(() => ss.includes('error')), 'L5: locked entries with no key to read them are an error');
-  ok(sw.some((w) => /locked|key/i.test(w)), `L5: with a clear reason (${sw.join(';')})`);
+  ok(await until(() => ss.at(-1) === 'synced', 5000) && !ss.includes('error'), `L5: a device with unreadable locked edits still syncs (${ss.join(',')} ${sw.join(';')})`);
+  ok(si.includes(QUARANTINE_INFO), `L5: the user is told the edits were re-sent (${si.join(';')})`);
+  ok((keptFor(stray).quarantine.get(old.id) ?? []).some((p) => p.locked === pendingLocked), 'L5: the locked entries are kept in quarantine');
+  ok(![...keptFor(stray).pending].some(([, l]) => l.some((p) => p.version !== 0)), 'L5: and are no longer pending');
+  const ep = fakeEngine();
+  ep.setRoomId(old.id);
+  const pcs: RoomStatus[] = [];
+  const pc5 = client(ep, await device(), pcs);
+  await pc5.open();
+  ok(await until(() => ep.ops.has('stray offline edit'), 3000), 'L5: the edits arrive on another device');
   sc.stop();
-  await sleep(50);
-  ok([...keptFor(stray).pending].some(([k, l]) => k.startsWith(old.id + '|') && l.some((p) => p.locked === pendingLocked)), 'L5: they are kept, not dropped');
+  pc5.stop();
 }
 
 // L6: two keyed devices; another converts first, so this one's conversion is refused: it reloads and goes on open.

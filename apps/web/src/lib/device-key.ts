@@ -115,6 +115,43 @@ export const pendingEntries = {
     void (await idb('readwrite', (st) => (entries.length ? st.put(entries.map((e) => ({ version: e.version, locked: e.locked })), `pending:${cave}|${client}`) : st.delete(`pending:${cave}|${client}`)))),
 };
 
+/**
+ * Locked entries set aside per cave because this device could no longer read them (the cave turned open while it
+ * was offline): only ever added to, never removed, so nothing made offline is lost.
+ */
+export const quarantinedEntries = {
+  load: async (cave: string): Promise<Pending[]> => (await idb<Pending[]>('readonly', (st) => st.get('quarantine:' + cave))) ?? [],
+  /** Adds to what is kept, in one transaction (two tabs at once both keep theirs). Rejects unless it was written. */
+  save: (cave: string, entries: Pending[]): Promise<void> =>
+    new Promise((resolve, reject) => {
+      let r: IDBOpenDBRequest;
+      try {
+        r = indexedDB.open(DB, 1);
+      } catch (e) {
+        return reject(e);
+      }
+      r.onupgradeneeded = () => r.result.createObjectStore('kv');
+      r.onerror = () => reject(r.error);
+      r.onsuccess = () => {
+        try {
+          const tx = r.result.transaction('kv', 'readwrite');
+          const st = tx.objectStore('kv');
+          const got = st.get('quarantine:' + cave);
+          got.onsuccess = () => {
+            const kept = (got.result as Pending[] | undefined) ?? [];
+            const add = entries.filter((e) => !kept.some((k) => k.version === e.version && k.locked === e.locked)).map((e) => ({ version: e.version, locked: e.locked }));
+            st.put([...kept, ...add], 'quarantine:' + cave);
+          };
+          tx.oncomplete = () => (resolve(), r.result.close());
+          tx.onerror = tx.onabort = () => (reject(tx.error), r.result.close());
+        } catch (e) {
+          reject(e);
+          r.result.close();
+        }
+      };
+    }),
+};
+
 /** A hash of each cave as it was when all of it was known to be in its room. */
 export const syncedHash = {
   load: async (cave: string): Promise<string | null> => (await idb<string>('readonly', (st) => st.get('synced:' + cave))) ?? null,
