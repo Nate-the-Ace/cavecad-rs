@@ -273,6 +273,12 @@ test('open caves over HTTP: plain text, storage listed, and conversion of a lock
     assert.equal((await call(ADMIN, 'POST', '/api/caves/cave-lock1/open', { upTo: 1, snapshot: plain }, dev)).status, 200);
     assert.equal((await call(ADMIN, 'POST', '/api/caves/cave-lock1/open', { upTo: 1, snapshot: plain }, dev)).status, 400);
     assert.equal((await call(ADMIN, 'POST', '/api/caves/cave-lock1/entries', { locked: plain }, dev)).json.number, 2);
+    // A device still in locked mode posts with its key version: refused, so locked text never lands in an open cave.
+    assert.equal((await call(ADMIN, 'POST', '/api/caves/cave-lock1/entries', { version: 1, locked: 'AAA' }, dev)).status, 400);
+    assert.equal((await call(ADMIN, 'PUT', '/api/caves/cave-lock1/snapshot', { upTo: 2, version: 1, locked: 'AAA' }, dev)).status, 400);
+    assert.equal((await call(ADMIN, 'PUT', '/api/caves/cave-lock1/label', { version: 1, locked: 'AAA' }, dev)).status, 400);
+    assert.equal((await call(ADMIN, 'POST', '/api/caves/cave-lock1/entries', { version: 0, locked: plain }, dev)).json.number, 3);
+    assert.equal((await call(ADMIN, 'GET', '/api/caves/cave-lock1/snapshot', undefined, dev)).json.snapshot.locked, plain);
     const list = (await call(ADMIN, 'GET', '/api/caves', undefined, dev)).json.caves;
     assert.deepEqual(list.map((c: { id: string; storage: string; wrapped: unknown; needsKeys: boolean }) => [c.id, c.storage, c.wrapped, c.needsKeys]).sort(), [['cave-lock1', 'open', null, false], ['cave-open1', 'open', null, false]]);
   } finally {

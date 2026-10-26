@@ -25,6 +25,11 @@ const plain = (v: unknown, max: number): string => {
   if (typeof v !== 'string' || v.length === 0 || v.length > max) throw new Error('bad-request');
   return v;
 };
+/** An open cave takes no key version (absent or 0): a device still in locked mode is refused, never stored as plain text. */
+const openVersion = (v: unknown): number => {
+  if (v !== undefined && v !== 0) throw new Error('bad-request');
+  return 0;
+};
 const int = (v: unknown): number => {
   if (typeof v !== 'number' || !Number.isInteger(v) || v < 0) throw new Error('bad-request');
   return v;
@@ -79,7 +84,7 @@ export async function handleRooms(db: Db, memberId: string, req: IncomingMessage
     }
     if (what === 'entries' && method === 'POST') {
       const b = await readJson(req, 2 * 1024 * 1024);
-      const version = open ? 0 : int(b.version);
+      const version = open ? openVersion(b.version) : int(b.version);
       const locked = open ? plain(b.locked, 2 * 1024 * 1024) : text(b.locked, 2 * 1024 * 1024);
       const number = R.appendEntry(db, memberId, device, cave, version, locked, now);
       broadcast(cave, { t: 'entry', number, keyVersion: version, locked, authorDevice: device });
@@ -87,12 +92,12 @@ export async function handleRooms(db: Db, memberId: string, req: IncomingMessage
     }
     if (what === 'snapshot' && method === 'PUT') {
       const b = await readJson(req, 64 * 1024 * 1024);
-      R.putSnapshot(db, memberId, cave, int(b.upTo), open ? 0 : int(b.version), open ? plain(b.locked, 64 * 1024 * 1024) : text(b.locked, 64 * 1024 * 1024), now);
+      R.putSnapshot(db, memberId, cave, int(b.upTo), open ? openVersion(b.version) : int(b.version), open ? plain(b.locked, 64 * 1024 * 1024) : text(b.locked, 64 * 1024 * 1024), now);
       return send(res, 200, { ok: true });
     }
     if (what === 'label' && method === 'PUT') {
       const b = await readJson(req, 512 * 1024);
-      R.putLabel(db, memberId, cave, open ? 0 : int(b.version), open ? plain(b.locked, 256 * 1024) : text(b.locked, 256 * 1024), now);
+      R.putLabel(db, memberId, cave, open ? openVersion(b.version) : int(b.version), open ? plain(b.locked, 256 * 1024) : text(b.locked, 256 * 1024), now);
       return send(res, 200, { ok: true });
     }
     if (what === 'snapshot' && method === 'GET') {

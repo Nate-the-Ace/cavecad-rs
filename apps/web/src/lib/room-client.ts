@@ -1,8 +1,17 @@
-// Keeps one open cave in step with its room on the CaveCAD server (step 1: the Private room, the owner's own
-// devices). Edits are locked here and posted; the server numbers them and passes them to the cave's other open
-// streams. Pure: the engine, fetch and the device's keys are passed in, so node tests run it against the real server.
+// Keeps one open cave in step with its room on the CaveCAD server (the Private room, the owner's own devices).
+// Edits are posted; the server numbers them and passes them to the cave's other open streams. Pure: the engine,
+// fetch and the device's keys are passed in, so node tests run it against the real server.
 //
-// What this client does not take on trust from the server:
+// Two storage modes, read per cave from `GET /api/caves` (`storage`):
+//   - `open` (every new cave): the server keeps plain JSON text. An entry is `{"c": client, "ops": ops}`, a snapshot
+//     `{"upTo": n, "ops": ops}` (the inner number must match the server's), a label `{name, summary}`. No keys.
+//   - `locked` (caves made during rooms step 1): everything below about keys. A device holding the key converts the
+//     cave once it has caught up: it posts an open snapshot at the last number (`POST /api/caves/:id/open`), turns
+//     its kept locked entries into open ones with the key still in memory, and syncs open from then on. When another
+//     device converted first, it reloads the listing and goes on open. A device with no key waits (`waiting-key`)
+//     until the cave is open. The crypto below is used only on this locked/conversion path.
+//
+// What this client does not take on trust from the server (locked caves):
 //   - Entries are unlocked with the author device the server names; a relabelled entry fails to unlock and stops
 //     sync with status `error` (it is never applied, and never skipped as "my own").
 //   - "My own" is this client, not this device: two tabs on one device share its key and author id, so each client
@@ -10,7 +19,7 @@
 //   - A snapshot's `upTo` is read from inside the lock; the server's plain copy must agree.
 //   - The highest key version (and its key id) seen for a cave is remembered; a lower version, or another key under
 //     a version already seen, is refused.
-// What it does take on trust (step 1): the server's list of this member's devices (see `wrapForDevices`).
+// What it does take on trust (step 1): the server's list of this member's devices (see `wrapFor`).
 //
 // Nothing is lost between opens:
 //   - Locked entries not yet posted (`pending`) are kept by the caller per cave (IndexedDB in the app). `stop()`
@@ -23,18 +32,18 @@
 //     Whether it changed is told by a hash of the cave saved when everything local was known to be in the room.
 // A stopped client never touches the engine again.
 //
-// Beside the client, for the Cave Shelf: `listMyCaves` (the member's caves with their locked labels, so a cave made
-// on another device can be listed by name), `downloadCave` (a cave's snapshot and history, to open it on a device
-// that does not keep it yet) and `handOverKeys` (wraps each cave key this device has for the member's devices that
-// have none, so a new device can open them without the cave being opened here first).
-import { lock, makeCaveKey, unlock, unwrapCaveKey, wrapCaveKey } from './room-crypto.ts';
+// Beside the client, for the Cave Shelf: `listMyCaves` (the member's caves with their labels, so a cave made on
+// another device can be listed by name), `downloadCave` (a cave's snapshot and history, to open it on a device that
+// does not keep it yet) and `handOverKeys` (locked caves only: wraps each cave key this device has for the member's
+// devices that have none).
+import { lock, unlock, unwrapCaveKey, wrapCaveKey } from './room-crypto.ts';
 
 export type RoomStatus = 'connecting' | 'synced' | 'offline' | 'waiting-key' | 'error';
 /** What the client needs from the cave engine (engine.ts provides it in the app; tests fake it). */
 export type CaveEngine = { roomId(): string; setRoomId(id: string): string; outbox(): string; apply(ops: string): number; snapshot(): string; load(ops: string): string };
 /** The newest cave key this device has used for a cave: its version and key id. */
 export type KeySeen = { version: number; keyId: string };
-/** A locked entry not yet posted, with the key version it was locked under. */
+/** An entry not yet posted: `version` 0 is an open entry (plain text), 1 and up the key version it was locked under. */
 export type Pending = { version: number; locked: string };
 export type RoomClientOptions = {
   base: string;
@@ -80,11 +89,17 @@ export type RoomClientOptions = {
 
 type DeviceInfo = { id: string; publicKey: string };
 /** One cave as `GET /api/caves` lists it for this device. */
-type ListedCave = { id: string; keyVersion: number; wrapped: string | null; createdAt: number; label: { keyVersion: number; locked: string } | null; needsKeys: boolean };
+type ListedCave = { id: string; keyVersion: number; wrapped: string | null; createdAt: number; label: { keyVersion: number; locked: string } | null; needsKeys: boolean; storage?: CaveStorage };
+/** How the server keeps a cave: plain text (`open`) or locked with a cave key (rooms step 1). */
+export type CaveStorage = 'open' | 'locked';
+const storageOf = (c: ListedCave): CaveStorage => (c.storage === 'open' ? 'open' : 'locked');
 /** What talking to the server about this member's caves needs (a room client's options have all of it). */
 export type ServerAccess = Pick<RoomClientOptions, 'base' | 'fetch' | 'device' | 'headers' | 'loadKeySeen' | 'saveKeySeen'>;
-/** One of the member's caves for the shelf: `label` is null until a device that has its key sets one (or when this device has no key). */
-export type ServerCave = { id: string; createdAt: number; hasKey: boolean; label: string | null };
+/**
+ * One of the member's caves for the shelf. `hasKey`: it can be opened here now (always, for an open cave). `label` is
+ * null until a device sets one (for a locked cave, also when this device has no key).
+ */
+export type ServerCave = { id: string; createdAt: number; hasKey: boolean; open: boolean; label: string | null };
 /** A cave fetched whole from its room: the snapshot's ops (null when the room has none) and each later entry's ops, in order. */
 export type Downloaded = { status: 'ok'; snapshot: string | null; entries: string[] } | { status: 'waiting' } | { status: 'unknown' };
 type StreamLine = { t: string; number?: number; keyVersion?: number; locked?: string; authorDevice?: string };
@@ -106,6 +121,8 @@ class Refused extends Error {}
 class Stopped extends Error {}
 /** The cave's room is this member's, but this device has no key for it yet. */
 class Waiting extends Error {}
+/** The stream must be read again from the snapshot (the cave just turned open under it). */
+class Reconnect extends Error {}
 class HttpError extends Error {
   readonly status: number;
   readonly code: string;
@@ -117,13 +134,13 @@ class HttpError extends Error {
 }
 
 /**
- * Splits a JSON array of ops into JSON arrays each small enough that its locked entry stays within `maxLocked`
- * characters. A single op too large on its own is refused.
+ * Splits a JSON array of ops into JSON arrays each small enough that its entry stays within `maxLocked` characters
+ * (locked: base64 of the lock; open: the plain text). A single op too large on its own is refused.
  */
-export function splitOps(ops: string, maxLocked: number): string[] {
+export function splitOps(ops: string, maxLocked: number, open = false): string[] {
   const list = JSON.parse(ops) as unknown[];
-  // Locked text is base64 of 0x01 | iv (12) | plain | tag (16); plain is {"c":"<16 hex>","ops":"<ops escaped>"}.
-  const budget = Math.floor((maxLocked * 3) / 4) - 29 - 64;
+  // The entry is {"c":"<16 hex>","ops":"<ops escaped>"}; locked, it is base64 of 0x01 | iv (12) | that | tag (16).
+  const budget = open ? maxLocked - 64 : Math.floor((maxLocked * 3) / 4) - 29 - 64;
   const out: string[] = [];
   let cur: string[] = [];
   let size = 2;
@@ -234,13 +251,46 @@ async function unlockEntry(key: CryptoKey, cave: string, version: number, line: 
   return { c: body.c, ops: body.ops };
 }
 
+type SnapshotWire = { upTo: number; keyVersion: number; locked: string };
+
+/** Reads an open snapshot: plain `{upTo, ops}` whose number agrees with the server's. */
+function readOpenSnapshot(snapshot: SnapshotWire): { upTo: number; ops: string } {
+  if (snapshot.keyVersion !== 0) throw new Refused('snapshot is not open');
+  let body: { upTo?: unknown; ops?: unknown } | null = null;
+  try {
+    body = JSON.parse(snapshot.locked);
+  } catch {
+    body = null;
+  }
+  if (!body || typeof body.ops !== 'string' || typeof body.upTo !== 'number') throw new Refused('snapshot malformed');
+  if (body.upTo !== snapshot.upTo) throw new Refused('snapshot number does not match');
+  return { upTo: body.upTo, ops: body.ops };
+}
+
+/** Reads an open entry from the stream: plain `{c, ops}`. */
+function readOpenEntry(line: StreamLine): { c: string; ops: string } {
+  if (line.keyVersion !== 0 || typeof line.locked !== 'string') throw new Refused('entry malformed');
+  let body: { c?: unknown; ops?: unknown } | null = null;
+  try {
+    body = JSON.parse(line.locked);
+  } catch {
+    body = null;
+  }
+  if (typeof body?.c !== 'string' || typeof body.ops !== 'string') throw new Refused('entry malformed');
+  return { c: body.c, ops: body.ops };
+}
+
 /**
- * The member's caves, each with its label unlocked when this device has the cave's key. A cave whose key or label
+ * The member's caves, each with its label (plain for an open cave, unlocked when this device has a locked cave's key). A cave whose key or label
  * cannot be opened is still listed (with no label): opening it says why.
  */
 export async function listMyCaves(o: ServerAccess): Promise<ServerCave[]> {
   const out: ServerCave[] = [];
   for (const c of await listCaves(o)) {
+    if (storageOf(c) === 'open') {
+      out.push({ id: c.id, createdAt: c.createdAt, hasKey: true, open: true, label: c.label?.locked ?? null });
+      continue;
+    }
     let label: string | null = null;
     if (c.wrapped && c.label && c.label.keyVersion === c.keyVersion) {
       try {
@@ -250,7 +300,7 @@ export async function listMyCaves(o: ServerAccess): Promise<ServerCave[]> {
         label = null;
       }
     }
-    out.push({ id: c.id, createdAt: c.createdAt, hasKey: !!c.wrapped, label });
+    out.push({ id: c.id, createdAt: c.createdAt, hasKey: !!c.wrapped, open: false, label });
   }
   return out;
 }
@@ -262,7 +312,7 @@ export async function listMyCaves(o: ServerAccess): Promise<ServerCave[]> {
 export async function handOverKeys(o: ServerAccess): Promise<number> {
   let n = 0;
   for (const c of await listCaves(o)) {
-    if (!c.wrapped || !c.needsKeys) continue;
+    if (storageOf(c) === 'open' || !c.wrapped || !c.needsKeys) continue;
     try {
       await openKey(o, c); // the same checks as opening the cave: a key that cannot be trusted is not handed on
       await handKeys(o, c.id, c.keyVersion, c.wrapped);
@@ -282,14 +332,19 @@ export async function handOverKeys(o: ServerAccess): Promise<number> {
 export async function downloadCave(o: ServerAccess, cave: string, deadAfterMs = 60_000): Promise<Downloaded> {
   const c = (await listCaves(o)).find((x) => x.id === cave);
   if (!c) return { status: 'unknown' };
-  if (!c.wrapped) return { status: 'waiting' };
-  const { key } = await openKey(o, c);
-  const { snapshot } = await request<{ snapshot: { upTo: number; keyVersion: number; locked: string } | null }>(o, 'GET', `/api/caves/${cave}/snapshot`);
+  const open = storageOf(c) === 'open';
+  if (!open && !c.wrapped) return { status: 'waiting' };
+  const key = open ? null : (await openKey(o, c)).key;
+  const { snapshot } = await request<{ snapshot: SnapshotWire | null }>(o, 'GET', `/api/caves/${cave}/snapshot`);
   let last = 0;
   let snapOps: string | null = null;
   if (snapshot) {
-    if (snapshot.keyVersion !== c.keyVersion) throw new Refused('snapshot under another key version');
-    const s = await unlockSnapshot(o, key, cave, snapshot);
+    let s;
+    if (open) s = readOpenSnapshot(snapshot);
+    else {
+      if (snapshot.keyVersion !== c.keyVersion) throw new Refused('snapshot under another key version');
+      s = await unlockSnapshot(o, key!, cave, snapshot);
+    }
     snapOps = s.ops;
     last = s.upTo;
   }
@@ -319,7 +374,7 @@ export async function downloadCave(o: ServerAccess, cave: string, deadAfterMs = 
           buf = buf.slice(i + 1);
           if (line.t === 'live') return { status: 'ok', snapshot: snapOps, entries };
           if (line.t !== 'entry' || typeof line.number !== 'number' || line.number <= last) continue;
-          entries.push((await unlockEntry(key, cave, c.keyVersion, line)).ops);
+          entries.push((open ? readOpenEntry(line) : await unlockEntry(key!, cave, c.keyVersion, line)).ops);
           last = line.number;
         }
       }
@@ -337,7 +392,9 @@ export class RoomClient {
   /** This client (one per tab and open cave): entries it posted carry it inside the lock, so it skips only its own. */
   private readonly clientId = hex(8);
   private cave = '';
-  /** The cave key for locking and unlocking: non-extractable. */
+  /** How the server keeps this cave: `open` needs no key; `locked` until this client (or another) converts it. */
+  private mode: CaveStorage = 'open';
+  /** The cave key for locking and unlocking (locked caves only): non-extractable. */
   private key: CryptoKey | null = null;
   /** This device's wrapped copy, kept to unwrap an extractable key only while handing it on. */
   private wrappedMine = '';
@@ -355,7 +412,14 @@ export class RoomClient {
   private localChecked = false;
   /** A room id this client set in the cave whose making the server has not yet confirmed; a retry reuses it. */
   private unconfirmed = '';
-  private made: { key: CryptoKey; id: string; raw: Uint8Array } | null = null;
+  /** A conversion to open is under way: nothing is posted meanwhile. */
+  private converting = false;
+  /** Not before this time is conversion tried again (it failed, or the cave moved on while it was tried). */
+  private convertNext = 0;
+  /** Turning this client to open mode (its kept entries unlocked): one at a time, whoever noticed first. */
+  private switching: Promise<boolean> | null = null;
+  /** The stream is being dropped on purpose, to be read again from the snapshot at once. */
+  private restart = false;
   /** The label the server keeps for this cave, as text (null when none, or not readable). */
   private labelKept: string | null = null;
   private infoShown = false;
@@ -414,6 +478,10 @@ export class RoomClient {
   private maxLocked(): number {
     return this.o.maxEntryBytes ?? 1.5 * 1024 * 1024;
   }
+  /** The cave can be read and written here: it is open, or this device holds its key. */
+  private ready(): boolean {
+    return this.mode === 'open' || !!this.key;
+  }
 
   /** Starts keeping the open cave in step. Call once per opened cave; call `stop()` before opening another. */
   async open(): Promise<void> {
@@ -438,7 +506,7 @@ export class RoomClient {
     if (!this.cave) await this.createRoom();
     else if (this.cave === this.unconfirmed) await this.confirmRoom();
     else {
-      const got = await this.loadKey();
+      const got = await this.loadRoom();
       if (got === 'waiting') throw new Waiting();
       if (got === 'unknown') {
         // Not this member's room at all (another account's file): the content is here, so it gets a room of its own.
@@ -460,6 +528,10 @@ export class RoomClient {
         await this.savePending();
       }
     }
+    // Entries kept in the locked format for a cave that is open now, with no key here to read them: kept, not dropped.
+    if (this.mode === 'open' && this.pending.some((p) => p.version !== 0)) {
+      throw new Refused('Edits kept on this device are locked with a key this device no longer has; they are kept here, not synced');
+    }
     if (!this.localChecked) await this.checkLocalCopy();
     this.alive();
     this.timer = setInterval(() => void this.flush(), this.o.flushMs ?? 300);
@@ -471,7 +543,7 @@ export class RoomClient {
     if (this.stopped) return;
     // Taken now, while the engine still holds this cave: an edit in the last flush window must not be lost.
     let ops = '';
-    if (this.key && !this.failed && this.cave && this.o.engine.roomId() === this.cave) {
+    if (this.ready() && !this.failed && this.cave && this.o.engine.roomId() === this.cave) {
       try {
         ops = this.o.engine.outbox();
       } catch {
@@ -494,13 +566,6 @@ export class RoomClient {
     this.o.onStatus('error', reason);
   }
 
-  /** Wraps the cave key for each device (see `wrapFor`). */
-  private async wrapForDevices(key: Uint8Array | CryptoKey, devices: DeviceInfo[]): Promise<{ device: string; wrapped: string }[]> {
-    const out = await wrapFor(key, devices, { cave: this.cave, version: this.version });
-    this.alive();
-    return out;
-  }
-
   /** Gives the cave a new room id (set in the cave first, so a retry reuses it), then makes the room. */
   private async createRoom(): Promise<void> {
     const id = newCaveId();
@@ -508,52 +573,53 @@ export class RoomClient {
     if (r !== 'ok') throw new Refused(`could not set the room id: ${r}`);
     this.cave = id;
     this.unconfirmed = id;
-    this.version = 1;
-    this.made = null;
     await this.confirmRoom();
   }
 
-  /** Makes the room for `unconfirmed`; when an earlier try was made but its answer lost, takes it as made. */
+  /** Makes the (open) room for `unconfirmed`; when an earlier try was made but its answer lost, takes it as made. */
   private async confirmRoom(): Promise<void> {
-    if (!this.made) this.made = await makeCaveKey();
-    const made = this.made;
-    this.alive();
     try {
-      const { devices } = await this.call<{ devices: DeviceInfo[] }>('GET', '/api/devices');
-      this.alive();
-      await this.call('POST', '/api/caves', { id: this.cave, wrapped: await this.wrapForDevices(made.raw, devices) });
+      await this.call('POST', '/api/caves', { id: this.cave, storage: 'open' });
       this.alive();
     } catch (e) {
       if (!(e instanceof HttpError && e.status === 409)) throw e;
       this.alive();
-      // Already made: by an earlier try whose answer was lost (then it lists our wrapped key), or by no one we know.
-      const got = await this.loadKey();
-      made.raw.fill(0);
-      this.made = null;
+      // Already made: by an earlier try whose answer was lost (then it is listed as ours), or by no one we know.
+      const got = await this.loadRoom();
       if (got === 'ok') {
         this.unconfirmed = '';
         return; // its first snapshot, if missing, is uploaded once caught up
       }
       return this.createRoom();
     }
-    this.made = null;
-    made.raw.fill(0);
     this.unconfirmed = '';
-    this.key = made.key;
+    this.mode = 'open';
+    this.key = null;
+    this.version = 0;
     this.labelKept = null;
-    await this.o.saveKeySeen(this.cave, { version: 1, keyId: made.id });
-    this.alive();
     this.eng.outbox(); // the snapshot below carries everything made so far
     await this.putSnapshot(0);
     this.localChecked = true; // the room's first snapshot is this copy
   }
 
-  /** Opens this device's wrapped key: `unknown` when the cave is not this member's, `waiting` when it has no key here yet. */
-  private async loadKey(): Promise<'ok' | 'waiting' | 'unknown'> {
+  /**
+   * Reads how the server keeps the cave, and for a locked cave opens this device's wrapped key: `unknown` when the
+   * cave is not this member's, `waiting` when it is locked and has no key here yet.
+   */
+  private async loadRoom(): Promise<'ok' | 'waiting' | 'unknown'> {
     const caves = await listCaves(this.o);
     this.alive();
     const mine = caves.find((c) => c.id === this.cave);
     if (!mine) return 'unknown';
+    if (storageOf(mine) === 'open') {
+      this.mode = 'open';
+      this.key = null;
+      this.wrappedMine = '';
+      this.version = 0;
+      this.labelKept = mine.label?.locked ?? null;
+      return 'ok';
+    }
+    this.mode = 'locked';
     if (!mine.wrapped) return 'waiting';
     const opened = await openKey(this.o, mine);
     this.alive();
@@ -573,19 +639,22 @@ export class RoomClient {
   }
 
   private async handKeysToMyOtherDevices(): Promise<void> {
-    if (this.wrappedMine) await handKeys(this.o, this.cave, this.version, this.wrappedMine);
+    if (this.mode === 'locked' && this.wrappedMine) await handKeys(this.o, this.cave, this.version, this.wrappedMine);
     this.alive();
   }
 
   /** Keeps the cave's label on the server when it differs from the one kept there. Best effort: it only names the cave in lists. */
   private async keepLabel(): Promise<void> {
     try {
-      if (!this.o.label || !this.key || this.eng.roomId() !== this.cave) return;
+      if (!this.o.label || !this.ready() || this.converting || this.eng.roomId() !== this.cave) return;
       const text = this.o.label();
       if (!text || text === this.labelKept) return;
-      const locked = await lock(this.key, text, labelCtx(this.cave, this.version));
-      this.alive();
-      await this.call('PUT', `/api/caves/${this.cave}/label`, { version: this.version, locked });
+      if (this.mode === 'open') await this.call('PUT', `/api/caves/${this.cave}/label`, { locked: text });
+      else {
+        const locked = await lock(this.key!, text, labelCtx(this.cave, this.version));
+        this.alive();
+        await this.call('PUT', `/api/caves/${this.cave}/label`, { version: this.version, locked });
+      }
       this.labelKept = text;
     } catch {
       // tried again when the cave next goes quiet, or on the next open
@@ -607,16 +676,18 @@ export class RoomClient {
     return { cave: this.cave, version: this.version, author, kind } as const;
   }
 
-  /** Locks ops (a JSON array) as one or more entries under the size cap and keeps them. Never touches the engine. */
+  /** Makes ops (a JSON array) into one or more entries under the size cap (locked for a locked cave) and keeps them. Never touches the engine. */
   private async queue(ops: string): Promise<void> {
     const max = this.maxLocked();
-    const parts = splitOps(ops, max);
-    const key = this.key!;
+    const open = this.mode === 'open';
+    const parts = splitOps(ops, max, open);
+    const key = this.key;
     const ctx = this.lockCtx('entry', this.o.device.id);
     for (const p of parts) {
-      const locked = await lock(key, JSON.stringify({ c: this.clientId, ops: p }), ctx);
-      if (locked.length > max) throw new Refused(`An edit is too large to sync (${mb(locked.length)}; the limit is ${mb(max)})`);
-      this.pending.push({ version: ctx.version, locked });
+      const plain = JSON.stringify({ c: this.clientId, ops: p });
+      const text = open ? plain : await lock(key!, plain, ctx);
+      if (text.length > max) throw new Refused(`An edit is too large to sync (${mb(text.length)}; the limit is ${mb(max)})`);
+      this.pending.push({ version: open ? 0 : ctx.version, locked: text });
     }
     await this.savePending();
   }
@@ -625,12 +696,99 @@ export class RoomClient {
     await this.o.savePending(this.cave, this.clientId, this.pending.slice()).catch(() => {});
   }
 
-  /** Uploads a locked whole-cave snapshot covering entries up to `upTo` (the number is inside the lock too). */
+  /** Uploads a whole-cave snapshot covering entries up to `upTo` (the number is inside it too; locked for a locked cave). */
   private async putSnapshot(upTo: number): Promise<void> {
     const body = JSON.stringify({ upTo, ops: this.eng.snapshot() });
+    if (this.mode === 'open') return void (await this.call('PUT', `/api/caves/${this.cave}/snapshot`, { upTo, locked: body }));
     const locked = await lock(this.key!, body, this.lockCtx('snapshot', this.o.device.id));
     this.alive();
     await this.call('PUT', `/api/caves/${this.cave}/snapshot`, { upTo, version: this.version, locked });
+  }
+
+  /**
+   * Reads the listing again; when the cave is open now (another device converted it), turns this client open.
+   * True when this client is open afterwards.
+   */
+  private async recheck(): Promise<boolean> {
+    if (this.mode === 'open') return (await this.switching) ?? true;
+    const mine = (await listCaves(this.o)).find((c) => c.id === this.cave);
+    if (!mine || storageOf(mine) !== 'open') return false;
+    return this.toOpen();
+  }
+
+  /** Turns this client open: kept locked entries are unlocked with the key in memory and kept again as open entries. */
+  private toOpen(): Promise<boolean> {
+    this.switching ??= (async () => {
+      const key = this.key;
+      // Open first, so an entry queued meanwhile (a stop) is made open; nothing here waits on `alive()`, so a stop
+      // part-way through still leaves every kept entry readable.
+      this.mode = 'open';
+      this.key = null;
+      this.wrappedMine = '';
+      this.version = 0;
+      this.labelKept = null;
+      this.sinceSnapshot = 0;
+      this.authoredSinceSnapshot = false;
+      this.needSnapshot = false;
+      for (let i = 0; i < this.pending.length; i++) {
+        const p = this.pending[i];
+        if (p.version === 0) continue;
+        let plain = '';
+        try {
+          if (!key) throw new Error('no key');
+          plain = await unlock(key, p.locked, { cave: this.cave, version: p.version, author: this.o.device.id, kind: 'entry' });
+          const b = JSON.parse(plain) as { c?: unknown; ops?: unknown };
+          if (typeof b?.c !== 'string' || typeof b.ops !== 'string') throw new Error('malformed');
+        } catch {
+          this.fail('Edits kept on this device are locked and could not be read after the cave moved to open storage; they are kept here, not synced');
+          return false;
+        }
+        const at = this.pending.indexOf(p);
+        if (at >= 0) this.pending[at] = { version: 0, locked: plain };
+      }
+      await this.savePending();
+      return true;
+    })();
+    return this.switching;
+  }
+
+  /** Drops the stream on purpose: it is read again from the snapshot at once. */
+  private restartStream(): void {
+    this.restart = true;
+    this.abort?.abort();
+  }
+
+  /**
+   * A locked cave this device holds the key for, caught up: converts it to open (an open snapshot at the last number,
+   * then this client goes open). Another device having converted it first is fine: this one reloads and goes open.
+   */
+  private async maybeConvert(): Promise<void> {
+    if (this.mode !== 'locked' || !this.key || !this.live || this.failed || Date.now() < this.convertNext) return;
+    this.converting = true;
+    try {
+      while (this.flushing) {
+        await sleep(10);
+        this.alive();
+      }
+      const upTo = this.last;
+      const snapshot = JSON.stringify({ upTo, ops: this.eng.snapshot() });
+      try {
+        await this.call('POST', `/api/caves/${this.cave}/open`, { upTo, snapshot });
+      } catch (e) {
+        this.alive();
+        // Refused: already open (another device was first), or the cave moved on past `upTo` while this was tried.
+        if (e instanceof HttpError && e.status === 400 && (await this.recheck())) throw new Reconnect();
+        this.convertNext = Date.now() + 2_000;
+        return;
+      }
+      // Converted: everything up to `upTo` is now this open snapshot, and numbering carries on after it.
+      if (!(await this.toOpen())) return;
+      this.alive();
+    } finally {
+      this.converting = false;
+    }
+    void this.keepLabel();
+    void this.flush();
   }
 
   /** Entries from the room changed the cave: the views hear of it now when live, or once when catch-up ends. */
@@ -643,15 +801,20 @@ export class RoomClient {
   private async catchUpFromSnapshot(): Promise<void> {
     // A reconnect names its last number, so a snapshot it is already past is not downloaded again.
     const q = this.last > 0 ? `?after=${this.last}` : '';
-    const { snapshot } = await this.call<{ snapshot: { upTo: number; keyVersion: number; locked: string } | null }>('GET', `/api/caves/${this.cave}/snapshot${q}`);
+    const { snapshot } = await this.call<{ snapshot: SnapshotWire | null }>('GET', `/api/caves/${this.cave}/snapshot${q}`);
     this.alive();
     if (!snapshot) {
       if (this.last === 0) this.needSnapshot = true;
       return;
     }
     if (this.last > 0 && snapshot.upTo <= this.last) return;
-    if (snapshot.keyVersion !== this.version) throw new Refused('snapshot under another key version');
-    const body = await unlockSnapshot(this.o, this.key!, this.cave, snapshot);
+    let body;
+    if (this.mode === 'open') body = readOpenSnapshot(snapshot);
+    else if (snapshot.keyVersion === 0 && (await this.recheck())) throw new Reconnect(); // converted meanwhile
+    else {
+      if (snapshot.keyVersion !== this.version) throw new Refused('snapshot under another key version');
+      body = await unlockSnapshot(this.o, this.key!, this.cave, snapshot);
+    }
     this.alive();
     if (this.last > 0 && body.upTo <= this.last) return;
     this.eng.apply(body.ops);
@@ -682,6 +845,7 @@ export class RoomClient {
           const reader = res.body.getReader();
           const decoder = new TextDecoder();
           let buf = '';
+          let read = 0;
           try {
             for (;;) {
               const { value, done } = await reader.read();
@@ -695,7 +859,15 @@ export class RoomClient {
                 buf = buf.slice(i + 1);
                 await this.onLine(line);
                 this.alive();
+                // Open entries need no unlocking, so a long catch-up would never give way: let the page (and a stop) in.
+                if (++read % 64 === 0) {
+                  await sleep(0);
+                  this.alive();
+                }
               }
+              // Caught up on all that was read: a locked cave whose key is here is converted now.
+              await this.maybeConvert();
+              this.alive();
             }
           } finally {
             reader.cancel().catch(() => {});
@@ -706,6 +878,17 @@ export class RoomClient {
       } catch (e) {
         if (this.stopped || e instanceof Stopped) return;
         if (e instanceof Refused) return this.fail(e.message);
+        if (e instanceof Reconnect || this.restart) {
+          // The cave turned open under this stream: read it again from the open snapshot, now.
+          this.restart = false;
+          this.live = false;
+          continue;
+        }
+      }
+      if (this.restart) {
+        this.restart = false;
+        this.live = false;
+        continue;
       }
       // The stream ended, went quiet, or the server dropped a client that fell behind: reconnect after <last>.
       this.live = false;
@@ -722,7 +905,8 @@ export class RoomClient {
         this.o.changed?.();
       }
       this.status(this.pending.length ? 'offline' : 'synced');
-      if (this.needSnapshot) {
+      if (this.needSnapshot && this.mode === 'open') {
+        // (A locked cave gets its open snapshot when it is converted, just after this.)
         this.needSnapshot = false;
         void this.putSnapshot(this.last).catch(() => {}); // still missing on the next open if this fails
       }
@@ -730,8 +914,11 @@ export class RoomClient {
       return;
     }
     if (line.t !== 'entry' || typeof line.number !== 'number' || line.number <= this.last) return;
+    let body;
+    if (this.mode === 'open') body = readOpenEntry(line);
+    else if (line.keyVersion === 0 && (await this.recheck())) throw new Reconnect(); // another device converted it
     // Unlocked even when it is our own, so an entry relabelled as ours fails here rather than being skipped.
-    const body = await unlockEntry(this.key!, this.cave, this.version, line);
+    else body = await unlockEntry(this.key!, this.cave, this.version, line);
     this.alive();
     // Another tab on this device posts with the same author: only this client's own entries are already here.
     if (body.c !== this.clientId) {
@@ -754,9 +941,9 @@ export class RoomClient {
     this.status('offline');
   }
 
-  /** Locks and posts local edits; keeps them in order while offline. */
+  /** Posts local edits (locked first, for a locked cave); keeps them in order while offline. */
   async flush(): Promise<void> {
-    if (!this.key || this.flushing || this.failed || this.stopped) return;
+    if (!this.ready() || this.flushing || this.failed || this.stopped || this.converting) return;
     this.flushing = true;
     try {
       const ops = this.eng.outbox();
@@ -770,8 +957,14 @@ export class RoomClient {
       while (this.pending.length) {
         const p = this.pending[0];
         try {
-          await this.call('POST', `/api/caves/${this.cave}/entries`, { version: p.version, locked: p.locked });
+          await this.call('POST', `/api/caves/${this.cave}/entries`, p.version === 0 ? { locked: p.locked } : { version: p.version, locked: p.locked });
         } catch (e) {
+          // A locked entry refused because the cave turned open (another device converted it): made open, posted again.
+          if (e instanceof HttpError && e.status === 400 && p.version !== 0 && (await this.recheck().catch(() => false))) {
+            this.alive();
+            this.restartStream();
+            continue;
+          }
           if (e instanceof HttpError && REFUSALS.has(e.status)) return this.fail(`The server refused an edit (${e.status} ${e.code}); it is kept on this device`);
           return this.offline(); // 401 (signed out), 5xx, or no network
         }

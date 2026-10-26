@@ -1,12 +1,14 @@
 // The member's caves kept on the CaveCAD server, for the Cave Shelf ("On your other devices": those this shelf does
-// not keep yet) and the Rooms panel (all of them, and the member's computers). Caves are listed by their labels,
-// which are locked with each cave's key, so a cave shows its name only once this device has been handed that key;
-// one not on this shelf opens by fetching the room's snapshot and history (caves.ts `openFromServer`).
+// not keep yet) and the Rooms panel (all of them, and the member's computers). Caves are listed by their labels: an
+// open cave's label is plain text, so any of the member's devices lists it by name and opens it at once, by fetching
+// the room's snapshot and history (caves.ts `openFromServer`); no key is involved.
 //
-// A device with no key for a cave waits: another of the member's devices hands keys on when it signs in, every few
-// minutes while open, whenever it opens that cave (room.svelte.ts), whenever its shelf or Rooms panel reads this
-// list, and when someone presses Send keys now. While the shelf or the Rooms panel is open the list is read again
-// every 15 s, and a cave someone asked to open opens by itself once its key has arrived.
+// Caves locked during rooms step 1 (until a device holding their key opens them once, which converts them to open)
+// show their name only once this device has been handed the key. Such a device waits: another of the member's
+// devices hands keys on when it signs in, every few minutes while open, whenever it opens that cave (room.svelte.ts),
+// whenever its shelf or Rooms panel reads this list, and when someone presses Send keys now. While the shelf or the
+// Rooms panel is open the list is read again every 15 s, and a cave someone asked to open opens by itself once its
+// key has arrived or it has been converted.
 import { handOverKeys, listMyCaves, type ServerAccess } from './room-client';
 import { serverAccess } from './room.svelte';
 import { shelf, shelfRoomIds } from './shelf.svelte';
@@ -18,7 +20,7 @@ export type OtherCave = {
   id: string;
   /** When its room was made (ms). */
   createdAt: number;
-  /** This device has the cave's key: it can be opened now. */
+  /** It can be opened here now: an open cave always, a locked one when this device has its key. */
   hasKey: boolean;
   /** The name from its label, or null when the label is not readable here yet. */
   name: string | null;
@@ -42,7 +44,7 @@ export const serverCaves = $state({
   problem: '',
   /** A cave being fetched now. */
   opening: '',
-  /** A cave someone asked to open that is waiting for its key: it opens by itself once the key is here. */
+  /** A locked cave someone asked to open that is waiting for its key: it opens by itself once it can. */
   waitingFor: '',
   /** What the last Send keys now did. */
   sent: '',

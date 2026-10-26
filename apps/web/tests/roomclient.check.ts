@@ -1,9 +1,10 @@
-// Two devices of one member keep a cave in step through the real server code, in this process.
+// Two devices of one member keep a cave in step through the real server code, in this process. New caves are open
+// (plain text on the server, no keys); caves locked during rooms step 1 convert when a device with their key opens them.
 import { createServer } from 'node:http';
 import { generateKeyPairSync } from 'node:crypto';
 import { openDb } from '../../server/src/db.ts';
 import { handleApi } from '../../server/src/api.ts';
-import { lock, makeDeviceKeys, unwrapCaveKey } from '../src/lib/room-crypto.ts';
+import { lock, makeCaveKey, makeDeviceKeys, wrapCaveKey } from '../src/lib/room-crypto.ts';
 import { RoomClient, downloadCave, handOverKeys, listMyCaves, type ServerAccess, type CaveEngine, type KeySeen, type Pending, type RoomClientOptions, type RoomStatus } from '../src/lib/room-client.ts';
 
 let bad = 0;
@@ -109,51 +110,52 @@ const tc2 = client(tablet, tabletDev, []);
 await tc2.open();
 ok(await until(() => tablet.ops.has('while the tablet was away')), 'the tablet catches up when it comes back');
 
-// A device registered after the room was made has no key until one of the member's devices with it opens the cave.
+// A device registered after the room was made needs no key: it opens an open cave at once.
 const phoneDev = await device();
 const phone = fakeEngine();
 phone.setRoomId(cave);
 const ps: RoomStatus[] = [];
-const pc = client(phone, phoneDev, ps);
-await pc.open();
-ok(ps.at(-1) === 'waiting-key', 'a device with no wrapped key waits for one');
-pc.stop();
+const pc2 = client(phone, phoneDev, ps);
+await pc2.open();
+ok(await until(() => ['trip 1', 'shot A1-A2', 'wall sketch', 'while the tablet was away'].every((x) => phone.ops.has(x))), 'O1: a device that never had a key gets the whole cave');
+ok(!ps.includes('waiting-key') && ps.at(-1) === 'synced', `O1: the new device is synced without waiting (${ps.join(',')})`);
 lc.stop();
 const ls2: RoomStatus[] = [];
 const lc2 = client(laptop, laptopDev, ls2);
-await lc2.open(); // hands the key to the phone
+await lc2.open();
 ok(await until(() => ls2.includes('synced')), 'the reopened laptop is synced');
-const pc2 = client(phone, phoneDev, ps);
-await pc2.open();
-ok(await until(() => ['trip 1', 'shot A1-A2', 'wall sketch', 'while the tablet was away'].every((x) => phone.ops.has(x))), 'the phone gets the key and the whole cave');
-ok(ps.at(-1) === 'synced', 'the phone is synced');
 
-const stored = [
-  ...(db.prepare('SELECT locked FROM history').all() as { locked: string }[]).map((r) => r.locked),
-  ...(db.prepare('SELECT locked FROM snapshots').all() as { locked: string }[]).map((r) => r.locked),
-  ...(db.prepare('SELECT wrapped FROM wrapped_keys').all() as { wrapped: string }[]).map((r) => r.wrapped),
-];
-ok(stored.length > 3 && stored.every((t) => !/shot|trip|wall|tablet|upTo/.test(t)), 'the server stores nothing readable');
+// New caves are open: stored as plain JSON text, with no keys anywhere.
+const caveRow = db.prepare('SELECT storage, key_version FROM caves WHERE id = ?').get(cave) as { storage: string; key_version: number };
+ok(caveRow.storage === 'open' && caveRow.key_version === 0, `O2: a new cave is open (${caveRow.storage})`);
+ok((db.prepare('SELECT COUNT(*) AS n FROM wrapped_keys').get() as { n: number }).n === 0, 'O2: no cave key was made or wrapped');
+const histTexts = (db.prepare('SELECT locked, key_version FROM history WHERE cave_id = ?').all(cave) as { locked: string; key_version: number }[]);
+ok(histTexts.length > 0 && histTexts.every((r) => {
+  const b = JSON.parse(r.locked);
+  return r.key_version === 0 && typeof b.c === 'string' && typeof b.ops === 'string' && Array.isArray(JSON.parse(b.ops));
+}), 'O2: each entry is the plain JSON {c, ops}');
+ok(histTexts.some((r) => r.locked.includes('shot A1-A2')), 'O2: the server can read the edits');
+const snapRow = db.prepare('SELECT up_to, locked FROM snapshots WHERE cave_id = ?').get(cave) as { up_to: number; locked: string };
+const snapBody = JSON.parse(snapRow.locked);
+ok(snapBody.upTo === snapRow.up_to && typeof snapBody.ops === 'string' && snapBody.ops.includes('trip 1'), 'O2: the snapshot is the plain JSON {upTo, ops} with a matching number');
 
-// An entry the server relabels as the receiving device's own must fail to unlock, not be skipped as "own".
+// An entry from another client is applied; an entry that is not {c, ops} stops sync with an error and is not applied.
 tc2.stop();
 await sleep(100);
-const myCaves = await (await fetch(base + '/api/caves', { headers: { 'X-Cave-Device': laptopDev.id } })).json();
-const w = myCaves.caves.find((c: { id: string }) => c.id === cave);
-const { key } = await unwrapCaveKey(w.wrapped, laptopDev.privateKey, { cave, version: w.keyVersion, myPublicKey: laptopDev.publicKey });
-const locked = await lock(key, JSON.stringify({ c: 'someone-else', ops: JSON.stringify(['tampered op']) }), { cave, version: 1, author: laptopDev.id, kind: 'entry' });
-const posted = await (await fetch(base + `/api/caves/${cave}/entries`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Cave-Device': laptopDev.id }, body: JSON.stringify({ version: 1, locked }) })).json();
-ok(await until(() => phone.ops.has('tampered op')), 'the genuine entry reaches the phone');
-db.prepare('UPDATE history SET author_device = ? WHERE cave_id = ? AND number = ?').run(tabletDev.id, cave, posted.number);
+const postPlain = async (c: string, text: string) =>
+  (await (await fetch(base + `/api/caves/${c}/entries`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Cave-Device': laptopDev.id }, body: JSON.stringify({ locked: text }) })).json()) as { number: number };
+await postPlain(cave, JSON.stringify({ c: 'someone-else', ops: JSON.stringify(['other client op']) }));
+ok(await until(() => phone.ops.has('other client op')), 'O3: an entry from another client reaches the phone');
+const posted = await postPlain(cave, JSON.stringify({ c: 'someone-else', ops: 42 }));
 const ts3: RoomStatus[] = [];
 const tc3 = client(tablet, tabletDev, ts3);
 await tc3.open();
-ok(await until(() => ts3.includes('error')), 'a relabelled entry is reported as an error');
-ok(!tablet.ops.has('tampered op'), 'a relabelled entry is not applied');
-ok(!ts3.includes('synced'), 'the tablet does not claim to be synced past it');
+ok(await until(() => ts3.includes('error')), 'O3: a malformed entry is reported as an error');
+ok(tablet.ops.has('other client op'), 'O3: entries before it were applied');
+ok(!ts3.includes('synced'), 'O3: the tablet does not claim to be synced past it');
 tc3.stop();
-// Put it back: every later open replays the history from the snapshot, and would stop at it too.
-db.prepare('UPDATE history SET author_device = ? WHERE cave_id = ? AND number = ?').run(laptopDev.id, cave, posted.number);
+// Put it right: every later open replays the history from the snapshot, and would stop at it too.
+db.prepare('UPDATE history SET locked = ? WHERE cave_id = ? AND number = ?').run(JSON.stringify({ c: 'someone-else', ops: '[]' }), cave, posted.number);
 
 // Two tabs on one device: the same device id and keys (IndexedDB is shared), each with its own cave in memory.
 const tabA = fakeEngine();
@@ -181,15 +183,6 @@ ok(!applied.some((s) => s.includes('tab A only once')), 'a tab does not apply it
 ok(!as.includes('error') && !bs.includes('error'), 'neither tab reports an error');
 ac.stop();
 bc.stop();
-
-// A wrapped key older than one this device has already used is refused.
-const old = fakeEngine();
-old.setRoomId(cave);
-const os: RoomStatus[] = [];
-const oc = client(old, phoneDev, os, { seen: { version: 2, keyId: 'x' } });
-await oc.open();
-ok(os.at(-1) === 'error', 'a lower key version than seen is refused');
-oc.stop();
 
 lc2.stop();
 pc2.stop();
@@ -435,7 +428,7 @@ pc2.stop();
   oc2.stop();
 }
 
-// M4: a device whose public key does not parse is skipped when wrapping, not fatal.
+// M4: a device whose public key does not parse does not stop a room being made (no wrapping for open caves).
 {
   const member = (db.prepare('SELECT member_id FROM devices WHERE id = ?').get(laptopDev.id) as { member_id: string }).member_id;
   db.prepare('INSERT INTO devices (id, member_id, public_key, created_at, last_seen_at) VALUES (?, ?, ?, 0, 0)').run('bad-dev', member, 'not-a-key');
@@ -446,19 +439,6 @@ pc2.stop();
   ok(await until(() => bs.includes('synced')), 'M4: a room is made despite a device with a bad key');
   bc.stop();
   db.prepare("DELETE FROM devices WHERE id = 'bad-dev'").run();
-}
-
-// M5: retrying while waiting for a key does not flicker back to "connecting".
-{
-  const late = await device();
-  const ek = fakeEngine();
-  ek.setRoomId(cave);
-  const ks: RoomStatus[] = [];
-  const kc = client(ek, late, ks, { keyRetryMs: 100 });
-  await kc.open();
-  await sleep(450);
-  kc.stop();
-  ok(ks.filter((x) => x === 'connecting').length === 1 && ks.at(-1) === 'waiting-key', `M5: statuses ${ks.join(',')}`);
 }
 
 // M6: only a client that wrote entries since the last snapshot uploads the next one.
@@ -487,7 +467,7 @@ pc2.stop();
 
 let relabelled = false;
 
-// The Cave Shelf on a device that does not keep a cave yet: list it by its locked label, wait for a key, open it.
+// The Cave Shelf on a device that does not keep a cave yet: list it by its plain label and open it, no key needed.
 {
   const laptopB = await device();
   const eng = fakeEngine();
@@ -506,18 +486,12 @@ let relabelled = false;
     const k = keptFor(dev);
     return { base, fetch, device: dev, loadKeySeen: async (c) => k.seen.get(c) ?? null, saveKeySeen: async (c, s) => void k.seen.set(c, s) };
   };
-  let list = await listMyCaves(access(workDev));
-  let t = list.find((x) => x.id === truitt);
-  ok(!!t && !t.hasKey && t.label === null, 'S2: the work PC lists the cave, with no key and so no name yet');
-  ok((await downloadCave(access(workDev), truitt)).status === 'waiting', 'S2: opening it waits for a key');
+  ok(await until(() => !!db.prepare('SELECT 1 FROM cave_labels WHERE cave_id = ?').get(truitt)), 'S1: the label was kept');
+  const list = await listMyCaves(access(workDev));
+  const t = list.find((x) => x.id === truitt);
+  ok(!!t && t.hasKey && t.open && t.label === label, `S2: the work PC, which never had a key, lists the cave by name (${t?.label})`);
   ok((await downloadCave(access(workDev), 'cave_nosuchcave000')).status === 'unknown', 'S2: a cave that is not the member\'s is unknown');
-
-  // The laptop hands its keys on without opening the cave again.
-  ok((await handOverKeys(access(laptopB))) >= 1, 'S3: the laptop hands the key on');
-  ok((await handOverKeys(access(laptopB))) === 0, 'S3: nothing is left to hand on');
-  list = await listMyCaves(access(workDev));
-  t = list.find((x) => x.id === truitt);
-  ok(!!t && t.hasKey && t.label === label, `S3: the work PC now reads the name (${t?.label})`);
+  ok((await handOverKeys(access(laptopB))) === 0, 'S3: an open cave has no keys to hand on');
 
   const got = await downloadCave(access(workDev), truitt);
   ok(got.status === 'ok', 'S4: the work PC downloads the cave');
@@ -534,10 +508,154 @@ let relabelled = false;
   ok(await until(() => {
     void listMyCaves(access(workDev)).then((l) => (relabelled = l.find((x) => x.id === truitt)?.label === label));
     return relabelled;
-  }, 4000), 'S5: a new name reaches the server, locked');
-  const labels = (db.prepare('SELECT locked FROM cave_labels').all() as { locked: string }[]).map((r) => r.locked);
-  ok(labels.length >= 1 && labels.every((x) => !/Truitt/.test(x) && !/Truitt/.test(Buffer.from(x, 'base64url').toString())), 'S5: the server cannot read the label');
+  }, 4000), 'S5: a new name reaches the server');
+  const kept = db.prepare('SELECT key_version, locked FROM cave_labels WHERE cave_id = ?').get(truitt) as { key_version: number; locked: string };
+  ok(kept.key_version === 0 && kept.locked === label, 'S5: the label is kept as plain JSON');
   c1.stop();
+}
+
+// Caves locked during rooms step 1: made here the old way (a cave key wrapped for one device, locked entries).
+const hdr = (dev: Dev) => ({ 'Content-Type': 'application/json', 'X-Cave-Device': dev.id });
+async function lockedCave(owners: Dev[], ops: string[], label?: string): Promise<{ id: string; key: CryptoKey }> {
+  const made = await makeCaveKey();
+  const id = 'cave_' + Math.random().toString(16).slice(2, 14).padEnd(12, '0') + 'aa';
+  const wrapped = [];
+  for (const d of owners) wrapped.push({ device: d.id, wrapped: await wrapCaveKey(made.raw, d.publicKey, { cave: id, version: 1 }) });
+  const r = await fetch(base + '/api/caves', { method: 'POST', headers: hdr(owners[0]), body: JSON.stringify({ id, wrapped }) });
+  if (!r.ok) throw new Error('locked cave not made: ' + r.status);
+  for (const op of ops) {
+    const locked = await lock(made.key, JSON.stringify({ c: 'old-client', ops: JSON.stringify([op]) }), { cave: id, version: 1, author: owners[0].id, kind: 'entry' });
+    await fetch(base + `/api/caves/${id}/entries`, { method: 'POST', headers: hdr(owners[0]), body: JSON.stringify({ version: 1, locked }) });
+  }
+  if (label) {
+    const locked = await lock(made.key, label, { cave: id, version: 1, author: 'label', kind: 'label' });
+    await fetch(base + `/api/caves/${id}/label`, { method: 'PUT', headers: hdr(owners[0]), body: JSON.stringify({ version: 1, locked }) });
+  }
+  return { id, key: made.key };
+}
+const storageOf = (id: string) => (db.prepare('SELECT storage FROM caves WHERE id = ?').get(id) as { storage: string }).storage;
+
+{
+  const keyed = await device();
+  const old = await lockedCave([keyed], ['locked op 1', 'locked op 2', 'locked op 3'], JSON.stringify({ name: 'Old Locked Cave' }));
+  ok(storageOf(old.id) === 'locked' && rows(old.id) === 3, 'L0: a locked cave with three entries');
+
+  // M5: a device with no key waits (until the cave converts), without flickering back to "connecting".
+  const late = await device();
+  const ek = fakeEngine();
+  ek.setRoomId(old.id);
+  const ks: RoomStatus[] = [];
+  const kc = client(ek, late, ks, { keyRetryMs: 100 });
+  await kc.open();
+  await sleep(450);
+  ok(ks.filter((x) => x === 'connecting').length === 1 && ks.at(-1) === 'waiting-key', `M5: statuses ${ks.join(',')}`);
+
+  // A wrapped key older than one this device has already used is refused (the locked path keeps its checks).
+  const ev = fakeEngine();
+  ev.setRoomId(old.id);
+  const vs: RoomStatus[] = [];
+  const vc = client(ev, keyed, vs, { seen: { version: 2, keyId: 'x' } });
+  await vc.open();
+  ok(vs.at(-1) === 'error', 'L1: a lower key version than seen is refused');
+  ok(storageOf(old.id) === 'locked', 'L1: and the cave is not converted');
+  vc.stop();
+  keptFor(keyed).seen.delete(old.id);
+
+  // An edit made offline before the move, kept on the keyed device in the locked format by another tab.
+  const pendingLocked = await lock(old.key, JSON.stringify({ c: 'old-tab', ops: JSON.stringify(['offline locked op']) }), { cave: old.id, version: 1, author: keyed.id, kind: 'entry' });
+  keptFor(keyed).pending.set(old.id + '|old-tab', [{ version: 1, locked: pendingLocked }]);
+  // Locked-format posts fail (as if offline) so the kept entry can only reach the room after conversion.
+  const noLockedPosts = faulty((u, i) => (i?.method === 'POST' && u.endsWith('/entries') && JSON.parse(String(i.body)).version ? json(503, { error: 'error' }) : undefined));
+  const el = fakeEngine();
+  el.setRoomId(old.id);
+  const lls: RoomStatus[] = [];
+  const why: string[] = [];
+  const lcl = client(el, keyed, lls, { fetch: noLockedPosts, reasons: why, label: () => JSON.stringify({ name: 'Old Locked Cave' }), quietMs: 50 });
+  await lcl.open();
+  ok(await until(() => storageOf(old.id) === 'open', 5000), 'L2: the keyed device converts the cave when it opens it');
+  ok(['locked op 1', 'locked op 2', 'locked op 3'].every((x) => el.ops.has(x)), 'L2: it caught up on the locked history first');
+  ok((db.prepare('SELECT COUNT(*) AS n FROM wrapped_keys WHERE cave_id = ?').get(old.id) as { n: number }).n === 0, 'L2: the wrapped keys are gone');
+  const osnap = db.prepare('SELECT up_to, key_version, locked FROM snapshots WHERE cave_id = ?').get(old.id) as { up_to: number; key_version: number; locked: string };
+  const ob = JSON.parse(osnap.locked);
+  ok(osnap.up_to === 3 && osnap.key_version === 0 && ob.upTo === 3 && ob.ops.includes('locked op 2'), `L2: an open snapshot at the last number (${osnap.up_to})`);
+  ok(await until(() => el.ops.has('offline locked op') || rows(old.id) > 0, 5000), 'L3: the kept locked entry is posted after conversion');
+  const firstOpen = db.prepare('SELECT number, key_version, locked FROM history WHERE cave_id = ? ORDER BY number LIMIT 1').get(old.id) as { number: number; key_version: number; locked: string } | undefined;
+  ok(!!firstOpen && firstOpen.number === 4 && firstOpen.key_version === 0, `L3: entry numbers continue after the snapshot (${firstOpen?.number})`);
+  ok(!!firstOpen && JSON.parse(firstOpen.locked).ops.includes('offline locked op'), 'L3: re-posted as an open entry, unlocked with the key held in memory');
+  ok(await until(() => lls.at(-1) === 'synced', 5000) && !lls.includes('error'), `L2: the converting device is synced (${lls.join(',')} ${why.join(';')})`);
+  ok(await until(() => (db.prepare('SELECT key_version FROM cave_labels WHERE cave_id = ?').get(old.id) as { key_version: number } | undefined)?.key_version === 0, 3000), 'L2: the label is kept again, plain');
+
+  // The device that was waiting for a key now syncs it with none.
+  ok(await until(() => ['locked op 1', 'locked op 3', 'offline locked op'].every((x) => ek.ops.has(x)), 5000), 'L4: the device that was waiting gets the cave without a key');
+  el.add('after conversion');
+  ok(await until(() => ek.ops.has('after conversion'), 3000), 'L4: and later edits');
+  ok(!ks.includes('error'), 'L4: no error on the waiting device');
+  const fresh = await device();
+  const ef = fakeEngine();
+  ef.setRoomId(old.id);
+  const fs: RoomStatus[] = [];
+  const fc = client(ef, fresh, fs);
+  await fc.open();
+  ok(await until(() => ['locked op 2', 'offline locked op', 'after conversion'].every((x) => ef.ops.has(x))), 'L4: a second device syncs the converted cave with no key');
+  ef.add('from the second device');
+  ok(await until(() => el.ops.has('from the second device'), 3000), 'L4: edits flow back to the converting device');
+  const freshAccess: ServerAccess = { base, fetch, device: fresh, loadKeySeen: async () => null, saveKeySeen: async () => {} };
+  const dl = await downloadCave(freshAccess, old.id);
+  ok(dl.status === 'ok' && !!dl.snapshot?.includes('locked op 1') && dl.entries.some((e) => e.includes('after conversion')), 'L4: the converted cave downloads with no key');
+  kc.stop();
+  fc.stop();
+  lcl.stop();
+
+  // L5: an open cave with locked entries kept on a device that has no key any more: error, and they stay kept.
+  const stray = await device();
+  keptFor(stray).pending.set(old.id + '|gone-tab', [{ version: 1, locked: pendingLocked }]);
+  const es = fakeEngine();
+  es.setRoomId(old.id);
+  const ss: RoomStatus[] = [];
+  const sw: string[] = [];
+  const sc = client(es, stray, ss, { reasons: sw });
+  await sc.open();
+  ok(await until(() => ss.includes('error')), 'L5: locked entries with no key to read them are an error');
+  ok(sw.some((w) => /locked|key/i.test(w)), `L5: with a clear reason (${sw.join(';')})`);
+  sc.stop();
+  await sleep(50);
+  ok([...keptFor(stray).pending].some(([k, l]) => k.startsWith(old.id + '|') && l.some((p) => p.locked === pendingLocked)), 'L5: they are kept, not dropped');
+}
+
+// L6: two keyed devices; another converts first, so this one's conversion is refused: it reloads and goes on open.
+{
+  const a = await device();
+  const b = await device();
+  const raced = await lockedCave([a, b], ['race op 1', 'race op 2']);
+  let raceDone = false;
+  const otherFirst = faulty(async (u, i) => {
+    if (!raceDone && i?.method === 'POST' && u.endsWith(`/api/caves/${raced.id}/open`)) {
+      raceDone = true;
+      const body = JSON.parse(String(i.body)) as { upTo: number };
+      const snapshot = JSON.stringify({ upTo: body.upTo, ops: JSON.stringify(['race op 1', 'race op 2', 'from the other device']) });
+      await fetch(u, { method: 'POST', headers: hdr(a), body: JSON.stringify({ upTo: body.upTo, snapshot }) });
+    }
+    return undefined;
+  });
+  const eb = fakeEngine();
+  eb.setRoomId(raced.id);
+  const bs: RoomStatus[] = [];
+  const bw: string[] = [];
+  const bc = client(eb, b, bs, { fetch: otherFirst, reasons: bw });
+  await bc.open();
+  ok(await until(() => raceDone && storageOf(raced.id) === 'open'), 'L6: the other device converted first');
+  ok(await until(() => bs.at(-1) === 'synced', 5000), `L6: this device goes on open (${bs.join(',')})`);
+  const ea = fakeEngine();
+  ea.setRoomId(raced.id);
+  const ac2 = client(ea, a, []);
+  await ac2.open();
+  ea.add('race after');
+  ok(await until(() => eb.ops.has('race after'), 3000), 'L6: and keeps syncing in open mode');
+  eb.add('race back');
+  ok(await until(() => ea.ops.has('race back'), 3000), 'L6: both ways');
+  ok(!bs.includes('error'), `L6: no error (${bw.join(';')})`);
+  bc.stop();
+  ac2.stop();
 }
 
 server.close();

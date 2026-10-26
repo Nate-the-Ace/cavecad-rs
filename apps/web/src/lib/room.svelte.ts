@@ -1,4 +1,7 @@
-// Keeps the open cave in step with its Private room on the server (rooms step 1). One RoomClient per open cave.
+// Keeps the open cave in step with its Private room on the server. One RoomClient per open cave. New caves are open
+// (stored as plain text on the server, no keys); a cave locked during rooms step 1 is converted to open by the first
+// device holding its key that opens it (room-client.ts). The device key stays: it identifies this device to the
+// server, and it opens the keys of caves not converted yet.
 //
 // One choke point: every way a cave comes on screen bumps `cave.opened`, so `startRooms()` watches that (with the
 // account) instead of each opener calling in. Sample caves never get a room (`noRoomForThisCave()` after
@@ -61,13 +64,13 @@ export async function serverAccess(): Promise<ServerAccess | null> {
   return { base: BASE, fetch: (...a) => fetch(...a), device: dev, headers, loadKeySeen: keySeen.load, saveKeySeen: keySeen.save };
 }
 
-/** Hands this device's cave keys to the member's devices that have none (a new computer then opens those caves). */
+/** Hands this device's keys of caves still locked to the member's devices that have none (open caves need none). */
 export async function handOnKeys(): Promise<void> {
   const access = await serverAccess();
   if (access) await handOverKeys(access).catch(() => 0);
 }
 
-/** The label kept (locked) on the server for the open cave: its name and shelf summary, for the shelf on other devices. */
+/** The label kept on the server for the open cave: its name and shelf summary, for the shelf on other devices. */
 function caveLabel(): string | null {
   const summary = engine.shelfSummary();
   if (!summary) return null;
