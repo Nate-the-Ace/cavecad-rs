@@ -13,12 +13,14 @@ const fail = (code: string): never => {
   throw new Error(code);
 };
 
-/** Registers a device's public key for a member (the same key gives the same device back). */
+/**
+ * Registers a device's public key for a member (the same key gives the same device back). Keys are unique per
+ * member only: another member holding the same key gets a device of their own and blocks no one.
+ */
 export function registerDevice(db: Db, memberId: string, publicKey: string, now: number): Device {
   if (!/^[A-Za-z0-9_-]{20,200}$/.test(publicKey)) fail('bad-key');
-  const found = db.prepare('SELECT id, member_id FROM devices WHERE public_key = ?').get(publicKey) as { id: string; member_id: string } | undefined;
+  const found = db.prepare('SELECT id FROM devices WHERE member_id = ? AND public_key = ?').get(memberId, publicKey) as { id: string } | undefined;
   if (found) {
-    if (found.member_id !== memberId) fail('bad-key');
     db.prepare('UPDATE devices SET last_seen_at = ? WHERE id = ?').run(now, found.id);
     return { id: found.id, memberId, publicKey };
   }
@@ -34,6 +36,11 @@ function requireOwner(db: Db, memberId: string, caveId: string): void {
 function requireOwnDevice(db: Db, memberId: string, deviceId: string): void {
   const row = db.prepare('SELECT member_id FROM devices WHERE id = ?').get(deviceId) as { member_id: string } | undefined;
   if (!row || row.member_id !== memberId) fail('bad-device');
+}
+/** Checks the device is one of the member's own (`bad-device` if not) and marks it seen. */
+export function checkDevice(db: Db, memberId: string, deviceId: string, now: number): void {
+  requireOwnDevice(db, memberId, deviceId);
+  db.prepare('UPDATE devices SET last_seen_at = ? WHERE id = ?').run(now, deviceId);
 }
 const keyVersion = (db: Db, caveId: string) => (db.prepare('SELECT key_version FROM caves WHERE id = ?').get(caveId) as { key_version: number }).key_version;
 
@@ -81,9 +88,10 @@ export function devicesMissingKey(db: Db, memberId: string, caveId: string): { i
     .map((r) => ({ id: (r as { id: string }).id, publicKey: (r as { public_key: string }).public_key }));
 }
 
-/** Stores wrapped copies of a key version for the owner's own devices. */
+/** Stores wrapped copies of the cave's current key version for the owner's own devices. */
 export function putWrappedKeys(db: Db, memberId: string, caveId: string, version: number, wrapped: Wrapped[]): void {
   requireOwner(db, memberId, caveId);
+  if (version !== keyVersion(db, caveId)) fail('bad-request');
   for (const w of wrapped) requireOwnDevice(db, memberId, w.device);
   for (const w of wrapped) db.prepare('INSERT OR REPLACE INTO wrapped_keys (cave_id, key_version, device_id, wrapped) VALUES (?, ?, ?, ?)').run(caveId, version, w.device, w.wrapped);
 }
@@ -92,24 +100,46 @@ export function putWrappedKeys(db: Db, memberId: string, caveId: string, version
 export function appendEntry(db: Db, memberId: string, deviceId: string, caveId: string, version: number, locked: string, now: number): number {
   requireOwner(db, memberId, caveId);
   requireOwnDevice(db, memberId, deviceId);
+  if (version < 1 || version > keyVersion(db, caveId)) fail('bad-request');
   const room = (db.prepare("SELECT id FROM rooms WHERE cave_id = ? AND kind = 'private'").get(caveId) as { id: string }).id;
-  const next = ((db.prepare('SELECT MAX(number) AS n FROM history WHERE cave_id = ?').get(caveId) as { n: number | null }).n ?? 0) + 1;
-  db.prepare('INSERT INTO history (cave_id, number, key_version, locked, author_member, author_device, room_id, received_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)').run(caveId, next, version, locked, memberId, deviceId, room, now);
-  return next;
+  // Numbered in the same statement that stores it, so two writers can never take the same number.
+  const row = db
+    .prepare(
+      `INSERT INTO history (cave_id, number, key_version, locked, author_member, author_device, room_id, received_at)
+       SELECT ?, COALESCE(MAX(number), 0) + 1, ?, ?, ?, ?, ?, ? FROM history WHERE cave_id = ? RETURNING number`,
+    )
+    .get(caveId, version, locked, memberId, deviceId, room, now, caveId) as { number: number };
+  return row.number;
 }
 
-/** Entries after `after`, oldest first, at most `limit`. */
-export function entriesAfter(db: Db, memberId: string, caveId: string, after: number, limit: number): Entry[] {
+/** Entries after `after`, oldest first, at most `limit`, stopping once their locked text reaches `maxBytes` (always at least one). */
+export function entriesAfter(db: Db, memberId: string, caveId: string, after: number, limit: number, maxBytes = Infinity): Entry[] {
   requireOwner(db, memberId, caveId);
-  return (db.prepare('SELECT number, key_version, locked, author_member, author_device, received_at FROM history WHERE cave_id = ? AND number > ? ORDER BY number LIMIT ?').all(caveId, after, limit) as {
-    number: number; key_version: number; locked: string; author_member: string; author_device: string; received_at: number;
-  }[]).map((r) => ({ number: r.number, keyVersion: r.key_version, locked: r.locked, authorMember: r.author_member, authorDevice: r.author_device, receivedAt: r.received_at }));
+  const out: Entry[] = [];
+  let bytes = 0;
+  const rows = db.prepare('SELECT number, key_version, locked, author_member, author_device, received_at FROM history WHERE cave_id = ? AND number > ? ORDER BY number LIMIT ?').iterate(caveId, after, limit);
+  for (const row of rows) {
+    const r = row as { number: number; key_version: number; locked: string; author_member: string; author_device: string; received_at: number };
+    out.push({ number: r.number, keyVersion: r.key_version, locked: r.locked, authorMember: r.author_member, authorDevice: r.author_device, receivedAt: r.received_at });
+    bytes += r.locked.length;
+    if (bytes >= maxBytes) break;
+  }
+  return out;
 }
 
-/** Keeps a locked whole-cave snapshot covering entries up to `upTo`. */
+/**
+ * Keeps a locked whole-cave snapshot covering entries up to `upTo`. It never goes backwards: one covering no more
+ * than the kept snapshot is ignored. `upTo` past the cave's last entry is refused (0 is fine for an empty cave).
+ */
 export function putSnapshot(db: Db, memberId: string, caveId: string, upTo: number, version: number, locked: string, now: number): void {
   requireOwner(db, memberId, caveId);
-  db.prepare('INSERT OR REPLACE INTO snapshots (cave_id, up_to, key_version, locked, created_at) VALUES (?, ?, ?, ?, ?)').run(caveId, upTo, version, locked, now);
+  const top = (db.prepare('SELECT COALESCE(MAX(number), 0) AS n FROM history WHERE cave_id = ?').get(caveId) as { n: number }).n;
+  if (upTo > top) fail('bad-request');
+  db.prepare(
+    `INSERT INTO snapshots (cave_id, up_to, key_version, locked, created_at) VALUES (?, ?, ?, ?, ?)
+     ON CONFLICT(cave_id) DO UPDATE SET up_to = excluded.up_to, key_version = excluded.key_version, locked = excluded.locked, created_at = excluded.created_at
+     WHERE excluded.up_to > snapshots.up_to`,
+  ).run(caveId, upTo, version, locked, now);
 }
 
 /** The latest snapshot, or null. */

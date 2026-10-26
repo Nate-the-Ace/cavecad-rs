@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { openDb } from '../src/db.ts';
 import { resolve, createInvite } from '../src/members.ts';
-import { appendEntry, createCave, devicesMissingKey, entriesAfter, latestSnapshot, myCaves, putSnapshot, putWrappedKeys, registerDevice } from '../src/rooms.ts';
+import { appendEntry, checkDevice, createCave, devicesMissingKey, entriesAfter, latestSnapshot, myCaves, putSnapshot, putWrappedKeys, registerDevice } from '../src/rooms.ts';
 
 const T = 1_800_000_000_000;
 function setup() {
@@ -58,6 +58,7 @@ test('snapshots keep the latest', () => {
   const d = registerDevice(db, owner, 'PUB1'.padEnd(43, 'x'), T);
   createCave(db, owner, 'cave-aaaa', [{ device: d.id, wrapped: 'W' }], T);
   assert.equal(latestSnapshot(db, owner, 'cave-aaaa'), null);
+  for (let i = 0; i < 9; i++) appendEntry(db, owner, d.id, 'cave-aaaa', 1, 'E', T);
   putSnapshot(db, owner, 'cave-aaaa', 5, 1, 'SNAP5', T);
   putSnapshot(db, owner, 'cave-aaaa', 9, 1, 'SNAP9', T);
   assert.deepEqual(latestSnapshot(db, owner, 'cave-aaaa'), { upTo: 9, keyVersion: 1, locked: 'SNAP9' });
@@ -84,4 +85,58 @@ test('wrapped keys go only to the owner\'s own devices, and a device must be the
   assert.throws(() => putWrappedKeys(db, owner, 'cave-aaaa', 1, [{ device: od.id, wrapped: 'X' }]), /bad-device/);
   assert.throws(() => appendEntry(db, owner, od.id, 'cave-aaaa', 1, 'X', T), /bad-device/);
   assert.throws(() => createCave(db, owner, 'cave-bbbb', [{ device: od.id, wrapped: 'X' }], T), /bad-device/);
+});
+
+test('snapshots never go backwards, and never past the last entry', () => {
+  const { db, owner } = setup();
+  const d = registerDevice(db, owner, 'PUB1'.padEnd(43, 'x'), T);
+  createCave(db, owner, 'cave-aaaa', [{ device: d.id, wrapped: 'W' }], T);
+  putSnapshot(db, owner, 'cave-aaaa', 0, 1, 'SNAP0', T); // an empty cave may be snapshotted at 0
+  assert.throws(() => putSnapshot(db, owner, 'cave-aaaa', 1, 1, 'X', T), /bad-request/);
+  for (let i = 0; i < 9; i++) appendEntry(db, owner, d.id, 'cave-aaaa', 1, 'E', T);
+  assert.throws(() => putSnapshot(db, owner, 'cave-aaaa', 10, 1, 'X', T), /bad-request/);
+  putSnapshot(db, owner, 'cave-aaaa', 9, 1, 'SNAP9', T);
+  putSnapshot(db, owner, 'cave-aaaa', 5, 1, 'SNAP5', T);
+  putSnapshot(db, owner, 'cave-aaaa', 9, 1, 'SNAP9-again', T);
+  assert.deepEqual(latestSnapshot(db, owner, 'cave-aaaa'), { upTo: 9, keyVersion: 1, locked: 'SNAP9' });
+});
+
+test('keys and entries only for the cave\'s current key version', () => {
+  const { db, owner } = setup();
+  const d = registerDevice(db, owner, 'PUB1'.padEnd(43, 'x'), T);
+  const t = registerDevice(db, owner, 'PUB2'.padEnd(43, 'x'), T);
+  createCave(db, owner, 'cave-aaaa', [{ device: d.id, wrapped: 'W' }], T);
+  assert.throws(() => putWrappedKeys(db, owner, 'cave-aaaa', 2, [{ device: t.id, wrapped: 'W2' }]), /bad-request/);
+  assert.throws(() => putWrappedKeys(db, owner, 'cave-aaaa', 0, [{ device: t.id, wrapped: 'W2' }]), /bad-request/);
+  assert.throws(() => appendEntry(db, owner, d.id, 'cave-aaaa', 2, 'X', T), /bad-request/);
+  assert.equal(entriesAfter(db, owner, 'cave-aaaa', 0, 10).length, 0);
+});
+
+test('catch-up batches stop at a byte budget', () => {
+  const { db, owner } = setup();
+  const d = registerDevice(db, owner, 'PUB1'.padEnd(43, 'x'), T);
+  createCave(db, owner, 'cave-aaaa', [{ device: d.id, wrapped: 'W' }], T);
+  for (let i = 0; i < 5; i++) appendEntry(db, owner, d.id, 'cave-aaaa', 1, 'A'.repeat(100), T);
+  assert.deepEqual(entriesAfter(db, owner, 'cave-aaaa', 0, 500, 250).map((e) => e.number), [1, 2, 3]);
+  assert.deepEqual(entriesAfter(db, owner, 'cave-aaaa', 0, 500, 1).map((e) => e.number), [1], 'always at least one');
+});
+
+test('the same public key may belong to two members, as two devices', () => {
+  const { db, owner, other } = setup();
+  const mine = registerDevice(db, owner, 'SAME'.padEnd(43, 'x'), T);
+  const theirs = registerDevice(db, other, 'SAME'.padEnd(43, 'x'), T);
+  assert.notEqual(mine.id, theirs.id);
+  assert.equal(theirs.memberId, other);
+  assert.equal(registerDevice(db, owner, 'SAME'.padEnd(43, 'x'), T + 1).id, mine.id);
+  assert.equal(registerDevice(db, other, 'SAME'.padEnd(43, 'x'), T + 1).id, theirs.id);
+});
+
+test('checkDevice accepts only the caller\'s own device and marks it seen', () => {
+  const { db, owner, other } = setup();
+  const d = registerDevice(db, owner, 'PUB1'.padEnd(43, 'x'), T);
+  const od = registerDevice(db, other, 'PUB9'.padEnd(43, 'x'), T);
+  checkDevice(db, owner, d.id, T + 500);
+  assert.equal((db.prepare('SELECT last_seen_at AS t FROM devices WHERE id = ?').get(d.id) as { t: number }).t, T + 500);
+  assert.throws(() => checkDevice(db, owner, od.id, T), /bad-device/);
+  assert.throws(() => checkDevice(db, owner, 'made-up', T), /bad-device/);
 });

@@ -5,6 +5,8 @@ import { generateKeyPairSync } from 'node:crypto';
 import { openDb } from '../src/db.ts';
 import { handleApi, type ApiDeps } from '../src/api.ts';
 import { listeners } from '../src/streams.ts';
+import { catchUp, isConstraint } from '../src/rooms-api.ts';
+import { createInvite } from '../src/members.ts';
 
 const ADMIN = 'nathan@example.com';
 const PUB = (n: number) => 'P'.repeat(30) + n;
@@ -22,8 +24,16 @@ async function start() {
     const res = await fetch(base + path, { method, headers: { 'x-test-user': user, 'Content-Type': 'application/json', ...(device ? { 'X-Cave-Device': device } : {}) }, body: body === undefined ? undefined : JSON.stringify(body) });
     return { status: res.status, json: await res.json() };
   };
-  return { server, base, call };
+  /** Makes Rick a member and gives back one of his devices. */
+  const rickDevice = async () => {
+    const admin = (await call(ADMIN, 'GET', '/api/me')).json.member.id;
+    createInvite(db, admin, RICK, 'member', Date.now());
+    return (await call(RICK, 'POST', '/api/devices', { publicKey: PUB(9) })).json.device.id as string;
+  };
+  return { server, base, call, db, rickDevice };
 }
+
+const RICK = 'rick@example.com';
 
 async function readLines(res: Response, count: number): Promise<Record<string, unknown>[]> {
   const out: Record<string, unknown>[] = [];
@@ -75,10 +85,114 @@ test('snapshots, and someone else is refused', async () => {
   try {
     const d = (await call(ADMIN, 'POST', '/api/devices', { publicKey: PUB(1) })).json.device.id;
     await call(ADMIN, 'POST', '/api/caves', { id: 'cave-0002', wrapped: [{ device: d, wrapped: 'W' }] }, d);
+    for (let i = 0; i < 4; i++) await call(ADMIN, 'POST', '/api/caves/cave-0002/entries', { version: 1, locked: 'AAAA' }, d);
     await call(ADMIN, 'PUT', '/api/caves/cave-0002/snapshot', { upTo: 4, version: 1, locked: 'SNAP' }, d);
     assert.deepEqual((await call(ADMIN, 'GET', '/api/caves/cave-0002/snapshot', undefined, d)).json.snapshot, { upTo: 4, keyVersion: 1, locked: 'SNAP' });
     assert.equal((await call(ADMIN, 'POST', '/api/caves/cave-0002/entries', { version: 1, locked: 'not base64!' }, d)).status, 400);
     assert.equal((await call(ADMIN, 'POST', '/api/caves/cave-0002/entries', { version: 1, locked: 'AAAA' }, 'someone-elses-device')).status, 400);
+  } finally {
+    server.close();
+  }
+});
+
+test('the device header is checked on every route', async () => {
+  const { server, base, call, rickDevice } = await start();
+  try {
+    const d = (await call(ADMIN, 'POST', '/api/devices', { publicKey: PUB(1) })).json.device.id;
+    await call(ADMIN, 'POST', '/api/caves', { id: 'cave-0003', wrapped: [{ device: d, wrapped: 'W' }] }, d);
+    const foreign = await rickDevice();
+    for (const bad of ['made-up-device', foreign]) {
+      for (const path of ['/api/caves', '/api/caves/cave-0003/missing', '/api/caves/cave-0003/snapshot']) {
+        const r = await call(ADMIN, 'GET', path, undefined, bad);
+        assert.deepEqual([r.status, r.json.error], [400, 'bad-device'], `${path} with ${bad}`);
+      }
+      const s = await fetch(base + '/api/caves/cave-0003/stream', { headers: { 'x-test-user': ADMIN, 'X-Cave-Device': bad } });
+      assert.deepEqual([s.status, (await s.json()).error], [400, 'bad-device'], `stream with ${bad}`);
+    }
+    assert.equal(listeners('cave-0003'), 0);
+  } finally {
+    server.close();
+  }
+});
+
+test('client mistakes are 400s', async () => {
+  const { server, base, call } = await start();
+  try {
+    const d = (await call(ADMIN, 'POST', '/api/devices', { publicKey: PUB(1) })).json.device.id;
+    const t = (await call(ADMIN, 'POST', '/api/devices', { publicKey: PUB(2) })).json.device.id;
+    const twice = [{ device: d, wrapped: 'W' }, { device: d, wrapped: 'V' }];
+    assert.deepEqual((await call(ADMIN, 'POST', '/api/caves', { id: 'cave-0004', wrapped: twice }, d)).json, { error: 'bad-request' });
+    await call(ADMIN, 'POST', '/api/caves', { id: 'cave-0004', wrapped: [{ device: d, wrapped: 'W' }] }, d);
+    assert.equal((await call(ADMIN, 'POST', '/api/caves/cave-0004/keys', { version: 1, wrapped: [{ device: t, wrapped: 'A' }, { device: t, wrapped: 'B' }] }, d)).status, 400);
+    assert.equal((await call(ADMIN, 'POST', '/api/caves/cave-0004/keys', { version: 2, wrapped: [{ device: t, wrapped: 'A' }] }, d)).status, 400);
+    assert.equal((await call(ADMIN, 'POST', '/api/caves/cave-0004/entries', { version: 2, locked: 'AAAA' }, d)).status, 400);
+    assert.equal((await call(ADMIN, 'PUT', '/api/caves/cave-0004/snapshot', { upTo: 1, version: 1, locked: 'SNAP' }, d)).status, 400);
+    for (const after of ['abc', '-1', '1.5', '']) {
+      const s = await fetch(base + `/api/caves/cave-0004/stream?after=${after}`, { headers: { 'x-test-user': ADMIN, 'X-Cave-Device': d } });
+      assert.equal(s.status, 400, `after=${after}`);
+      await s.body?.cancel();
+    }
+    assert.equal(listeners('cave-0004'), 0);
+  } finally {
+    server.close();
+  }
+});
+
+test('a database constraint error counts as a client mistake', () => {
+  const db = openDb(':memory:');
+  db.exec('CREATE TABLE t (a PRIMARY KEY)');
+  db.exec('INSERT INTO t VALUES (1)');
+  let err: unknown;
+  try {
+    db.exec('INSERT INTO t VALUES (1)');
+  } catch (e) {
+    err = e;
+  }
+  assert.equal(isConstraint(err), true);
+  assert.equal(isConstraint(new Error('boom')), false);
+});
+
+test('an entry posted while the stream is still catching up arrives exactly once, in order', async () => {
+  const { server, base, call } = await start();
+  const saved = { ...catchUp };
+  try {
+    const d = (await call(ADMIN, 'POST', '/api/devices', { publicKey: PUB(1) })).json.device.id;
+    await call(ADMIN, 'POST', '/api/caves', { id: 'cave-0005', wrapped: [{ device: d, wrapped: 'W' }] }, d);
+    for (let i = 0; i < 3; i++) await call(ADMIN, 'POST', '/api/caves/cave-0005/entries', { version: 1, locked: 'AAAA' }, d);
+    let paused = 0;
+    catchUp.rows = 1;
+    catchUp.afterBatch = async () => {
+      // the first pause: entry 4 lands mid catch-up, after this stream started listening
+      if (paused++ === 0) assert.equal((await call(ADMIN, 'POST', '/api/caves/cave-0005/entries', { version: 1, locked: 'BBBB' }, d)).json.number, 4);
+    };
+    const res = await fetch(base + '/api/caves/cave-0005/stream?after=0', { headers: { 'x-test-user': ADMIN, 'X-Cave-Device': d } });
+    const linesP = readLines(res, 6);
+    while (listeners('cave-0005') === 0 || paused < 4) await new Promise((r) => setTimeout(r, 10));
+    await new Promise((r) => setTimeout(r, 30));
+    await call(ADMIN, 'POST', '/api/caves/cave-0005/entries', { version: 1, locked: 'CCCC' }, d);
+    const lines = (await linesP).filter((l) => l.t !== 'ping');
+    assert.deepEqual(lines.map((l) => (l.t === 'entry' ? l.number : l.t)), [1, 2, 3, 4, 'live', 5]);
+  } finally {
+    Object.assign(catchUp, saved);
+    server.close();
+  }
+});
+
+test('closing a stream stops listening; another stream on the cave carries on', async () => {
+  const { server, base, call } = await start();
+  try {
+    const d = (await call(ADMIN, 'POST', '/api/devices', { publicKey: PUB(1) })).json.device.id;
+    await call(ADMIN, 'POST', '/api/caves', { id: 'cave-0006', wrapped: [{ device: d, wrapped: 'W' }] }, d);
+    const open = () => fetch(base + '/api/caves/cave-0006/stream', { headers: { 'x-test-user': ADMIN, 'X-Cave-Device': d } });
+    const a = await open();
+    const b = await open();
+    const bLines = readLines(b, 2);
+    while (listeners('cave-0006') < 2) await new Promise((r) => setTimeout(r, 10));
+    await a.body!.cancel();
+    while (listeners('cave-0006') > 1) await new Promise((r) => setTimeout(r, 10));
+    await call(ADMIN, 'POST', '/api/caves/cave-0006/entries', { version: 1, locked: 'AAAA' }, d);
+    assert.deepEqual((await bLines).map((l) => l.number ?? l.t), ['live', 1]);
+    while (listeners('cave-0006') > 0) await new Promise((r) => setTimeout(r, 10));
   } finally {
     server.close();
   }

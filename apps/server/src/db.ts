@@ -38,9 +38,10 @@ CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS devices (
   id TEXT PRIMARY KEY,
   member_id TEXT NOT NULL REFERENCES members(id),
-  public_key TEXT NOT NULL UNIQUE,
+  public_key TEXT NOT NULL,
   created_at INTEGER NOT NULL,
-  last_seen_at INTEGER
+  last_seen_at INTEGER,
+  UNIQUE (member_id, public_key)
 );
 CREATE TABLE IF NOT EXISTS caves (
   id TEXT PRIMARY KEY,
@@ -87,6 +88,9 @@ CREATE TABLE IF NOT EXISTS snapshots (
   locked TEXT NOT NULL,
   created_at INTEGER NOT NULL
 );
+CREATE INDEX IF NOT EXISTS rooms_cave ON rooms(cave_id);
+CREATE INDEX IF NOT EXISTS cave_owners_member ON cave_owners(member_id);
+CREATE INDEX IF NOT EXISTS devices_member ON devices(member_id);
 INSERT OR IGNORE INTO settings (key, value) VALUES ('signups', 'invite');
 `;
 

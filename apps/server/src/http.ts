@@ -10,8 +10,15 @@ export function send(res: ServerResponse, status: number, body: unknown): void {
 /** A body that is too big or not a JSON object; answered 400. */
 export class BadBody extends SyntaxError {}
 
-/** Reads a JSON object body of at most `max` bytes (64 KB by default). */
+/** Answers 400 for a body readJson refused; a too-big one also closes the connection, so its rest is never read. */
+export function sendBadBody(res: ServerResponse, e: unknown): void {
+  if (e instanceof BadBody && e.message === 'too-big') res.setHeader('Connection', 'close');
+  send(res, 400, { error: 'bad-request' });
+}
+
+/** Reads a JSON object body of at most `max` bytes (64 KB by default); one declared bigger is refused unread. */
 export async function readJson(req: IncomingMessage, max = 64 * 1024): Promise<Record<string, unknown>> {
+  if (Number(req.headers['content-length'] ?? 0) > max) throw new BadBody('too-big');
   const chunks: Buffer[] = [];
   let size = 0;
   for await (const chunk of req) {

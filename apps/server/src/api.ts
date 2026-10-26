@@ -9,7 +9,7 @@ import { signPass } from './pass.ts';
 import { sendInvite, type MailerConfig } from './mailer.ts';
 import type { RequestLike } from './identity.ts';
 import { serveStatic } from './static.ts';
-import { send, readJson } from './http.ts';
+import { send, sendBadBody, readJson } from './http.ts';
 import { handleRooms } from './rooms-api.ts';
 
 export type ApiDeps = {
@@ -86,7 +86,7 @@ export async function handleApi(d: ApiDeps, req: IncomingMessage, res: ServerRes
       return send(res, out.status, out.body);
     }
   } catch (e) {
-    if (e instanceof SyntaxError) return send(res, 400, { error: 'bad-request' });
+    if (e instanceof SyntaxError) return sendBadBody(res, e);
     throw e;
   }
 
@@ -99,7 +99,7 @@ export async function handleApi(d: ApiDeps, req: IncomingMessage, res: ServerRes
   const me = r.member;
 
   try {
-    if (path === '/api/devices' || path === '/api/caves' || path.startsWith('/api/caves/')) return handleRooms(d.db, me.id, req, res, now);
+    if (path === '/api/devices' || path === '/api/caves' || path.startsWith('/api/caves/')) return await handleRooms(d.db, me.id, req, res, now);
     if (path === '/api/me' && method === 'GET') {
       return send(res, 200, { status: 'member', member: me, drives: M.listDrives(d.db, me.id), firstVisit: r.firstVisit, signups: getSetting(d.db, 'signups'), ...via, pass: signPass(d.passKey, { memberId: me.id, email: me.email, role: me.role }, now) });
     }
@@ -156,7 +156,7 @@ export async function handleApi(d: ApiDeps, req: IncomingMessage, res: ServerRes
   } catch (e) {
     const code = e instanceof Error ? e.message : 'error';
     if (STATUS[code]) return send(res, STATUS[code], { error: code });
-    if (e instanceof SyntaxError) return send(res, 400, { error: 'bad-request' });
+    if (e instanceof SyntaxError) return sendBadBody(res, e);
     throw e;
   }
 }
