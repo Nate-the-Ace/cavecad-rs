@@ -1,10 +1,9 @@
-// Read-only mode for the engine: while a person is only watching a class, every call that would change
-// the cave (or replace it) is refused here, whatever part of the interface tried it. The panels, the
-// ribbon and the keyboard are also kept from acting (see `classroom.svelte.ts`), but this is the
-// guarantee: nothing a student does can reach their copy of the cave, so nothing can reach anyone else's.
+// Read-only mode for the engine: while the account is locked (an offline pass over 30 days old), every call
+// that would change the cave (or replace it) is refused here, whatever part of the interface tried it. This is
+// the guarantee: nothing done while locked reaches the cave.
 //
 // Every method of `engine` is listed below as one that reads or one that writes. A test
-// (`tests/classroom.check.ts`) fails when a method of `engine` is in neither list, so a new engine call
+// (`tests/readonly.check.ts`) fails when a method of `engine` is in neither list, so a new engine call
 // has to be classified when it is added.
 
 /** Engine calls that change or replace the open cave. */
@@ -67,8 +66,8 @@ export const WRITES: readonly string[] = [
   'redo',
 ];
 
-/** Engine calls that only look. (`syncLoad` and `syncApply` are here on purpose: they are how the teacher's
- *  cave and edits arrive, and nothing a person does can call them.) */
+/** Engine calls that only look. (`syncLoad` and `syncApply` are here on purpose: they are how a cave's edits
+ *  arrive from the server, and nothing a person does can call them.) */
 export const READS: readonly string[] = [
   'version',
   'log',
@@ -160,32 +159,17 @@ export const READS: readonly string[] = [
   'editState',
 ];
 
-const CLASS_WHY = 'This is a class: only the teacher can change the cave.';
-
-/** Whether the engine refuses writes, and what it says. Two things can lock it: watching a class
- *  (`setClassLock`) and an offline pass over 30 days old (`setAccountLock`). `on` is what the engine checks. */
+/** Whether the engine refuses writes, and what it says. The account locks it (`setAccountLock`) while the
+ *  offline pass is too old to keep editing. `on` is what the engine checks. */
 export const readOnly = {
   on: false,
-  /** The teacher asked that the cave not be kept: saving, exporting and printing are off, and it is cleared when the student leaves. */
-  noKeep: false,
-  why: CLASS_WHY,
+  why: '',
 };
 
-const locks = { class: { on: false, why: CLASS_WHY }, account: { on: false, why: '' } };
-function settle() {
-  readOnly.on = locks.class.on || locks.account.on;
-  // The class's reason first: a student can't edit whatever the account says.
-  readOnly.why = locks.class.on ? locks.class.why : locks.account.on ? locks.account.why : CLASS_WHY;
-}
-/** The classroom's lock: on while a person is only watching a class. */
-export function setClassLock(on: boolean, why = CLASS_WHY): void {
-  locks.class = { on, why };
-  settle();
-}
 /** The account's lock: on while the offline pass is too old to keep editing. */
 export function setAccountLock(on: boolean, why = ''): void {
-  locks.account = { on, why };
-  settle();
+  readOnly.on = on;
+  readOnly.why = why;
 }
 
 const writes = new Set(WRITES);

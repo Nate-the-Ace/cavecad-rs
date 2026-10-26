@@ -61,11 +61,8 @@ jobs:
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          VITE_RELAY_URL: ${{ secrets.RELAY_URL }}
           VITE_FEEDBACK_ENDPOINT: ${{ secrets.FEEDBACK_ENDPOINT }}
           VITE_FEEDBACK_KEY: ${{ secrets.FEEDBACK_KEY }}
-          VITE_SIGNAL_ENDPOINT: ${{ secrets.SIGNAL_ENDPOINT }}
-          VITE_SIGNAL_KEY: ${{ secrets.SIGNAL_KEY }}
           # accounts: the offline pass's public key, TinyAuth's sign-out page, and the API host the desktop app calls
           VITE_PASS_PUBLIC_KEY: ${{ vars.PASS_PUBLIC_KEY }}
           VITE_SIGNOUT_URL: ${{ vars.SIGNOUT_URL }}

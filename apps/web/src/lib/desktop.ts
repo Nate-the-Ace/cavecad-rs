@@ -40,8 +40,9 @@ export const typeOf = (path: string): string => TYPES[path.slice(path.lastIndexO
 export const baseName = (path: string): string => path.replace(/[\\/]+$/, '').split(/[\\/]/).pop() || path;
 
 /**
- * Join links that open the desktop app (`cavecad://join?...`) reach the page here: the ones that started the app before
- * the page was ready, and each one that arrives while it runs. Does nothing in a browser.
+ * Links that open the desktop app (`cavecad://auth` after sign-in, and old `cavecad://join?...` links, which show the
+ * moved page) reach the page here: the ones that started the app before the page was ready, and each one that arrives
+ * while it runs. Does nothing in a browser.
  */
 export function listenForLinks(onLink: (url: string) => void): void {
   if (!isDesktop()) return;

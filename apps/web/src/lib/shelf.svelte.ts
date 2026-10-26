@@ -35,8 +35,6 @@ function startupSetting(): boolean {
 export const shelf = $state({
   /** The shelf window is showing. */
   open: false,
-  /** Open it on the Join a live session page (from the ribbon). */
-  join: false,
   records: [] as ShelfRecord[],
   /** The record the open cave is saved to ('' for a sample or a cave not yet stored). */
   currentId: '',
@@ -127,7 +125,7 @@ const newId = () => (typeof crypto !== 'undefined' && 'randomUUID' in crypto ? c
  * `shelf.problem` saying why) when the browser would not keep it.
  */
 export async function storeOpenCave(source = ''): Promise<boolean> {
-  if (readOnly.on) return false; // what a student is shown is the teacher's cave: never kept here
+  if (readOnly.on) return false; // a locked cave (the offline pass is too old) is not changed here
   const summary = engine.shelfSummary();
   if (!summary) return false;
   const existing = shelf.records.find((r) => r.id === shelf.currentId) ?? (source ? shelf.records.find((r) => r.source === source) : undefined);

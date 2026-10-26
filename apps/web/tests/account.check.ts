@@ -143,20 +143,12 @@ ok(shown.role === 'member' && shown.email === 'a@example.com' && shown.displayNa
   ok(p3 !== p1 && (await p3) === 2, 'and a later start runs again');
 }
 
-// ---- read-only has two locks: the class and the account ----
-import { readOnly, setAccountLock, setClassLock } from '../src/lib/readonly.ts';
+// ---- read-only: the account's lock ----
+import { readOnly, setAccountLock } from '../src/lib/readonly.ts';
 setAccountLock(true, 'old pass');
 ok(readOnly.on && readOnly.why === 'old pass', 'an old pass locks editing');
-setClassLock(true);
-ok(readOnly.on && readOnly.why.startsWith('This is a class'), 'the class reason comes first');
-setClassLock(false);
-ok(readOnly.on && readOnly.why === 'old pass', 'leaving the class does not unlock an old pass');
 setAccountLock(false);
-ok(!readOnly.on, 'both off: editing again');
-setClassLock(true);
-setAccountLock(false);
-ok(readOnly.on, 'coming back online does not unlock a class');
-setClassLock(false);
+ok(!readOnly.on, 'coming back online: editing again');
 
 console.log(bad ? `account: ${bad} failed` : 'account: all ok');
 process.exit(bad ? 1 : 0);

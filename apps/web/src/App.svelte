@@ -12,17 +12,11 @@
   import { cave, unsaved } from './lib/cave.svelte';
   import { guardUnload } from './lib/files';
   import { installDiagnostics } from './lib/diagnostics';
-  import { live, readInviteFromUrl } from './lib/sync.svelte';
   import CaveShelf from './components/CaveShelf.svelte';
-  import LiveShare from './components/LiveShare.svelte';
-  import ClassroomDock from './components/ClassroomDock.svelte';
-  import ClassroomDialogs from './components/ClassroomDialogs.svelte';
-  import ClassroomAlerts from './components/ClassroomAlerts.svelte';
-  import { classroom, keepsCave, openJoinUrl, readClassLinkFromUrl } from './lib/classroom.svelte';
+  import MovedPage from './components/MovedPage.svelte';
+  import { isOldJoinUrl, isOldLiveLink } from './lib/moved-link';
   import { listenForLinks } from './lib/desktop';
   import { syncDrawing } from './lib/drawing';
-  import { viewChanged } from './lib/p2p.svelte';
-  import { scans } from './lib/scans.svelte';
   import { autosaveSoon, flush, loadShelf, shelf } from './lib/shelf.svelte';
   import { checkRemembered } from './lib/scans.svelte';
   import AccountGate from './components/account/AccountGate.svelte';
@@ -33,6 +27,8 @@
   let info = $state<BuildInfo | null>(null);
   let failed = $state<string | null>(null);
   let host: HTMLDivElement;
+  /** Opened from an old live, class or join link: say where those went (MovedPage.svelte). */
+  let moved = $state(isOldLiveLink(location.search));
 
   // The drawing's scale (and who changed it) is read again whenever the cave changes or another opens.
   let engineReady = $state(false);
@@ -75,10 +71,8 @@
     window.addEventListener('paste', onPaste);
     const teardown = initWorkspace(host);
     installDiagnostics();
-    readInviteFromUrl();
-    readClassLinkFromUrl();
     listenForLinks((url) => {
-      void handleAuthLink(url).then((signIn) => { if (!signIn) openJoinUrl(url); });
+      void handleAuthLink(url).then((signIn) => { if (!signIn && isOldJoinUrl(url)) moved = true; });
     }); // in the desktop app, a link that opened it
     void checkRemembered(); // the scans kept from last time come back before any panel is opened
     const unguard = guardUnload();
@@ -91,8 +85,8 @@
         engineReady = true;
         syncDrawing();
         await loadShelf();
-        // A clean slate: the shelf opens first, unless someone sent an invite to a room.
-        if (!cave.hasCave && shelf.startup && !live.pending && !classroom.pending) shelf.open = true;
+        // A clean slate: the shelf opens first (an old live link opens it from the moved page instead).
+        if (!cave.hasCave && shelf.startup && !moved) shelf.open = true;
       } catch (e) {
         failed = String(e);
       }
@@ -114,15 +108,7 @@
   // Edits are kept on the shelf a moment after they are made.
   $effect(() => {
     void cave.version;
-    if (keepsCave()) autosaveSoon(); // what a student is shown is the teacher's cave: not kept here
-  });
-  // The host tells guests where it is looking.
-  $effect(() => {
-    void cave.trip;
-    void cave.run;
-    void cave.station;
-    void scans.selected;
-    viewChanged();
+    autosaveSoon();
   });
   // A multiple selection belongs to the line that was picked first: picking another line on its own drops the rest.
   $effect(() => {
@@ -132,7 +118,7 @@
     }
   });
 
-  const keepNow = () => keepsCave() && void flush();
+  const keepNow = () => void flush();
 
   const dirty = $derived(unsaved());
   $effect(() => {
@@ -163,9 +149,7 @@
   <SnapMenu />
   <NewCave />
   <CaveShelf />
-  <LiveShare />
-  <ClassroomDialogs />
-  <ClassroomAlerts />
+  <MovedPage bind:open={moved} />
   <LineMenu />
   <TextEditor />
   {#if info?.error}
@@ -174,7 +158,6 @@
   {#if failed}<p class="err">Engine failed to load: {failed}</p>{/if}
   <div class="body">
     <div class="workspace" bind:this={host}></div>
-    <ClassroomDock />
   </div>
   <footer>
     <span>{version}</span>

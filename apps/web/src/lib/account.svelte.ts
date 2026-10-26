@@ -1,9 +1,9 @@
 // Who is signed in to CaveCAD, for the whole page. Sign-in is required: the app starts by asking the server
 // (startAccount); with no network it opens on the offline pass this device was given last time it was online.
-// The display name and colour are the ones live sessions show (`me` in sync.svelte.ts).
+// The display name and colour are the ones others see (`me` in me.svelte.ts).
 import { accountApi, offlinePhase, passMember, singleFlight, type AccountApi, type Drive, type Member, type NotInvitedReason } from './account-api';
 import { verifyPass } from './pass';
-import { me } from './sync.svelte';
+import { me } from './me.svelte';
 import { setAccountLock } from './readonly';
 import { desktopBearer, finishDesktopSignIn, refreshDesktop, signOutDesktop } from './desktop-signin';
 import { isDesktop } from './desktop';

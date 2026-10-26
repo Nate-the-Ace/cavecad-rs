@@ -1,7 +1,7 @@
 <script lang="ts">
   // Account: who you are signed in as, the name and colour others see in live sessions, and Sign out.
   import { account, saveProfile, signOut } from '../../lib/account.svelte';
-  import { COLORS } from '../../lib/sync.svelte';
+  import { COLORS } from '../../lib/me.svelte';
   import { flush } from '../../lib/shelf.svelte';
 
   const m = $derived(account.member);

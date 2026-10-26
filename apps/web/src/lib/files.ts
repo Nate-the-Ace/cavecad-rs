@@ -7,15 +7,12 @@
 import { decodeSurveyText } from './text-decode';
 import { engine } from './engine';
 import { cave, changed, markSaved, markUnsaved, option, unsaved } from './cave.svelte';
-import { leave } from './sync.svelte';
 import { shelf as shelfState, storeOpenCave } from './shelf.svelte';
 import { EXT, pack, unpack } from './cavefile';
 import { unzip } from './unzip';
 import { zip } from './zip';
 import { addRemoteFile, fileOf, scans } from './scans.svelte';
-import { readOnly } from './readonly';
 
-const LOCKED = 'Saving and exporting are turned off while you are watching a class: the cave stays with the teacher.';
 
 /** The subset of the File System Access API this file uses. */
 interface Handle {
@@ -160,7 +157,6 @@ async function usedScans(): Promise<{ path: string; data: Uint8Array }[]> {
 
 /** The bytes of the open cave as a CaveCAD file, with its scans when asked. */
 export async function caveBytes(withScans: boolean): Promise<Uint8Array> {
-  if (readOnly.noKeep) throw new Error(LOCKED);
   return pack({ name: cave.name || stem(cave.fileName), app: `cavecad-rs ${engine.version()}`, cave: engine.syncSnapshot(), scans: withScans ? await usedScans() : [] });
 }
 
@@ -173,7 +169,6 @@ export function startCave(name: string, unit: 'ft' | 'm'): { ok: boolean; messag
   const clean = name.trim() || 'New cave';
   const r = engine.newCave(clean, 'First trip', unit);
   if (r !== 'ok') return { ok: false, message: r.replace(/^error: /, '') };
-  leave(); // a different cave: stop sharing the old one
   handle = null;
   cave.fileName = `${safeName(clean)}${EXT}`;
   cave.trip = '';
@@ -232,7 +227,6 @@ export async function openCave(): Promise<{ ok: boolean; message: string } | nul
     warnings = r.warnings;
   }
   if (!ok) return { ok: false, message };
-  leave(); // a different cave: stop sharing the old one
   handle = native ? picked.handle : null; // only a CaveCAD file is saved back to where it came from
   cave.fileName = native ? picked.name : `${stem(picked.name)}${EXT}`;
   cave.hasCave = true;
@@ -254,7 +248,6 @@ export async function openCave(): Promise<{ ok: boolean; message: string } | nul
 
 /** Saves the open cave as a CaveCAD file. `saveAs` always asks where. Returns what to tell the person, or `null` if they cancelled. */
 export async function saveCave(saveAs = false): Promise<string | null> {
-  if (readOnly.noKeep) return LOCKED;
   if (!cave.hasCave) return 'Nothing to save: no cave is open.';
   const bytes = await caveBytes(option('saveScans', true));
   try {
@@ -278,7 +271,6 @@ export async function saveCave(saveAs = false): Promise<string | null> {
 
 /** Exports the drawing as a DXF (for other CAD programs). It is not how a cave is saved. */
 export async function exportDxf(): Promise<string | null> {
-  if (readOnly.noKeep) return LOCKED;
   const text = engine.saveDxf(cave.adjusted);
   if (!text) return 'Nothing to export: no cave is open.';
   const name = await writeNew(`${stem(cave.fileName)}.dxf`, text, 'application/dxf', DXF_SAVE_TYPES);
@@ -302,7 +294,6 @@ export async function importSurvey(): Promise<{ ok: boolean; message: string } |
   const others = Object.fromEntries(files.filter((f) => f !== main).map((f) => [f.name, f.text]));
   const r = engine.importSurvey(main.name, main.text, others);
   if (!r.ok) return { ok: false, message: r.message };
-  leave(); // a different cave: stop sharing the old one
   handle = null;
   cave.fileName = `${stem(main.name)}${EXT}`;
   cave.hasCave = true;
@@ -375,7 +366,6 @@ export async function importSurveyFolder(): Promise<{ ok: boolean; message: stri
   if (!confirmDiscard()) return null;
   const r = engine.importFolder(picked.files);
   if (!r.ok) return { ok: false, message: r.message };
-  leave(); // a different cave: stop sharing the old one
   handle = null;
   cave.fileName = `${safeName(picked.name)}${EXT}`;
   cave.hasCave = true;
@@ -391,7 +381,6 @@ export async function importSurveyFolder(): Promise<{ ok: boolean; message: stri
 
 /** Exports the survey in one of the standard cave data formats (an id from `engine.surveyFormats()`). */
 export async function exportSurvey(format: string): Promise<string | null> {
-  if (readOnly.noKeep) return LOCKED;
   if (!cave.hasCave) return 'Nothing to export: no cave is open.';
   const r = engine.exportSurvey(format);
   if (!r.ok) return r.message;
@@ -404,7 +393,6 @@ export async function exportSurvey(format: string): Promise<string | null> {
 
 /** Exports the whole project: the cave, its DXF and everything in the scans folder, as one zip. */
 export async function exportProject(): Promise<string | null> {
-  if (readOnly.noKeep) return LOCKED;
   if (!cave.hasCave) return 'Nothing to export: no cave is open.';
   const base = safeName(stem(cave.fileName));
   const entries = [

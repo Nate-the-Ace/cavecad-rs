@@ -11,25 +11,21 @@
     "test:decode": "node --experimental-strip-types tests/decode.check.ts",
     "test:spline": "node --experimental-strip-types tests/spline.check.ts",
     "harness": "vite --config harness/vite.config.ts",
-    "test": "npm run test:units && npm run test:decode && npm run test:spline && npm run test:glyph && npm run test:editor && npm run test:labelleader && npm run test:selectall && npm run test:clip && npm run test:commands && npm run test:touch && npm run test:relay && npm run test:pen && npm run test:symbols && npm run test:patterns && npm run test:stations && npm run test:zip && npm run test:notebook && npm run test:importer && npm run test:scantree && npm run test:scandraw && npm run test:scanlocation && npm run test:p2p && npm run test:cavefile && npm run test:plane && npm run test:classroom && npm run test:signal && npm run test:sketchgrid && npm run test:layoutslots && npm run test:webble && npm run test:snap && npm run test:account && npm run test:roomcrypto && npm run test:roomclient",
+    "test": "npm run test:units && npm run test:decode && npm run test:spline && npm run test:glyph && npm run test:editor && npm run test:labelleader && npm run test:selectall && npm run test:clip && npm run test:commands && npm run test:touch && npm run test:pen && npm run test:symbols && npm run test:patterns && npm run test:stations && npm run test:zip && npm run test:notebook && npm run test:importer && npm run test:scantree && npm run test:scandraw && npm run test:scanlocation && npm run test:cavefile && npm run test:plane && npm run test:sketchgrid && npm run test:layoutslots && npm run test:webble && npm run test:snap && npm run test:account && npm run test:roomcrypto && npm run test:roomclient && npm run test:readonly && npm run test:movedlink",
     "test:glyph": "node --experimental-strip-types --import ./tests/ts-resolve.mjs tests/glyph.check.ts",
     "test:editor": "node --experimental-strip-types tests/lineeditor.check.ts",
     "test:commands": "node --experimental-strip-types tests/commands.check.ts",
     "test:touch": "node --experimental-strip-types tests/touch.check.ts",
-    "test:relay": "node tests/relay.check.mjs",
     "test:pen": "node --experimental-strip-types tests/pen.check.ts",
     "test:patterns": "node --experimental-strip-types tests/patterns.check.ts",
     "test:symbols": "node ../../tools/check_import_symbols.mjs",
     "test:stations": "node --experimental-strip-types tests/stations.check.ts",
     "test:zip": "node --experimental-strip-types tests/zip.check.ts",
     "test:notebook": "node --experimental-strip-types tests/notebook.check.ts",
-    "test:classroom": "node --experimental-strip-types tests/classroom.check.ts",
-    "test:signal": "node --experimental-strip-types tests/signal.check.ts",
     "test:importer": "node ../../tools/check_import_old_dxf.mjs",
     "test:scantree": "node --experimental-strip-types tests/scantree.check.ts",
     "test:scandraw": "node --experimental-strip-types --import ./tests/ts-resolve.mjs tests/scandraw.check.ts",
     "test:scanlocation": "node --experimental-strip-types tests/scanlocation.check.ts",
-    "test:p2p": "node --experimental-strip-types tests/p2p.check.ts",
     "test:cavefile": "node --experimental-strip-types tests/cavefile.check.ts",
     "test:plane": "node --experimental-strip-types tests/plane.check.ts",
     "test:sketchgrid": "node --experimental-strip-types tests/sketchgrid.check.ts",
@@ -42,7 +38,9 @@
     "test:snap": "node --experimental-strip-types tests/snap.check.ts",
     "test:account": "node --experimental-strip-types tests/account.check.ts",
     "test:roomcrypto": "node --experimental-strip-types tests/roomcrypto.check.ts",
-    "test:roomclient": "node --experimental-strip-types tests/roomclient.check.ts"
+    "test:roomclient": "node --experimental-strip-types tests/roomclient.check.ts",
+    "test:readonly": "node --experimental-strip-types tests/readonly.check.ts",
+    "test:movedlink": "node --experimental-strip-types tests/movedlink.check.ts"
   },
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "^7.3.1",
@@ -50,8 +48,7 @@
     "svelte": "^5.57.2",
     "svelte-check": "^4.7.6",
     "typescript": "^6.0.3",
-    "vite": "^8.3.4",
-    "ws": "^8.22.0"
+    "vite": "^8.3.4"
   },
   "dependencies": {
     "@lucide/svelte": "^1.55.0",

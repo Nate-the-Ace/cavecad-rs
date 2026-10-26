@@ -6,7 +6,6 @@ import { DEMOS } from './demos';
 import { confirmDiscard, forgetFile } from './files';
 import { dxfOf, flush, isNative, shelf, storeOpenCave } from './shelf.svelte';
 import { EXT } from './cavefile';
-import { leave } from './sync.svelte';
 import { workLayout } from './workspace.svelte';
 import { noRoomForThisCave, serverAccess } from './room.svelte';
 import { downloadCave } from './room-client';
@@ -14,7 +13,6 @@ import { syncedHash } from './device-key';
 
 /** A different cave is now on screen: everything that belonged to the last one is let go. */
 function landed(name: string) {
-  leave(); // stop sharing the old cave
   forgetFile();
   cave.fileName = `${name}${EXT}`;
   cave.name = name;

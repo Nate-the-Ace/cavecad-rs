@@ -67,7 +67,7 @@
           ? ROOM_TEXT[room.status] + (room.status === 'error' && room.reason ? ` (${room.reason})` : '')
           : !signedIn
             ? 'Not signed in: this cave is kept only on this computer.'
-            : 'Not syncing: samples never sync, and a cave stops while a live session or class runs.',
+            : 'Not syncing: samples never sync.',
   );
 </script>
 

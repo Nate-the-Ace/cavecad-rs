@@ -4,7 +4,6 @@
 
 import { cave } from './cave.svelte';
 import { engine, loadBuildInfo } from './engine';
-import { live } from './sync.svelte';
 import { panelState } from './workspace.svelte';
 import { pageErrors } from './diagnostics';
 import { zip } from './zip';
@@ -65,7 +64,6 @@ export async function details(): Promise<Record<string, unknown>> {
     pick: cave.pick.kind,
     stations,
     legs,
-    live: { status: live.status, people: live.people.length },
   };
 }
 

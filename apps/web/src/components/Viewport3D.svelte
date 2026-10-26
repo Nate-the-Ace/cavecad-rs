@@ -4,11 +4,10 @@
   import PanelUndo from './PanelUndo.svelte';
   import { shelf } from '../lib/shelf.svelte';
   import { isSymbolKind, needsWords, symbolDef, withLabelSpot } from '../lib/symbols';
-  import { registerMirror } from '../lib/classroom-mirror';
   import { drawing, liveStyle } from '../lib/line-style.svelte';
-  import { cursorsFor, live as room, reportCursor } from '../lib/sync.svelte';
+  import { cursorsFor, presence as room, reportCursor } from '../lib/presence.svelte';
   import { engine, loadEngine, type Scene, type TypeStyle } from '../lib/engine';
-  import { CaveView, type CameraState, type Projection } from '../lib/viewport/cave-view';
+  import { CaveView, type Projection } from '../lib/viewport/cave-view';
   import { fitPlane, heightSurface } from '../lib/plane';
   import { markViewUsed, registerSelectAll } from '../lib/select-all';
   import { copyGhost, copyOp, copyPress, endCopy, endPaste, pasteGhost, pasteOp, pastePlace, registerClipView } from '../lib/view-clip.svelte';
@@ -408,7 +407,6 @@
     };
     v.shadingFor = (dir, persp) => engine.shading(cave.adjusted, dir, persp, wireFilter());
     view = v;
-    const unmirror = registerMirror('map', { read: () => v.getCamera(), write: (c) => v.setCamera(c as CameraState) });
     if (import.meta.env.DEV) (window as unknown as { __view: CaveView }).__view = v; // for tests
     setActiveView(v);
 
@@ -425,7 +423,6 @@
     return () => {
       offSelectAll();
       offClip();
-      unmirror();
       ro.disconnect();
       offTheme();
       cube.dispose();

@@ -1,11 +1,8 @@
 // Keeps the open cave in step with its Private room on the server (rooms step 1). One RoomClient per open cave.
 //
 // One choke point: every way a cave comes on screen bumps `cave.opened`, so `startRooms()` watches that (with the
-// account and the live sessions) instead of each opener calling in. Which caves never get a room:
-//   - sample caves (`noRoomForThisCave()` after `openDemo`), so no room id is ever written into one;
-//   - any cave that arrived through a live session (peer-to-peer, relay room, a class): it is someone else's;
-//   - nothing at all while a live session runs, because the session drains `engine.syncOutbox` too. The room
-//     closes when a session starts and opens again for the same cave when it ends.
+// account) instead of each opener calling in. Sample caves never get a room (`noRoomForThisCave()` after
+// `openDemo`), so no room id is ever written into one.
 //
 // The room id lives in the cave (a `room-id` setting), so it travels wherever the cave's own format goes: the shelf
 // and a saved CaveCAD file both keep it (a DXF export does not, and a DXF opened is a new cave). Setting it is kept
@@ -20,9 +17,6 @@ import { account } from './account.svelte';
 import { desktopBearer } from './desktop-signin';
 import { deviceKey, keySeen, pendingEntries, syncedHash } from './device-key';
 import { RoomClient, handOverKeys, type RoomStatus, type ServerAccess } from './room-client';
-import { p2p } from './p2p.svelte';
-import { live } from './sync.svelte';
-import { classroom } from './classroom.svelte';
 
 /** Each status in plain words (the label beside the user icon, and the Rooms panel). */
 export const ROOM_TEXT: Record<RoomStatus, string> = {
@@ -45,9 +39,8 @@ let current: RoomClient | null = null;
 /** Bumped on every open and close, so a slow open that was overtaken gives up. */
 let generation = 0;
 
-/** The `cave.opened` count of a cave that must not get a room (a sample, or one that came through a session). */
+/** The `cave.opened` count of a cave that must not get a room (a sample). */
 let roomless = -1;
-let seenOpened = -1;
 let lastKey = '';
 /** The member whose device could not be registered yet (the server was out of reach): retried every 30 s. */
 let waitingForDevice = '';
@@ -157,7 +150,7 @@ async function startClient(member: string, mine: number): Promise<void> {
   await client.open();
 }
 
-/** Stops syncing (the cave is closing, another is opening, or a live session took over). */
+/** Stops syncing (the cave is closing, or another is opening). */
 function closeRoom(): void {
   generation++;
   current?.stop();
@@ -169,17 +162,14 @@ function closeRoom(): void {
   room.reason = '';
 }
 
-/** Watches for caves opening (and the account and live sessions) and keeps one room open to match. Call once. */
+/** Watches for caves opening (and the account) and keeps one room open to match. Call once. */
 export function startRooms(): () => void {
-  seenOpened = cave.opened;
   // A device signed in elsewhere may be waiting for keys this one has: hand them on now and then, not only on open.
   const sweep = setInterval(() => void handOnKeys(), 10 * 60_000);
   return $effect.root(() => {
     $effect(() => {
       const n = cave.opened;
       const has = cave.hasCave;
-      const busy = p2p.role !== 'none' || live.status !== 'off';
-      const student = classroom.role === 'student';
       const phase = account.phase;
       const who = account.member;
       const member = phase === 'ready' || phase === 'offline' ? (who?.id ?? '') : '';
@@ -188,9 +178,7 @@ export function startRooms(): () => void {
           sweptFor = member;
           void handOnKeys();
         }
-        if (busy && n !== seenOpened) roomless = n; // a cave that came through a session is not this device's own
-        seenOpened = n;
-        const want = has && !busy && !student && member !== '' && n !== roomless;
+        const want = has && member !== '' && n !== roomless;
         const key = want ? `${n}|${member}` : '';
         if (key === lastKey) {
           // Still the same cave and member: if this device is not registered yet, the account changing

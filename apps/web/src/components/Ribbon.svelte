@@ -24,10 +24,6 @@
   import { openCave, saveCave } from '../lib/files';
   import ProjectFiles from './ProjectFiles.svelte';
   import { shelf } from '../lib/shelf.svelte';
-  import { leaveP2p, p2p } from '../lib/p2p.svelte';
-  import { leave, live } from '../lib/sync.svelte';
-  import { classroom } from '../lib/classroom.svelte';
-  import { registerMirror } from '../lib/classroom-mirror';
   import { cave, clearPick, selectedIds, selectIds, setCompactRibbon, setPick, setUnits, option, setOption } from '../lib/cave.svelte';
   import DrawTools from './DrawTools.svelte';
   import ThemeGroup from './ThemeGroup.svelte';
@@ -35,7 +31,6 @@
   import SelectionTools from './SelectionTools.svelte';
   import CopyIcon from './CopyIcon.svelte';
   import { copyOp, endCopy, endPaste, pasteOp, startCopy } from '../lib/view-clip.svelte';
-  import CollaborateGroup from './CollaborateGroup.svelte';
   import LayoutGroup from './LayoutGroup.svelte';
   import { surveyGroups } from './survey-groups';
   import FillTools from './FillTools.svelte';
@@ -49,7 +44,7 @@
   import { fillLabel, isFillKind } from '../lib/fills';
   import { onMount, untrack } from 'svelte';
   import { PANELS, panelState, resetLayout, showPanel, surveyLayout, togglePanel, workLayout } from '../lib/workspace.svelte';
-  import { GraduationCap, Check, Trash2, LogIn, LogOut, Users, Library, FilePlus, FolderOpen, Save, Ruler, Footprints, Scissors, Map as MapIcon, Terminal, LayoutDashboard, Activity, Shapes, Table2, BookOpen, ScanLine, FileText, ChevronDown, PanelTop, Mountain, SlidersHorizontal, Crosshair, Tent, Lock, Cloud } from '@lucide/svelte';
+  import { Check, Trash2, Library, FilePlus, FolderOpen, Save, Ruler, Footprints, Scissors, Map as MapIcon, Terminal, LayoutDashboard, Activity, Shapes, Table2, BookOpen, ScanLine, FileText, ChevronDown, PanelTop, Mountain, SlidersHorizontal, Crosshair, Tent, Lock, Cloud } from '@lucide/svelte';
 
   /**
    * The app shows the ribbon as it is. A host that is only a part of the app (the survey harness) can give its own
@@ -81,13 +76,9 @@
       { name: 'File', items: [{ label: 'Caves', icon: Library, run: () => (shelf.open = true) }, { label: 'New', icon: FilePlus, run: () => (cave.newDialog = true) }, { label: 'Open', icon: FolderOpen, run: open }, { label: 'Save', icon: Save, run: save }, { label: 'Save as', icon: Save, run: saveAs }, { label: 'Scans in file', icon: ScanLine, run: () => setOption('saveScans', !option('saveScans', true)), pressed: () => option('saveScans', true) }] },
       { name: 'Project files', items: [], custom: ProjectFiles },
       {
-        name: 'Live',
+        name: 'Rooms',
         items: [
           { label: 'Rooms', icon: Cloud, run: () => showPanel('rooms'), pressed: () => !!panelState.open.rooms },
-          { label: 'Share', icon: Users, run: () => (p2p.dialog = true), pressed: () => live.status === 'live' && p2p.role === 'host' },
-          { label: 'Join', icon: LogIn, run: () => { shelf.join = true; shelf.open = true; }, pressed: () => live.status === 'live' && p2p.role === 'guest' },
-          { label: 'Classroom', icon: GraduationCap, run: () => (classroom.dialog = true), pressed: () => classroom.role === 'teacher' },
-          { label: 'Leave', icon: LogOut, run: () => { leaveP2p(); leave(); } },
         ],
       },
     ],
@@ -115,7 +106,6 @@
       { name: 'Drawing scale', items: [], custom: DrawingScale },
       { name: 'Rock halo', items: [{ label: 'Rock halo', icon: Mountain, run: () => setOption('halo', !option('halo', true)), pressed: () => option('halo', true) }, { label: 'Settings', icon: SlidersHorizontal, run: () => setPick('halo', 'halo'), pressed: () => cave.pick.kind === 'halo' }] },
       { name: 'Map view', items: [{ label: 'Lock view', icon: Lock, run: () => setOption('mapLock', !option('mapLock', false)), pressed: () => option('mapLock', false) }] },
-      { name: 'Live editing', items: [], custom: CollaborateGroup },
       { name: 'Layout', items: [{ label: 'Reset', icon: LayoutDashboard, run: resetLayout }, { label: 'In cave', icon: Tent, run: surveyLayout }, { label: 'Scans', icon: ScanLine, run: workLayout }] },
       { name: 'Saved layouts', items: [], custom: LayoutGroup },
       { name: 'Ribbon settings', items: [{ label: 'Compact layout', icon: PanelTop, run: () => setCompactRibbon(!cave.compactRibbon), pressed: () => cave.compactRibbon }] },
@@ -128,15 +118,6 @@
 
   // A running command gets its own tab, in front, with its settings and a way to finish it.
   const CONTEXT = '\u0000command';
-  // In a class the teacher's tab is mirrored (a contextual tab is each person's own, from the tool they have).
-  $effect(() =>
-    registerMirror('ribbon', {
-      read: () => (active === CONTEXT ? undefined : active),
-      write: (tab) => {
-        if (typeof tab === 'string' && tab in tabs) active = tab;
-      },
-    })
-  );
   let toolLabels = $state<Record<string, string>>({});
   onMount(() => {
     loadEngine().then(() => (toolLabels = Object.fromEntries(engine.drawTools().map((t) => [t.key, t.label]))));
