@@ -10,6 +10,7 @@ import { sendInvite, type MailerConfig } from './mailer.ts';
 import type { RequestLike } from './identity.ts';
 import { serveStatic } from './static.ts';
 import { send, readJson } from './http.ts';
+import { handleRooms } from './rooms-api.ts';
 
 export type ApiDeps = {
   db: Db;
@@ -62,7 +63,7 @@ export async function handleApi(d: ApiDeps, req: IncomingMessage, res: ServerRes
   const origin = String(req.headers.origin ?? '');
   if (DESKTOP_ORIGINS.includes(origin)) {
     res.setHeader('Access-Control-Allow-Origin', origin);
-    res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type, X-Cave-Signup');
+    res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type, X-Cave-Signup, X-Cave-Device');
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PATCH, PUT, DELETE');
     res.setHeader('Vary', 'Origin');
   }
@@ -98,6 +99,7 @@ export async function handleApi(d: ApiDeps, req: IncomingMessage, res: ServerRes
   const me = r.member;
 
   try {
+    if (path === '/api/devices' || path === '/api/caves' || path.startsWith('/api/caves/')) return handleRooms(d.db, me.id, req, res, now);
     if (path === '/api/me' && method === 'GET') {
       return send(res, 200, { status: 'member', member: me, drives: M.listDrives(d.db, me.id), firstVisit: r.firstVisit, signups: getSetting(d.db, 'signups'), ...via, pass: signPass(d.passKey, { memberId: me.id, email: me.email, role: me.role }, now) });
     }
