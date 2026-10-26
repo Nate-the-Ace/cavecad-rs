@@ -106,4 +106,12 @@ mod tests {
             "a [location hidden] b [location hidden]"
         );
     }
+
+    #[test]
+    fn hides_tab_separated_coordinates() {
+        assert_eq!(
+            redact("entrance at 36.1234\t-86.5432 ok"),
+            "entrance at [location hidden] ok"
+        );
+    }
 }
