@@ -6,4 +6,5 @@ Description=CaveCAD database backup
 Type=oneshot
 User=cavecad
 ExecStart=/usr/local/bin/cavecad-backup.sh
+ProtectSystem=strict
 ReadWritePaths=/var/lib/cavecad
