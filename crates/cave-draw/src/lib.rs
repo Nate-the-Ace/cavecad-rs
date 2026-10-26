@@ -468,6 +468,46 @@ pub fn set_drawing_scale(doc: &Document, n: f64) -> Result<Vec<Action>, DrawErro
     Ok(actions)
 }
 
+/// The id of the cave's room on the CaveCAD server, or `""` when it has none yet.
+pub fn room_id(doc: &Document) -> String {
+    doc.entity(setting_id("room-id"))
+        .map(|e| e.text(Field::SettingValue).trim().to_string())
+        .unwrap_or_default()
+}
+
+/// Actions that set the cave's room id (8-64 of letters, digits, `_` and `-`); none when it is already that.
+pub fn set_room_id(doc: &Document, id: &str) -> Result<Vec<Action>, DrawError> {
+    let ok = (8..=64).contains(&id.len())
+        && id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-');
+    if !ok {
+        return Err(DrawError::BadStroke);
+    }
+    if room_id(doc) == id {
+        return Ok(Vec::new());
+    }
+    let key = setting_id("room-id");
+    let mut actions = Vec::new();
+    if doc.entity(key).is_none() {
+        actions.push(Action::Create {
+            id: key,
+            kind: Kind::Setting,
+        });
+        actions.push(Action::Set {
+            id: key,
+            field: Field::SettingKey,
+            value: Value::Text("room-id".into()),
+        });
+    }
+    actions.push(Action::Set {
+        id: key,
+        field: Field::SettingValue,
+        value: Value::Text(id.to_string()),
+    });
+    Ok(actions)
+}
+
 /// The line patterns a single line may be given, besides its type's own (empty).
 pub const LINETYPE_CHOICES: &[&str] = &["", "solid", "dashed", "longdash", "sparse", "dashdot"];
 
@@ -1430,6 +1470,26 @@ mod tests {
             setting_id("drawing-scale"),
             "the id comes from the name"
         );
+    }
+
+    #[test]
+    fn room_id_round_trips() {
+        use cave_doc::{ActorId, Document};
+        let mut doc = Document::new(ActorId(1));
+        assert_eq!(room_id(&doc), "");
+        let actions = set_room_id(&doc, "cave_abc12345").unwrap();
+        doc.edit(actions).unwrap();
+        assert_eq!(room_id(&doc), "cave_abc12345");
+        assert!(set_room_id(&doc, "cave_abc12345").unwrap().is_empty());
+        assert!(set_room_id(&doc, "bad id!").is_err());
+        assert!(set_room_id(&doc, "short").is_err());
+        assert!(set_room_id(&doc, &"a".repeat(65)).is_err());
+        // another copy applying the same operations knows the same room
+        let mut other = Document::new(ActorId(2));
+        for op in doc.snapshot() {
+            other.apply(&op).unwrap();
+        }
+        assert_eq!(room_id(&other), "cave_abc12345");
     }
 
     #[test]
