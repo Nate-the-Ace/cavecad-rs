@@ -35,6 +35,58 @@ CREATE TABLE IF NOT EXISTS drives (
   created_at INTEGER NOT NULL
 );
 CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS devices (
+  id TEXT PRIMARY KEY,
+  member_id TEXT NOT NULL REFERENCES members(id),
+  public_key TEXT NOT NULL UNIQUE,
+  created_at INTEGER NOT NULL,
+  last_seen_at INTEGER
+);
+CREATE TABLE IF NOT EXISTS caves (
+  id TEXT PRIMARY KEY,
+  key_version INTEGER NOT NULL DEFAULT 1,
+  created_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS cave_owners (
+  cave_id TEXT NOT NULL REFERENCES caves(id),
+  member_id TEXT NOT NULL REFERENCES members(id),
+  PRIMARY KEY (cave_id, member_id)
+);
+CREATE TABLE IF NOT EXISTS rooms (
+  id TEXT PRIMARY KEY,
+  cave_id TEXT NOT NULL REFERENCES caves(id),
+  name TEXT NOT NULL,
+  kind TEXT NOT NULL CHECK (kind IN ('private', 'shared')),
+  waiting_room INTEGER NOT NULL DEFAULT 0,
+  editors_keep INTEGER NOT NULL DEFAULT 1,
+  watchers_keep INTEGER NOT NULL DEFAULT 0,
+  created_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS wrapped_keys (
+  cave_id TEXT NOT NULL REFERENCES caves(id),
+  key_version INTEGER NOT NULL,
+  device_id TEXT NOT NULL REFERENCES devices(id),
+  wrapped TEXT NOT NULL,
+  PRIMARY KEY (cave_id, key_version, device_id)
+);
+CREATE TABLE IF NOT EXISTS history (
+  cave_id TEXT NOT NULL REFERENCES caves(id),
+  number INTEGER NOT NULL,
+  key_version INTEGER NOT NULL,
+  locked TEXT NOT NULL,
+  author_member TEXT NOT NULL,
+  author_device TEXT NOT NULL,
+  room_id TEXT NOT NULL,
+  received_at INTEGER NOT NULL,
+  PRIMARY KEY (cave_id, number)
+);
+CREATE TABLE IF NOT EXISTS snapshots (
+  cave_id TEXT PRIMARY KEY REFERENCES caves(id),
+  up_to INTEGER NOT NULL,
+  key_version INTEGER NOT NULL,
+  locked TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);
 INSERT OR IGNORE INTO settings (key, value) VALUES ('signups', 'invite');
 `;
 

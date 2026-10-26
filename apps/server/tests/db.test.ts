@@ -5,10 +5,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { openDb, getSetting } from '../src/db.ts';
 
-test('creates the four tables', () => {
+test('creates the tables', () => {
   const db = openDb(':memory:');
   const names = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name").all().map((r) => r.name);
-  assert.deepEqual(names, ['drives', 'invites', 'members', 'settings']);
+  assert.deepEqual(names, ['cave_owners', 'caves', 'devices', 'drives', 'history', 'invites', 'members', 'rooms', 'settings', 'snapshots', 'wrapped_keys']);
 });
 
 test('sign-ups start invite only', () => {

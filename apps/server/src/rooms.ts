@@ -1,0 +1,120 @@
+// Rooms, step 1: each cave's Private room. The server keeps devices' public keys, each cave's lock key
+// wrapped for each device (which it cannot open), and the cave's history as numbered locked entries. It never
+// reads an entry: blobs are base64 text stored as given. In step 1 only a cave's owner can reach it.
+import { randomUUID } from 'node:crypto';
+import type { Db } from './db.ts';
+
+export type Device = { id: string; memberId: string; publicKey: string };
+export type Wrapped = { device: string; wrapped: string };
+export type MyCave = { id: string; keyVersion: number; wrapped: string | null; privateRoom: string };
+export type Entry = { number: number; keyVersion: number; locked: string; authorMember: string; authorDevice: string; receivedAt: number };
+
+const fail = (code: string): never => {
+  throw new Error(code);
+};
+
+/** Registers a device's public key for a member (the same key gives the same device back). */
+export function registerDevice(db: Db, memberId: string, publicKey: string, now: number): Device {
+  if (!/^[A-Za-z0-9_-]{20,200}$/.test(publicKey)) fail('bad-key');
+  const found = db.prepare('SELECT id, member_id FROM devices WHERE public_key = ?').get(publicKey) as { id: string; member_id: string } | undefined;
+  if (found) {
+    if (found.member_id !== memberId) fail('bad-key');
+    db.prepare('UPDATE devices SET last_seen_at = ? WHERE id = ?').run(now, found.id);
+    return { id: found.id, memberId, publicKey };
+  }
+  const id = randomUUID();
+  db.prepare('INSERT INTO devices (id, member_id, public_key, created_at, last_seen_at) VALUES (?, ?, ?, ?, ?)').run(id, memberId, publicKey, now, now);
+  return { id, memberId, publicKey };
+}
+
+const isOwner = (db: Db, memberId: string, caveId: string) => !!db.prepare('SELECT 1 FROM cave_owners WHERE cave_id = ? AND member_id = ?').get(caveId, memberId);
+function requireOwner(db: Db, memberId: string, caveId: string): void {
+  if (!isOwner(db, memberId, caveId)) fail('not-found');
+}
+function requireOwnDevice(db: Db, memberId: string, deviceId: string): void {
+  const row = db.prepare('SELECT member_id FROM devices WHERE id = ?').get(deviceId) as { member_id: string } | undefined;
+  if (!row || row.member_id !== memberId) fail('bad-device');
+}
+const keyVersion = (db: Db, caveId: string) => (db.prepare('SELECT key_version FROM caves WHERE id = ?').get(caveId) as { key_version: number }).key_version;
+
+/** Makes a cave with its owner and Private room, and stores its lock key (version 1) wrapped for the given devices. */
+export function createCave(db: Db, memberId: string, caveId: string, wrapped: Wrapped[], now: number): void {
+  if (!/^[A-Za-z0-9_-]{8,64}$/.test(caveId)) fail('bad-id');
+  if (db.prepare('SELECT 1 FROM caves WHERE id = ?').get(caveId)) fail('exists');
+  for (const w of wrapped) requireOwnDevice(db, memberId, w.device);
+  db.exec('BEGIN');
+  try {
+    db.prepare('INSERT INTO caves (id, key_version, created_at) VALUES (?, 1, ?)').run(caveId, now);
+    db.prepare('INSERT INTO cave_owners (cave_id, member_id) VALUES (?, ?)').run(caveId, memberId);
+    db.prepare("INSERT INTO rooms (id, cave_id, name, kind, created_at) VALUES (?, ?, 'Private', 'private', ?)").run(randomUUID(), caveId, now);
+    for (const w of wrapped) db.prepare('INSERT INTO wrapped_keys (cave_id, key_version, device_id, wrapped) VALUES (?, 1, ?, ?)').run(caveId, w.device, w.wrapped);
+    db.exec('COMMIT');
+  } catch (e) {
+    db.exec('ROLLBACK');
+    throw e;
+  }
+}
+
+/** The member's caves, each with this device's wrapped key for the current version (null when it has none yet). */
+export function myCaves(db: Db, memberId: string, deviceId: string): MyCave[] {
+  const rows = db
+    .prepare(
+      `SELECT c.id, c.key_version, w.wrapped, r.id AS room FROM caves c
+       JOIN cave_owners o ON o.cave_id = c.id AND o.member_id = ?
+       JOIN rooms r ON r.cave_id = c.id AND r.kind = 'private'
+       LEFT JOIN wrapped_keys w ON w.cave_id = c.id AND w.key_version = c.key_version AND w.device_id = ?
+       ORDER BY c.created_at`,
+    )
+    .all(memberId, deviceId) as { id: string; key_version: number; wrapped: string | null; room: string }[];
+  return rows.map((r) => ({ id: r.id, keyVersion: r.key_version, wrapped: r.wrapped, privateRoom: r.room }));
+}
+
+/** The owner's devices that have no wrapped key for the cave's current version. */
+export function devicesMissingKey(db: Db, memberId: string, caveId: string): { id: string; publicKey: string }[] {
+  requireOwner(db, memberId, caveId);
+  return db
+    .prepare(
+      `SELECT d.id, d.public_key FROM devices d WHERE d.member_id = ? AND NOT EXISTS
+       (SELECT 1 FROM wrapped_keys w WHERE w.cave_id = ? AND w.key_version = ? AND w.device_id = d.id) ORDER BY d.created_at`,
+    )
+    .all(memberId, caveId, keyVersion(db, caveId))
+    .map((r) => ({ id: (r as { id: string }).id, publicKey: (r as { public_key: string }).public_key }));
+}
+
+/** Stores wrapped copies of a key version for the owner's own devices. */
+export function putWrappedKeys(db: Db, memberId: string, caveId: string, version: number, wrapped: Wrapped[]): void {
+  requireOwner(db, memberId, caveId);
+  for (const w of wrapped) requireOwnDevice(db, memberId, w.device);
+  for (const w of wrapped) db.prepare('INSERT OR REPLACE INTO wrapped_keys (cave_id, key_version, device_id, wrapped) VALUES (?, ?, ?, ?)').run(caveId, version, w.device, w.wrapped);
+}
+
+/** Adds a locked entry to the cave's history; gives back its number. */
+export function appendEntry(db: Db, memberId: string, deviceId: string, caveId: string, version: number, locked: string, now: number): number {
+  requireOwner(db, memberId, caveId);
+  requireOwnDevice(db, memberId, deviceId);
+  const room = (db.prepare("SELECT id FROM rooms WHERE cave_id = ? AND kind = 'private'").get(caveId) as { id: string }).id;
+  const next = ((db.prepare('SELECT MAX(number) AS n FROM history WHERE cave_id = ?').get(caveId) as { n: number | null }).n ?? 0) + 1;
+  db.prepare('INSERT INTO history (cave_id, number, key_version, locked, author_member, author_device, room_id, received_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)').run(caveId, next, version, locked, memberId, deviceId, room, now);
+  return next;
+}
+
+/** Entries after `after`, oldest first, at most `limit`. */
+export function entriesAfter(db: Db, memberId: string, caveId: string, after: number, limit: number): Entry[] {
+  requireOwner(db, memberId, caveId);
+  return (db.prepare('SELECT number, key_version, locked, author_member, author_device, received_at FROM history WHERE cave_id = ? AND number > ? ORDER BY number LIMIT ?').all(caveId, after, limit) as {
+    number: number; key_version: number; locked: string; author_member: string; author_device: string; received_at: number;
+  }[]).map((r) => ({ number: r.number, keyVersion: r.key_version, locked: r.locked, authorMember: r.author_member, authorDevice: r.author_device, receivedAt: r.received_at }));
+}
+
+/** Keeps a locked whole-cave snapshot covering entries up to `upTo`. */
+export function putSnapshot(db: Db, memberId: string, caveId: string, upTo: number, version: number, locked: string, now: number): void {
+  requireOwner(db, memberId, caveId);
+  db.prepare('INSERT OR REPLACE INTO snapshots (cave_id, up_to, key_version, locked, created_at) VALUES (?, ?, ?, ?, ?)').run(caveId, upTo, version, locked, now);
+}
+
+/** The latest snapshot, or null. */
+export function latestSnapshot(db: Db, memberId: string, caveId: string): { upTo: number; keyVersion: number; locked: string } | null {
+  requireOwner(db, memberId, caveId);
+  const r = db.prepare('SELECT up_to, key_version, locked FROM snapshots WHERE cave_id = ?').get(caveId) as { up_to: number; key_version: number; locked: string } | undefined;
+  return r ? { upTo: r.up_to, keyVersion: r.key_version, locked: r.locked } : null;
+}
