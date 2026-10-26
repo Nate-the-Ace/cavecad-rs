@@ -1,4 +1,4 @@
-// Keeps the open cave in step with its Private room on the server. One RoomClient per open cave. New caves are open
+// Keeps the open cave in step with its rooms on the server (a guest's shared cave too; a watcher's is locked). One RoomClient per open cave. New caves are open
 // (stored as plain text on the server, no keys); a cave locked during rooms step 1 is converted to open by the first
 // device holding its key that opens it (room-client.ts). The device key stays: it identifies this device to the
 // server, and it opens the keys of caves not converted yet.
@@ -19,7 +19,8 @@ import { flush as keepOnShelf } from './shelf.svelte';
 import { account } from './account.svelte';
 import { desktopBearer } from './desktop-signin';
 import { deviceKey, keySeen, pendingEntries, quarantinedEntries, syncedHash } from './device-key';
-import { RoomClient, handOverKeys, type RoomStatus, type ServerAccess } from './room-client';
+import { RoomClient, handOverKeys, type Role, type RoomStatus, type ServerAccess } from './room-client';
+import { setWatchLock } from './readonly';
 
 /** Each status in plain words (the label beside the user icon, and the Rooms panel). */
 export const ROOM_TEXT: Record<RoomStatus, string> = {
@@ -31,7 +32,7 @@ export const ROOM_TEXT: Record<RoomStatus, string> = {
 };
 
 /** `reason` says why for `error`; `info` is a one-off note shown for a while in place of the status. */
-export const room = $state({ status: '' as RoomStatus | '', reason: '', info: '' });
+export const room = $state({ status: '' as RoomStatus | '', reason: '', info: '', role: '' as Role | '' });
 
 const BASE = (import.meta.env.VITE_ACCOUNT_BASE as string | undefined) ?? '';
 const headers = (): Record<string, string> => {
@@ -143,6 +144,11 @@ async function startClient(member: string, mine: number): Promise<void> {
       room.reason = reason ?? '';
       if (reason) console.warn('[rooms]', reason);
     },
+    onRole: (role) => {
+      if (current !== client) return;
+      room.role = role;
+      setWatchLock(role === 'watcher');
+    },
     onInfo: (message) => {
       if (current !== client) return;
       room.info = message;
@@ -164,6 +170,8 @@ function closeRoom(): void {
   waitingForDevice = '';
   room.status = '';
   room.reason = '';
+  room.role = '';
+  setWatchLock(false);
 }
 
 /** Watches for caves opening (and the account) and keeps one room open to match. Call once. */

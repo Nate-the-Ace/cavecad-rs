@@ -8,7 +8,7 @@ import { openDb, getSetting } from '../src/db.ts';
 test('creates the tables', () => {
   const db = openDb(':memory:');
   const names = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name").all().map((r) => r.name);
-  assert.deepEqual(names, ['cave_labels', 'cave_owners', 'caves', 'devices', 'drives', 'history', 'invites', 'members', 'rooms', 'settings', 'snapshots', 'wrapped_keys']);
+  assert.deepEqual(names, ['cave_gone', 'cave_labels', 'cave_owners', 'caves', 'devices', 'drives', 'history', 'invites', 'members', 'room_guests', 'rooms', 'settings', 'snapshots', 'wrapped_keys']);
 });
 
 test('sign-ups start invite only', () => {

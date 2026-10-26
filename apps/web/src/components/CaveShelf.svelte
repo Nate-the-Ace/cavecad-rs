@@ -49,6 +49,14 @@
   /** A cave on the server this browser does not keep yet. */
   const remote = $derived(picked.startsWith('server:') ? (serverCaves.list.find((c) => `server:${c.id}` === picked) ?? null) : null);
   const remoteShown = $derived(serverCaves.list.filter((c) => (c.name ?? '').toLowerCase().includes(search.trim().toLowerCase()) || (!c.name && !search.trim())));
+  const remoteMine = $derived(remoteShown.filter((c) => c.role === 'owner'));
+  const remoteShared = $derived(remoteShown.filter((c) => c.role !== 'owner'));
+  /** "Nathan's" (and "watching") for a cave shared with this member, or '' for their own. */
+  function whose(c: { role: string; ownerName: string }): string {
+    if (c.role === 'owner') return '';
+    return `${c.ownerName ? `${c.ownerName}'s` : 'shared with you'}${c.role === 'watcher' ? ' · watching' : ''}`;
+  }
+  const sharedOf = (shelfId: string) => serverCaves.all.find((c) => c.shelfId === shelfId && c.role !== 'owner');
 
   // Start on the cave in use, else the first one.
   $effect(() => {
@@ -145,14 +153,23 @@
           {#each shown as r (r.id)}
             <button class="cave" class:sel={picked === r.id} role="option" aria-selected={picked === r.id} onclick={() => (picked = r.id)} ondblclick={open} oncontextmenu={(e) => rightClick(e, r.id)}>
               <span class="name">{#if r.favorite}<Star size={12} fill="currentColor" />{/if} {r.name}</span>
-              <span class="sub">{r.summary ? (r.summary.empty ? 'nothing surveyed yet' : `${r.summary.trips.length} trip${r.summary.trips.length === 1 ? '' : 's'} · ${length(r.summary.length_m)}`) : '…'}{r.id === shelf.currentId ? ' · open now' : ''}</span>
+              <span class="sub">{r.summary ? (r.summary.empty ? 'nothing surveyed yet' : `${r.summary.trips.length} trip${r.summary.trips.length === 1 ? '' : 's'} · ${length(r.summary.length_m)}`) : '…'}{r.id === shelf.currentId ? ' · open now' : ''}{sharedOf(r.id) ? ` · ${whose(sharedOf(r.id)!)}` : ''}</span>
             </button>
           {:else}
             <p class="none">{shelf.records.length ? 'No cave matches.' : 'No caves yet. Start one, or bring one in from a file.'}</p>
           {/each}
-          {#if serverCaves.list.length}
+          {#if remoteShared.length}
+            <div class="group" title="Caves of other members that you are a guest of">Shared with you</div>
+            {#each remoteShared as c (c.id)}
+              <button class="cave" class:sel={picked === `server:${c.id}`} role="option" aria-selected={picked === `server:${c.id}`} onclick={() => (picked = `server:${c.id}`)} ondblclick={open}>
+                <span class="name">{c.name ?? 'A shared cave'}</span>
+                <span class="sub">{serverCaves.opening === c.id ? 'fetching…' : whose(c)}</span>
+              </button>
+            {/each}
+          {/if}
+          {#if remoteMine.length}
             <div class="group" title="Caves you keep on the CaveCAD server that this computer does not have yet">On your other devices</div>
-            {#each remoteShown as c (c.id)}
+            {#each remoteMine as c (c.id)}
               <button class="cave" class:sel={picked === `server:${c.id}`} role="option" aria-selected={picked === `server:${c.id}`} onclick={() => (picked = `server:${c.id}`)} ondblclick={open}>
                 <span class="name">{c.name ?? 'A cave from another device'}</span>
                 <span class="sub">{serverCaves.opening === c.id ? 'fetching…' : !c.hasKey ? 'waiting for a key' : c.summary && !c.summary.empty ? `${c.summary.trips.length} trip${c.summary.trips.length === 1 ? '' : 's'} · ${length(c.summary.length_m)}` : 'on the server'}</span>

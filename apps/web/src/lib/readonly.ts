@@ -172,22 +172,48 @@ export function setAccountLock(on: boolean, why = ''): void {
   readOnly.why = why;
 }
 
-const writes = new Set(WRITES);
+/** The watcher's lock: on while the open cave is one this member only watches (a guest's Watcher seat). It refuses
+ *  every change to that cave, but not opening or making another (those replace the cave and end the watching). */
+export const watchLock = {
+  on: false,
+  why: "You're watching this cave: you can look but not change it.",
+};
 
-/** What a refused call gives back, in the shape its caller expects. */
-function refusal(name: string): unknown {
-  if (name === 'undo' || name === 'redo') return false;
-  if (name === 'openDxf' || name === 'importSurvey' || name === 'importFolder') return { ok: false, message: readOnly.why, warnings: [] as string[] };
-  return `error: ${readOnly.why}`;
+/** The writes a watcher may still make: each replaces the open cave with another one. */
+export const REPLACES: readonly string[] = ['setRoomId', 'openDemo', 'newCave', 'openDxf', 'importSurvey', 'importFolder', 'openNative'];
+
+/** Turns the watcher's lock on or off. */
+export function setWatchLock(on: boolean): void {
+  watchLock.on = on;
 }
 
-/** Wraps the engine so that, while `readOnly.on`, every write is refused. Reads pass straight through. */
+const writes = new Set(WRITES);
+const replaces = new Set(REPLACES);
+
+/** What a refused call gives back, in the shape its caller expects. */
+function refusal(name: string, why: string): unknown {
+  if (name === 'undo' || name === 'redo') return false;
+  if (name === 'openDxf' || name === 'importSurvey' || name === 'importFolder') return { ok: false, message: why, warnings: [] as string[] };
+  return `error: ${why}`;
+}
+
+/** Why a write is refused now, or '' when it may go ahead. */
+function refusedWhy(name: string): string {
+  if (readOnly.on) return readOnly.why || 'This cave is read-only.';
+  if (watchLock.on && !replaces.has(name)) return watchLock.why;
+  return '';
+}
+
+/** Wraps the engine so that, while `readOnly.on` (or the watcher's lock), writes are refused. Reads pass straight through. */
 export function guardEngine<T extends object>(raw: T): T {
   return new Proxy(raw, {
     get(target, prop, receiver) {
       const value = Reflect.get(target, prop, receiver);
       if (typeof prop === 'string' && typeof value === 'function' && writes.has(prop)) {
-        return (...args: unknown[]) => (readOnly.on ? refusal(prop) : (value as (...a: unknown[]) => unknown)(...args));
+        return (...args: unknown[]) => {
+          const why = refusedWhy(prop);
+          return why ? refusal(prop, why) : (value as (...a: unknown[]) => unknown)(...args);
+        };
       }
       return value;
     },

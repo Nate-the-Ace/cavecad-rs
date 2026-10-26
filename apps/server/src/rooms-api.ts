@@ -1,13 +1,27 @@
-// The rooms API (step 1: the Private room). The member is already known (api.ts); the device is named by the
+// The rooms API: each cave's history and live stream, and its rooms and guest lists (owners change those). The member is already known (api.ts); the device is named by the
 // X-Cave-Device header and must be one of the member's own. Entries are plain JSON text for an open cave (the server
 // can read them) or base64 locked text for a locked cave from before; the server stores and passes them on.
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Db } from './db.ts';
 import { readJson, send, sendBadBody } from './http.ts';
 import * as R from './rooms.ts';
-import { broadcast, listen, writeOrDrop } from './streams.ts';
+import { broadcast, closeMember, listen, writeOrDrop } from './streams.ts';
 
-const STATUS: Record<string, number> = { 'not-found': 404, exists: 409, 'bad-device': 400, 'bad-key': 400, 'bad-id': 400, 'bad-request': 400 };
+const STATUS: Record<string, number> = {
+  'not-found': 404,
+  exists: 409,
+  'bad-device': 400,
+  'bad-key': 400,
+  'bad-id': 400,
+  'bad-request': 400,
+  'bad-name': 400,
+  'name-taken': 409,
+  private: 409,
+  'is-owner': 409,
+  'no-member': 404,
+  locked: 409,
+  watcher: 403,
+};
 const PING_MS = 25_000;
 
 /** How a stream catches up: batches of at most `rows` entries or about `bytes` of locked text. Tests shrink it and pause between batches. */
@@ -57,7 +71,7 @@ export async function handleRooms(db: Db, memberId: string, req: IncomingMessage
     if (path === '/api/devices' && method === 'GET') return send(res, 200, { devices: R.myDevices(db, memberId) });
     if (!device) throw new Error('bad-device');
     R.checkDevice(db, memberId, device, now);
-    if (path === '/api/caves' && method === 'GET') return send(res, 200, { caves: R.myCaves(db, memberId, device) });
+    if (path === '/api/caves' && method === 'GET') return send(res, 200, { caves: R.myCaves(db, memberId, device), gone: R.goneCaves(db, memberId) });
     if (path === '/api/caves' && method === 'POST') {
       const b = await readJson(req);
       if (b.storage !== undefined && b.storage !== 'open' && b.storage !== 'locked') throw new Error('bad-request');
@@ -67,6 +81,8 @@ export async function handleRooms(db: Db, memberId: string, req: IncomingMessage
       } else R.createCave(db, memberId, text(b.id, 64), wrappedList(b.wrapped), now);
       return send(res, 200, { ok: true });
     }
+    const rm = /^\/api\/caves\/([A-Za-z0-9_-]{8,64})\/rooms(?:\/([0-9a-f-]{36})(?:\/guests\/([0-9a-f-]{36}))?)?$/.exec(path);
+    if (rm) return await rooms(db, memberId, req, res, method, rm[1], rm[2] ?? '', rm[3] ?? '', now);
     const m = /^\/api\/caves\/([A-Za-z0-9_-]{8,64})\/(missing|keys|entries|stream|snapshot|label|open)$/.exec(path);
     if (!m) return send(res, 404, { error: 'not-found' });
     const [, cave, what] = m;
@@ -116,6 +132,35 @@ export async function handleRooms(db: Db, memberId: string, req: IncomingMessage
     if (e instanceof SyntaxError) return sendBadBody(res, e);
     throw e;
   }
+}
+
+/**
+ * A cave's rooms and guest lists: `GET .../rooms` (owners and guests), and for owners only `POST .../rooms {name}`,
+ * `PATCH` and `DELETE .../rooms/:room`, `PUT .../rooms/:room/guests/:member {seat}` and `DELETE` of the same. Whoever's
+ * seats changed has their open streams of the cave closed, so their app reads its seat again at once.
+ */
+async function rooms(db: Db, memberId: string, req: IncomingMessage, res: ServerResponse, method: string, cave: string, room: string, guest: string, now: number): Promise<void> {
+  if (!room && method === 'GET') return send(res, 200, R.caveRooms(db, memberId, cave));
+  if (!room && method === 'POST') return send(res, 200, { id: R.addRoom(db, memberId, cave, (await readJson(req)).name, now) });
+  if (room && !guest && method === 'PATCH') {
+    R.renameRoom(db, memberId, cave, room, (await readJson(req)).name);
+    return send(res, 200, { ok: true });
+  }
+  if (room && !guest && method === 'DELETE') {
+    for (const g of R.removeRoom(db, memberId, cave, room, now)) closeMember(cave, g);
+    return send(res, 200, { ok: true });
+  }
+  if (guest && method === 'PUT') {
+    R.setGuest(db, memberId, cave, room, guest, (await readJson(req)).seat, now);
+    closeMember(cave, guest);
+    return send(res, 200, { ok: true });
+  }
+  if (guest && method === 'DELETE') {
+    R.removeGuest(db, memberId, cave, room, guest, now);
+    closeMember(cave, guest);
+    return send(res, 200, { ok: true });
+  }
+  return send(res, 404, { error: 'not-found' });
 }
 
 const entryLine = (e: { number: number; keyVersion: number; locked: string; authorDevice: string }) =>

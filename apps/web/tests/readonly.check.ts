@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs';
-import { READS, WRITES, guardEngine, readOnly } from '../src/lib/readonly.ts';
+import { READS, REPLACES, WRITES, guardEngine, readOnly, setWatchLock } from '../src/lib/readonly.ts';
 
 let bad = 0;
 const ok = (c: boolean, m: string) => { if (!c) { bad++; console.log('FAIL', m); } };
@@ -35,6 +35,19 @@ fake.scene();
 fake.syncApply();
 ok(calls.join() === 'scene,syncApply', 'reads, and edits arriving from the server, still work');
 readOnly.on = false;
+
+// ---- a watcher's lock refuses changes to the cave, not opening another --------------------------------
+for (const name of REPLACES) ok(WRITES.includes(name), `${name} (a cave-replacing call) is a write`);
+calls.length = 0;
+setWatchLock(true);
+ok(String(fake.addMapLine()).startsWith('error: '), 'a watcher cannot draw');
+ok(fake.undo() === false, 'a watcher cannot undo');
+ok((fake.openDxf() as { ok: boolean }).ok === true, 'a watcher can still open another file');
+fake.syncApply();
+ok(calls.join() === 'openDxf,syncApply', 'and edits from the room still arrive');
+setWatchLock(false);
+calls.length = 0;
+ok(fake.addMapLine() === 'ok' && calls.join() === 'addMapLine', 'the lock comes off');
 
 if (bad) process.exit(1);
 console.log('readonly ok');
