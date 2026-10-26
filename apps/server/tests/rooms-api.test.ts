@@ -80,6 +80,20 @@ test('a device makes a cave, posts entries, and a stream catches up then goes li
   }
 });
 
+test('GET /api/devices lists the member\'s own devices with their public keys, and no one else\'s', async () => {
+  const { server, call, rickDevice } = await start();
+  try {
+    const laptop = (await call(ADMIN, 'POST', '/api/devices', { publicKey: PUB(1) })).json.device.id;
+    const tablet = (await call(ADMIN, 'POST', '/api/devices', { publicKey: PUB(2) })).json.device.id;
+    await rickDevice();
+    const r = await call(ADMIN, 'GET', '/api/devices');
+    assert.equal(r.status, 200);
+    assert.deepEqual(r.json.devices, [{ id: laptop, publicKey: PUB(1) }, { id: tablet, publicKey: PUB(2) }]);
+  } finally {
+    server.close();
+  }
+});
+
 test('snapshots, and someone else is refused', async () => {
   const { server, call } = await start();
   try {

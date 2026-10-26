@@ -76,6 +76,14 @@ export function myCaves(db: Db, memberId: string, deviceId: string): MyCave[] {
   return rows.map((r) => ({ id: r.id, keyVersion: r.key_version, wrapped: r.wrapped, privateRoom: r.room }));
 }
 
+/** The member's devices, with public keys (to wrap a new cave's key for each). */
+export function myDevices(db: Db, memberId: string): { id: string; publicKey: string }[] {
+  return (db.prepare('SELECT id, public_key FROM devices WHERE member_id = ? ORDER BY created_at').all(memberId) as { id: string; public_key: string }[]).map((r) => ({
+    id: r.id,
+    publicKey: r.public_key,
+  }));
+}
+
 /** The owner's devices that have no wrapped key for the cave's current version. */
 export function devicesMissingKey(db: Db, memberId: string, caveId: string): { id: string; publicKey: string }[] {
   requireOwner(db, memberId, caveId);

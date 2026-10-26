@@ -43,6 +43,8 @@ export async function handleRooms(db: Db, memberId: string, req: IncomingMessage
     if (path === '/api/devices' && method === 'POST') {
       return send(res, 200, { device: R.registerDevice(db, memberId, text((await readJson(req)).publicKey, 200), now) });
     }
+    // Lists only the caller's own devices, so it needs no device header (a new device asks before it has one).
+    if (path === '/api/devices' && method === 'GET') return send(res, 200, { devices: R.myDevices(db, memberId) });
     if (!device) throw new Error('bad-device');
     R.checkDevice(db, memberId, device, now);
     if (path === '/api/caves' && method === 'GET') return send(res, 200, { caves: R.myCaves(db, memberId, device) });
