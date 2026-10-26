@@ -1,5 +1,6 @@
-// The server's one database file: members, invites, which drives each member uses, and settings.
-// Nothing about any cave is ever stored here.
+// The server's one database file: members, invites, which drives each member uses, settings, and the caves
+// themselves (since server caves, 2026-10-26): an open cave's history, snapshot and label are plain JSON text the
+// server can read, entrance coordinates included. Caves locked during rooms step 1 stay base64 until converted.
 import { DatabaseSync } from 'node:sqlite';
 
 const SCHEMA = `
@@ -90,7 +91,8 @@ CREATE TABLE IF NOT EXISTS snapshots (
   locked TEXT NOT NULL,
   created_at INTEGER NOT NULL
 );
--- A cave's name and summary for its owners' cave lists, locked with the cave key (the server cannot read it).
+-- A cave's name and summary for its owners' cave lists: plain JSON for an open cave (the server can read it),
+-- locked with the cave key for a cave still locked from rooms step 1 (key_version 0 means open).
 CREATE TABLE IF NOT EXISTS cave_labels (
   cave_id TEXT PRIMARY KEY REFERENCES caves(id),
   key_version INTEGER NOT NULL,
