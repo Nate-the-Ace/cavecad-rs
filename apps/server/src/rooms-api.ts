@@ -53,7 +53,7 @@ export async function handleRooms(db: Db, memberId: string, req: IncomingMessage
       R.createCave(db, memberId, text(b.id, 64), wrappedList(b.wrapped), now);
       return send(res, 200, { ok: true });
     }
-    const m = /^\/api\/caves\/([A-Za-z0-9_-]{8,64})\/(missing|keys|entries|stream|snapshot)$/.exec(path);
+    const m = /^\/api\/caves\/([A-Za-z0-9_-]{8,64})\/(missing|keys|entries|stream|snapshot|label)$/.exec(path);
     if (!m) return send(res, 404, { error: 'not-found' });
     const [, cave, what] = m;
     if (what === 'missing' && method === 'GET') return send(res, 200, { devices: R.devicesMissingKey(db, memberId, cave) });
@@ -73,6 +73,11 @@ export async function handleRooms(db: Db, memberId: string, req: IncomingMessage
     if (what === 'snapshot' && method === 'PUT') {
       const b = await readJson(req, 64 * 1024 * 1024);
       R.putSnapshot(db, memberId, cave, int(b.upTo), int(b.version), text(b.locked, 64 * 1024 * 1024), now);
+      return send(res, 200, { ok: true });
+    }
+    if (what === 'label' && method === 'PUT') {
+      const b = await readJson(req, 512 * 1024);
+      R.putLabel(db, memberId, cave, int(b.version), text(b.locked, 256 * 1024), now);
       return send(res, 200, { ok: true });
     }
     if (what === 'snapshot' && method === 'GET') {

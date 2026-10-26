@@ -216,3 +216,39 @@ test('closing a stream stops listening; another stream on the cave carries on', 
     server.close();
   }
 });
+
+test('a cave list shows the locked label, when it was made, and whether another device still waits for a key', async () => {
+  const { server, call, rickDevice } = await start();
+  try {
+    const laptop = (await call(ADMIN, 'POST', '/api/devices', { publicKey: PUB(1) })).json.device.id;
+    await call(ADMIN, 'POST', '/api/caves', { id: 'cave-0007', wrapped: [{ device: laptop, wrapped: 'W1' }] }, laptop);
+    let [c] = (await call(ADMIN, 'GET', '/api/caves', undefined, laptop)).json.caves;
+    assert.equal(c.label, null);
+    assert.equal(c.needsKeys, false);
+    assert.equal(typeof c.createdAt, 'number');
+
+    // A new device: the cave is listed for it with no key, and the laptop's list says a device is waiting.
+    const work = (await call(ADMIN, 'POST', '/api/devices', { publicKey: PUB(2) })).json.device.id;
+    [c] = (await call(ADMIN, 'GET', '/api/caves', undefined, work)).json.caves;
+    assert.equal(c.wrapped, null);
+    assert.equal(c.needsKeys, true);
+
+    assert.equal((await call(ADMIN, 'PUT', '/api/caves/cave-0007/label', { version: 1, locked: 'TEFCRUw' }, laptop)).status, 200);
+    assert.equal((await call(ADMIN, 'PUT', '/api/caves/cave-0007/label', { version: 2, locked: 'TEFCRUw' }, laptop)).status, 400);
+    assert.equal((await call(ADMIN, 'PUT', '/api/caves/cave-0007/label', { version: 1, locked: 'plain name!' }, laptop)).status, 400);
+    await call(ADMIN, 'PUT', '/api/caves/cave-0007/label', { version: 1, locked: 'TEFCRUwy' }, laptop);
+    [c] = (await call(ADMIN, 'GET', '/api/caves', undefined, work)).json.caves;
+    assert.deepEqual(c.label, { keyVersion: 1, locked: 'TEFCRUwy' });
+
+    await call(ADMIN, 'POST', '/api/caves/cave-0007/keys', { version: 1, wrapped: [{ device: work, wrapped: 'W2' }] }, laptop);
+    [c] = (await call(ADMIN, 'GET', '/api/caves', undefined, laptop)).json.caves;
+    assert.equal(c.needsKeys, false);
+
+    // Someone else can neither set the label nor see the cave.
+    const rick = await rickDevice();
+    assert.equal((await call(RICK, 'PUT', '/api/caves/cave-0007/label', { version: 1, locked: 'QUJD' }, rick)).status, 404);
+    assert.deepEqual((await call(RICK, 'GET', '/api/caves', undefined, rick)).json.caves, []);
+  } finally {
+    server.close();
+  }
+});

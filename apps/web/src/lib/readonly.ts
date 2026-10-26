@@ -129,6 +129,7 @@ export const READS: readonly string[] = [
   'shelfSummarize',
   'shelfSummarizeDemo',
   'shelfSummarizeNative',
+  'roomIdOfNative',
   'revision',
   'syncOutbox',
   'syncApply',

@@ -1668,6 +1668,18 @@ mod tests {
     }
 
     #[test]
+    fn a_kept_caves_room_id_is_read_without_opening_it() {
+        open_demo(CAVE);
+        assert_eq!(room_id_of_native(&sync_snapshot()), "");
+        assert_eq!(set_room_id("cave_0123456789abcdef01234567"), "ok");
+        let kept = sync_snapshot();
+        open_demo(CAVE);
+        assert_eq!(room_id_of_native(&kept), "cave_0123456789abcdef01234567");
+        assert_eq!(room_id(), "", "the open cave is untouched");
+        assert_eq!(room_id_of_native("not a cave"), "");
+    }
+
+    #[test]
     fn a_bad_file_changes_nothing() {
         open_demo(CAVE);
         let before = scene(false, "{}");
@@ -2294,6 +2306,20 @@ pub fn shelf_summarize_native(ops: &str) -> String {
         });
     serde_json::to_string(&doc.as_ref().map(cave_shelf::summarize))
         .unwrap_or_else(|_| "null".into())
+}
+
+/// The room id of a cave kept in CaveCAD's own format (its ops as JSON), without opening it; "" when it has none
+/// or the text is not a cave.
+#[wasm_bindgen]
+pub fn room_id_of_native(ops: &str) -> String {
+    serde_json::from_str::<Vec<cave_doc::Op>>(ops)
+        .ok()
+        .and_then(|ops| {
+            let mut doc = Document::new(ActorId(1));
+            ops.iter().all(|op| doc.apply(op).is_ok()).then_some(doc)
+        })
+        .map(|doc| cave_draw::room_id(&doc))
+        .unwrap_or_default()
 }
 
 /// What the shelf shows about a sample cave given as shot-list JSON, without opening it.

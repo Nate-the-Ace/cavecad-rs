@@ -22,6 +22,11 @@
 //     itself whole, once, on the next open. The merge is last-writer-wins by stamp, so re-applying is harmless.
 //     Whether it changed is told by a hash of the cave saved when everything local was known to be in the room.
 // A stopped client never touches the engine again.
+//
+// Beside the client, for the Cave Shelf: `listMyCaves` (the member's caves with their locked labels, so a cave made
+// on another device can be listed by name), `downloadCave` (a cave's snapshot and history, to open it on a device
+// that does not keep it yet) and `handOverKeys` (wraps each cave key this device has for the member's devices that
+// have none, so a new device can open them without the cave being opened here first).
 import { lock, makeCaveKey, unlock, unwrapCaveKey, wrapCaveKey } from './room-crypto.ts';
 
 export type RoomStatus = 'connecting' | 'synced' | 'offline' | 'waiting-key' | 'error';
@@ -54,6 +59,8 @@ export type RoomClientOptions = {
   saveSynced: (cave: string, hash: string) => Promise<void>;
   /** The status, and for `error` a short reason (for logs and a tooltip). */
   onStatus: (s: RoomStatus, reason?: string) => void;
+  /** The cave's label for cave lists (its name and summary, as text), locked and kept on the server when it changes. */
+  label?: () => string | null;
   /** A one-off note for the user (a new room was started for this cave). */
   onInfo?: (message: string) => void;
   /** The cave changed under the views (entries from the room were applied). Called once after catch-up, then per entry. */
@@ -72,6 +79,14 @@ export type RoomClientOptions = {
 };
 
 type DeviceInfo = { id: string; publicKey: string };
+/** One cave as `GET /api/caves` lists it for this device. */
+type ListedCave = { id: string; keyVersion: number; wrapped: string | null; createdAt: number; label: { keyVersion: number; locked: string } | null; needsKeys: boolean };
+/** What talking to the server about this member's caves needs (a room client's options have all of it). */
+export type ServerAccess = Pick<RoomClientOptions, 'base' | 'fetch' | 'device' | 'headers' | 'loadKeySeen' | 'saveKeySeen'>;
+/** One of the member's caves for the shelf: `label` is null until a device that has its key sets one (or when this device has no key). */
+export type ServerCave = { id: string; createdAt: number; hasKey: boolean; label: string | null };
+/** A cave fetched whole from its room: the snapshot's ops (null when the room has none) and each later entry's ops, in order. */
+export type Downloaded = { status: 'ok'; snapshot: string | null; entries: string[] } | { status: 'waiting' } | { status: 'unknown' };
 type StreamLine = { t: string; number?: number; keyVersion?: number; locked?: string; authorDevice?: string };
 
 const enc = new TextEncoder();
@@ -128,6 +143,195 @@ export function splitOps(ops: string, maxLocked: number): string[] {
   return out;
 }
 
+const headersOf = (o: ServerAccess): Record<string, string> => ({ 'Content-Type': 'application/json', 'X-Cave-Device': o.device.id, ...(o.headers?.() ?? {}) });
+
+async function request<T>(o: ServerAccess, method: string, path: string, body?: unknown): Promise<T> {
+  const res = await o.fetch(o.base + path, { method, headers: headersOf(o), body: body === undefined ? undefined : JSON.stringify(body), credentials: 'same-origin' });
+  let out: (T & { error?: string }) | null = null;
+  try {
+    out = (await res.json()) as T & { error?: string };
+  } catch {
+    out = null;
+  }
+  if (!res.ok) throw new HttpError(res.status, out?.error ?? 'error');
+  if (!out) throw new Error('unreadable answer');
+  return out;
+}
+
+const listCaves = async (o: ServerAccess) => (await request<{ caves: ListedCave[] }>(o, 'GET', '/api/caves')).caves;
+
+/**
+ * Opens this device's wrapped key for a listed cave (which must have one), checked against the newest key seen for
+ * the cave: a lower version, or another key under a version already seen, is refused. Remembers a newer one.
+ */
+async function openKey(o: ServerAccess, c: ListedCave, opts?: { extractable?: boolean }): Promise<{ key: CryptoKey; id: string }> {
+  const seen = await o.loadKeySeen(c.id);
+  if (seen && c.keyVersion < seen.version) throw new Refused('key version went backwards');
+  let opened;
+  try {
+    opened = await unwrapCaveKey(c.wrapped!, o.device.privateKey, { cave: c.id, version: c.keyVersion, myPublicKey: o.device.publicKey }, opts);
+  } catch {
+    throw new Refused('wrapped key does not open');
+  }
+  if (seen && seen.version === c.keyVersion && seen.keyId !== opened.id) throw new Refused('another key under a version already seen');
+  if (!seen || seen.version !== c.keyVersion) await o.saveKeySeen(c.id, { version: c.keyVersion, keyId: opened.id });
+  return opened;
+}
+
+/** Wraps a cave key for each device; a device whose public key does not parse is skipped. */
+async function wrapFor(key: Uint8Array | CryptoKey, devices: DeviceInfo[], ctx: { cave: string; version: number }): Promise<{ device: string; wrapped: string }[]> {
+  // Trusts the server's list of this member's devices for now (Nathan's decision); device approval comes later.
+  const out: { device: string; wrapped: string }[] = [];
+  for (const d of devices) {
+    try {
+      out.push({ device: d.id, wrapped: await wrapCaveKey(key, d.publicKey, ctx) });
+    } catch {
+      // a key that does not parse: that device gets no copy
+    }
+  }
+  return out;
+}
+
+/** Wraps the cave's key (this device's wrapped copy, opened) for the member's devices that have none. */
+async function handKeys(o: ServerAccess, cave: string, version: number, wrappedMine: string): Promise<void> {
+  const { devices } = await request<{ devices: DeviceInfo[] }>(o, 'GET', `/api/caves/${cave}/missing`);
+  if (!devices.length) return;
+  // An extractable copy only for wrapping, dropped when this returns; the everyday key stays non-extractable.
+  const { key } = await unwrapCaveKey(wrappedMine, o.device.privateKey, { cave, version, myPublicKey: o.device.publicKey }, { extractable: true });
+  const wrapped = await wrapFor(key, devices, { cave, version });
+  if (wrapped.length) await request(o, 'POST', `/api/caves/${cave}/keys`, { version, wrapped });
+}
+
+const labelCtx = (cave: string, version: number) => ({ cave, version, author: 'label', kind: 'label' }) as const;
+
+/** Unlocks a snapshot (it names no author, so it may be any of this member's devices') and checks its number. */
+async function unlockSnapshot(o: ServerAccess, key: CryptoKey, cave: string, snapshot: { upTo: number; keyVersion: number; locked: string }): Promise<{ upTo: number; ops: string }> {
+  const { devices } = await request<{ devices: DeviceInfo[] }>(o, 'GET', '/api/devices');
+  let body: { upTo?: unknown; ops?: unknown } | null = null;
+  for (const d of devices) {
+    try {
+      body = JSON.parse(await unlock(key, snapshot.locked, { cave, version: snapshot.keyVersion, author: d.id, kind: 'snapshot' }));
+      break;
+    } catch {
+      // not this device's
+    }
+  }
+  if (!body || typeof body.ops !== 'string' || typeof body.upTo !== 'number') throw new Refused('snapshot does not unlock');
+  if (body.upTo !== snapshot.upTo) throw new Refused('snapshot number does not match');
+  return { upTo: body.upTo, ops: body.ops };
+}
+
+/** Unlocks an entry from the stream with the author device the server names; anything else is refused. */
+async function unlockEntry(key: CryptoKey, cave: string, version: number, line: StreamLine): Promise<{ c: string; ops: string }> {
+  if (line.keyVersion !== version || typeof line.locked !== 'string' || typeof line.authorDevice !== 'string' || !line.authorDevice) throw new Refused('entry malformed');
+  let body: { c?: unknown; ops?: unknown };
+  try {
+    body = JSON.parse(await unlock(key, line.locked, { cave, version, author: line.authorDevice, kind: 'entry' }));
+  } catch {
+    throw new Refused('entry does not unlock');
+  }
+  if (typeof body?.c !== 'string' || typeof body.ops !== 'string') throw new Refused('entry malformed');
+  return { c: body.c, ops: body.ops };
+}
+
+/**
+ * The member's caves, each with its label unlocked when this device has the cave's key. A cave whose key or label
+ * cannot be opened is still listed (with no label): opening it says why.
+ */
+export async function listMyCaves(o: ServerAccess): Promise<ServerCave[]> {
+  const out: ServerCave[] = [];
+  for (const c of await listCaves(o)) {
+    let label: string | null = null;
+    if (c.wrapped && c.label && c.label.keyVersion === c.keyVersion) {
+      try {
+        const { key } = await openKey(o, c);
+        label = await unlock(key, c.label.locked, labelCtx(c.id, c.keyVersion));
+      } catch {
+        label = null;
+      }
+    }
+    out.push({ id: c.id, createdAt: c.createdAt, hasKey: !!c.wrapped, label });
+  }
+  return out;
+}
+
+/**
+ * Wraps every cave key this device has for the member's devices that have none yet, so a new device can open
+ * those caves. Errors on one cave do not stop the others. Gives back how many caves were handed on.
+ */
+export async function handOverKeys(o: ServerAccess): Promise<number> {
+  let n = 0;
+  for (const c of await listCaves(o)) {
+    if (!c.wrapped || !c.needsKeys) continue;
+    try {
+      await openKey(o, c); // the same checks as opening the cave: a key that cannot be trusted is not handed on
+      await handKeys(o, c.id, c.keyVersion, c.wrapped);
+      n++;
+    } catch {
+      // tried again next time
+    }
+  }
+  return n;
+}
+
+/**
+ * Fetches a cave whole from its room: the snapshot, then every entry after it up to now (read from the stream
+ * until it goes live). `waiting` when this device has no key for it yet, `unknown` when it is not this member's.
+ * Throws when the server cannot be reached or something does not unlock.
+ */
+export async function downloadCave(o: ServerAccess, cave: string, deadAfterMs = 60_000): Promise<Downloaded> {
+  const c = (await listCaves(o)).find((x) => x.id === cave);
+  if (!c) return { status: 'unknown' };
+  if (!c.wrapped) return { status: 'waiting' };
+  const { key } = await openKey(o, c);
+  const { snapshot } = await request<{ snapshot: { upTo: number; keyVersion: number; locked: string } | null }>(o, 'GET', `/api/caves/${cave}/snapshot`);
+  let last = 0;
+  let snapOps: string | null = null;
+  if (snapshot) {
+    if (snapshot.keyVersion !== c.keyVersion) throw new Refused('snapshot under another key version');
+    const s = await unlockSnapshot(o, key, cave, snapshot);
+    snapOps = s.ops;
+    last = s.upTo;
+  }
+  const entries: string[] = [];
+  const abort = new AbortController();
+  let dog: ReturnType<typeof setTimeout> | undefined;
+  const pet = () => {
+    clearTimeout(dog);
+    dog = setTimeout(() => abort.abort(), deadAfterMs);
+  };
+  pet();
+  try {
+    const res = await o.fetch(`${o.base}/api/caves/${cave}/stream?after=${last}`, { headers: headersOf(o), credentials: 'same-origin', signal: abort.signal });
+    if (!res.ok || !res.body) throw new HttpError(res.status, 'stream');
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = '';
+    try {
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) throw new Error('the stream ended before catching up');
+        pet();
+        buf += decoder.decode(value, { stream: true });
+        let i;
+        while ((i = buf.indexOf('\n')) >= 0) {
+          const line = JSON.parse(buf.slice(0, i)) as StreamLine;
+          buf = buf.slice(i + 1);
+          if (line.t === 'live') return { status: 'ok', snapshot: snapOps, entries };
+          if (line.t !== 'entry' || typeof line.number !== 'number' || line.number <= last) continue;
+          entries.push((await unlockEntry(key, cave, c.keyVersion, line)).ops);
+          last = line.number;
+        }
+      }
+    } finally {
+      reader.cancel().catch(() => {});
+    }
+  } finally {
+    clearTimeout(dog);
+    abort.abort();
+  }
+}
+
 export class RoomClient {
   private o: RoomClientOptions;
   /** This client (one per tab and open cave): entries it posted carry it inside the lock, so it skips only its own. */
@@ -152,6 +356,8 @@ export class RoomClient {
   /** A room id this client set in the cave whose making the server has not yet confirmed; a retry reuses it. */
   private unconfirmed = '';
   private made: { key: CryptoKey; id: string; raw: Uint8Array } | null = null;
+  /** The label the server keeps for this cave, as text (null when none, or not readable). */
+  private labelKept: string | null = null;
   private infoShown = false;
   private flushing = false;
   private live = false;
@@ -183,19 +389,10 @@ export class RoomClient {
   }
 
   private headers(): Record<string, string> {
-    return { 'Content-Type': 'application/json', 'X-Cave-Device': this.o.device.id, ...(this.o.headers?.() ?? {}) };
+    return headersOf(this.o);
   }
-  private async call<T>(method: string, path: string, body?: unknown): Promise<T> {
-    const res = await this.o.fetch(this.o.base + path, { method, headers: this.headers(), body: body === undefined ? undefined : JSON.stringify(body), credentials: 'same-origin' });
-    let out: (T & { error?: string }) | null = null;
-    try {
-      out = (await res.json()) as T & { error?: string };
-    } catch {
-      out = null;
-    }
-    if (!res.ok) throw new HttpError(res.status, out?.error ?? 'error');
-    if (!out) throw new Error('unreadable answer');
-    return out;
+  private call<T>(method: string, path: string, body?: unknown): Promise<T> {
+    return request<T>(this.o, method, path, body);
   }
   private shown: RoomStatus | null = null;
   /** Reports a status when it changes. */
@@ -253,6 +450,7 @@ export class RoomClient {
       }
     }
     await this.handKeysToMyOtherDevices();
+    await this.keepLabel();
     if (!this.pendingLoaded) {
       const kept = await this.o.loadPending(this.cave);
       this.alive();
@@ -296,18 +494,10 @@ export class RoomClient {
     this.o.onStatus('error', reason);
   }
 
-  /** Wraps the cave key for each device; a device whose public key does not parse is skipped. */
+  /** Wraps the cave key for each device (see `wrapFor`). */
   private async wrapForDevices(key: Uint8Array | CryptoKey, devices: DeviceInfo[]): Promise<{ device: string; wrapped: string }[]> {
-    // Trusts the server's list of this member's devices for now (Nathan's decision); device approval comes later.
-    const out: { device: string; wrapped: string }[] = [];
-    for (const d of devices) {
-      try {
-        out.push({ device: d.id, wrapped: await wrapCaveKey(key, d.publicKey, { cave: this.cave, version: this.version }) });
-      } catch {
-        // a key that does not parse: that device gets no copy
-      }
-      this.alive();
-    }
+    const out = await wrapFor(key, devices, { cave: this.cave, version: this.version });
+    this.alive();
     return out;
   }
 
@@ -350,6 +540,7 @@ export class RoomClient {
     made.raw.fill(0);
     this.unconfirmed = '';
     this.key = made.key;
+    this.labelKept = null;
     await this.o.saveKeySeen(this.cave, { version: 1, keyId: made.id });
     this.alive();
     this.eng.outbox(); // the snapshot below carries everything made so far
@@ -359,40 +550,46 @@ export class RoomClient {
 
   /** Opens this device's wrapped key: `unknown` when the cave is not this member's, `waiting` when it has no key here yet. */
   private async loadKey(): Promise<'ok' | 'waiting' | 'unknown'> {
-    const { caves } = await this.call<{ caves: { id: string; keyVersion: number; wrapped: string | null }[] }>('GET', '/api/caves');
+    const caves = await listCaves(this.o);
     this.alive();
     const mine = caves.find((c) => c.id === this.cave);
     if (!mine) return 'unknown';
     if (!mine.wrapped) return 'waiting';
-    const seen = await this.o.loadKeySeen(this.cave);
+    const opened = await openKey(this.o, mine);
     this.alive();
-    if (seen && mine.keyVersion < seen.version) throw new Refused('key version went backwards');
-    let opened;
-    try {
-      opened = await unwrapCaveKey(mine.wrapped, this.o.device.privateKey, { cave: this.cave, version: mine.keyVersion, myPublicKey: this.o.device.publicKey });
-    } catch {
-      throw new Refused('wrapped key does not open');
-    }
-    this.alive();
-    if (seen && seen.version === mine.keyVersion && seen.keyId !== opened.id) throw new Refused('another key under a version already seen');
     this.key = opened.key;
     this.wrappedMine = mine.wrapped;
     this.version = mine.keyVersion;
-    if (!seen || seen.version !== this.version) await this.o.saveKeySeen(this.cave, { version: this.version, keyId: opened.id });
-    this.alive();
+    this.labelKept = null;
+    if (mine.label && mine.label.keyVersion === mine.keyVersion) {
+      try {
+        this.labelKept = await unlock(opened.key, mine.label.locked, labelCtx(this.cave, this.version));
+      } catch {
+        this.labelKept = null; // replaced below
+      }
+      this.alive();
+    }
     return 'ok';
   }
 
   private async handKeysToMyOtherDevices(): Promise<void> {
-    const { devices } = await this.call<{ devices: DeviceInfo[] }>('GET', `/api/caves/${this.cave}/missing`);
+    if (this.wrappedMine) await handKeys(this.o, this.cave, this.version, this.wrappedMine);
     this.alive();
-    if (!devices.length || !this.wrappedMine) return;
-    // An extractable copy only for wrapping, dropped when this returns; the everyday key stays non-extractable.
-    const { key } = await unwrapCaveKey(this.wrappedMine, this.o.device.privateKey, { cave: this.cave, version: this.version, myPublicKey: this.o.device.publicKey }, { extractable: true });
-    this.alive();
-    const wrapped = await this.wrapForDevices(key, devices);
-    if (wrapped.length) await this.call('POST', `/api/caves/${this.cave}/keys`, { version: this.version, wrapped });
-    this.alive();
+  }
+
+  /** Keeps the cave's label on the server when it differs from the one kept there. Best effort: it only names the cave in lists. */
+  private async keepLabel(): Promise<void> {
+    try {
+      if (!this.o.label || !this.key || this.eng.roomId() !== this.cave) return;
+      const text = this.o.label();
+      if (!text || text === this.labelKept) return;
+      const locked = await lock(this.key, text, labelCtx(this.cave, this.version));
+      this.alive();
+      await this.call('PUT', `/api/caves/${this.cave}/label`, { version: this.version, locked });
+      this.labelKept = text;
+    } catch {
+      // tried again when the cave next goes quiet, or on the next open
+    }
   }
 
   /** Posts this copy whole when it changed since it was last known to be all in the room (once per open). */
@@ -454,21 +651,8 @@ export class RoomClient {
     }
     if (this.last > 0 && snapshot.upTo <= this.last) return;
     if (snapshot.keyVersion !== this.version) throw new Refused('snapshot under another key version');
-    // The snapshot names no author, so it may be from any of this member's devices.
-    const { devices } = await this.call<{ devices: DeviceInfo[] }>('GET', '/api/devices');
+    const body = await unlockSnapshot(this.o, this.key!, this.cave, snapshot);
     this.alive();
-    let body: { upTo?: unknown; ops?: unknown } | null = null;
-    for (const d of devices) {
-      try {
-        body = JSON.parse(await unlock(this.key!, snapshot.locked, this.lockCtx('snapshot', d.id)));
-        break;
-      } catch {
-        // not this device's
-      }
-    }
-    this.alive();
-    if (!body || typeof body.ops !== 'string' || typeof body.upTo !== 'number') throw new Refused('snapshot does not unlock');
-    if (body.upTo !== snapshot.upTo) throw new Refused('snapshot number does not match');
     if (this.last > 0 && body.upTo <= this.last) return;
     this.eng.apply(body.ops);
     this.applied();
@@ -546,16 +730,9 @@ export class RoomClient {
       return;
     }
     if (line.t !== 'entry' || typeof line.number !== 'number' || line.number <= this.last) return;
-    if (line.keyVersion !== this.version || typeof line.locked !== 'string' || typeof line.authorDevice !== 'string' || !line.authorDevice) throw new Refused('entry malformed');
     // Unlocked even when it is our own, so an entry relabelled as ours fails here rather than being skipped.
-    let body: { c?: unknown; ops?: unknown };
-    try {
-      body = JSON.parse(await unlock(this.key!, line.locked, this.lockCtx('entry', line.authorDevice)));
-    } catch {
-      throw new Refused('entry does not unlock');
-    }
+    const body = await unlockEntry(this.key!, this.cave, this.version, line);
     this.alive();
-    if (typeof body?.c !== 'string' || typeof body.ops !== 'string') throw new Refused('entry malformed');
     // Another tab on this device posts with the same author: only this client's own entries are already here.
     if (body.c !== this.clientId) {
       this.eng.apply(body.ops);
@@ -620,5 +797,7 @@ export class RoomClient {
     this.dirty = false;
     const hash = await sha256(this.eng.snapshot());
     await this.o.saveSynced(this.cave, hash).catch(() => {});
+    await this.keepLabel(); // the cave was still for a while: a changed name or summary is kept now
+
   }
 }

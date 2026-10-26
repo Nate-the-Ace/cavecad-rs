@@ -1,7 +1,9 @@
 // The Cave Shelf's store: the caves this browser keeps, each with the last summary of what is in it
 // (so the shelf can list caves without reading them). A cave is kept as its DXF text, the same file
 // Save writes, in IndexedDB on this machine; an open cave is saved back by itself a moment after every
-// edit, so closing the page or refreshing loses nothing. Nothing is uploaded.
+// edit, so closing the page or refreshing loses nothing. The shelf itself is never uploaded (a cave's room on the
+// server, with its locked copy, is room.svelte.ts; each record keeps that room's id so the shelf can tell which of
+// the member's caves on the server this browser already has).
 import { cave, changed, markSaved, unsaved } from './cave.svelte';
 import { readOnly } from './readonly';
 import { engine, type CaveSummary } from './engine';
@@ -15,6 +17,8 @@ export interface ShelfRecord {
   /** Milliseconds since 1970 of the last save. */
   updated: number;
   summary: CaveSummary | null;
+  /** The cave's room on the CaveCAD server ('' for none; absent on records kept before rooms, read once from the cave). */
+  roomId?: string;
 }
 
 const DB = 'cavecad-shelf';
@@ -134,6 +138,7 @@ export async function storeOpenCave(source = ''): Promise<boolean> {
     favorite: existing?.favorite ?? false,
     updated: Date.now(),
     summary,
+    roomId: engine.roomId(),
   };
   // What is written is the cave as it is now; an edit made while the browser stores it (the room id arriving, say)
   // stays unsaved and is kept by the next autosave.
@@ -195,6 +200,30 @@ export async function summaryOf(rec: ShelfRecord): Promise<CaveSummary | null> {
     shelf.records = sorted(shelf.records.map((r) => (r.id === rec.id ? next : r)));
   }
   return summary;
+}
+
+/**
+ * The room ids of the caves on this shelf. A record kept before rooms has none written beside it: it is read from
+ * the kept cave once and remembered (the engine must be loaded).
+ */
+export async function shelfRoomIds(): Promise<Set<string>> {
+  const out = new Set<string>();
+  for (const rec of shelf.records) {
+    let id = rec.roomId;
+    if (id === undefined) {
+      const text = await dxfOf(rec.id);
+      id = text && isNative(text) ? engine.roomIdOfNative(text) : '';
+      const next = { ...rec, roomId: id };
+      try {
+        await put(next, null);
+      } catch {
+        /* read again next time */
+      }
+      shelf.records = shelf.records.map((r) => (r.id === rec.id ? next : r));
+    }
+    if (id) out.add(id);
+  }
+  return out;
 }
 
 let timer: ReturnType<typeof setTimeout> | undefined;

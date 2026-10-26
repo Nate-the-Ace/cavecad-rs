@@ -6,7 +6,19 @@ import type { Db } from './db.ts';
 
 export type Device = { id: string; memberId: string; publicKey: string };
 export type Wrapped = { device: string; wrapped: string };
-export type MyCave = { id: string; keyVersion: number; wrapped: string | null; privateRoom: string };
+/**
+ * One of the member's caves for a device: its wrapped key for that device (null when it has none yet), its locked
+ * label (name and summary, null until a device sets one), and whether another of the member's devices still has no key.
+ */
+export type MyCave = {
+  id: string;
+  keyVersion: number;
+  wrapped: string | null;
+  privateRoom: string;
+  createdAt: number;
+  label: { keyVersion: number; locked: string } | null;
+  needsKeys: boolean;
+};
 export type Entry = { number: number; keyVersion: number; locked: string; authorMember: string; authorDevice: string; receivedAt: number };
 
 const fail = (code: string): never => {
@@ -67,14 +79,45 @@ export function createCave(db: Db, memberId: string, caveId: string, wrapped: Wr
 export function myCaves(db: Db, memberId: string, deviceId: string): MyCave[] {
   const rows = db
     .prepare(
-      `SELECT c.id, c.key_version, w.wrapped, r.id AS room FROM caves c
+      `SELECT c.id, c.key_version, c.created_at, w.wrapped, r.id AS room, l.key_version AS label_version, l.locked AS label,
+         EXISTS (SELECT 1 FROM devices d WHERE d.member_id = ? AND NOT EXISTS
+           (SELECT 1 FROM wrapped_keys k WHERE k.cave_id = c.id AND k.key_version = c.key_version AND k.device_id = d.id)) AS needs_keys
+       FROM caves c
        JOIN cave_owners o ON o.cave_id = c.id AND o.member_id = ?
        JOIN rooms r ON r.cave_id = c.id AND r.kind = 'private'
        LEFT JOIN wrapped_keys w ON w.cave_id = c.id AND w.key_version = c.key_version AND w.device_id = ?
+       LEFT JOIN cave_labels l ON l.cave_id = c.id
        ORDER BY c.created_at`,
     )
-    .all(memberId, deviceId) as { id: string; key_version: number; wrapped: string | null; room: string }[];
-  return rows.map((r) => ({ id: r.id, keyVersion: r.key_version, wrapped: r.wrapped, privateRoom: r.room }));
+    .all(memberId, memberId, deviceId) as {
+    id: string;
+    key_version: number;
+    created_at: number;
+    wrapped: string | null;
+    room: string;
+    label_version: number | null;
+    label: string | null;
+    needs_keys: number;
+  }[];
+  return rows.map((r) => ({
+    id: r.id,
+    keyVersion: r.key_version,
+    wrapped: r.wrapped,
+    privateRoom: r.room,
+    createdAt: r.created_at,
+    label: r.label === null || r.label_version === null ? null : { keyVersion: r.label_version, locked: r.label },
+    needsKeys: !!r.needs_keys,
+  }));
+}
+
+/** Keeps the cave's locked label (its name and summary for cave lists), locked under the current key version. */
+export function putLabel(db: Db, memberId: string, caveId: string, version: number, locked: string, now: number): void {
+  requireOwner(db, memberId, caveId);
+  if (version !== keyVersion(db, caveId)) fail('bad-request');
+  db.prepare(
+    `INSERT INTO cave_labels (cave_id, key_version, locked, updated_at) VALUES (?, ?, ?, ?)
+     ON CONFLICT(cave_id) DO UPDATE SET key_version = excluded.key_version, locked = excluded.locked, updated_at = excluded.updated_at`,
+  ).run(caveId, version, locked, now);
 }
 
 /** The member's devices, with public keys (to wrap a new cave's key for each). */

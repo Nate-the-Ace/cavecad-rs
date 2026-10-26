@@ -3,7 +3,9 @@
   // The Cave Shelf: the window CaveCAD opens on. The caves this browser keeps are on the left (with a
   // few samples below); the one picked shows on the right: how big it is, where each trip started and
   // stopped, and the open ends where a new trip could pick up. Open it, add a trip to it, start a new
-  // cave, or bring one in from a file. Nothing here changes a cave except by opening it.
+  // cave, or bring one in from a file. Nothing here changes a cave except by opening it. Signed in, the caves kept on
+  // the CaveCAD server that this browser does not have yet (made on another device) are listed too, under "On your
+  // other devices"; opening one fetches it and keeps it here (server-caves.svelte.ts).
   import { untrack } from 'svelte';
   import { Copy, Star } from '@lucide/svelte';
   import { leaveP2p, p2p } from '../lib/p2p.svelte';
@@ -13,7 +15,9 @@
   import { DEMOS } from '../lib/demos';
   import { engine, loadEngine, type CaveSummary } from '../lib/engine';
   import { openCave } from '../lib/files';
-  import { openAtTrip, newTripOn, newTripOnSample, openKept, openSample } from '../lib/caves';
+  import { openAtTrip, newTripOn, newTripOnSample, openFromServer, openKept, openSample } from '../lib/caves';
+  import { refreshServerCaves, serverCaves } from '../lib/server-caves.svelte';
+  import { account } from '../lib/account.svelte';
   import { dxfOf, forgetCave, loadShelf, setFavorite, setStartup, shelf, summaryOf, type ShelfRecord } from '../lib/shelf.svelte';
   import { formatLength } from '../lib/units';
 
@@ -56,7 +60,7 @@
 
   $effect(() => {
     if (shelf.open) {
-      void loadEngine().then(() => loadShelf());
+      void loadEngine().then(() => loadShelf()).then(() => refreshServerCaves());
       message = '';
       if (shelf.join) {
         // Asked for from the ribbon: straight to the join page.
@@ -68,15 +72,34 @@
     }
   });
 
+  // While open, the caves on the server are read again now and then: a key handed over by another device shows up,
+  // and a cave someone asked to open opens by itself once its key is here.
+  $effect(() => {
+    if (!shelf.open) return;
+    void account.phase; // signing in (or out) while the shelf is open reads the list again
+    void account.member?.id;
+    untrack(() => void loadEngine().then(() => refreshServerCaves()));
+    const t = setInterval(() => void refreshServerCaves(), 15_000);
+    return () => clearInterval(t);
+  });
+  $effect(() => {
+    const id = serverCaves.waitingFor;
+    const ready = !!id && serverCaves.list.some((c) => c.id === id && c.hasKey);
+    if (ready && shelf.open && !serverCaves.opening) untrack(() => void openRemote(id));
+  });
+
   const shown = $derived(shelf.records.filter((r) => r.name.toLowerCase().includes(search.trim().toLowerCase())));
   const record = $derived(shelf.records.find((r) => r.id === picked) ?? null);
   const sample = $derived(picked.startsWith('sample:') ? (DEMOS.find((d) => `sample:${d.id}` === picked) ?? null) : null);
+  /** A cave on the server this browser does not keep yet. */
+  const remote = $derived(picked.startsWith('server:') ? (serverCaves.list.find((c) => `server:${c.id}` === picked) ?? null) : null);
+  const remoteShown = $derived(serverCaves.list.filter((c) => (c.name ?? '').toLowerCase().includes(search.trim().toLowerCase()) || (!c.name && !search.trim())));
 
   // Start on the cave in use, else the first one.
   $effect(() => {
     if (!shelf.open) return;
     untrack(() => {
-      if (!picked || (!record && !sample)) picked = shelf.records.find((r) => r.id === shelf.currentId)?.id ?? shelf.records[0]?.id ?? `sample:${DEMOS[0].id}`;
+      if (!picked || (!record && !sample && !remote)) picked = shelf.records.find((r) => r.id === shelf.currentId)?.id ?? shelf.records[0]?.id ?? `sample:${DEMOS[0].id}`;
     });
   });
 
@@ -85,9 +108,10 @@
   $effect(() => {
     const rec = record;
     const smp = sample;
+    const rem = remote;
     void loadEngine().then(() => {
       untrack(() => {
-        summary = rec?.summary ?? (smp ? engine.shelfSummarizeDemo(smp.json) : null);
+        summary = rec?.summary ?? (smp ? engine.shelfSummarizeDemo(smp.json) : (rem?.summary ?? null));
         from = '';
         if (rec && !rec.summary) void summaryOf(rec).then((s) => rec.id === picked && (summary = s));
       });
@@ -111,7 +135,26 @@
     message = problem ?? '';
   }
 
-  const open = () => (record ? run(openKept(record.id)) : sample ? run(openSample(sample.id)) : undefined);
+  /** Fetches a cave from the server; one with no key here yet waits, and opens by itself when the key arrives. */
+  async function openRemote(id: string) {
+    if (serverCaves.opening) return;
+    serverCaves.opening = id;
+    try {
+      const r = await openFromServer(id);
+      if (r === 'waiting') {
+        serverCaves.waitingFor = id;
+        message = '';
+      } else {
+        if (serverCaves.waitingFor === id) serverCaves.waitingFor = '';
+        message = r ?? '';
+        if (!r) void refreshServerCaves(); // it is on this shelf now
+      }
+    } finally {
+      serverCaves.opening = '';
+    }
+  }
+
+  const open = () => (record ? run(openKept(record.id)) : sample ? run(openSample(sample.id)) : remote ? openRemote(remote.id) : undefined);
   const newTrip = () => (record ? run(newTripOn(record.id, from)) : sample ? run(newTripOnSample(sample.id, from)) : undefined);
   const atTrip = (index: number) => record && run(openAtTrip(record.id, index));
 
@@ -183,6 +226,15 @@
           {:else}
             <p class="none">{shelf.records.length ? 'No cave matches.' : 'No caves yet. Start one, or bring one in from a file.'}</p>
           {/each}
+          {#if serverCaves.list.length}
+            <div class="group" title="Caves you keep on the CaveCAD server that this computer does not have yet">On your other devices</div>
+            {#each remoteShown as c (c.id)}
+              <button class="cave" class:sel={picked === `server:${c.id}`} role="option" aria-selected={picked === `server:${c.id}`} onclick={() => (picked = `server:${c.id}`)} ondblclick={open}>
+                <span class="name">{c.name ?? 'A cave from another device'}</span>
+                <span class="sub">{serverCaves.opening === c.id ? 'fetching…' : !c.hasKey ? 'waiting for a key' : c.summary && !c.summary.empty ? `${c.summary.trips.length} trip${c.summary.trips.length === 1 ? '' : 's'} · ${length(c.summary.length_m)}` : 'on the server'}</span>
+              </button>
+            {/each}
+          {/if}
           <div class="group">Samples</div>
           {#each DEMOS as d}
             <button class="cave" class:sel={picked === `sample:${d.id}`} onclick={() => (picked = `sample:${d.id}`)} ondblclick={open}>
@@ -199,12 +251,23 @@
       </div>
 
       <div class="detail">
-        {#if (record || sample) && summary}
+        {#if remote && !summary}
+          <h2>{remote.name ?? 'A cave from another device'}</h2>
+          <p class="stats">Kept on the CaveCAD server by one of your other devices · made {when(remote.createdAt)}</p>
+          {#if !remote.hasKey}
+            <p class="wait">Waiting for a key: open CaveCAD once on a device that has this cave{serverCaves.waitingFor === remote.id ? '. It opens here by itself when the key arrives.' : ', then open it here.'}</p>
+          {:else}
+            <p class="stored">Open it to bring it onto this computer. It stays in step with your other devices.</p>
+          {/if}
+        {:else if (record || sample || remote) && summary}
           <h2>{summary.name}</h2>
           <p class="stats">
             {#if summary.empty}Nothing surveyed yet.{:else}{length(summary.length_m)} surveyed · {summary.stations} stations · {summary.trips.length} trip{summary.trips.length === 1 ? '' : 's'}{#if summary.depth_m !== null && summary.depth_m > 0} · {length(summary.depth_m)} deep{/if} · {health(summary)}{/if}
           </p>
-          {#if record}<p class="stored">Kept in this browser · last saved {when(record.updated)}</p>{:else}<p class="stored">A sample cave. Open it to look around, or start a trip on it (it is then kept in this browser as your own copy).</p>{/if}
+          {#if remote}
+            <p class="stored">On the CaveCAD server, from one of your other devices · made {when(remote.createdAt)}. Open it to bring it onto this computer; it stays in step with your other devices.</p>
+            {#if !remote.hasKey}<p class="wait">Waiting for a key: open CaveCAD once on a device that has this cave{serverCaves.waitingFor === remote.id ? '. It opens here by itself when the key arrives.' : ', then open it here.'}</p>{/if}
+          {:else if record}<p class="stored">Kept in this browser · last saved {when(record.updated)}</p>{:else}<p class="stored">A sample cave. Open it to look around, or start a trip on it (it is then kept in this browser as your own copy).</p>{/if}
           {#if summary.ends.length}
             <div class="ends">
               <span class="lead">Open ends</span>
@@ -229,13 +292,14 @@
           <p class="none big">Pick a cave on the left, or start a new one.</p>
         {/if}
         {#if shelf.problem}<p class="err" role="alert">{shelf.problem}</p>{/if}
+        {#if remote && serverCaves.problem}<p class="err" role="alert">{serverCaves.problem}</p>{/if}
         {#if message}<p class="err" role="alert">{message}</p>{/if}
         <div class="spacer"></div>
         <div class="foot">
           <label><input type="checkbox" checked={shelf.startup} onchange={(e) => setStartup(e.currentTarget.checked)} /> Open this window at startup</label>
           <span class="grow"></span>
           <button onclick={newTrip} disabled={(!record && !sample) || !summary} title="Open the cave and start a new trip on it">{from ? `New trip from ${from}` : 'New trip'}</button>
-          <button class="go" onclick={open} disabled={!record && !sample}>Open</button>
+          <button class="go" onclick={open} disabled={(!record && !sample && !remote) || !!serverCaves.opening}>{remote && serverCaves.opening === remote.id ? 'Fetching…' : remote && serverCaves.waitingFor === remote.id ? 'Waiting for key…' : 'Open'}</button>
           <button onclick={close}>{cave.hasCave ? 'Close' : 'Start empty'}</button>
         </div>
       </div>
@@ -300,6 +364,7 @@
   .grow { flex: 1; }
   .none { color: var(--muted); font-size: 12px; padding: 8px 6px; }
   .none.big { font-size: 14px; padding: 40px 0; text-align: center; }
+  .wait { margin: 0; font-size: 12px; color: var(--text); background: var(--accent-bg); border: 1px solid var(--accent); border-radius: 6px; padding: 6px 10px; }
   .err { margin: 0; color: var(--danger); font-size: 12px; }
   input[type='search'] { font: inherit; font-size: 13px; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel-2); color: var(--text); }
   button { font: inherit; font-size: 13px; padding: 6px 12px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel-2); color: var(--text); cursor: pointer; }

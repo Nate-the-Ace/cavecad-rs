@@ -88,6 +88,13 @@ CREATE TABLE IF NOT EXISTS snapshots (
   locked TEXT NOT NULL,
   created_at INTEGER NOT NULL
 );
+-- A cave's name and summary for its owners' cave lists, locked with the cave key (the server cannot read it).
+CREATE TABLE IF NOT EXISTS cave_labels (
+  cave_id TEXT PRIMARY KEY REFERENCES caves(id),
+  key_version INTEGER NOT NULL,
+  locked TEXT NOT NULL,
+  updated_at INTEGER NOT NULL
+);
 CREATE INDEX IF NOT EXISTS rooms_cave ON rooms(cave_id);
 CREATE INDEX IF NOT EXISTS cave_owners_member ON cave_owners(member_id);
 CREATE INDEX IF NOT EXISTS devices_member ON devices(member_id);

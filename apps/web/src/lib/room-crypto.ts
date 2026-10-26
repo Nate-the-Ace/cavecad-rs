@@ -23,7 +23,8 @@
 //
 // Entries and snapshots. Text is locked with the cave key, a fresh 12-byte IV and associated data
 // "cavecad-<kind>-v1|<cave>|<keyVersion>|<author>", so an entry cannot be replayed as a snapshot, or under another
-// cave, key version or author.
+// cave, key version or author. A cave's label (its name and summary for cave lists) is locked the same way with
+// kind `label` and author `label`, since any of the owner's devices may set it.
 //   Lock format: 0x01 | iv (12) | ciphertext + tag (16).
 //
 // Every format starts with a version byte (1); any other version throws. Context strings may not contain "|"
@@ -55,7 +56,7 @@ export type DeviceKeys = { privateKey: CryptoKey; publicKey: string };
 export type CaveKey = { key: CryptoKey; id: string; raw?: Uint8Array };
 export type WrapContext = { cave: string; version: number };
 export type UnwrapContext = { cave: string; version: number; myPublicKey: string };
-export type LockKind = 'entry' | 'snapshot';
+export type LockKind = 'entry' | 'snapshot' | 'label';
 export type LockContext = { cave: string; version: number; author: string; kind: LockKind };
 
 function field(name: string, v: unknown): string {
@@ -173,7 +174,7 @@ export async function unwrapCaveKey(wrapped: string, privateKey: CryptoKey, ctx:
 }
 
 const lockAad = (ctx: LockContext) => {
-  if (ctx.kind !== 'entry' && ctx.kind !== 'snapshot') throw new Error('room-crypto: bad kind');
+  if (ctx.kind !== 'entry' && ctx.kind !== 'snapshot' && ctx.kind !== 'label') throw new Error('room-crypto: bad kind');
   return enc.encode(`cavecad-${ctx.kind}-v1|${field('cave', ctx.cave)}|${keyVersion(ctx.version)}|${field('author', ctx.author)}`);
 };
 

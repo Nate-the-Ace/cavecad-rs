@@ -19,7 +19,7 @@ import { flush as keepOnShelf } from './shelf.svelte';
 import { account } from './account.svelte';
 import { desktopBearer } from './desktop-signin';
 import { deviceKey, keySeen, pendingEntries, syncedHash } from './device-key';
-import { RoomClient, type RoomStatus } from './room-client';
+import { RoomClient, handOverKeys, type RoomStatus, type ServerAccess } from './room-client';
 import { p2p } from './p2p.svelte';
 import { live } from './sync.svelte';
 import { classroom } from './classroom.svelte';
@@ -42,8 +42,36 @@ let seenOpened = -1;
 let lastKey = '';
 /** The member whose device could not be registered yet (the server was out of reach): retried every 30 s. */
 let waitingForDevice = '';
+/** The member whose keys were last handed on when they signed in. */
+let sweptFor = '';
 let deviceRetry: ReturnType<typeof setTimeout> | null = null;
 let infoTimer: ReturnType<typeof setTimeout> | null = null;
+
+/** The signed-in member's id ('' when signed out): a stored pass is enough, the server may be out of reach. */
+const memberNow = (): string => (account.phase === 'ready' || account.phase === 'offline' ? (account.member?.id ?? '') : '');
+
+/** This device's way to the member's caves on the server; null when signed out or the device is not registered yet. */
+export async function serverAccess(): Promise<ServerAccess | null> {
+  const member = memberNow();
+  if (!member) return null;
+  const dev = await deviceKey(BASE, member, headers);
+  if (!dev || memberNow() !== member) return null;
+  return { base: BASE, fetch: (...a) => fetch(...a), device: dev, headers, loadKeySeen: keySeen.load, saveKeySeen: keySeen.save };
+}
+
+/** Hands this device's cave keys to the member's devices that have none (a new computer then opens those caves). */
+export async function handOnKeys(): Promise<void> {
+  const access = await serverAccess();
+  if (access) await handOverKeys(access).catch(() => 0);
+}
+
+/** The label kept (locked) on the server for the open cave: its name and shelf summary, for the shelf on other devices. */
+function caveLabel(): string | null {
+  const summary = engine.shelfSummary();
+  if (!summary) return null;
+  const full = JSON.stringify({ name: summary.name, summary });
+  return full.length <= 150_000 ? full : JSON.stringify({ name: summary.name }); // a huge trip list stays off the list
+}
 
 /** The cave just put on screen is a sample: it never gets a room. Call right after `cave.opened` is bumped. */
 export function noRoomForThisCave(): void {
@@ -94,6 +122,7 @@ async function startClient(member: string, mine: number): Promise<void> {
       },
     },
     changed: () => changed(), // the views re-read, and the shelf keeps what arrived
+    label: caveLabel,
     device: dev,
     headers,
     loadKeySeen: keySeen.load,
@@ -134,6 +163,8 @@ function closeRoom(): void {
 /** Watches for caves opening (and the account and live sessions) and keeps one room open to match. Call once. */
 export function startRooms(): () => void {
   seenOpened = cave.opened;
+  // A device signed in elsewhere may be waiting for keys this one has: hand them on now and then, not only on open.
+  const sweep = setInterval(() => void handOnKeys(), 10 * 60_000);
   return $effect.root(() => {
     $effect(() => {
       const n = cave.opened;
@@ -144,6 +175,10 @@ export function startRooms(): () => void {
       const who = account.member;
       const member = phase === 'ready' || phase === 'offline' ? (who?.id ?? '') : '';
       untrack(() => {
+        if (member && member !== sweptFor) {
+          sweptFor = member;
+          void handOnKeys();
+        }
         if (busy && n !== seenOpened) roomless = n; // a cave that came through a session is not this device's own
         seenOpened = n;
         const want = has && !busy && !student && member !== '' && n !== roomless;
@@ -159,6 +194,9 @@ export function startRooms(): () => void {
         else closeRoom();
       });
     });
-    return () => closeRoom();
+    return () => {
+      clearInterval(sweep);
+      closeRoom();
+    };
   });
 }

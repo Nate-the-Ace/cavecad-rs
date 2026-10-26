@@ -4,7 +4,7 @@ import { generateKeyPairSync } from 'node:crypto';
 import { openDb } from '../../server/src/db.ts';
 import { handleApi } from '../../server/src/api.ts';
 import { lock, makeDeviceKeys, unwrapCaveKey } from '../src/lib/room-crypto.ts';
-import { RoomClient, type CaveEngine, type KeySeen, type Pending, type RoomClientOptions, type RoomStatus } from '../src/lib/room-client.ts';
+import { RoomClient, downloadCave, handOverKeys, listMyCaves, type ServerAccess, type CaveEngine, type KeySeen, type Pending, type RoomClientOptions, type RoomStatus } from '../src/lib/room-client.ts';
 
 let bad = 0;
 const ok = (c: boolean, m: string) => { if (!c) { bad++; console.log('FAIL', m); } };
@@ -483,6 +483,61 @@ pc2.stop();
   ok(puts.a >= 1 && puts.b === 0, `M6: snapshots uploaded by writer ${puts.a}, reader ${puts.b}`);
   ca.stop();
   cb.stop();
+}
+
+let relabelled = false;
+
+// The Cave Shelf on a device that does not keep a cave yet: list it by its locked label, wait for a key, open it.
+{
+  const laptopB = await device();
+  const eng = fakeEngine();
+  eng.add('Truitt trip 1');
+  let label = JSON.stringify({ name: 'Truitt Cave' });
+  const st: RoomStatus[] = [];
+  const c1 = client(eng, laptopB, st, { label: () => label, quietMs: 50 });
+  await c1.open();
+  ok(await until(() => st.includes('synced')), 'S1: laptop synced');
+  const truitt = eng.roomId();
+  eng.add('Truitt trip 2');
+  ok(await until(() => rows(truitt) >= 1), 'S1: an edit was posted');
+
+  const workDev = await device();
+  const access = (dev: Dev): ServerAccess => {
+    const k = keptFor(dev);
+    return { base, fetch, device: dev, loadKeySeen: async (c) => k.seen.get(c) ?? null, saveKeySeen: async (c, s) => void k.seen.set(c, s) };
+  };
+  let list = await listMyCaves(access(workDev));
+  let t = list.find((x) => x.id === truitt);
+  ok(!!t && !t.hasKey && t.label === null, 'S2: the work PC lists the cave, with no key and so no name yet');
+  ok((await downloadCave(access(workDev), truitt)).status === 'waiting', 'S2: opening it waits for a key');
+  ok((await downloadCave(access(workDev), 'cave_nosuchcave000')).status === 'unknown', 'S2: a cave that is not the member\'s is unknown');
+
+  // The laptop hands its keys on without opening the cave again.
+  ok((await handOverKeys(access(laptopB))) >= 1, 'S3: the laptop hands the key on');
+  ok((await handOverKeys(access(laptopB))) === 0, 'S3: nothing is left to hand on');
+  list = await listMyCaves(access(workDev));
+  t = list.find((x) => x.id === truitt);
+  ok(!!t && t.hasKey && t.label === label, `S3: the work PC now reads the name (${t?.label})`);
+
+  const got = await downloadCave(access(workDev), truitt);
+  ok(got.status === 'ok', 'S4: the work PC downloads the cave');
+  if (got.status === 'ok') {
+    const work = fakeEngine();
+    work.load(got.snapshot ?? '[]');
+    for (const e of got.entries) work.apply(e);
+    ok(work.ops.has('Truitt trip 1') && work.ops.has('Truitt trip 2'), 'S4: snapshot and history make the whole cave');
+  }
+
+  // A renamed cave: its new label is kept once the cave has been still.
+  label = JSON.stringify({ name: 'Truitt Cave (main)' });
+  eng.add('Truitt trip 3');
+  ok(await until(() => {
+    void listMyCaves(access(workDev)).then((l) => (relabelled = l.find((x) => x.id === truitt)?.label === label));
+    return relabelled;
+  }, 4000), 'S5: a new name reaches the server, locked');
+  const labels = (db.prepare('SELECT locked FROM cave_labels').all() as { locked: string }[]).map((r) => r.locked);
+  ok(labels.length >= 1 && labels.every((x) => !/Truitt/.test(x) && !/Truitt/.test(Buffer.from(x, 'base64url').toString())), 'S5: the server cannot read the label');
+  c1.stop();
 }
 
 server.close();
