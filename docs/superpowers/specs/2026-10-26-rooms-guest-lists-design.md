@@ -46,7 +46,8 @@ Rooms panel (Home > Live > Rooms, or the View tab), for the open cave:
   editors; a watcher's write is refused (403 `watcher`). Locked-cave key routes and conversion stay owner-only.
 - Any change to a person's seats closes their open streams of that cave, so their app re-reads its seat at once.
   Losing every seat records them as gone from the cave (`GET /api/caves` lists gone caves) until added again.
-- `GET /api/members/directory`: every current member's id, name and email, for picking guests.
+- `GET /api/members/directory`: every current member's id, name and email, for picking guests; cave owners only.
+- Only a cave's owners see email addresses; guests see names only (Nathan, 2026-10-26).
 
 ## Records
 

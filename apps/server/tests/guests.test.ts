@@ -138,17 +138,23 @@ test('over HTTP: the directory, guest list changes, watcher refusals, and stream
     const admin = (await call(ADMIN, 'GET', '/api/me')).json.member.id;
     createInvite(db, admin, ANA, 'member', Date.now());
     const anaDev = (await call(ANA, 'POST', '/api/devices', { publicKey: PUB(2) })).json.device.id;
-    const dir = (await call(ANA, 'GET', '/api/members/directory')).json.members as { id: string; name: string; email: string }[];
+    // Only cave owners list members (and so see their emails).
+    assert.equal((await call(ANA, 'GET', '/api/members/directory')).status, 403);
+    assert.equal((await call(ADMIN, 'GET', '/api/members/directory')).status, 403);
+    await call(ADMIN, 'POST', '/api/caves', { id: 'cave-open1', storage: 'open' }, dev);
+    const dir = (await call(ADMIN, 'GET', '/api/members/directory')).json.members as { id: string; name: string; email: string }[];
     assert.deepEqual(dir.map((m) => m.email).sort(), [ANA, ADMIN]);
     const ana = dir.find((m) => m.email === ANA)!.id;
-    await call(ADMIN, 'POST', '/api/caves', { id: 'cave-open1', storage: 'open' }, dev);
     assert.equal((await call(ANA, 'POST', '/api/caves/cave-open1/rooms', { name: 'Team' }, anaDev)).status, 404);
     const team = (await call(ADMIN, 'POST', '/api/caves/cave-open1/rooms', { name: 'Team' }, dev)).json.id as string;
     assert.equal((await call(ADMIN, 'POST', '/api/caves/cave-open1/rooms', { name: 'team' }, dev)).status, 409);
     assert.equal((await call(ADMIN, 'PUT', `/api/caves/cave-open1/rooms/${team}/guests/${ana}`, { seat: 'editor' }, dev)).status, 200);
     const seen = (await call(ANA, 'GET', '/api/caves/cave-open1/rooms', undefined, anaDev)).json;
     assert.equal(seen.you, 'editor');
-    assert.deepEqual(seen.owners.map((o: { email: string }) => o.email), [ADMIN]);
+    // A guest sees names, never email addresses; the owner sees both.
+    assert.deepEqual(seen.owners.map((o: { name: string; email: string }) => [o.name, o.email]), [['nathan', '']]);
+    assert.deepEqual(seen.rooms[0].guests.map((g: { email: string }) => g.email), ['']);
+    assert.deepEqual((await call(ADMIN, 'GET', '/api/caves/cave-open1/rooms', undefined, dev)).json.rooms[1].guests.map((g: { email: string }) => g.email), [ANA]);
     assert.equal((await call(ANA, 'PUT', `/api/caves/cave-open1/rooms/${team}/guests/${ana}`, { seat: 'editor' }, anaDev)).status, 404);
     assert.equal((await call(ANA, 'POST', '/api/caves/cave-open1/entries', { locked: '{"c":"a","ops":"[]"}' }, anaDev)).json.number, 1);
     const listed = (await call(ANA, 'GET', '/api/caves', undefined, anaDev)).json;

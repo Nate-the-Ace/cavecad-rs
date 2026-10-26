@@ -307,7 +307,7 @@ export function openCave(db: Db, memberId: string, caveId: string, upTo: number,
 
 /**
  * The cave's rooms as the member may see them: owners get every room with its guests; a guest gets only the rooms
- * they are in. Also who owns the cave and what the member is in it.
+ * they are in, with names but no email addresses. Also who owns the cave and what the member is in it.
  */
 export function caveRooms(db: Db, memberId: string, caveId: string): { you: Access; owners: Person[]; rooms: Room[] } {
   const you = requireReader(db, memberId, caveId);
@@ -325,6 +325,11 @@ export function caveRooms(db: Db, memberId: string, caveId: string): { you: Acce
     const guests = (guestsOf.all(r.id) as { member_id: string; seat: Seat; display_name: string; email: string }[]).map((g) => ({ memberId: g.member_id, name: g.display_name, email: g.email, seat: g.seat }));
     if (you !== 'owner' && !guests.some((g) => g.memberId === memberId)) continue;
     rooms.push({ id: r.id, name: r.name, kind: r.kind, guests });
+  }
+  // Only a cave's owners see email addresses; guests see names.
+  if (you !== 'owner') {
+    for (const o of owners) o.email = '';
+    for (const r of rooms) for (const g of r.guests) g.email = '';
   }
   return { you, owners, rooms };
 }
@@ -416,3 +421,6 @@ export function removeGuest(db: Db, memberId: string, caveId: string, roomId: st
   if (db.prepare('DELETE FROM room_guests WHERE room_id = ? AND member_id = ?').run(roomId, guestId).changes === 0) fail('not-found');
   settle(db, caveId, [guestId], now);
 }
+
+/** Whether the member owns any cave (only owners may list members, to pick guests). */
+export const ownsAnyCave = (db: Db, memberId: string): boolean => !!db.prepare('SELECT 1 FROM cave_owners WHERE member_id = ? LIMIT 1').get(memberId);
