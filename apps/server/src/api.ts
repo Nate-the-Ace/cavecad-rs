@@ -9,6 +9,8 @@ import { signPass } from './pass.ts';
 import { sendInvite, type MailerConfig } from './mailer.ts';
 import type { RequestLike } from './identity.ts';
 import { serveStatic } from './static.ts';
+import { send, sendBadBody, readJson } from './http.ts';
+import { handleRooms } from './rooms-api.ts';
 
 export type ApiDeps = {
   db: Db;
@@ -30,30 +32,6 @@ export type ApiDeps = {
 
 const DESKTOP_ORIGINS = ['tauri://localhost', 'http://tauri.localhost', 'https://tauri.localhost'];
 const STATUS: Record<string, number> = { 'not-admin': 403, 'not-found': 404, self: 409, 'last-admin': 409, 'already-member': 409, 'bad-email': 400, 'bad-role': 400, 'bad-provider': 400, 'bad-name': 400, 'bad-colour': 400 };
-
-function send(res: ServerResponse, status: number, body: unknown) {
-  res.writeHead(status, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
-  res.end(JSON.stringify(body));
-}
-
-class BadBody extends SyntaxError {}
-
-/** Reads a JSON object body of at most 64 KB; anything else throws a SyntaxError (answered 400). */
-async function readJson(req: IncomingMessage): Promise<Record<string, unknown>> {
-  const chunks: Buffer[] = [];
-  let size = 0;
-  for await (const chunk of req) {
-    const b = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-    size += b.length;
-    if (size > 64 * 1024) throw new BadBody('too-big');
-    chunks.push(b);
-  }
-  const s = Buffer.concat(chunks).toString('utf8');
-  if (!s) return {};
-  const v: unknown = JSON.parse(s);
-  if (typeof v !== 'object' || v === null || Array.isArray(v)) throw new BadBody('not-an-object');
-  return v as Record<string, unknown>;
-}
 
 const SAFE = ['GET', 'HEAD', 'OPTIONS'];
 const originOf = (u: string) => {
@@ -85,7 +63,7 @@ export async function handleApi(d: ApiDeps, req: IncomingMessage, res: ServerRes
   const origin = String(req.headers.origin ?? '');
   if (DESKTOP_ORIGINS.includes(origin)) {
     res.setHeader('Access-Control-Allow-Origin', origin);
-    res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type, X-Cave-Signup');
+    res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type, X-Cave-Signup, X-Cave-Device');
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PATCH, PUT, DELETE');
     res.setHeader('Vary', 'Origin');
   }
@@ -108,7 +86,7 @@ export async function handleApi(d: ApiDeps, req: IncomingMessage, res: ServerRes
       return send(res, out.status, out.body);
     }
   } catch (e) {
-    if (e instanceof SyntaxError) return send(res, 400, { error: 'bad-request' });
+    if (e instanceof SyntaxError) return sendBadBody(res, e);
     throw e;
   }
 
@@ -121,6 +99,7 @@ export async function handleApi(d: ApiDeps, req: IncomingMessage, res: ServerRes
   const me = r.member;
 
   try {
+    if (path === '/api/devices' || path === '/api/caves' || path.startsWith('/api/caves/')) return await handleRooms(d.db, me.id, req, res, now);
     if (path === '/api/me' && method === 'GET') {
       return send(res, 200, { status: 'member', member: me, drives: M.listDrives(d.db, me.id), firstVisit: r.firstVisit, signups: getSetting(d.db, 'signups'), ...via, pass: signPass(d.passKey, { memberId: me.id, email: me.email, role: me.role }, now) });
     }
@@ -177,7 +156,7 @@ export async function handleApi(d: ApiDeps, req: IncomingMessage, res: ServerRes
   } catch (e) {
     const code = e instanceof Error ? e.message : 'error';
     if (STATUS[code]) return send(res, STATUS[code], { error: code });
-    if (e instanceof SyntaxError) return send(res, 400, { error: 'bad-request' });
+    if (e instanceof SyntaxError) return sendBadBody(res, e);
     throw e;
   }
 }

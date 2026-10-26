@@ -9,6 +9,7 @@
 
 /** Engine calls that change or replace the open cave. */
 export const WRITES: readonly string[] = [
+  'setRoomId',
   'openDemo',
   'setShot',
   'setStationWalls',
@@ -76,6 +77,7 @@ export const READS: readonly string[] = [
   'fills',
   'fillMarks',
   'drawingScale',
+  'roomId',
   'linetypes',
   'symbols',
   'stationRows',

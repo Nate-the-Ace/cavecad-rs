@@ -583,6 +583,37 @@ pub fn set_drawing_scale(n: f64) -> String {
     }
 }
 
+/// The open cave's room id on the CaveCAD server, or "" when it has none.
+#[wasm_bindgen]
+pub fn room_id() -> String {
+    DOC.with(|d| {
+        d.borrow()
+            .as_ref()
+            .map(cave_draw::room_id)
+            .unwrap_or_default()
+    })
+}
+
+/// Sets the open cave's room id. One edit in the settings history. Returns `ok` or `error: ...`.
+#[wasm_bindgen]
+pub fn set_room_id(id: &str) -> String {
+    let result = DOC.with(|d| {
+        let mut slot = d.borrow_mut();
+        let doc = slot.as_mut().ok_or("no cave is open")?;
+        let actions = cave_draw::set_room_id(doc, id).map_err(|e| format!("{e:?}"))?;
+        if actions.is_empty() {
+            return Ok(());
+        }
+        let edit = doc.edit(actions).map_err(|e| format!("{e:?}"))?;
+        record_edit("settings", &edit);
+        Ok::<(), String>(())
+    });
+    match result {
+        Ok(()) => "ok".into(),
+        Err(e) => format!("error: {e}"),
+    }
+}
+
 /// Sets how one line is drawn, apart from its type's look: `linetype;scale;density` (`dashed;1.50;1.00`; empty for the
 /// type's own). One undoable edit. Returns `ok` or `error: ...`.
 #[wasm_bindgen]

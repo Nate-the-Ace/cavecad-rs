@@ -27,6 +27,7 @@
   import { checkRemembered } from './lib/scans.svelte';
   import AccountGate from './components/account/AccountGate.svelte';
   import { account, handleAuthLink, startAccount } from './lib/account.svelte';
+  import { startRooms } from './lib/room.svelte';
 
   let version = $state('loading engine…');
   let info = $state<BuildInfo | null>(null);
@@ -67,6 +68,7 @@
 
   onMount(() => {
     void startAccount();
+    const stopRooms = startRooms(); // the open cave kept in step through its Private room
     window.addEventListener('keydown', noPageSelectAll);
     window.addEventListener('copy', onCopy);
     window.addEventListener('cut', onCut);
@@ -97,6 +99,7 @@
       info = await loadBuildInfo();
     })();
     return () => {
+      stopRooms();
       unguard();
       document.removeEventListener('visibilitychange', keepNow);
       window.removeEventListener('pagehide', keepNow);

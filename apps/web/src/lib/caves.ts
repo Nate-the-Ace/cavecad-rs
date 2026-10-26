@@ -8,6 +8,7 @@ import { dxfOf, flush, isNative, shelf, storeOpenCave } from './shelf.svelte';
 import { EXT } from './cavefile';
 import { leave } from './sync.svelte';
 import { workLayout } from './workspace.svelte';
+import { noRoomForThisCave } from './room.svelte';
 
 /** A different cave is now on screen: everything that belonged to the last one is let go. */
 function landed(name: string) {
@@ -56,6 +57,7 @@ export async function openSample(id: string): Promise<string | null> {
   if (r.startsWith('error')) return r.replace(/^error: /, '');
   shelf.currentId = '';
   landed(d.title.replace(/ \(.*\)$/, ''));
+  noRoomForThisCave(); // a sample never gets a room
   markSaved();
   return null;
 }
