@@ -182,7 +182,7 @@
     {#if info}<span>build {info.git}{info.dirty ? '+' : ''} · {built}</span>{/if}
   </footer>
 </div>
-<AccountGate openDrives={() => window.dispatchEvent(new CustomEvent('cavecad:open-user', { detail: 'drives' }))} />
+<AccountGate />
 
 <style>
   .shell { display: flex; flex-direction: column; height: 100%; }

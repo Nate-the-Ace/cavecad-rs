@@ -8,7 +8,6 @@
   import { startDesktopSignIn } from '../../lib/desktop-signin';
   import { flush } from '../../lib/shelf.svelte';
 
-  let { openDrives }: { openDrives: () => void } = $props();
   // The name field starts as the account's name once it is known; after that it is the person's to change (even to empty).
   let name = $state('');
   let seeded = false;
@@ -29,12 +28,11 @@
     cancelled: `but this invite was cancelled. Ask ${account.inviter || 'whoever invited you'} if that's a mistake.`,
     'other-email': "but this invite is for a different email. Sign in with the address the invite was sent to.",
   });
-  async function done(thenDrives: boolean) {
+  async function done() {
     busy = true;
     error = '';
     try {
       await finishWelcome(name.trim() || account.member!.displayName);
-      if (thenDrives) openDrives();
     } catch {
       error = "Couldn't save that. Check your connection and try again.";
     } finally {
@@ -74,17 +72,14 @@
         <div class="note">
           <Lock size={18} aria-hidden="true" />
           <strong>Your caves stay yours</strong>
-          <p>Your caves live on your devices and in the drives you connect. CaveCAD's server never has your surveys, sketches, scans or locations in a form it can read.</p>
+          <p>Your caves live on your devices. CaveCAD's server never has your surveys, sketches, scans or locations in a form it can read.</p>
           <p>For live sessions, the server keeps a locked history of edits so people can catch up. Only the people you share a cave with hold the key. The server, and its admins, can't open it.</p>
-          <p>The server knows your name, email, which drives you use, and when edits happened.</p>
+          <p>The server knows your name, email, and when edits happened.</p>
         </div>
         <label class="lab" for="welcome-name">Name shown to others</label>
         <input id="welcome-name" class="field" bind:value={name} maxlength="40" />
-        <span class="lab">Where are your caves?</span>
-        <div class="row">
-          <button class="btn primary" disabled={busy} onclick={() => done(true)}>Connect a drive</button>
-          <button class="btn" disabled={busy} onclick={() => done(false)}>Keep on this device for now</button>
-        </div>
+        <!-- Connecting a cloud drive is for a later release (DrivesSection.svelte waits for it). -->
+        <div class="row"><button class="btn primary" disabled={busy} onclick={done}>Continue</button></div>
       {:else if account.phase === 'not-invited'}
         <h2>CaveCAD is invite only for now</h2>
         <p>You're signed in as {account.email}, {REASONS[account.reason] ?? REASONS.none}</p>

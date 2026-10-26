@@ -14,13 +14,13 @@
   import { KIND_LABEL, buildReport, download, logText, send, type FeedbackKind } from '../lib/feedback';
   import { account, saveProfile } from '../lib/account.svelte';
   import AccountSection from './account/AccountSection.svelte';
-  import DrivesSection from './account/DrivesSection.svelte';
   import AdminSection from './account/AdminSection.svelte';
 
   let open = $state(false);
-  let tab = $state<'account' | 'drives' | 'people' | 'options' | 'feedback' | 'admin'>('account');
+  let tab = $state<'account' | 'people' | 'options' | 'feedback' | 'admin'>('account');
   const isAdmin = $derived(account.member?.role === 'admin');
-  const SECTIONS = [['account', 'Account'], ['drives', 'Drives'], ['people', 'People'], ['options', 'Options'], ['feedback', 'Feedback']] as const;
+  // Drives is left out of this release: connecting cloud drives comes later (DrivesSection.svelte is kept for it).
+  const SECTIONS = [['account', 'Account'], ['people', 'People'], ['options', 'Options'], ['feedback', 'Feedback']] as const;
   let root: HTMLDivElement;
 
   const initials = (name: string) => {
@@ -157,8 +157,6 @@
       <div class="content">
       {#if tab === 'account'}
         <AccountSection />
-      {:else if tab === 'drives'}
-        <DrivesSection />
       {:else if tab === 'admin' && isAdmin}
         <AdminSection />
       {:else if tab === 'people'}
