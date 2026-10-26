@@ -422,18 +422,33 @@ fn draw_stroke(g: &mut Geometry, doc: &Document, s: &Stroke, suffix: &str) {
     if let (Some(sym), [a, b, ..]) = (cave_symbols::symbol(s.kind), s.points) {
         // A placed symbol: its drawing on the symbol's own layer, not a line between two points.
         g.symbol(sym, *a, *b, suffix);
-        if !s.text.is_empty() {
-            // its label sits to the symbol's right, a little larger than the symbol's radius
-            let r = (b[0] - a[0]).hypot(b[1] - a[1]);
-            if r > 0.0 {
-                let (ux, uy) = ((b[0] - a[0]) / r, (b[1] - a[1]) / r);
-                g.text(
-                    "text",
-                    [a[0] + 1.3 * r * uy, a[1] - 1.3 * r * ux, 0.0],
-                    0.9 * r,
-                    s.text,
-                );
+        let r = (b[0] - a[0]).hypot(b[1] - a[1]);
+        let labelled = !s.text.is_empty() && r > 0.0;
+        if let Some(note) = s.points.get(2).filter(|_| labelled) {
+            // its label is a note where it was put, with a leader back to the symbol once pulled clear of it
+            let h = 0.9 * r;
+            match cave_shape::callout::label_leader(*a, r, *note, s.text.chars().count(), h) {
+                Some(l) => {
+                    g.text(
+                        "text",
+                        [l.note[0], l.note[1].min(l.note[3]), 0.0],
+                        h,
+                        s.text,
+                    );
+                    g.lwpolyline_suffixed("callout", suffix, &l.leader, None);
+                    g.lwpolyline_suffixed("callout", suffix, &l.head, None);
+                }
+                None => g.text("text", [note[0], note[1] - h / 2.0, 0.0], h, s.text),
             }
+        } else if labelled {
+            // its label sits to the symbol's right, a little larger than the symbol's radius
+            let (ux, uy) = ((b[0] - a[0]) / r, (b[1] - a[1]) / r);
+            g.text(
+                "text",
+                [a[0] + 1.3 * r * uy, a[1] - 1.3 * r * ux, 0.0],
+                0.9 * r,
+                s.text,
+            );
         }
         return;
     }
