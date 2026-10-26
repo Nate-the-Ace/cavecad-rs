@@ -73,3 +73,25 @@ mailboxes; the account values are repository variables PASS_PUBLIC_KEY, SIGNOUT_
 `gh workflow run web.yml`, then `gh run download <run> -n cavecad-web -D <empty folder>`. On CT 209: back up
 /opt/cavecad/web (`cp -a web web.bak-before-<what>`), empty it, unpack the build there. No restart needed.
 The desktop workflow (`desktop.yml`) takes the same values.
+
+## Server caves (2026-10-26)
+
+Caves are now stored readable on the server (spec `docs/superpowers/specs/2026-10-26-server-caves-design.md`),
+so the database needs a nightly backup. On CT 209:
+
+1. `apt install sqlite3` (the backup script uses the `sqlite3` command; it is not installed by default).
+2. Install the backup unit: copy `cavecad-backup.sh` to `/usr/local/bin/` (mode 755), and
+   `cavecad-backup.service` and `cavecad-backup.timer` to `/etc/systemd/system/`, then
+   `systemctl daemon-reload && systemctl enable --now cavecad-backup.timer`. Test once with
+   `systemctl start cavecad-backup.service`; a file `cavecad-<date>.sqlite` appears in
+   `/var/lib/cavecad/backups/` (the last 14 are kept). It runs daily at 02:30, before the host's nightly
+   container backup, and uses SQLite's `.backup`, which is safe while the server is running (WAL).
+3. Update the server (`/opt/cavecad/server`, restart `cavecad-server`) and the web app (see "Updating the
+   web app" above) as usual.
+
+### Updating the invite mailer
+
+The invite email text changed ("CaveCAD stores caves on its server and syncs them to your devices.").
+The Apps Script is not updated by the server deploy: open the script project in Nathan's cavecad.app
+account, replace its code with the new `tools/invite-mailer/Code.combined.gs`, and redeploy the web app
+version (keep the same deployment so the URL stays).
