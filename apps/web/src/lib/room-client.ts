@@ -431,6 +431,8 @@ export class RoomClient {
   private switching: Promise<boolean> | null = null;
   /** The stream is being dropped on purpose, to be read again from the snapshot at once. */
   private restart = false;
+  /** Restarts since the stream last went live (the second one waits before reading again). */
+  private restartsBeforeLive = 0;
   /** The label the server keeps for this cave, as text (null when none, or not readable). */
   private labelKept: string | null = null;
   private infoShown = false;
@@ -931,9 +933,11 @@ export class RoomClient {
         if (this.stopped || e instanceof Stopped) return;
         if (e instanceof Refused) return this.fail(e.message);
         if (e instanceof Reconnect || this.restart) {
-          // The cave turned open under this stream: read it again from the open snapshot, now.
+          // The cave turned open under this stream: read it again from the open snapshot, now. A second time before
+          // going live waits first, so a server that keeps sending such lines is not asked again in a tight loop.
           this.restart = false;
           this.live = false;
+          if (this.restartsBeforeLive++) await sleep(this.o.reconnectMs ?? 3_000);
           continue;
         }
       }
@@ -952,6 +956,7 @@ export class RoomClient {
   private async onLine(line: StreamLine): Promise<void> {
     if (line.t === 'live') {
       this.live = true;
+      this.restartsBeforeLive = 0;
       if (this.quietChanges) {
         this.quietChanges = false;
         this.o.changed?.();
@@ -967,6 +972,8 @@ export class RoomClient {
     }
     if (line.t !== 'entry' || typeof line.number !== 'number' || line.number <= this.last) return;
     let body;
+    // Open: a line under a key version is from before the cave turned open (a stale stream): read again from the snapshot.
+    if (this.mode === 'open' && line.keyVersion !== 0) throw new Reconnect();
     if (this.mode === 'open') body = readOpenEntry(line);
     else if (line.keyVersion === 0 && (await this.recheck())) throw new Reconnect(); // another device converted it
     // Unlocked even when it is our own, so an entry relabelled as ours fails here rather than being skipped.

@@ -636,6 +636,36 @@ const storageOf = (id: string) => (db.prepare('SELECT storage FROM caves WHERE i
   pc5.stop();
 }
 
+// L7: in open mode a stream line under a key version is a reason to read again, not a failure.
+{
+  const eo = fakeEngine();
+  eo.add('m1 open cave');
+  const os: RoomStatus[] = [];
+  const ow: string[] = [];
+  let injected = 0;
+  let streams = 0;
+  const lockedLine = faulty((u, i) => {
+    if (!u.includes('/stream?')) return undefined;
+    streams++;
+    if (injected) return undefined;
+    injected++;
+    const body = JSON.stringify({ t: 'entry', number: 999, keyVersion: 1, locked: 'AAAA', authorDevice: laptopDev.id }) + '\n';
+    return new Response(body, { status: 200, headers: { 'Content-Type': 'application/x-ndjson' } });
+  });
+  const oc = client(eo, laptopDev, os, { fetch: lockedLine, reasons: ow, reconnectMs: 50 });
+  await oc.open();
+  ok(await until(() => injected === 1 && streams >= 2 && os.at(-1) === 'synced', 3000), `L7: a locked line in an open cave reconnects (${os.join(',')} ${ow.join(';')})`);
+  ok(!os.includes('error'), 'L7: and is not a failure');
+  const other = fakeEngine();
+  other.setRoomId(eo.roomId());
+  const oc3 = client(other, tabletDev, []);
+  await oc3.open();
+  eo.add('m1 after reconnect');
+  ok(await until(() => other.ops.has('m1 after reconnect'), 3000), 'L7: sync carries on after the reconnect');
+  oc.stop();
+  oc3.stop();
+}
+
 // L6: two keyed devices; another converts first, so this one's conversion is refused: it reloads and goes on open.
 {
   const a = await device();
