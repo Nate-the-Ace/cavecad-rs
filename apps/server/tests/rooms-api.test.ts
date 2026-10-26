@@ -9,7 +9,7 @@ import { catchUp, isConstraint } from '../src/rooms-api.ts';
 import { createInvite } from '../src/members.ts';
 
 const ADMIN = 'nathan@example.com';
-const PUB = (n: number) => 'P'.repeat(30) + n;
+const PUB = (n: number) => ('P'.repeat(30) + n).padEnd(43, 'x');
 
 async function start() {
   const db = openDb(':memory:');
@@ -102,6 +102,11 @@ test('snapshots, and someone else is refused', async () => {
     for (let i = 0; i < 4; i++) await call(ADMIN, 'POST', '/api/caves/cave-0002/entries', { version: 1, locked: 'AAAA' }, d);
     await call(ADMIN, 'PUT', '/api/caves/cave-0002/snapshot', { upTo: 4, version: 1, locked: 'SNAP' }, d);
     assert.deepEqual((await call(ADMIN, 'GET', '/api/caves/cave-0002/snapshot', undefined, d)).json.snapshot, { upTo: 4, keyVersion: 1, locked: 'SNAP' });
+    // A reconnecting client passes its last number: nothing comes back unless the snapshot covers more.
+    assert.equal((await call(ADMIN, 'GET', '/api/caves/cave-0002/snapshot?after=4', undefined, d)).json.snapshot, null);
+    assert.equal((await call(ADMIN, 'GET', '/api/caves/cave-0002/snapshot?after=3', undefined, d)).json.snapshot.upTo, 4);
+    assert.equal((await call(ADMIN, 'GET', '/api/caves/cave-0002/snapshot?after=x', undefined, d)).status, 400);
+    assert.equal((await call(ADMIN, 'POST', '/api/devices', { publicKey: 'Q'.repeat(42) })).status, 400);
     assert.equal((await call(ADMIN, 'POST', '/api/caves/cave-0002/entries', { version: 1, locked: 'not base64!' }, d)).status, 400);
     assert.equal((await call(ADMIN, 'POST', '/api/caves/cave-0002/entries', { version: 1, locked: 'AAAA' }, 'someone-elses-device')).status, 400);
   } finally {

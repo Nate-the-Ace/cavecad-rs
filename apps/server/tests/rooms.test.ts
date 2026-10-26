@@ -140,3 +140,23 @@ test('checkDevice accepts only the caller\'s own device and marks it seen', () =
   assert.throws(() => checkDevice(db, owner, od.id, T), /bad-device/);
   assert.throws(() => checkDevice(db, owner, 'made-up', T), /bad-device/);
 });
+
+test('a device public key must be exactly 32 bytes (43 base64url characters)', () => {
+  const { db, owner } = setup();
+  for (const bad of ['A'.repeat(42), 'A'.repeat(44), 'A'.repeat(20), 'A'.repeat(42) + '=', 'A'.repeat(42) + '+']) {
+    assert.throws(() => registerDevice(db, owner, bad, T), /bad-key/, bad);
+  }
+  assert.ok(registerDevice(db, owner, 'A'.repeat(43), T).id);
+});
+
+test('a snapshot asked for "after" a number is null unless it covers more', () => {
+  const { db, owner } = setup();
+  const d = registerDevice(db, owner, 'PUB1'.padEnd(43, 'x'), T);
+  createCave(db, owner, 'cave-aaaa', [{ device: d.id, wrapped: 'W' }], T);
+  for (let i = 0; i < 9; i++) appendEntry(db, owner, d.id, 'cave-aaaa', 1, 'E', T);
+  putSnapshot(db, owner, 'cave-aaaa', 5, 1, 'SNAP5', T);
+  assert.equal(latestSnapshot(db, owner, 'cave-aaaa', 5), null);
+  assert.equal(latestSnapshot(db, owner, 'cave-aaaa', 7), null);
+  assert.equal(latestSnapshot(db, owner, 'cave-aaaa', 4)?.upTo, 5);
+  assert.equal(latestSnapshot(db, owner, 'cave-aaaa')?.upTo, 5);
+});

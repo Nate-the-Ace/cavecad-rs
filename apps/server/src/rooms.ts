@@ -18,7 +18,8 @@ const fail = (code: string): never => {
  * member only: another member holding the same key gets a device of their own and blocks no one.
  */
 export function registerDevice(db: Db, memberId: string, publicKey: string, now: number): Device {
-  if (!/^[A-Za-z0-9_-]{20,200}$/.test(publicKey)) fail('bad-key');
+  // An X25519 public key: exactly 32 bytes, as 43 base64url characters.
+  if (!/^[A-Za-z0-9_-]{43}$/.test(publicKey) || Buffer.from(publicKey, 'base64url').length !== 32) fail('bad-key');
   const found = db.prepare('SELECT id FROM devices WHERE member_id = ? AND public_key = ?').get(memberId, publicKey) as { id: string } | undefined;
   if (found) {
     db.prepare('UPDATE devices SET last_seen_at = ? WHERE id = ?').run(now, found.id);
@@ -150,9 +151,13 @@ export function putSnapshot(db: Db, memberId: string, caveId: string, upTo: numb
   ).run(caveId, upTo, version, locked, now);
 }
 
-/** The latest snapshot, or null. */
-export function latestSnapshot(db: Db, memberId: string, caveId: string): { upTo: number; keyVersion: number; locked: string } | null {
+/**
+ * The latest snapshot, or null. With `after` (a reconnecting client's last entry number), null too when the
+ * snapshot covers no more than that, so a client that is already past it does not download it again.
+ */
+export function latestSnapshot(db: Db, memberId: string, caveId: string, after?: number): { upTo: number; keyVersion: number; locked: string } | null {
   requireOwner(db, memberId, caveId);
   const r = db.prepare('SELECT up_to, key_version, locked FROM snapshots WHERE cave_id = ?').get(caveId) as { up_to: number; key_version: number; locked: string } | undefined;
-  return r ? { upTo: r.up_to, keyVersion: r.key_version, locked: r.locked } : null;
+  if (!r || (after !== undefined && r.up_to <= after)) return null;
+  return { upTo: r.up_to, keyVersion: r.key_version, locked: r.locked };
 }

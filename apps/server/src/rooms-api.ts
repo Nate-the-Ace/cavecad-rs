@@ -75,7 +75,10 @@ export async function handleRooms(db: Db, memberId: string, req: IncomingMessage
       R.putSnapshot(db, memberId, cave, int(b.upTo), int(b.version), text(b.locked, 64 * 1024 * 1024), now);
       return send(res, 200, { ok: true });
     }
-    if (what === 'snapshot' && method === 'GET') return send(res, 200, { snapshot: R.latestSnapshot(db, memberId, cave) });
+    if (what === 'snapshot' && method === 'GET') {
+      const after = url.searchParams.get('after');
+      return send(res, 200, { snapshot: R.latestSnapshot(db, memberId, cave, after === null ? undefined : intParam(after)) });
+    }
     if (what === 'stream' && method === 'GET') return await stream(db, memberId, cave, intParam(url.searchParams.get('after')), res);
     return send(res, 404, { error: 'not-found' });
   } catch (e) {
