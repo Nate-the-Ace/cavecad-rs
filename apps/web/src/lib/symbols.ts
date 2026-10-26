@@ -243,17 +243,23 @@ export function liveWords(kind: string | undefined, typed: string): string {
   return isSymbolKind(kind) ? t : '';
 }
 
-/** A symbol's label is a leader's note: a third point says where the note sits, and the leader to the symbol shows once the note is pulled clear of it. */
-const LABEL_LOOK: LeaderLook = { ...leaderLook(''), arrow: 'none', frame: 'none' };
+/** A symbol's label is a leader's note: a third point says where the note sits, and the leader (an arrow onto the symbol) shows once the note is pulled clear of it. */
+const LABEL_LOOK: LeaderLook = { ...leaderLook(''), arrow: 'arrow', frame: 'none' };
 
 /** True when a symbol carries its label as a leader note (words and a note point). */
 function labelLeader(kind: string, text: string, more: [number, number][]): boolean {
   return isSymbolKind(kind) && !!text && more.length > 0;
 }
 
-/** True when the note is clear enough of the symbol to need a leader line to it. */
+/** True when the note is clear enough of the symbol to need a leader line to it (the engine's `LABEL_CLEAR` radii, as the DXF export). */
 function noteIsFar(pl: ReturnType<typeof placement>, note: [number, number]): boolean {
   return Math.hypot(note[0] - pl.cx, note[1] - pl.cy) > 2.6 * Math.max(pl.r, 8);
+}
+
+/** Where a label's leader arrow touches its symbol: the symbol's edge on the side facing the note. */
+export function labelTip(pl: ReturnType<typeof placement>, note: [number, number]): [number, number] {
+  const d = Math.hypot(note[0] - pl.cx, note[1] - pl.cy);
+  return d < 1e-9 ? [pl.cx, pl.cy] : [pl.cx + (pl.r * (note[0] - pl.cx)) / d, pl.cy + (pl.r * (note[1] - pl.cy)) / d];
 }
 
 /** Where a stamp's words are, to edit them in place: the screen point they start at, and their height in pixels. Null for a stamp with no words to edit. */
@@ -287,6 +293,15 @@ export function withLabelSpot<T extends number[]>(kind: string, points: T[], tex
   return [...points, [points[0][0] + 1.3 * r, points[0][1], ...points[0].slice(2)] as T];
 }
 
+/**
+ * Every line as it is shown and edited: a labelled symbol that has no note point yet (placed before labels were notes, or
+ * labelled afterwards) gets one where its label has always sat, so its label has a grip and can be pulled away like any other.
+ * The point is saved with the symbol's next edit.
+ */
+export function withLabelSpots<L extends { kind?: string; text?: string; points: number[][] }>(lines: L[]): L[] {
+  return lines.map((l) => (l.points.length === 2 && isSymbolKind(l.kind) && l.text?.trim() ? { ...l, points: withLabelSpot(l.kind ?? '', l.points, l.text) as L['points'] } : l));
+}
+
 /** Draws a symbol (with its label) or a text stroke at `p0`, aimed toward `p1`. A leader's `more` are the points its further arrows touch. */
 export function drawStamp(g: CanvasRenderingContext2D, kind: string, p0: [number, number], p1: [number, number], text = '', leader: LeaderLook = leaderLook(''), more: [number, number][] = []): void {
   let labelHeight: number | undefined;
@@ -308,6 +323,7 @@ export function drawStamp(g: CanvasRenderingContext2D, kind: string, p0: [number
     kind = 'callout';
     leader = { ...LABEL_LOOK, flags: leader.flags, font: leader.font, color: leader.color, align: leader.align };
     more = [];
+    p0 = labelTip(pl, note);
     p1 = note;
     labelHeight = w.size;
   }
