@@ -5,6 +5,8 @@
 // What this client does not take on trust from the server:
 //   - Entries are unlocked with the author device the server names; a relabelled entry fails to unlock and stops
 //     sync with status `error` (it is never applied, and never skipped as "my own").
+//   - "My own" is this client, not this device: two tabs on one device share its key and author id, so each client
+//     names itself inside the lock (`c`) and skips only entries carrying its own name.
 //   - A snapshot's `upTo` is read from inside the lock; the server's plain copy must agree.
 //   - The highest key version (and its key id) seen for a cave is remembered; a lower version, or another key under
 //     a version already seen, is refused.
@@ -38,13 +40,16 @@ export type RoomClientOptions = {
 type DeviceInfo = { id: string; publicKey: string };
 type StreamLine = { t: string; number?: number; keyVersion?: number; locked?: string; authorDevice?: string };
 
-const newCaveId = () => 'cave_' + Array.from(crypto.getRandomValues(new Uint8Array(12)), (b) => b.toString(16).padStart(2, '0')).join('');
+const hex = (n: number) => Array.from(crypto.getRandomValues(new Uint8Array(n)), (b) => b.toString(16).padStart(2, '0')).join('');
+const newCaveId = () => 'cave_' + hex(12);
 
 /** Something the server sent that this device will not accept: sync stops with status `error`. */
 class Refused extends Error {}
 
 export class RoomClient {
   private o: RoomClientOptions;
+  /** This client (one per tab and open cave): entries it posted carry it inside the lock, so it skips only its own. */
+  private readonly clientId = hex(8);
   private cave = '';
   /** The cave key for locking and unlocking: non-extractable. */
   private key: CryptoKey | null = null;
@@ -258,13 +263,15 @@ export class RoomClient {
     if (line.t !== 'entry' || typeof line.number !== 'number' || line.number <= this.last) return;
     if (line.keyVersion !== this.version || typeof line.locked !== 'string' || typeof line.authorDevice !== 'string' || !line.authorDevice) throw new Refused('entry malformed');
     // Unlocked even when it is our own, so an entry relabelled as ours fails here rather than being skipped.
-    let ops: string;
+    let body: { c?: unknown; ops?: unknown };
     try {
-      ops = await unlock(this.key!, line.locked, this.lockCtx('entry', line.authorDevice));
+      body = JSON.parse(await unlock(this.key!, line.locked, this.lockCtx('entry', line.authorDevice)));
     } catch {
       throw new Refused('entry does not unlock');
     }
-    if (line.authorDevice !== this.o.device.id) this.o.engine.apply(ops);
+    if (typeof body?.c !== 'string' || typeof body.ops !== 'string') throw new Refused('entry malformed');
+    // Another tab on this device posts with the same author: only this client's own entries are already here.
+    if (body.c !== this.clientId) this.o.engine.apply(body.ops);
     this.last = line.number;
     this.sinceSnapshot++;
     await this.o.saveLast(this.cave, this.last);
@@ -280,7 +287,7 @@ export class RoomClient {
     this.flushing = true;
     try {
       const ops = this.o.engine.outbox();
-      if (ops && ops !== '[]') this.pending.push(await lock(this.key, ops, this.lockCtx('entry', this.o.device.id)));
+      if (ops && ops !== '[]') this.pending.push(await lock(this.key, JSON.stringify({ c: this.clientId, ops }), this.lockCtx('entry', this.o.device.id)));
       while (this.pending.length && !this.stopped) {
         try {
           await this.call('POST', `/api/caves/${this.cave}/entries`, { version: this.version, locked: this.pending[0] });

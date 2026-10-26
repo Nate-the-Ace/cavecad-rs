@@ -1477,9 +1477,12 @@ mod tests {
         use cave_doc::{ActorId, Document};
         let mut doc = Document::new(ActorId(1));
         assert_eq!(room_id(&doc), "");
+        let before = doc.revision();
         let actions = set_room_id(&doc, "cave_abc12345").unwrap();
         doc.edit(actions).unwrap();
         assert_eq!(room_id(&doc), "cave_abc12345");
+        // a change like any other, so the app sees the cave as unsaved and keeps it on the shelf
+        assert!(doc.revision() > before);
         assert!(set_room_id(&doc, "cave_abc12345").unwrap().is_empty());
         assert!(set_room_id(&doc, "bad id!").is_err());
         assert!(set_room_id(&doc, "short").is_err());
@@ -1490,6 +1493,13 @@ mod tests {
             other.apply(&op).unwrap();
         }
         assert_eq!(room_id(&other), "cave_abc12345");
+        // the shelf and a saved CaveCAD file keep the cave as its snapshot ops in JSON: the room id survives the text
+        let text = serde_json::to_string(&doc.snapshot()).unwrap();
+        let mut reopened = Document::new(ActorId(3));
+        for op in serde_json::from_str::<Vec<cave_doc::Op>>(&text).unwrap() {
+            reopened.apply(&op).unwrap();
+        }
+        assert_eq!(room_id(&reopened), "cave_abc12345");
     }
 
     #[test]

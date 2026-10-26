@@ -118,7 +118,7 @@ await sleep(100);
 const myCaves = await (await fetch(base + '/api/caves', { headers: { 'X-Cave-Device': laptopDev.id } })).json();
 const w = myCaves.caves.find((c: { id: string }) => c.id === cave);
 const { key } = await unwrapCaveKey(w.wrapped, laptopDev.privateKey, { cave, version: w.keyVersion, myPublicKey: laptopDev.publicKey });
-const locked = await lock(key, JSON.stringify(['tampered op']), { cave, version: 1, author: laptopDev.id, kind: 'entry' });
+const locked = await lock(key, JSON.stringify({ c: 'someone-else', ops: JSON.stringify(['tampered op']) }), { cave, version: 1, author: laptopDev.id, kind: 'entry' });
 const posted = await (await fetch(base + `/api/caves/${cave}/entries`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Cave-Device': laptopDev.id }, body: JSON.stringify({ version: 1, locked }) })).json();
 ok(await until(() => phone.ops.has('tampered op')), 'the genuine entry reaches the phone');
 db.prepare('UPDATE history SET author_device = ? WHERE cave_id = ? AND number = ?').run(tabletDev.id, cave, posted.number);
@@ -129,6 +129,33 @@ ok(await until(() => ts3.includes('error')), 'a relabelled entry is reported as 
 ok(!tablet.ops.has('tampered op'), 'a relabelled entry is not applied');
 ok(!ts3.includes('synced'), 'the tablet does not claim to be synced past it');
 tc3.stop();
+
+// Two tabs on one device: the same device id and keys (IndexedDB is shared), each with its own cave in memory.
+const tabA = fakeEngine();
+tabA.setRoomId(cave);
+const tabB = fakeEngine();
+tabB.setRoomId(cave);
+const as: RoomStatus[] = [];
+const bs: RoomStatus[] = [];
+const ac = client(tabA, laptopDev, as);
+const bc = client(tabB, laptopDev, bs);
+await ac.open();
+await bc.open();
+ok(await until(() => as.includes('synced') && bs.includes('synced')), 'two tabs on one device are both synced');
+tabA.add('tab A shot');
+ok(await until(() => tabB.ops.has('tab A shot'), 2000), 'an edit in tab A reaches tab B on the same device');
+tabB.add('tab B sketch');
+ok(await until(() => tabA.ops.has('tab B sketch'), 2000), 'an edit in tab B reaches tab A on the same device');
+const applied: string[] = [];
+const realApply = tabA.apply;
+tabA.apply = (s) => (applied.push(s), realApply(s));
+tabA.add('tab A only once');
+ok(await until(() => tabB.ops.has('tab A only once'), 2000), 'a later tab A edit reaches tab B');
+await sleep(200);
+ok(!applied.some((s) => s.includes('tab A only once')), 'a tab does not apply its own entry back to itself');
+ok(!as.includes('error') && !bs.includes('error'), 'neither tab reports an error');
+ac.stop();
+bc.stop();
 
 // A wrapped key older than one this device has already used is refused.
 const old = fakeEngine();

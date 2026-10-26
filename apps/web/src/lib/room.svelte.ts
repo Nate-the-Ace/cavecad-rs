@@ -6,9 +6,16 @@
 //   - any cave that arrived through a live session (peer-to-peer, relay room, a class): it is someone else's;
 //   - nothing at all while a live session runs, because the session drains `engine.syncOutbox` too. The room
 //     closes when a session starts and opens again for the same cave when it ends.
+//
+// The room id lives in the cave (a `room-id` setting), so it travels wherever the cave's own format goes: the shelf
+// and a saved CaveCAD file both keep it (a DXF export does not, and a DXF opened is a new cave). Setting it is kept
+// on the shelf at once, so a reload or a reopen finds the same room. There is no "duplicate cave" yet; Save as writes
+// the same cave to another place (same room). A future copy-to-a-new-cave must clear `room-id` in the copy so it
+// gets a room of its own.
 import { untrack } from 'svelte';
 import { engine } from './engine';
-import { cave } from './cave.svelte';
+import { cave, changed } from './cave.svelte';
+import { flush as keepOnShelf } from './shelf.svelte';
 import { account } from './account.svelte';
 import { desktopBearer } from './desktop-signin';
 import { deviceKey, keySeen, lastNumber } from './device-key';
@@ -52,7 +59,29 @@ async function openRoom(member: string): Promise<void> {
   const client = new RoomClient({
     base: BASE,
     fetch: (...a) => fetch(...a),
-    engine: { roomId: engine.roomId, setRoomId: engine.setRoomId, outbox: engine.syncOutbox, apply: engine.syncApply, snapshot: engine.syncSnapshot, load: engine.syncLoad },
+    engine: {
+      roomId: engine.roomId,
+      setRoomId: (id) => {
+        const r = engine.setRoomId(id);
+        if (r === 'ok') {
+          changed();
+          void keepOnShelf(); // kept now, not at the next edit: a reload must find the same room
+        }
+        return r;
+      },
+      outbox: engine.syncOutbox,
+      apply: (ops) => {
+        const n = engine.syncApply(ops);
+        changed(); // the views re-read, and the shelf keeps what arrived
+        return n;
+      },
+      snapshot: engine.syncSnapshot,
+      load: (ops) => {
+        const r = engine.syncLoad(ops);
+        changed();
+        return r;
+      },
+    },
     device: dev,
     headers,
     loadLast: lastNumber.load,

@@ -201,10 +201,11 @@ export function setTool(key: string) {
 /** The cave's revision at the last open or save: what "nothing unsaved" means. */
 let savedRevision = 0;
 
-/** Says the cave on screen is the one just opened, loaded or saved: nothing is unsaved now. */
-export function markSaved() {
+/** Says the cave on screen is the one just opened, loaded or saved: nothing is unsaved now. `at` is the revision
+ *  that was written, when the write took time (an edit made meanwhile stays unsaved). */
+export function markSaved(at?: number) {
   try {
-    savedRevision = engine.revision();
+    savedRevision = at ?? engine.revision();
   } catch {
     savedRevision = 0; // the engine is not loaded yet
   }

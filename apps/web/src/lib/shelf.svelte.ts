@@ -135,6 +135,9 @@ export async function storeOpenCave(source = ''): Promise<boolean> {
     updated: Date.now(),
     summary,
   };
+  // What is written is the cave as it is now; an edit made while the browser stores it (the room id arriving, say)
+  // stays unsaved and is kept by the next autosave.
+  const at = engine.revision();
   try {
     await put(rec, engine.saveNative()); // the cave in its own format: nothing lost on the way in or out
   } catch {
@@ -145,7 +148,7 @@ export async function storeOpenCave(source = ''): Promise<boolean> {
   shelf.currentId = rec.id;
   shelf.storedAt = rec.updated;
   shelf.records = sorted([...shelf.records.filter((r) => r.id !== rec.id), rec]);
-  markSaved();
+  markSaved(at);
   return true;
 }
 
