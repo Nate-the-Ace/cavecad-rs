@@ -9,6 +9,7 @@ import { signPass } from './pass.ts';
 import { sendInvite, type MailerConfig } from './mailer.ts';
 import type { RequestLike } from './identity.ts';
 import { serveStatic } from './static.ts';
+import { send, readJson } from './http.ts';
 
 export type ApiDeps = {
   db: Db;
@@ -30,30 +31,6 @@ export type ApiDeps = {
 
 const DESKTOP_ORIGINS = ['tauri://localhost', 'http://tauri.localhost', 'https://tauri.localhost'];
 const STATUS: Record<string, number> = { 'not-admin': 403, 'not-found': 404, self: 409, 'last-admin': 409, 'already-member': 409, 'bad-email': 400, 'bad-role': 400, 'bad-provider': 400, 'bad-name': 400, 'bad-colour': 400 };
-
-function send(res: ServerResponse, status: number, body: unknown) {
-  res.writeHead(status, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
-  res.end(JSON.stringify(body));
-}
-
-class BadBody extends SyntaxError {}
-
-/** Reads a JSON object body of at most 64 KB; anything else throws a SyntaxError (answered 400). */
-async function readJson(req: IncomingMessage): Promise<Record<string, unknown>> {
-  const chunks: Buffer[] = [];
-  let size = 0;
-  for await (const chunk of req) {
-    const b = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-    size += b.length;
-    if (size > 64 * 1024) throw new BadBody('too-big');
-    chunks.push(b);
-  }
-  const s = Buffer.concat(chunks).toString('utf8');
-  if (!s) return {};
-  const v: unknown = JSON.parse(s);
-  if (typeof v !== 'object' || v === null || Array.isArray(v)) throw new BadBody('not-an-object');
-  return v as Record<string, unknown>;
-}
 
 const SAFE = ['GET', 'HEAD', 'OPTIONS'];
 const originOf = (u: string) => {
