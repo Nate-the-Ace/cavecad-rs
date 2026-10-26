@@ -88,7 +88,8 @@ test('GET /api/devices lists the member\'s own devices with their public keys, a
     await rickDevice();
     const r = await call(ADMIN, 'GET', '/api/devices');
     assert.equal(r.status, 200);
-    assert.deepEqual(r.json.devices, [{ id: laptop, publicKey: PUB(1) }, { id: tablet, publicKey: PUB(2) }]);
+    assert.deepEqual(r.json.devices.map((d: { id: string; publicKey: string }) => ({ id: d.id, publicKey: d.publicKey })), [{ id: laptop, publicKey: PUB(1) }, { id: tablet, publicKey: PUB(2) }]);
+    assert.ok(r.json.devices.every((d: { createdAt: unknown; lastSeen: unknown }) => typeof d.createdAt === 'number' && typeof d.lastSeen === 'number'), 'each device says when it was added and last seen');
   } finally {
     server.close();
   }

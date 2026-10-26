@@ -24,6 +24,15 @@ import { p2p } from './p2p.svelte';
 import { live } from './sync.svelte';
 import { classroom } from './classroom.svelte';
 
+/** Each status in plain words (the label beside the user icon, and the Rooms panel). */
+export const ROOM_TEXT: Record<RoomStatus, string> = {
+  connecting: 'Connecting…',
+  synced: 'Synced',
+  offline: 'Offline: your edits will join when you reconnect',
+  'waiting-key': 'Waiting for your other device to share this cave',
+  error: "Sync stopped: something didn't check out",
+};
+
 /** `reason` says why for `error`; `info` is a one-off note shown for a while in place of the status. */
 export const room = $state({ status: '' as RoomStatus | '', reason: '', info: '' });
 

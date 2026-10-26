@@ -1,19 +1,12 @@
 <script lang="ts">
   // A small label beside the user icon saying whether the open cave is in step with the server.
-  import { room } from '../lib/room.svelte';
-  const TEXT: Record<string, string> = {
-    connecting: 'Connecting…',
-    synced: 'Synced',
-    offline: 'Offline: your edits will join when you reconnect',
-    'waiting-key': 'Waiting for your other device to share this cave',
-    error: "Sync stopped: something didn't check out",
-  };
+  import { ROOM_TEXT, room } from '../lib/room.svelte';
 </script>
 
 {#if room.info}
   <span class="room-status" role="status">{room.info}</span>
 {:else if room.status}
-  <span class="room-status" class:quiet={room.status === 'synced'} role="status" title={room.reason || undefined}>{TEXT[room.status]}</span>
+  <span class="room-status" class:quiet={room.status === 'synced'} role="status" title={room.reason || undefined}>{ROOM_TEXT[room.status]}</span>
 {/if}
 
 <style>

@@ -120,12 +120,16 @@ export function putLabel(db: Db, memberId: string, caveId: string, version: numb
   ).run(caveId, version, locked, now);
 }
 
-/** The member's devices, with public keys (to wrap a new cave's key for each). */
-export function myDevices(db: Db, memberId: string): { id: string; publicKey: string }[] {
-  return (db.prepare('SELECT id, public_key FROM devices WHERE member_id = ? ORDER BY created_at').all(memberId) as { id: string; public_key: string }[]).map((r) => ({
-    id: r.id,
-    publicKey: r.public_key,
-  }));
+/** The member's devices, with public keys (to wrap a new cave's key for each) and when each was added and last seen. */
+export function myDevices(db: Db, memberId: string): { id: string; publicKey: string; createdAt: number; lastSeen: number | null }[] {
+  return (
+    db.prepare('SELECT id, public_key, created_at, last_seen_at FROM devices WHERE member_id = ? ORDER BY created_at').all(memberId) as {
+      id: string;
+      public_key: string;
+      created_at: number;
+      last_seen_at: number | null;
+    }[]
+  ).map((r) => ({ id: r.id, publicKey: r.public_key, createdAt: r.created_at, lastSeen: r.last_seen_at }));
 }
 
 /** The owner's devices that have no wrapped key for the cave's current version. */

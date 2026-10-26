@@ -15,8 +15,8 @@
   import { DEMOS } from '../lib/demos';
   import { engine, loadEngine, type CaveSummary } from '../lib/engine';
   import { openCave } from '../lib/files';
-  import { openAtTrip, newTripOn, newTripOnSample, openFromServer, openKept, openSample } from '../lib/caves';
-  import { refreshServerCaves, serverCaves } from '../lib/server-caves.svelte';
+  import { openAtTrip, newTripOn, newTripOnSample, openKept, openSample } from '../lib/caves';
+  import { openServerCave, refreshServerCaves, serverCaves } from '../lib/server-caves.svelte';
   import { account } from '../lib/account.svelte';
   import { dxfOf, forgetCave, loadShelf, setFavorite, setStartup, shelf, summaryOf, type ShelfRecord } from '../lib/shelf.svelte';
   import { formatLength } from '../lib/units';
@@ -73,7 +73,7 @@
   });
 
   // While open, the caves on the server are read again now and then: a key handed over by another device shows up,
-  // and a cave someone asked to open opens by itself once its key is here.
+  // and a cave someone asked to open opens by itself once its key is here (server-caves.svelte.ts).
   $effect(() => {
     if (!shelf.open) return;
     void account.phase; // signing in (or out) while the shelf is open reads the list again
@@ -81,11 +81,6 @@
     untrack(() => void loadEngine().then(() => refreshServerCaves()));
     const t = setInterval(() => void refreshServerCaves(), 15_000);
     return () => clearInterval(t);
-  });
-  $effect(() => {
-    const id = serverCaves.waitingFor;
-    const ready = !!id && serverCaves.list.some((c) => c.id === id && c.hasKey);
-    if (ready && shelf.open && !serverCaves.opening) untrack(() => void openRemote(id));
   });
 
   const shown = $derived(shelf.records.filter((r) => r.name.toLowerCase().includes(search.trim().toLowerCase())));
@@ -136,23 +131,7 @@
   }
 
   /** Fetches a cave from the server; one with no key here yet waits, and opens by itself when the key arrives. */
-  async function openRemote(id: string) {
-    if (serverCaves.opening) return;
-    serverCaves.opening = id;
-    try {
-      const r = await openFromServer(id);
-      if (r === 'waiting') {
-        serverCaves.waitingFor = id;
-        message = '';
-      } else {
-        if (serverCaves.waitingFor === id) serverCaves.waitingFor = '';
-        message = r ?? '';
-        if (!r) void refreshServerCaves(); // it is on this shelf now
-      }
-    } finally {
-      serverCaves.opening = '';
-    }
-  }
+  const openRemote = async (id: string) => (message = await openServerCave(id));
 
   const open = () => (record ? run(openKept(record.id)) : sample ? run(openSample(sample.id)) : remote ? openRemote(remote.id) : undefined);
   const newTrip = () => (record ? run(newTripOn(record.id, from)) : sample ? run(newTripOnSample(sample.id, from)) : undefined);
