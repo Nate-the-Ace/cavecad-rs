@@ -13,6 +13,7 @@ ok(L.check({ ...good, link: 'https://evil.example/?signup=abc' }) === 'link', 'f
 ok(L.check({ ...good, countThisHour: 40 }) === 'busy', 'hourly cap');
 const m = L.message({ inviter: 'Nathan', to: 'rick@example.com', link: good.link });
 ok(m.subject === 'Nathan invited you to CaveCAD', 'subject');
+ok(m.body.includes('stores caves on its server') && !/in a form it can read/.test(m.body), 'body says where caves live');
 ok(m.body.includes('rick@example.com') && m.body.includes('7 days') && m.body.includes(good.link), 'body');
 console.log(bad ? `invite-mailer: ${bad} failed` : 'invite-mailer: all ok');
 process.exit(bad ? 1 : 0);

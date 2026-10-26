@@ -71,10 +71,9 @@
         <h2>Welcome, {account.member?.displayName}</h2>
         <div class="note">
           <Lock size={18} aria-hidden="true" />
-          <strong>Your caves stay yours</strong>
-          <p>Your caves live on your devices. CaveCAD's server never has your surveys, sketches, scans or locations in a form it can read.</p>
-          <p>For live sessions, the server keeps a locked history of edits so people can catch up. Only the people you share a cave with hold the key. The server, and its admins, can't open it.</p>
-          <p>The server knows your name, email, and when edits happened.</p>
+          <strong>Where your caves live</strong>
+          <p>Your caves are stored on CaveCAD's server and synced to your devices so you can work offline. Only people you give a seat in a cave's room can open it. The server's admins can technically read everything stored on it.</p>
+          <p>The server also knows your name, email, and when edits happened.</p>
         </div>
         <label class="lab" for="welcome-name">Name shown to others</label>
         <input id="welcome-name" class="field" bind:value={name} maxlength="40" />

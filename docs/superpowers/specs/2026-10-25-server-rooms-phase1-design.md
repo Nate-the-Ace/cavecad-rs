@@ -22,6 +22,7 @@ room, a list of your devices, search across caves. Not wanted: none.
 
 ## Decisions (Nathan, 2026-10-25)
 
+> **Superseded 2026-10-26:** caves are now stored on the server readable by it, and synced to devices; see `2026-10-26-server-caves-design.md`. The locked-history text below is historical.
 - **Every cave has a closed Private room from the moment it is made.** Its locked history lives on the
   server, which also backs it up and keeps your own devices in step. Owners open the cave up with
   roles, invites and more rooms.
@@ -119,6 +120,8 @@ for the desktop app), behind the same sign-in. Messages:
 - *Catch-up:* "everything after number N" returns the missing entries in order, or the latest snapshot
   plus what follows it.
 - *Room events:* who joined or left, waiting room, seat changes, removal, lock changes.
+
+> **Superseded 2026-10-26:** caves are now stored on the server readable by it, and synced to devices; see `2026-10-26-server-caves-design.md`. The locked-history text below is historical.
 
 **The server can't read and still enforces:** it knows who is in which room with which seat, so it
 drops watcher edits, refuses removed people, stops expired, used or stopped links, and refuses old app

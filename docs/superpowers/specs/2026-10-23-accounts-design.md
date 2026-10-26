@@ -25,6 +25,7 @@ depend on how the server is reached.
 - **Drives:** a member can connect any number (two Google accounts, Dropbox, OneDrive, WebDAV).
   Drive keys stay in the browser on each device; the server only records which drives a member uses.
   Disconnect is everywhere, never per device.
+> **Superseded 2026-10-26:** caves are now stored on the server readable by it, and synced to devices; see `2026-10-26-server-caves-design.md`. The locked-history text below is historical.
 - **The server never holds cave data in a form it can read.** It may keep a locked edit history for
   live sessions (piece 3). The key exists only on the devices of the people sharing the cave and in
   the invite link's `#` fragment, which browsers never send to a server. Admins cannot read it either.
@@ -61,6 +62,7 @@ People, Options, Feedback). The window gets a side list of sections:
    Link works for 7 days." Button `Join CaveCAD`.
 2. TinyAuth's sign-in page: `Continue with Google`, `Continue with Microsoft`.
 3. First-sign-in screen (once only; afterwards the app opens on the Cave Shelf):
+   - > **Superseded 2026-10-26:** the note is now titled "Where your caves live" and says the server stores caves readable by its admins; see `2026-10-26-server-caves-design.md`.
    - Note, under a lock icon, titled **Your caves stay yours**:
      > Your caves live on your devices and in the drives you connect. CaveCAD's server never has your
      > surveys, sketches, scans or locations in a form it can read.
