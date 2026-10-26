@@ -1,5 +1,6 @@
 // The rooms API (step 1: the Private room). The member is already known (api.ts); the device is named by the
-// X-Cave-Device header and must be one of the member's own. Entries are locked text the server stores and passes on.
+// X-Cave-Device header and must be one of the member's own. Entries are plain JSON text for an open cave (the server
+// can read them) or base64 locked text for a locked cave from before; the server stores and passes them on.
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Db } from './db.ts';
 import { readJson, send, sendBadBody } from './http.ts';
@@ -25,11 +26,10 @@ const plain = (v: unknown, max: number): string => {
   if (typeof v !== 'string' || v.length === 0 || v.length > max) throw new Error('bad-request');
   return v;
 };
-/** An open cave takes no key version (absent or 0): a device still in locked mode is refused, never stored as plain text. */
-const openVersion = (v: unknown): number => {
-  if (v !== undefined && v !== 0) throw new Error('bad-request');
-  return 0;
-};
+/** A write's key version: absent means 0 (an open cave's). The writer refuses one that does not fit the cave's storage. */
+const writeVersion = (v: unknown): number => (v === undefined ? 0 : int(v));
+/** A write's text: plain within the cap for an open cave, base64 for a locked one. Called after the body is read. */
+const body = (db: Db, memberId: string, cave: string, v: unknown, max: number): string => (R.caveStorage(db, memberId, cave) === 'open' ? plain(v, max) : text(v, max));
 const int = (v: unknown): number => {
   if (typeof v !== 'number' || !Number.isInteger(v) || v < 0) throw new Error('bad-request');
   return v;
@@ -75,29 +75,31 @@ export async function handleRooms(db: Db, memberId: string, req: IncomingMessage
       R.openCave(db, memberId, cave, int(b.upTo), plain(b.snapshot, 64 * 1024 * 1024), now);
       return send(res, 200, { ok: true });
     }
-    const open = what !== 'stream' && R.caveStorage(db, memberId, cave) === 'open';
     if (what === 'missing' && method === 'GET') return send(res, 200, { devices: R.devicesMissingKey(db, memberId, cave) });
     if (what === 'keys' && method === 'POST') {
       const b = await readJson(req);
       R.putWrappedKeys(db, memberId, cave, int(b.version), wrappedList(b.wrapped));
       return send(res, 200, { ok: true });
     }
+    // Writes: the body is read first; only then is the cave's storage looked at, and the writer checks the version
+    // against it again in the same synchronous step as the write. A cave that converts while a body is arriving
+    // therefore refuses a locked write instead of storing it as plain text.
     if (what === 'entries' && method === 'POST') {
       const b = await readJson(req, 2 * 1024 * 1024);
-      const version = open ? openVersion(b.version) : int(b.version);
-      const locked = open ? plain(b.locked, 2 * 1024 * 1024) : text(b.locked, 2 * 1024 * 1024);
+      const version = writeVersion(b.version);
+      const locked = body(db, memberId, cave, b.locked, 2 * 1024 * 1024);
       const number = R.appendEntry(db, memberId, device, cave, version, locked, now);
       broadcast(cave, { t: 'entry', number, keyVersion: version, locked, authorDevice: device });
       return send(res, 200, { number });
     }
     if (what === 'snapshot' && method === 'PUT') {
       const b = await readJson(req, 64 * 1024 * 1024);
-      R.putSnapshot(db, memberId, cave, int(b.upTo), open ? openVersion(b.version) : int(b.version), open ? plain(b.locked, 64 * 1024 * 1024) : text(b.locked, 64 * 1024 * 1024), now);
+      R.putSnapshot(db, memberId, cave, int(b.upTo), writeVersion(b.version), body(db, memberId, cave, b.locked, 64 * 1024 * 1024), now);
       return send(res, 200, { ok: true });
     }
     if (what === 'label' && method === 'PUT') {
       const b = await readJson(req, 512 * 1024);
-      R.putLabel(db, memberId, cave, open ? openVersion(b.version) : int(b.version), open ? plain(b.locked, 256 * 1024) : text(b.locked, 256 * 1024), now);
+      R.putLabel(db, memberId, cave, writeVersion(b.version), body(db, memberId, cave, b.locked, 256 * 1024), now);
       return send(res, 200, { ok: true });
     }
     if (what === 'snapshot' && method === 'GET') {

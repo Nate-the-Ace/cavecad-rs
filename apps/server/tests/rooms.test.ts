@@ -228,3 +228,22 @@ test('an existing database without the storage column gains it on start', async 
   assert.equal((db.prepare("SELECT storage FROM caves WHERE id = 'old-cave1'").get() as { storage: string }).storage, 'locked');
   db.close();
 });
+
+test('a writer holding a stale "locked" view is refused once the cave is open, never stored as plain text', () => {
+  const { db, owner } = setup();
+  const d = registerDevice(db, owner, 'PUB1'.padEnd(43, 'x'), T);
+  createCave(db, owner, 'cave-race1', [{ device: d.id, wrapped: 'W' }], T);
+  appendEntry(db, owner, d.id, 'cave-race1', 1, 'AAA', T);
+  // A request decided "locked" earlier; the cave converts before its write lands.
+  openCave(db, owner, 'cave-race1', 1, PLAIN, T);
+  assert.throws(() => appendEntry(db, owner, d.id, 'cave-race1', 1, 'LOCKEDTEXT', T), /bad-request/);
+  assert.throws(() => putLabel(db, owner, 'cave-race1', 1, 'LOCKEDLABEL', T), /bad-request/);
+  assert.throws(() => putSnapshot(db, owner, 'cave-race1', 1, 1, 'LOCKEDSNAP', T), /bad-request/);
+  const stored = (db.prepare("SELECT locked FROM history WHERE cave_id = 'cave-race1' UNION ALL SELECT locked FROM cave_labels WHERE cave_id = 'cave-race1' UNION ALL SELECT locked FROM snapshots WHERE cave_id = 'cave-race1'").all() as { locked: string }[]).map((r) => r.locked);
+  assert.deepEqual(stored, [PLAIN]);
+  // and the other way: a locked cave takes no version 0
+  createCave(db, owner, 'cave-race2', [{ device: d.id, wrapped: 'W' }], T);
+  assert.throws(() => appendEntry(db, owner, d.id, 'cave-race2', 0, PLAIN, T), /bad-request/);
+  assert.throws(() => putLabel(db, owner, 'cave-race2', 0, PLAIN, T), /bad-request/);
+  assert.throws(() => putSnapshot(db, owner, 'cave-race2', 0, 0, PLAIN, T), /bad-request/);
+});

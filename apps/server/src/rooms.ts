@@ -1,6 +1,7 @@
-// Rooms, step 1: each cave's Private room. The server keeps devices' public keys, each cave's lock key
-// wrapped for each device (which it cannot open), and the cave's history as numbered locked entries. It never
-// reads an entry: blobs are base64 text stored as given. In step 1 only a cave's owner can reach it.
+// Rooms: each cave's Private room. An open cave (the default since server caves) keeps its history, snapshot and
+// label as plain JSON text the server can read. A locked cave (from before) keeps devices' public keys, its lock
+// key wrapped for each device (which the server cannot open), and base64 locked entries until its keyed device
+// converts it to open. Only a cave's owner can reach it.
 import { randomUUID } from 'node:crypto';
 import type { Db } from './db.ts';
 
@@ -70,6 +71,14 @@ const topNumber = (db: Db, caveId: string): number =>
       .get(caveId, caveId) as { n: number }
   ).n;
 const keyVersion = (db: Db, caveId: string) => (db.prepare('SELECT key_version FROM caves WHERE id = ?').get(caveId) as { key_version: number }).key_version;
+/**
+ * The storage check every writer makes in the same synchronous step as its write: an open cave takes version 0
+ * only, a locked cave version 1 or more. A version is refused, never rewritten, so a request that was decided
+ * "locked" before the cave converted can never land locked text in an open cave.
+ */
+function requireVersionFits(db: Db, memberId: string, caveId: string, version: number): void {
+  if (caveStorage(db, memberId, caveId) === 'open' ? version !== 0 : version < 1) fail('bad-request');
+}
 
 /** Makes a cave with its owner and Private room, and stores its lock key (version 1) wrapped for the given devices. */
 export function createCave(db: Db, memberId: string, caveId: string, wrapped: Wrapped[], now: number, storage: Storage = 'locked'): void {
@@ -129,9 +138,8 @@ export function myCaves(db: Db, memberId: string, deviceId: string): MyCave[] {
 
 /** Keeps the cave's locked label (its name and summary for cave lists), locked under the current key version. */
 export function putLabel(db: Db, memberId: string, caveId: string, version: number, locked: string, now: number): void {
-  const open = caveStorage(db, memberId, caveId) === 'open';
-  if (open) version = 0;
-  else if (version !== keyVersion(db, caveId)) fail('bad-request');
+  requireVersionFits(db, memberId, caveId, version);
+  if (version !== 0 && version !== keyVersion(db, caveId)) fail('bad-request');
   db.prepare(
     `INSERT INTO cave_labels (cave_id, key_version, locked, updated_at) VALUES (?, ?, ?, ?)
      ON CONFLICT(cave_id) DO UPDATE SET key_version = excluded.key_version, locked = excluded.locked, updated_at = excluded.updated_at`,
@@ -172,10 +180,9 @@ export function putWrappedKeys(db: Db, memberId: string, caveId: string, version
 
 /** Adds a locked entry to the cave's history; gives back its number. */
 export function appendEntry(db: Db, memberId: string, deviceId: string, caveId: string, version: number, locked: string, now: number): number {
-  const open = caveStorage(db, memberId, caveId) === 'open';
+  requireVersionFits(db, memberId, caveId, version);
   requireOwnDevice(db, memberId, deviceId);
-  if (open) version = 0;
-  else if (version < 1 || version > keyVersion(db, caveId)) fail('bad-request');
+  if (version > keyVersion(db, caveId)) fail('bad-request');
   const room = (db.prepare("SELECT id FROM rooms WHERE cave_id = ? AND kind = 'private'").get(caveId) as { id: string }).id;
   // Numbered in the same statement that stores it, so two writers can never take the same number.
   const row = db
@@ -207,7 +214,7 @@ export function entriesAfter(db: Db, memberId: string, caveId: string, after: nu
  * than the kept snapshot is ignored. `upTo` past the cave's last entry is refused (0 is fine for an empty cave).
  */
 export function putSnapshot(db: Db, memberId: string, caveId: string, upTo: number, version: number, locked: string, now: number): void {
-  requireOwner(db, memberId, caveId);
+  requireVersionFits(db, memberId, caveId, version);
   if (upTo > topNumber(db, caveId)) fail('bad-request');
   db.prepare(
     `INSERT INTO snapshots (cave_id, up_to, key_version, locked, created_at) VALUES (?, ?, ?, ?, ?)

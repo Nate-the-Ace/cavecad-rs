@@ -285,3 +285,36 @@ test('open caves over HTTP: plain text, storage listed, and conversion of a lock
     server.close();
   }
 });
+
+test('a locked entry whose body is still arriving when the cave opens is refused, not stored', async () => {
+  const { server, base, call, db } = await start();
+  try {
+    const dev = (await call(ADMIN, 'POST', '/api/devices', { publicKey: PUB(1) })).json.device.id;
+    await call(ADMIN, 'POST', '/api/caves', { id: 'cave-race1', wrapped: [{ device: dev, wrapped: 'W' }] }, dev);
+    const { request } = await import('node:http');
+    const { openCave } = await import('../src/rooms.ts');
+    const owner = (await call(ADMIN, 'GET', '/api/me')).json.member.id;
+    const body = JSON.stringify({ version: 1, locked: 'LOCKEDTEXT' });
+    const url = new URL(base + '/api/caves/cave-race1/entries');
+    const status = await new Promise<number>((resolve, reject) => {
+      const req = request(
+        { host: url.hostname, port: url.port, path: url.pathname, method: 'POST', headers: { 'x-test-user': ADMIN, 'X-Cave-Device': dev, 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) } },
+        (res) => {
+          res.resume();
+          resolve(res.statusCode ?? 0);
+        },
+      );
+      req.on('error', reject);
+      req.write(body.slice(0, 5));
+      setTimeout(() => {
+        openCave(db, owner, 'cave-race1', 0, '{"plain":true}', Date.now()); // the cave converts mid-body
+        req.end(body.slice(5));
+      }, 50);
+    });
+    assert.equal(status, 400);
+    const stored = (db.prepare("SELECT locked FROM history WHERE cave_id = 'cave-race1'").all() as { locked: string }[]).map((r) => r.locked);
+    assert.deepEqual(stored, []);
+  } finally {
+    server.close();
+  }
+});
