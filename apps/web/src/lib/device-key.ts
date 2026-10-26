@@ -1,8 +1,9 @@
 // This device's room key pair. Made once, the private half kept as a non-extractable CryptoKey in IndexedDB
 // (it never leaves the device), the public half registered with the server, which gives back a device id.
-// Beside it, per cave: the last entry number applied here and the newest cave key seen (see room-client.ts).
+// Beside it, per cave (see room-client.ts): the newest cave key seen, locked entries not yet posted (per client),
+// and a hash of the cave as it was when all of it was known to be in the room.
 import { makeDeviceKeys } from './room-crypto';
-import type { KeySeen } from './room-client';
+import type { KeySeen, Pending } from './room-client';
 
 /** This device as the room client needs it. */
 export type Device = { id: string; privateKey: CryptoKey; publicKey: string };
@@ -26,6 +27,39 @@ function idb<T>(mode: IDBTransactionMode, f: (s: IDBObjectStore) => IDBRequest):
         q.onerror = () => (resolve(undefined), r.result.close());
       } catch {
         resolve(undefined);
+        r.result.close();
+      }
+    };
+  });
+}
+
+/** Takes (reads and removes) every value whose key starts with `prefix`, in key order. */
+function idbTake<T>(prefix: string): Promise<T[]> {
+  return new Promise((resolve) => {
+    let r: IDBOpenDBRequest;
+    try {
+      r = indexedDB.open(DB, 1);
+    } catch {
+      return resolve([]);
+    }
+    r.onupgradeneeded = () => r.result.createObjectStore('kv');
+    r.onerror = () => resolve([]);
+    r.onsuccess = () => {
+      const out: T[] = [];
+      try {
+        const tx = r.result.transaction('kv', 'readwrite');
+        const q = tx.objectStore('kv').openCursor(IDBKeyRange.bound(prefix, prefix + '\uffff'));
+        q.onsuccess = () => {
+          const c = q.result;
+          if (!c) return;
+          out.push(c.value as T);
+          c.delete();
+          c.continue();
+        };
+        tx.oncomplete = () => (resolve(out), r.result.close());
+        tx.onerror = tx.onabort = () => (resolve([]), r.result.close());
+      } catch {
+        resolve([]);
         r.result.close();
       }
     };
@@ -74,10 +108,17 @@ export function deviceKey(base: string, member: string, headers: () => Record<st
   return p;
 }
 
-/** Last applied entry number per cave. */
-export const lastNumber = {
-  load: async (cave: string): Promise<number> => (await idb<number>('readonly', (st) => st.get('last:' + cave))) ?? 0,
-  save: async (cave: string, n: number): Promise<void> => void (await idb('readwrite', (st) => st.put(n, 'last:' + cave))),
+/** Locked entries not yet posted, per cave and client (a tab): `load` takes every client's for the cave. */
+export const pendingEntries = {
+  load: async (cave: string): Promise<Pending[]> => (await idbTake<Pending[]>(`pending:${cave}|`)).flat(),
+  save: async (cave: string, client: string, entries: Pending[]): Promise<void> =>
+    void (await idb('readwrite', (st) => (entries.length ? st.put(entries.map((e) => ({ version: e.version, locked: e.locked })), `pending:${cave}|${client}`) : st.delete(`pending:${cave}|${client}`)))),
+};
+
+/** A hash of each cave as it was when all of it was known to be in its room. */
+export const syncedHash = {
+  load: async (cave: string): Promise<string | null> => (await idb<string>('readonly', (st) => st.get('synced:' + cave))) ?? null,
+  save: async (cave: string, hash: string): Promise<void> => void (await idb('readwrite', (st) => st.put(hash, 'synced:' + cave))),
 };
 
 /** The newest cave key seen per cave (its version and key id). */

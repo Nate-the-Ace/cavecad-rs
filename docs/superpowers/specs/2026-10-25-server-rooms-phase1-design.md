@@ -220,3 +220,10 @@ and claims (phase 2).
 - Streams are capped at 20 per member (the oldest is closed first).
 - New-device approval is deferred (Nathan, 2026-10-25); devices trust the server-listed device list for now.
 - Save as keeps the same room (it is the same cave written elsewhere); a future copy feature must clear the room id.
+- No entry number is kept between opens: every open catches up from the snapshot (a cave copy can be older or newer than any number kept beside it). Reconnects within one open pass `snapshot?after=<last>` and skip a snapshot they are past.
+- Unposted locked entries are kept per cave and client in IndexedDB; `stop()` takes the outbox at once (only while the engine still holds that cave) so the last flush window survives a session start. A cave switch replaces the engine's cave before `stop()`, so that window is covered by the next rule instead.
+- A copy that changed while its room was closed posts itself whole (chunked) once on the next open. "Changed" = its SHA-256 differs from the hash kept when the client was live, quiet for 5 s, with nothing pending.
+- Entries are split to stay under 1.5 MB locked; one op over that stops sync with `error` and a reason. A 400/403/404/409/410/413/422 on a post is `error` (the entry is kept); 401, 5xx and network failures are `offline` with backoff 300 ms doubling to 30 s.
+- A cave whose room is not this member's at all gets a new room (said once). A member's own cave this device has no key for still waits (`waiting-key`), including after browser data is cleared with no other device left to hand the key on.
+- Only a client that wrote entries since the last snapshot uploads the next one; a room with no snapshot (first upload failed) gets one from the next client to catch up.
+- A stream silent for 60 s (pings come every 25 s) is dropped and reopened.

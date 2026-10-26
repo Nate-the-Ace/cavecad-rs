@@ -6,12 +6,14 @@
     synced: 'Synced',
     offline: 'Offline: your edits will join when you reconnect',
     'waiting-key': 'Waiting for your other device to share this cave',
-    error: "Couldn't reach the server",
+    error: "Sync stopped: something didn't check out",
   };
 </script>
 
-{#if room.status}
-  <span class="room-status" class:quiet={room.status === 'synced'} role="status">{TEXT[room.status]}</span>
+{#if room.info}
+  <span class="room-status" role="status">{room.info}</span>
+{:else if room.status}
+  <span class="room-status" class:quiet={room.status === 'synced'} role="status" title={room.reason || undefined}>{TEXT[room.status]}</span>
 {/if}
 
 <style>

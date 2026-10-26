@@ -18,13 +18,14 @@ import { cave, changed } from './cave.svelte';
 import { flush as keepOnShelf } from './shelf.svelte';
 import { account } from './account.svelte';
 import { desktopBearer } from './desktop-signin';
-import { deviceKey, keySeen, lastNumber } from './device-key';
+import { deviceKey, keySeen, pendingEntries, syncedHash } from './device-key';
 import { RoomClient, type RoomStatus } from './room-client';
 import { p2p } from './p2p.svelte';
 import { live } from './sync.svelte';
 import { classroom } from './classroom.svelte';
 
-export const room = $state({ status: '' as RoomStatus | '' });
+/** `reason` says why for `error`; `info` is a one-off note shown for a while in place of the status. */
+export const room = $state({ status: '' as RoomStatus | '', reason: '', info: '' });
 
 const BASE = (import.meta.env.VITE_ACCOUNT_BASE as string | undefined) ?? '';
 const headers = (): Record<string, string> => {
@@ -39,6 +40,10 @@ let generation = 0;
 let roomless = -1;
 let seenOpened = -1;
 let lastKey = '';
+/** The member whose device could not be registered yet (the server was out of reach): retried every 30 s. */
+let waitingForDevice = '';
+let deviceRetry: ReturnType<typeof setTimeout> | null = null;
+let infoTimer: ReturnType<typeof setTimeout> | null = null;
 
 /** The cave just put on screen is a sample: it never gets a room. Call right after `cave.opened` is bumped. */
 export function noRoomForThisCave(): void {
@@ -50,12 +55,22 @@ async function openRoom(member: string): Promise<void> {
   closeRoom();
   const mine = ++generation;
   room.status = 'connecting';
+  await startClient(member, mine);
+}
+
+/** Registers this device if it has to, then starts the room client; until the device is known, retries. */
+async function startClient(member: string, mine: number): Promise<void> {
+  if (deviceRetry) clearTimeout(deviceRetry);
+  deviceRetry = null;
   const dev = await deviceKey(BASE, member, headers);
-  if (mine !== generation) return;
+  if (mine !== generation || current) return;
   if (!dev) {
     room.status = 'offline';
+    waitingForDevice = member;
+    deviceRetry = setTimeout(() => void startClient(member, mine), 30_000);
     return;
   }
+  waitingForDevice = '';
   const client = new RoomClient({
     base: BASE,
     fetch: (...a) => fetch(...a),
@@ -70,11 +85,7 @@ async function openRoom(member: string): Promise<void> {
         return r;
       },
       outbox: engine.syncOutbox,
-      apply: (ops) => {
-        const n = engine.syncApply(ops);
-        changed(); // the views re-read, and the shelf keeps what arrived
-        return n;
-      },
+      apply: engine.syncApply, // the client calls `changed` (once after catch-up, then per entry)
       snapshot: engine.syncSnapshot,
       load: (ops) => {
         const r = engine.syncLoad(ops);
@@ -82,14 +93,26 @@ async function openRoom(member: string): Promise<void> {
         return r;
       },
     },
+    changed: () => changed(), // the views re-read, and the shelf keeps what arrived
     device: dev,
     headers,
-    loadLast: lastNumber.load,
-    saveLast: lastNumber.save,
     loadKeySeen: keySeen.load,
     saveKeySeen: keySeen.save,
-    onStatus: (s) => {
-      if (current === client) room.status = s;
+    loadPending: pendingEntries.load,
+    savePending: pendingEntries.save,
+    loadSynced: syncedHash.load,
+    saveSynced: syncedHash.save,
+    onStatus: (s, reason) => {
+      if (current !== client) return;
+      room.status = s;
+      room.reason = reason ?? '';
+      if (reason) console.warn('[rooms]', reason);
+    },
+    onInfo: (message) => {
+      if (current !== client) return;
+      room.info = message;
+      if (infoTimer) clearTimeout(infoTimer);
+      infoTimer = setTimeout(() => (room.info = ''), 10_000);
     },
   });
   current = client;
@@ -101,7 +124,11 @@ function closeRoom(): void {
   generation++;
   current?.stop();
   current = null;
+  if (deviceRetry) clearTimeout(deviceRetry);
+  deviceRetry = null;
+  waitingForDevice = '';
   room.status = '';
+  room.reason = '';
 }
 
 /** Watches for caves opening (and the account and live sessions) and keeps one room open to match. Call once. */
@@ -113,13 +140,20 @@ export function startRooms(): () => void {
       const has = cave.hasCave;
       const busy = p2p.role !== 'none' || live.status !== 'off';
       const student = classroom.role === 'student';
-      const member = account.phase === 'ready' || account.phase === 'offline' ? (account.member?.id ?? '') : '';
+      const phase = account.phase;
+      const who = account.member;
+      const member = phase === 'ready' || phase === 'offline' ? (who?.id ?? '') : '';
       untrack(() => {
         if (busy && n !== seenOpened) roomless = n; // a cave that came through a session is not this device's own
         seenOpened = n;
         const want = has && !busy && !student && member !== '' && n !== roomless;
         const key = want ? `${n}|${member}` : '';
-        if (key === lastKey) return;
+        if (key === lastKey) {
+          // Still the same cave and member: if this device is not registered yet, the account changing
+          // (back online, signed in again) is the moment to try again.
+          if (want && waitingForDevice === member) void startClient(member, generation);
+          return;
+        }
         lastKey = key;
         if (want) void openRoom(member);
         else closeRoom();
