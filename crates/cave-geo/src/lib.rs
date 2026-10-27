@@ -6,6 +6,7 @@ pub mod contour;
 pub mod datum;
 pub mod frame;
 pub mod grid;
+pub mod layers;
 pub mod pick;
 pub mod record;
 pub mod request;
