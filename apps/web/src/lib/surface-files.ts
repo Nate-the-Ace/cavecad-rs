@@ -1,5 +1,5 @@
 // The surface files (aerial photo, elevation grid): downloaded straight from USGS, kept in the browser's
-// private storage (OPFS) under a key made from the REQUEST, and packed into the .cavecad file. Keyed by the
+// private storage (OPFS, and memory for the session) under a key made from the REQUEST, and packed into the .cavecad file. Keyed by the
 // request so undoing a re-download still finds the earlier files, and two caves cut to the same window share them.
 // Never log a URL from here: it carries the window, which locates the cave.
 
@@ -55,23 +55,42 @@ async function dir(): Promise<FileSystemDirectoryHandle | null> {
   }
 }
 
-/** Keeps a part's bytes under its key (OPFS). Quietly does nothing where OPFS is unavailable. */
-export async function store(key: string, bytes: Uint8Array): Promise<void> {
-  const d = await dir();
-  if (!d) return;
-  const f = await d.getFileHandle(key, { create: true });
-  const w = await f.createWritable();
-  await w.write(bytes as BlobPart);
-  await w.close();
+/** Every part kept this session, so a browser without OPFS (a private window, an older Safari) still has them until the page closes. */
+const memory = new Map<string, Uint8Array>();
+
+/**
+ * Keeps a part's bytes under its key: always in memory for this session, and in OPFS where the browser
+ * allows it. Never throws: a store that fails must not cost the download. Returns whether OPFS kept it.
+ */
+export async function store(key: string, bytes: Uint8Array): Promise<boolean> {
+  memory.set(key, bytes); // before any await, so a load that races this one finds it
+  try {
+    const d = await dir();
+    if (!d) return false;
+    const f = await d.getFileHandle(key, { create: true });
+    const w = await f.createWritable();
+    try {
+      await w.write(bytes as BlobPart);
+    } finally {
+      await w.close();
+    }
+    return true;
+  } catch {
+    return false;
+  }
 }
 
-/** A kept part, or null. */
+/** A kept part (this session's memory first, then OPFS), or null. */
 export async function load(key: string): Promise<Uint8Array | null> {
+  const m = memory.get(key);
+  if (m) return m;
   const d = await dir();
   if (!d) return null;
   try {
     const f = await (await d.getFileHandle(key)).getFile();
-    return new Uint8Array(await f.arrayBuffer());
+    const bytes = new Uint8Array(await f.arrayBuffer());
+    memory.set(key, bytes);
+    return bytes;
   } catch {
     return null;
   }
