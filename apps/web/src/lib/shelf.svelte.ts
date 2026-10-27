@@ -1,7 +1,9 @@
 // The Cave Shelf's store: the caves this browser keeps, each with the last summary of what is in it
 // (so the shelf can list caves without reading them). A cave is kept as its DXF text, the same file
 // Save writes, in IndexedDB on this machine; an open cave is saved back by itself a moment after every
-// edit, so closing the page or refreshing loses nothing. Nothing is uploaded.
+// edit, so closing the page or refreshing loses nothing. The shelf itself is never uploaded (a cave's room on the
+// server, with its locked copy, is room.svelte.ts; each record keeps that room's id so the shelf can tell which of
+// the member's caves on the server this browser already has).
 import { cave, changed, markSaved, unsaved } from './cave.svelte';
 import { readOnly } from './readonly';
 import { engine, type CaveSummary } from './engine';
@@ -19,6 +21,8 @@ export interface ShelfRecord {
   summary: CaveSummary | null;
   /** Where its project folder is (the browser's handle to it is kept apart, under the same id), if it has one. */
   home?: { label: string; file: string; path?: string };
+  /** The cave's room on the CaveCAD server ('' for none; absent on records kept before rooms, read once from the cave). */
+  roomId?: string;
 }
 
 const DB = 'cavecad-shelf';
@@ -35,8 +39,6 @@ function startupSetting(): boolean {
 export const shelf = $state({
   /** The shelf window is showing. */
   open: false,
-  /** Open it on the Join a live session page (from the ribbon). */
-  join: false,
   records: [] as ShelfRecord[],
   /** The record the open cave is saved to ('' for a sample or a cave not yet stored). */
   currentId: '',
@@ -129,7 +131,7 @@ const newId = () => (typeof crypto !== 'undefined' && 'randomUUID' in crypto ? c
  * `shelf.problem` saying why) when the browser would not keep it.
  */
 export async function storeOpenCave(source = ''): Promise<boolean> {
-  if (readOnly.on) return false; // what a student is shown is the teacher's cave: never kept here
+  if (readOnly.on) return false; // a locked cave (the offline pass is too old) is not changed here
   const summary = engine.shelfSummary();
   if (!summary) return false;
   const existing = shelf.records.find((r) => r.id === shelf.currentId) ?? (source ? shelf.records.find((r) => r.source === source) : undefined);
@@ -140,10 +142,14 @@ export async function storeOpenCave(source = ''): Promise<boolean> {
     favorite: existing?.favorite ?? false,
     updated: Date.now(),
     summary,
+    roomId: engine.roomId(),
   };
   const home = currentHome();
   if (home) rec.home = { label: home.label, file: home.file, ...(home.kind === 'path' ? { path: home.path } : {}) };
   else if (existing?.home) rec.home = existing.home; // a folder not found today is still the cave's folder
+  // What is written is the cave as it is now; an edit made while the browser stores it (the room id arriving, say)
+  // stays unsaved and is kept by the next autosave.
+  const at = engine.revision();
   try {
     await put(rec, engine.saveNative()); // the cave in its own format: nothing lost on the way in or out
     if (home?.kind === 'handle') await putHandle(rec.id, home.handle);
@@ -166,7 +172,7 @@ export async function storeOpenCave(source = ''): Promise<boolean> {
   shelf.currentId = rec.id;
   shelf.storedAt = rec.updated;
   shelf.records = sorted([...shelf.records.filter((r) => r.id !== rec.id), rec]);
-  markSaved();
+  markSaved(at);
   return true;
 }
 
@@ -262,6 +268,30 @@ export async function summaryOf(rec: ShelfRecord): Promise<CaveSummary | null> {
     shelf.records = sorted(shelf.records.map((r) => (r.id === rec.id ? next : r)));
   }
   return summary;
+}
+
+/**
+ * The room ids of the caves on this shelf. A record kept before rooms has none written beside it: it is read from
+ * the kept cave once and remembered (the engine must be loaded).
+ */
+export async function shelfRoomIds(): Promise<Set<string>> {
+  const out = new Set<string>();
+  for (const rec of shelf.records) {
+    let id = rec.roomId;
+    if (id === undefined) {
+      const text = await dxfOf(rec.id);
+      id = text && isNative(text) ? engine.roomIdOfNative(text) : '';
+      const next = { ...rec, roomId: id };
+      try {
+        await put(next, null);
+      } catch {
+        /* read again next time */
+      }
+      shelf.records = shelf.records.map((r) => (r.id === rec.id ? next : r));
+    }
+    if (id) out.add(id);
+  }
+  return out;
 }
 
 let timer: ReturnType<typeof setTimeout> | undefined;

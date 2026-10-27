@@ -1,0 +1,17 @@
+# systemd unit for the CaveCAD server, on its own container. Settings in /etc/cavecad/server.env (mode 600).
+[Unit]
+Description=CaveCAD server (web app and accounts)
+After=network-online.target
+
+[Service]
+User=cavecad
+WorkingDirectory=/opt/cavecad/server
+EnvironmentFile=/etc/cavecad/server.env
+ExecStart=/usr/bin/node src/main.ts
+Restart=on-failure
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/cavecad
+
+[Install]
+WantedBy=multi-user.target

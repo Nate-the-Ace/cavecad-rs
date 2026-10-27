@@ -14,6 +14,7 @@ use wasm_bindgen::prelude::*;
 
 static CONSOLE: OnceLock<LogBuffer> = OnceLock::new();
 
+mod formats;
 mod snap;
 mod survey;
 
@@ -569,6 +570,37 @@ pub fn set_drawing_scale(n: f64) -> String {
         let mut slot = d.borrow_mut();
         let doc = slot.as_mut().ok_or("no cave is open")?;
         let actions = cave_draw::set_drawing_scale(doc, n).map_err(|e| format!("{e:?}"))?;
+        if actions.is_empty() {
+            return Ok(());
+        }
+        let edit = doc.edit(actions).map_err(|e| format!("{e:?}"))?;
+        record_edit("settings", &edit);
+        Ok::<(), String>(())
+    });
+    match result {
+        Ok(()) => "ok".into(),
+        Err(e) => format!("error: {e}"),
+    }
+}
+
+/// The open cave's room id on the CaveCAD server, or "" when it has none.
+#[wasm_bindgen]
+pub fn room_id() -> String {
+    DOC.with(|d| {
+        d.borrow()
+            .as_ref()
+            .map(cave_draw::room_id)
+            .unwrap_or_default()
+    })
+}
+
+/// Sets the open cave's room id. One edit in the settings history. Returns `ok` or `error: ...`.
+#[wasm_bindgen]
+pub fn set_room_id(id: &str) -> String {
+    let result = DOC.with(|d| {
+        let mut slot = d.borrow_mut();
+        let doc = slot.as_mut().ok_or("no cave is open")?;
+        let actions = cave_draw::set_room_id(doc, id).map_err(|e| format!("{e:?}"))?;
         if actions.is_empty() {
             return Ok(());
         }
@@ -1636,6 +1668,18 @@ mod tests {
     }
 
     #[test]
+    fn a_kept_caves_room_id_is_read_without_opening_it() {
+        open_demo(CAVE);
+        assert_eq!(room_id_of_native(&sync_snapshot()), "");
+        assert_eq!(set_room_id("cave_0123456789abcdef01234567"), "ok");
+        let kept = sync_snapshot();
+        open_demo(CAVE);
+        assert_eq!(room_id_of_native(&kept), "cave_0123456789abcdef01234567");
+        assert_eq!(room_id(), "", "the open cave is untouched");
+        assert_eq!(room_id_of_native("not a cave"), "");
+    }
+
+    #[test]
     fn a_bad_file_changes_nothing() {
         open_demo(CAVE);
         let before = scene(false, "{}");
@@ -2262,6 +2306,20 @@ pub fn shelf_summarize_native(ops: &str) -> String {
         });
     serde_json::to_string(&doc.as_ref().map(cave_shelf::summarize))
         .unwrap_or_else(|_| "null".into())
+}
+
+/// The room id of a cave kept in CaveCAD's own format (its ops as JSON), without opening it; "" when it has none
+/// or the text is not a cave.
+#[wasm_bindgen]
+pub fn room_id_of_native(ops: &str) -> String {
+    serde_json::from_str::<Vec<cave_doc::Op>>(ops)
+        .ok()
+        .and_then(|ops| {
+            let mut doc = Document::new(ActorId(1));
+            ops.iter().all(|op| doc.apply(op).is_ok()).then_some(doc)
+        })
+        .map(|doc| cave_draw::room_id(&doc))
+        .unwrap_or_default()
 }
 
 /// What the shelf shows about a sample cave given as shot-list JSON, without opening it.

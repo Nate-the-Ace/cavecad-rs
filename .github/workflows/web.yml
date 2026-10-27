@@ -1,0 +1,45 @@
+# Builds the web app for the CaveCAD server (cave.schonegg.stream) with every build setting, including the
+# ones kept in GitHub secrets, and keeps it as an artifact named cavecad-web. Deploying it to the server is
+# done by hand (deploy/README.md): download the artifact, back up /opt/cavecad/web, unpack it there.
+#
+# Run it by hand: Actions > web > Run workflow, or `gh workflow run web.yml`.
+name: web
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - uses: swatinem/rust-cache@v2
+
+      - name: Install wasm-pack (the engine is built with it)
+        run: npm install -g wasm-pack
+
+      - name: Build the web app
+        env:
+          VITE_FEEDBACK_ENDPOINT: ${{ secrets.FEEDBACK_ENDPOINT }}
+          VITE_FEEDBACK_KEY: ${{ secrets.FEEDBACK_KEY }}
+          VITE_PASS_PUBLIC_KEY: ${{ vars.PASS_PUBLIC_KEY }}
+          VITE_SIGNOUT_URL: ${{ vars.SIGNOUT_URL }}
+        run: |
+          npm ci --prefix apps/web
+          cd apps/web && npx vite build
+          rm -rf dist/local
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cavecad-web
+          path: apps/web/dist
+          retention-days: 30

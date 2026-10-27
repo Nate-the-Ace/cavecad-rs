@@ -4,7 +4,7 @@
 // world and screen relate; this decides what a press, a drag and a key do.
 import { distanceToCurve, distanceToPolyline, insertionAt, insideCurve, nearestPoint, refit, type Pt } from './spline.ts';
 import { isFillKind } from './fills.ts';
-import { hitsLabelNote, hitsStamp, isStampKind, leaderLook, stampEditSpot } from './symbols.ts';
+import { hitsLabelNote, hitsStamp, isStampKind, leaderLook, stampEditSpot, withLabelSpots } from './symbols.ts';
 import { arrowAt, attachOf, nearestVertex, resolveLeaders, withArrow, withoutArrow } from './leader-edit.ts';
 import { withAttach } from './line-style-text.ts';
 
@@ -110,10 +110,10 @@ export class LineEditor<T extends EditableLine = EditableLine> {
     return nearestVertex(this.shown(), exclude, this.h.toScreen, x, y, SNAP_REACH);
   }
 
-  /** The lines that are switched on. */
+  /** The lines that are switched on (every labelled symbol with its label's note point). */
   private shown(): T[] {
     const hide = this.h.hidden;
-    return resolveLeaders(hide ? this.h.lines().filter((l) => !hide(l.kind)) : this.h.lines());
+    return resolveLeaders(withLabelSpots(hide ? this.h.lines().filter((l) => !hide(l.kind)) : this.h.lines()));
   }
 
   /** The lines to draw: the one being dragged shows its live points. */

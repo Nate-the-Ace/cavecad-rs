@@ -1,0 +1,10 @@
+# Backs up the CaveCAD database once (started by cavecad-backup.timer).
+[Unit]
+Description=CaveCAD database backup
+
+[Service]
+Type=oneshot
+User=cavecad
+ExecStart=/usr/local/bin/cavecad-backup.sh
+ProtectSystem=strict
+ReadWritePaths=/var/lib/cavecad

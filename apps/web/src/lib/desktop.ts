@@ -58,6 +58,9 @@ export const listScansNative = (root: string): Promise<{ path: string; size: num
 export const readScanNative = (root: string, rel: string): Promise<ArrayBuffer> => call('read_scan', { root, rel });
 
 /** Opens Finder or Explorer on the real file, selected (an empty `rel` is the folder itself). */
+/** Opens an https address in the system browser (the desktop sign-in). */
+export const openUrlNative = (url: string): Promise<void> => call('open_url', { url });
+
 export const revealNative = (root: string, rel: string): Promise<void> => call('reveal', { root, rel });
 
 const TYPES: Record<string, string> = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp', gif: 'image/gif', bmp: 'image/bmp', svg: 'image/svg+xml', avif: 'image/avif', pdf: 'application/pdf' };
@@ -69,8 +72,9 @@ export const typeOf = (path: string): string => TYPES[path.slice(path.lastIndexO
 export const baseName = (path: string): string => path.replace(/[\\/]+$/, '').split(/[\\/]/).pop() || path;
 
 /**
- * Join links that open the desktop app (`cavecad://join?...`) reach the page here: the ones that started the app before
- * the page was ready, and each one that arrives while it runs. Does nothing in a browser.
+ * Links that open the desktop app (`cavecad://auth` after sign-in, and old `cavecad://join?...` links, which show the
+ * moved page) reach the page here: the ones that started the app before the page was ready, and each one that arrives
+ * while it runs. Does nothing in a browser.
  */
 export function listenForLinks(onLink: (url: string) => void): void {
   if (!isDesktop()) return;

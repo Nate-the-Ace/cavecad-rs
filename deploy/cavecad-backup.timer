@@ -1,0 +1,10 @@
+# Daily at 02:30 local time, before the host's nightly container backup.
+[Unit]
+Description=Nightly CaveCAD database backup
+
+[Timer]
+OnCalendar=*-*-* 02:30:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

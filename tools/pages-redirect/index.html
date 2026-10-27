@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>CaveCAD has moved</title>
+  <style>
+    body { font: 16px system-ui, sans-serif; max-width: 34rem; margin: 4rem auto; padding: 0 16px; line-height: 1.45; }
+    ul { padding-left: 1.2rem; }
+    li { margin: 0.3rem 0; }
+    .row { display: flex; gap: 0.6rem; flex-wrap: wrap; margin: 1.2rem 0; }
+    .btn { font: inherit; padding: 0.5rem 0.9rem; border-radius: 6px; border: 1px solid #888; background: #f4f4f4; color: inherit; text-decoration: none; cursor: pointer; }
+    .btn.primary { background: #1f6feb; border-color: #1f6feb; color: #fff; }
+    .hint { color: #666; font-size: 0.9rem; }
+    [hidden] { display: none !important; }
+  </style>
+</head>
+<body>
+  <!-- CaveCAD used to run here and kept caves in this browser (the Cave Shelf, IndexedDB `cavecad-shelf`). That
+       storage belongs to this address, so the new site cannot see it: before sending people on, this page offers
+       those caves as DXF files, the same files the shelf's "Download a file…" writes and its "Import file…" reads. -->
+  <div id="moving">
+    <p>CaveCAD now lives at <a class="go" href="https://cave.schonegg.stream/">cave.schonegg.stream</a>. Sign in there with your Google account.</p>
+  </div>
+  <div id="caves" hidden>
+    <h1>CaveCAD has moved</h1>
+    <p>CaveCAD now lives at <a class="go" href="https://cave.schonegg.stream/">cave.schonegg.stream</a>, where you sign in with your Google account.</p>
+    <p>This browser still holds <strong id="count"></strong> from the old CaveCAD. The new site can't see them, so save them as files first, then bring them in with <em>Import file…</em> on the new site's Cave Shelf.</p>
+    <ul id="list"></ul>
+    <div class="row">
+      <button class="btn primary" id="all">Download all</button>
+      <a class="btn go" href="https://cave.schonegg.stream/">Go to the new CaveCAD</a>
+    </div>
+    <p class="hint">Nothing here is deleted. You can come back to this page and download them again. Scanned pages were never kept here for good: pick their folder again on the new site.</p>
+  </div>
+  <script>
+    const target = 'https://cave.schonegg.stream/' + location.search + location.hash;
+    for (const a of document.querySelectorAll('a.go')) a.href = target;
+
+    // The caves the old Cave Shelf kept in this browser, as { name, dxf }. Never creates the database.
+    async function keptCaves() {
+      if (!('indexedDB' in window)) return [];
+      if (indexedDB.databases) {
+        const all = await indexedDB.databases();
+        if (!all.some((d) => d.name === 'cavecad-shelf')) return [];
+      }
+      const d = await new Promise((resolve, reject) => {
+        const r = indexedDB.open('cavecad-shelf');
+        r.onupgradeneeded = () => r.transaction.abort(); // it did not exist: leave nothing behind
+        r.onsuccess = () => resolve(r.result);
+        r.onerror = () => (r.error && r.error.name === 'AbortError' ? resolve(null) : reject(r.error));
+      });
+      if (!d || !d.objectStoreNames.contains('meta') || !d.objectStoreNames.contains('dxf')) return [];
+      const tx = d.transaction(['meta', 'dxf']);
+      const get = (req) => new Promise((resolve, reject) => { req.onsuccess = () => resolve(req.result); req.onerror = () => reject(req.error); });
+      const metas = await get(tx.objectStore('meta').getAll());
+      const caves = [];
+      for (const m of metas) {
+        const dxf = await get(tx.objectStore('dxf').get(m.id));
+        if (typeof dxf === 'string' && dxf) caves.push({ name: m.name || 'Cave', dxf });
+      }
+      return caves;
+    }
+
+    const fileName = (name, used) => {
+      const base = name.replace(/[\\/:*?"<>|\u0000-\u001f]+/g, '-').trim() || 'Cave';
+      let n = base + '.dxf';
+      for (let i = 2; used.has(n); i++) n = `${base} (${i}).dxf`;
+      used.add(n);
+      return n;
+    };
+
+    keptCaves().then((caves) => {
+      if (!caves.length) return location.replace(target);
+      document.getElementById('moving').hidden = true;
+      document.getElementById('caves').hidden = false;
+      document.getElementById('count').textContent = caves.length === 1 ? '1 cave' : `${caves.length} caves`;
+      const list = document.getElementById('list');
+      const used = new Set();
+      const links = caves.map((c) => {
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(new Blob([c.dxf], { type: 'application/dxf' }));
+        a.download = fileName(c.name, used);
+        a.textContent = a.download;
+        const li = document.createElement('li');
+        li.append(a);
+        list.append(li);
+        return a;
+      });
+      // One click each, a moment apart: browsers refuse a burst of downloads from one click.
+      document.getElementById('all').onclick = () => links.forEach((a, i) => setTimeout(() => a.click(), i * 400));
+    }, () => location.replace(target));
+  </script>
+</body>
+</html>

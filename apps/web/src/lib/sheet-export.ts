@@ -3,7 +3,6 @@
 import { cave } from './cave.svelte';
 import { engine, type Scene, type SheetPlan, type ProfileSketch3d } from './engine';
 import { looks } from './ink';
-import { readOnly } from './readonly';
 import { drawSheet } from './sheet-draw';
 import { sheet } from './sheet.svelte';
 
@@ -36,7 +35,6 @@ export function renderSheet(dpi: number): HTMLCanvasElement {
 
 /** Saves the sheet as a PNG picture at 200 dots per inch. */
 export function downloadSheet(): string {
-  if (readOnly.noKeep) return 'Printing and saving are turned off while you are watching a class: the cave stays with the teacher.';
   const c = renderSheet(200);
   const a = document.createElement('a');
   a.href = c.toDataURL('image/png');
@@ -47,7 +45,6 @@ export function downloadSheet(): string {
 
 /** Opens the print dialog for the sheet (choose "Save as PDF" there for a PDF), on the right paper size. */
 export function printSheet(): string {
-  if (readOnly.noKeep) return 'Printing and saving are turned off while you are watching a class: the cave stays with the teacher.';
   const { plan } = currentSheet();
   const url = renderSheet(150).toDataURL('image/png');
   const f = document.createElement('iframe');

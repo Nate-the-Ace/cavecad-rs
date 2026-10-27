@@ -9,12 +9,13 @@ import { folder, openScans, readHome, reachable, setHome, type Home } from './ca
 import { EXT, unpack } from './cavefile';
 import { addRemoteFile, have } from './scans.svelte';
 import { typeOf } from './desktop';
-import { leave } from './sync.svelte';
 import { workLayout } from './workspace.svelte';
+import { noRoomForThisCave, serverAccess } from './room.svelte';
+import { downloadCave } from './room-client';
+import { syncedHash } from './device-key';
 
 /** A different cave is now on screen: everything that belonged to the last one is let go. */
 function landed(name: string, home: Home | null = null) {
-  leave(); // stop sharing the old cave
   forgetFile();
   setHome(home);
   cave.fileName = home?.file ?? `${name}${EXT}`;
@@ -83,6 +84,40 @@ async function openFileAt(home: Home): Promise<string | { path: string; file: Fi
   return bundle.scans.map((sc) => ({ path: sc.path, file: new File([sc.data as BlobPart], sc.path.slice(sc.path.lastIndexOf('/') + 1), { type: typeOf(sc.path) }) }));
 }
 
+const sha256 = async (s: string) =>
+  Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(s))), (b) => b.toString(16).padStart(2, '0')).join('');
+
+/**
+ * Opens one of the member's caves from its room on the server (one this shelf does not keep yet): fetches the
+ * room's snapshot and history, puts the cave on screen and keeps it on this shelf, where its room keeps it in step
+ * from then on. `waiting` when this device has no key for it yet; otherwise a sentence when it could not, or null.
+ */
+export async function openFromServer(roomId: string): Promise<'waiting' | string | null> {
+  await flush();
+  if (!confirmDiscard()) return null;
+  const access = await serverAccess();
+  if (!access) return "Can't reach the CaveCAD server. Check you are online and signed in, then try again.";
+  let got;
+  try {
+    got = await downloadCave(access, roomId);
+  } catch (e) {
+    console.warn('[rooms] download', e);
+    return "The cave could not be fetched from the server. Try again in a moment.";
+  }
+  if (got.status === 'waiting') return 'waiting';
+  if (got.status === 'unknown') return 'That cave is not on the server any more.';
+  const r = engine.syncLoad(got.snapshot ?? '[]');
+  if (r !== 'ok') return r.replace(/^error: /, '');
+  for (const ops of got.entries) engine.syncApply(ops);
+  if (engine.roomId() !== roomId) engine.setRoomId(roomId); // a room whose first snapshot was never uploaded
+  // All of this copy came from the room: its next open must not post it back whole.
+  await syncedHash.save(roomId, await sha256(engine.syncSnapshot()));
+  shelf.currentId = '';
+  landed(engine.shelfSummary()?.name ?? 'Cave');
+  if (!(await storeOpenCave())) return shelf.problem || 'The cave opened but this browser would not keep it.';
+  return null;
+}
+
 /** Opens one of the sample caves (a working copy; nothing is kept unless it is saved). */
 export async function openSample(id: string): Promise<string | null> {
   await flush();
@@ -93,6 +128,7 @@ export async function openSample(id: string): Promise<string | null> {
   if (r.startsWith('error')) return r.replace(/^error: /, '');
   shelf.currentId = '';
   landed(d.title.replace(/ \(.*\)$/, ''));
+  noRoomForThisCave(); // a sample never gets a room
   markSaved();
   return null;
 }

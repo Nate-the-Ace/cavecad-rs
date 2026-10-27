@@ -1,0 +1,142 @@
+<script lang="ts">
+  // Sign-in is required. Until the account is known this covers the whole page: loading, the first-sign-in
+  // welcome, the one-time "Where your caves live" notice, not invited, removed, or signed out. Offline it shows a strip instead and lets the app run.
+  import { untrack } from 'svelte';
+  import { Lock } from '@lucide/svelte';
+  import { account, finishWelcome, seeNotice } from '../../lib/account.svelte';
+  import { isDesktop } from '../../lib/desktop';
+  import { startDesktopSignIn } from '../../lib/desktop-signin';
+  import { flush } from '../../lib/shelf.svelte';
+
+  // The name field starts as the account's name once it is known; after that it is the person's to change (even to empty).
+  let name = $state('');
+  let seeded = false;
+  $effect(() => {
+    const n = account.member?.displayName;
+    if (n && !seeded) {
+      seeded = true;
+      untrack(() => (name = n));
+    }
+  });
+  let busy = $state(false);
+  let error = $state('');
+
+  const REASONS: Record<string, string> = $derived({
+    none: "which hasn't been invited. If you were invited at another address, sign in with that one.",
+    expired: `but this invite has expired. Ask ${account.inviter || 'whoever invited you'} for a new one.`,
+    used: 'but this invite was already used by another account.',
+    cancelled: `but this invite was cancelled. Ask ${account.inviter || 'whoever invited you'} if that's a mistake.`,
+    'other-email': "but this invite is for a different email. Sign in with the address the invite was sent to.",
+  });
+  async function done() {
+    busy = true;
+    error = '';
+    try {
+      await finishWelcome(name.trim() || account.member!.displayName);
+    } catch {
+      error = "Couldn't save that. Check your connection and try again.";
+    } finally {
+      busy = false;
+    }
+  }
+  async function noticeOk() {
+    busy = true;
+    error = '';
+    try {
+      await seeNotice();
+    } catch {
+      error = "Couldn't save that. Check your connection and try again.";
+    } finally {
+      busy = false;
+    }
+  }
+  // Signing in again, or as someone else, goes through TinyAuth: a reload of the page after its sign-out.
+  // The open cave is stored first, so the reload cannot lose an edit made in the last moment.
+  const signInAgain = async () => {
+    error = '';
+    account.signInError = '';
+    if (isDesktop()) void startDesktopSignIn().catch(() => (error = "Couldn't open the sign-in. Check your connection and try again."));
+    else {
+      await flush().catch(() => {});
+      location.reload();
+    }
+  };
+  const otherAccount = async () => {
+    await flush().catch(() => {});
+    location.href = (import.meta.env.VITE_SIGNOUT_URL as string | undefined) || '/';
+  };
+</script>
+
+{#snippet whereCavesLive()}
+  <p>Your caves are stored on CaveCAD's server and synced to your devices so you can work offline. Only people you give a seat in a cave's room can open it. The server's admins can technically read everything stored on it.</p>
+  <p>The server also knows your name, email, and when edits happened.</p>
+{/snippet}
+
+{#if account.phase === 'offline'}
+  <div class="strip" role="status">Offline: working on what's on this device</div>
+{:else if account.phase === 'offline-expired'}
+  <div class="strip warn" role="status">You've been offline over 30 days. Connect once to keep editing.</div>
+{:else if account.phase !== 'ready'}
+  <!-- Keys typed here stay here: the app's shortcuts listening on the window must not hear them. -->
+  <!-- svelte-ignore a11y_no_static_element_interactions -->
+  <div class="gate" data-account-gate onkeydown={(e) => e.stopPropagation()} onkeyup={(e) => e.stopPropagation()}>
+    <div class="card">
+      {#if account.phase === 'loading'}
+        <p class="hint">Opening CaveCAD…</p>
+      {:else if account.phase === 'welcome'}
+        <h2>Welcome, {account.member?.displayName}</h2>
+        <div class="note">
+          <Lock size={18} aria-hidden="true" />
+          <strong>Where your caves live</strong>
+          {@render whereCavesLive()}
+        </div>
+        <label class="lab" for="welcome-name">Name shown to others</label>
+        <input id="welcome-name" class="field" bind:value={name} maxlength="40" />
+        <!-- Connecting a cloud drive is for a later release (DrivesSection.svelte waits for it). -->
+        <div class="row"><button class="btn primary" disabled={busy} onclick={done}>Continue</button></div>
+      {:else if account.phase === 'notice'}
+        <!-- Shown once to members welcomed under the old note, which said the server could not read their caves. -->
+        <h2>Where your caves live</h2>
+        <div class="note">{@render whereCavesLive()}</div>
+        <div class="row"><button class="btn primary" disabled={busy} onclick={noticeOk}>OK</button></div>
+      {:else if account.phase === 'not-invited'}
+        <h2>CaveCAD is invite only for now</h2>
+        <p>You're signed in as {account.email}, {REASONS[account.reason] ?? REASONS.none}</p>
+        {#if account.tailnet}<p class="hint">This private copy knows you by your Tailscale account. To use another, sign in to Tailscale with it.</p>
+        {:else}<div class="row"><button class="btn" onclick={otherAccount}>Use another account</button></div>{/if}
+      {:else if account.phase === 'removed'}
+        <h2>Your CaveCAD account was removed</h2>
+        <p>You're signed in as {account.email}. Ask an admin if this is a mistake.</p>
+        {#if !account.tailnet}<div class="row"><button class="btn" onclick={otherAccount}>Use another account</button></div>{/if}
+      {:else if account.expired}
+        <h2>Your sign-in expired</h2>
+        <p>Sign in again to keep working. Your work on this device is kept.</p>
+        <div class="row"><button class="btn primary" onclick={signInAgain}>Sign in again</button></div>
+      {:else}
+        <h2>Sign in to CaveCAD</h2>
+        <p>Sign in with your Google account.</p>
+        <div class="row"><button class="btn primary" onclick={signInAgain}>Sign in</button></div>
+      {/if}
+      {#if account.signInError && !error}<p class="hint bad" role="alert">{account.signInError}</p>{/if}
+      {#if error}<p class="hint bad" role="alert">{error}</p>{/if}
+    </div>
+  </div>
+{/if}
+
+<style>
+  .gate { position: fixed; inset: 0; z-index: 100; display: grid; place-items: center; padding: 16px; background: var(--bg); }
+  .card { width: min(460px, 100%); display: flex; flex-direction: column; gap: 10px; padding: 20px 22px; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; color: var(--text); }
+  h2 { margin: 0; font-size: 18px; color: var(--text-strong); }
+  p { margin: 0; line-height: 1.5; }
+  .note { display: flex; flex-direction: column; gap: 6px; padding: 12px 14px; background: var(--accent-bg); border-radius: var(--radius); font-size: 13px; }
+  .lab { color: var(--muted); font-size: 12px; }
+  .field { font: inherit; background: var(--panel-2); color: var(--text); border: 1px solid var(--line); border-radius: var(--radius); padding: 6px 8px; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; }
+  .btn { padding: 6px 12px; background: var(--panel-2); color: var(--text); border: 1px solid var(--line); border-radius: var(--radius); cursor: pointer; font: inherit; }
+  .btn.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .btn:disabled { opacity: 0.5; }
+  .hint { color: var(--muted); font-size: 12px; }
+  .bad { color: var(--danger); }
+  .strip { position: fixed; left: 50%; bottom: 8px; transform: translateX(-50%); z-index: 70; padding: 4px 12px; border-radius: var(--radius); background: var(--panel); border: 1px solid var(--line); color: var(--muted); font-size: 12px; }
+  .strip.warn { color: var(--danger); border-color: var(--danger); }
+</style>

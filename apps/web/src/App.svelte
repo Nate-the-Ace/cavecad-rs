@@ -12,24 +12,23 @@
   import { cave, unsaved } from './lib/cave.svelte';
   import { guardUnload } from './lib/files';
   import { installDiagnostics } from './lib/diagnostics';
-  import { live, readInviteFromUrl } from './lib/sync.svelte';
   import CaveShelf from './components/CaveShelf.svelte';
-  import LiveShare from './components/LiveShare.svelte';
-  import ClassroomDock from './components/ClassroomDock.svelte';
-  import ClassroomDialogs from './components/ClassroomDialogs.svelte';
-  import ClassroomAlerts from './components/ClassroomAlerts.svelte';
-  import { classroom, keepsCave, openJoinUrl, readClassLinkFromUrl } from './lib/classroom.svelte';
+  import MovedPage from './components/MovedPage.svelte';
+  import { isOldJoinUrl, isOldLiveLink } from './lib/moved-link';
   import { listenForLinks } from './lib/desktop';
   import { syncDrawing } from './lib/drawing';
-  import { viewChanged } from './lib/p2p.svelte';
-  import { scans } from './lib/scans.svelte';
   import { autosaveSoon, flush, loadShelf, shelf } from './lib/shelf.svelte';
   import { checkRemembered } from './lib/scans.svelte';
+  import AccountGate from './components/account/AccountGate.svelte';
+  import { account, handleAuthLink, startAccount } from './lib/account.svelte';
+  import { startRooms } from './lib/room.svelte';
 
   let version = $state('loading engine…');
   let info = $state<BuildInfo | null>(null);
   let failed = $state<string | null>(null);
   let host: HTMLDivElement;
+  /** Opened from an old live, class or join link: say where those went (MovedPage.svelte). */
+  let moved = $state(isOldLiveLink(location.search));
 
   // The drawing's scale (and who changed it) is read again whenever the cave changes or another opens.
   let engineReady = $state(false);
@@ -64,15 +63,17 @@
   };
 
   onMount(() => {
+    void startAccount();
+    const stopRooms = startRooms(); // the open cave kept in step through its Private room
     window.addEventListener('keydown', noPageSelectAll);
     window.addEventListener('copy', onCopy);
     window.addEventListener('cut', onCut);
     window.addEventListener('paste', onPaste);
     const teardown = initWorkspace(host);
     installDiagnostics();
-    readInviteFromUrl();
-    readClassLinkFromUrl();
-    listenForLinks(openJoinUrl); // in the desktop app, a link that opened it
+    listenForLinks((url) => {
+      void handleAuthLink(url).then((signIn) => { if (!signIn && isOldJoinUrl(url)) moved = true; });
+    }); // in the desktop app, a link that opened it
     void checkRemembered(); // the scans kept from last time come back before any panel is opened
     const unguard = guardUnload();
     document.addEventListener('visibilitychange', keepNow);
@@ -84,14 +85,15 @@
         engineReady = true;
         syncDrawing();
         await loadShelf();
-        // A clean slate: the shelf opens first, unless someone sent an invite to a room.
-        if (!cave.hasCave && shelf.startup && !live.pending && !classroom.pending) shelf.open = true;
+        // A clean slate: the shelf opens first (an old live link opens it from the moved page instead).
+        if (!cave.hasCave && shelf.startup && !moved) shelf.open = true;
       } catch (e) {
         failed = String(e);
       }
       info = await loadBuildInfo();
     })();
     return () => {
+      stopRooms();
       unguard();
       document.removeEventListener('visibilitychange', keepNow);
       window.removeEventListener('pagehide', keepNow);
@@ -106,15 +108,7 @@
   // Edits are kept on the shelf a moment after they are made.
   $effect(() => {
     void cave.version;
-    if (keepsCave()) autosaveSoon(); // what a student is shown is the teacher's cave: not kept here
-  });
-  // The host tells guests where it is looking.
-  $effect(() => {
-    void cave.trip;
-    void cave.run;
-    void cave.station;
-    void scans.selected;
-    viewChanged();
+    autosaveSoon();
   });
   // A multiple selection belongs to the line that was picked first: picking another line on its own drops the rest.
   $effect(() => {
@@ -124,24 +118,38 @@
     }
   });
 
-  const keepNow = () => keepsCave() && void flush();
+  const keepNow = () => void flush();
 
   const dirty = $derived(unsaved());
   $effect(() => {
     document.title = `${dirty ? '• ' : ''}CaveCAD`; // a dot in the tab says there is something unsaved
   });
 
+  // While the sign-in gate covers the page, the app behind it is inert, and the keyboard shortcuts and
+  // clipboard handlers listening on the window don't hear keys meant for (or outside) the gate.
+  const open = $derived(account.phase === 'ready' || account.phase === 'offline' || account.phase === 'offline-expired');
+  $effect(() => {
+    if (open) return;
+    const TYPES = ['keydown', 'keyup', 'keypress', 'copy', 'cut', 'paste'];
+    const stop = (e: Event) => {
+      if ((e.target as Element | null)?.closest?.('[data-account-gate]')) return;
+      e.stopImmediatePropagation();
+    };
+    for (const t of TYPES) window.addEventListener(t, stop, { capture: true });
+    return () => {
+      for (const t of TYPES) window.removeEventListener(t, stop, { capture: true });
+    };
+  });
+
   const built = $derived(info?.builtAt ? new Date(info.builtAt).toLocaleTimeString() : '');
 </script>
 
-<div class="shell">
+<div class="shell" inert={!open}>
   <Ribbon />
   <SnapMenu />
   <NewCave />
   <CaveShelf />
-  <LiveShare />
-  <ClassroomDialogs />
-  <ClassroomAlerts />
+  <MovedPage bind:open={moved} />
   <LineMenu />
   <TextEditor />
   {#if info?.error}
@@ -150,7 +158,6 @@
   {#if failed}<p class="err">Engine failed to load: {failed}</p>{/if}
   <div class="body">
     <div class="workspace" bind:this={host}></div>
-    <ClassroomDock />
   </div>
   <footer>
     <span>{version}</span>
@@ -158,6 +165,7 @@
     {#if info}<span>build {info.git}{info.dirty ? '+' : ''} · {built}</span>{/if}
   </footer>
 </div>
+<AccountGate />
 
 <style>
   .shell { display: flex; flex-direction: column; height: 100%; }

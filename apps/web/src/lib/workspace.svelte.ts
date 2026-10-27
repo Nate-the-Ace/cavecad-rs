@@ -9,8 +9,6 @@ import { GroupActions, SveltePanel } from './dock-parts';
 import { setOption } from './cave.svelte';
 import { setLayoutHost } from './layouts.svelte';
 import { isDark, onTheme } from './theme';
-import { frontPanels, layoutShape, registerMirror } from './classroom-mirror';
-import { classroom } from './classroom.svelte';
 import MapPanel from '../panels/MapPanel.svelte';
 import ConsolePanel from '../components/Console.svelte';
 import ProfilePanel from '../panels/ProfilePanel.svelte';
@@ -22,6 +20,7 @@ import NotebookPanel from '../panels/NotebookPanel.svelte';
 import ScansPanel from '../panels/ScansPanel.svelte';
 import SurveyPanel from '../panels/SurveyPanel.svelte';
 import PatternsPanel from '../panels/PatternsPanel.svelte';
+import RoomsPanel from '../panels/RoomsPanel.svelte';
 
 const LAYOUT_KEY = 'cavecad.layout.v1';
 
@@ -47,6 +46,7 @@ export const PANELS: Record<string, PanelDef> = {
   sheet: { title: 'Sheet', component: SheetPanel, width: 520 },
   patterns: { title: 'Patterns', component: PatternsPanel, width: 560 },
   console: { title: 'Console', component: ConsolePanel, height: 260 },
+  rooms: { title: 'Rooms', component: RoomsPanel, width: 460, height: 360 },
 };
 
 /** Which panels are open right now (drives the View tab's toggles). */
@@ -127,7 +127,6 @@ export function initWorkspace(el: HTMLElement): () => void {
     refreshOpen();
     clearTimeout(timer);
     timer = setTimeout(() => {
-      if (classroom.role === 'student') return; // the teacher's arrangement is not this person's own
       try {
         localStorage.setItem(LAYOUT_KEY, JSON.stringify(a.toJSON()));
       } catch {
@@ -138,29 +137,9 @@ export function initWorkspace(el: HTMLElement): () => void {
   // Which tab is in front decides what can be seen, so a change of tab refreshes it too.
   const activeSub = a.onDidActivePanelChange(() => refreshOpen());
   const offTheme = onTheme((dark) => a.updateOptions({ theme: dark ? themeDark : themeLight }));
-  // In a class the teacher's arrangement of panels is mirrored: a different arrangement rebuilds the workspace,
-  // sizes and the tab in front are matched without rebuilding (so the views keep their place).
-  const offMirror = registerMirror('layout', {
-    read: () => ({ layout: a.toJSON() }),
-    write: (state) => {
-      const layout = (state as { layout?: unknown }).layout;
-      if (!layout) return;
-      if (layoutShape(layout) !== layoutShape(a.toJSON())) {
-        try {
-          a.fromJSON(layout as Parameters<DockviewApi['fromJSON']>[0]);
-        } catch {
-          return; // a layout this build cannot read: keep the one on screen
-        }
-        refreshOpen();
-        return;
-      }
-      for (const id of frontPanels(layout)) a.getPanel(id)?.api.setActive();
-    },
-  });
 
   return () => {
     setLayoutHost(null);
-    offMirror();
     clearTimeout(timer);
     layoutSub.dispose();
     offTheme();

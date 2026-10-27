@@ -1,14 +1,14 @@
-// Read-only mode for the engine: while a person is only watching a class, every call that would change
-// the cave (or replace it) is refused here, whatever part of the interface tried it. The panels, the
-// ribbon and the keyboard are also kept from acting (see `classroom.svelte.ts`), but this is the
-// guarantee: nothing a student does can reach their copy of the cave, so nothing can reach anyone else's.
+// Read-only mode for the engine: while the account is locked (an offline pass over 30 days old), every call
+// that would change the cave (or replace it) is refused here, whatever part of the interface tried it. This is
+// the guarantee: nothing done while locked reaches the cave.
 //
 // Every method of `engine` is listed below as one that reads or one that writes. A test
-// (`tests/classroom.check.ts`) fails when a method of `engine` is in neither list, so a new engine call
+// (`tests/readonly.check.ts`) fails when a method of `engine` is in neither list, so a new engine call
 // has to be classified when it is added.
 
 /** Engine calls that change or replace the open cave. */
 export const WRITES: readonly string[] = [
+  'setRoomId',
   'openDemo',
   'setShot',
   'setStationWalls',
@@ -47,6 +47,8 @@ export const WRITES: readonly string[] = [
   'scanSetComplete',
   'newCave',
   'openDxf',
+  'importSurvey',
+  'importFolder',
   'openNative',
   'addSectionSketch',
   'placeSection',
@@ -64,8 +66,8 @@ export const WRITES: readonly string[] = [
   'redo',
 ];
 
-/** Engine calls that only look. (`syncLoad` and `syncApply` are here on purpose: they are how the teacher's
- *  cave and edits arrive, and nothing a person does can call them.) */
+/** Engine calls that only look. (`syncLoad` and `syncApply` are here on purpose: they are how a cave's edits
+ *  arrive from the server, and nothing a person does can call them.) */
 export const READS: readonly string[] = [
   'version',
   'log',
@@ -74,6 +76,7 @@ export const READS: readonly string[] = [
   'fills',
   'fillMarks',
   'drawingScale',
+  'roomId',
   'linetypes',
   'symbols',
   'stationRows',
@@ -127,6 +130,7 @@ export const READS: readonly string[] = [
   'shelfSummarizeNative',
   'folderName',
   'folderPlan',
+  'roomIdOfNative',
   'revision',
   'syncOutbox',
   'syncApply',
@@ -135,6 +139,8 @@ export const READS: readonly string[] = [
   'scene',
   'shading',
   'saveDxf',
+  'surveyFormats',
+  'exportSurvey',
   'saveNative',
   'sectionStations',
   'sectionAt',
@@ -155,30 +161,61 @@ export const READS: readonly string[] = [
   'editState',
 ];
 
-/** Whether the engine refuses writes, and what it says. Set by the classroom for students. */
+/** Whether the engine refuses writes, and what it says. The account locks it (`setAccountLock`) while the
+ *  offline pass is too old to keep editing. `on` is what the engine checks. */
 export const readOnly = {
   on: false,
-  /** The teacher asked that the cave not be kept: saving, exporting and printing are off, and it is cleared when the student leaves. */
-  noKeep: false,
-  why: 'This is a class: only the teacher can change the cave.',
+  why: '',
 };
 
-const writes = new Set(WRITES);
-
-/** What a refused call gives back, in the shape its caller expects. */
-function refusal(name: string): unknown {
-  if (name === 'undo' || name === 'redo') return false;
-  if (name === 'openDxf') return { ok: false, message: readOnly.why, warnings: [] as string[] };
-  return `error: ${readOnly.why}`;
+/** The account's lock: on while the offline pass is too old to keep editing. */
+export function setAccountLock(on: boolean, why = ''): void {
+  readOnly.on = on;
+  readOnly.why = why;
 }
 
-/** Wraps the engine so that, while `readOnly.on`, every write is refused. Reads pass straight through. */
+/** The watcher's lock: on while the open cave is one this member only watches (a guest's Watcher seat). It refuses
+ *  every change to that cave, but not opening or making another (those replace the cave and end the watching). */
+export const watchLock = {
+  on: false,
+  why: "You're watching this cave: you can look but not change it.",
+};
+
+/** The writes a watcher may still make: each replaces the open cave with another one. */
+export const REPLACES: readonly string[] = ['setRoomId', 'openDemo', 'newCave', 'openDxf', 'importSurvey', 'importFolder', 'openNative'];
+
+/** Turns the watcher's lock on or off. */
+export function setWatchLock(on: boolean): void {
+  watchLock.on = on;
+}
+
+const writes = new Set(WRITES);
+const replaces = new Set(REPLACES);
+
+/** What a refused call gives back, in the shape its caller expects. */
+function refusal(name: string, why: string): unknown {
+  if (name === 'undo' || name === 'redo') return false;
+  if (name === 'openDxf' || name === 'importSurvey' || name === 'importFolder') return { ok: false, message: why, warnings: [] as string[] };
+  return `error: ${why}`;
+}
+
+/** Why a write is refused now, or '' when it may go ahead. */
+function refusedWhy(name: string): string {
+  if (readOnly.on) return readOnly.why || 'This cave is read-only.';
+  if (watchLock.on && !replaces.has(name)) return watchLock.why;
+  return '';
+}
+
+/** Wraps the engine so that, while `readOnly.on` (or the watcher's lock), writes are refused. Reads pass straight through. */
 export function guardEngine<T extends object>(raw: T): T {
   return new Proxy(raw, {
     get(target, prop, receiver) {
       const value = Reflect.get(target, prop, receiver);
       if (typeof prop === 'string' && typeof value === 'function' && writes.has(prop)) {
-        return (...args: unknown[]) => (readOnly.on ? refusal(prop) : (value as (...a: unknown[]) => unknown)(...args));
+        return (...args: unknown[]) => {
+          const why = refusedWhy(prop);
+          return why ? refusal(prop, why) : (value as (...a: unknown[]) => unknown)(...args);
+        };
       }
       return value;
     },

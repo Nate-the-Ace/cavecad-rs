@@ -5,8 +5,6 @@
   // their station and follow it when the survey is adjusted.
   import { drawHalo, type HaloLine } from '../lib/halo';
   import { onMount, untrack } from 'svelte';
-  import { fitRect, registerMirror, roundRect, visibleRect, type Rect } from '../lib/classroom-mirror';
-  import { classroom } from '../lib/classroom.svelte';
   import { onTheme } from '../lib/theme';
   import { Maximize, ChevronLeft, ChevronRight } from '@lucide/svelte';
   import PanelUndo from '../components/PanelUndo.svelte';
@@ -20,7 +18,7 @@ import { planFrame } from '../lib/snap-types';
   import { PenGuard, isEraser, widthFor } from '../lib/pen';
   import { drawStationMarker, isStampKind, leaderLook, liveWords, needsWords, stampEditSpot, withLabelSpot } from '../lib/symbols';
   import { isFillKind } from '../lib/fills';
-  import { cursorsFor, live as room, reportCursor } from '../lib/sync.svelte';
+  import { cursorsFor, presence as room, reportCursor } from '../lib/presence.svelte';
   import { drawCursor } from '../lib/presence-draw';
   import { FIT_SPACING, fitStroke, smooth } from '../lib/spline';
   import { drawing, liveStyle } from '../lib/line-style.svelte';
@@ -52,19 +50,6 @@ import { planFrame } from '../lib/snap-types';
   let ox = 0;
   let oy = 0;
   let frame = 0;
-  // In a class the teacher's view is mirrored: what is on show is the part of the section in the window, so a window of
-  // another size shows the same part.
-  $effect(() =>
-    registerMirror('section', {
-      read: () => (width > 0 && scale > 0 ? { rect: roundRect(visibleRect(scale, ox, oy, width, height)) } : undefined),
-      write: (state) => {
-        const rect = (state as { rect?: Rect }).rect;
-        if (!rect || width === 0) return;
-        ({ scale, ox, oy } = fitRect(rect, width, height));
-        schedule();
-      },
-    })
-  );
   let framed = '';
   let live: { pts: [number, number][]; widths: number[]; pressure: boolean } | null = null;
 
@@ -191,7 +176,6 @@ import { planFrame } from '../lib/snap-types';
   }
 
   function fit() {
-    if (classroom.role === 'student') return; // a student's view is the teacher's
     const s = section;
     if (!s || width === 0) return;
     const all = [...s.outline, ...s.measured, ...s.sketches.flatMap((k) => k.points)];
@@ -494,7 +478,7 @@ import { planFrame } from '../lib/snap-types';
   let cursorW: [number, number] | null = null;
   function onMove(e: PointerEvent) {
     if (e.pointerType !== 'touch') {
-      // tell the others where this pointer is (rate limited; nothing happens when not sharing)
+      // tell the others where this pointer is (rate limited; nothing is sent until room presence plugs in)
       const rr = canvas.getBoundingClientRect();
       const w = toWorld(e.clientX - rr.left, e.clientY - rr.top);
       cursorW = w;

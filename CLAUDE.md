@@ -25,8 +25,9 @@ the index useful; `missing_docs` is a warning for that reason.
   This is what makes undo, history and later co-editing possible.
 - **Source vs derived.** Store only what a person authored. Anything computed (adjustment, shaped
   lines, fills, profile views) is regenerated deterministically, with seeded randomness.
-- **Never log or store entrance coordinates** where a cave is shared. `cave-log` redacts as a
-  safety net, but do not rely on it. The per-cave `<cave>.log` is excluded from sanitized packages.
+- **Never log entrance coordinates or put them in URLs or files meant for sharing (exports, packages).**
+  The server stores caves, coordinates included (Nathan, 2026-10-26); `cave-log` redaction stays as a
+  safety net. The per-cave `<cave>.log` is excluded from sanitized packages.
 - **Tests with every change.** Convergence (order-independence) tests for anything merged.
 
 ## Commands

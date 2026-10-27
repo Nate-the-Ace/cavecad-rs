@@ -1,19 +1,19 @@
 <script lang="ts">
-  import RelaySettings from './RelaySettings.svelte';
   // The Cave Shelf: the window CaveCAD opens on. The caves this browser keeps are on the left (with a
   // few samples below); the one picked shows on the right: how big it is, where each trip started and
   // stopped, and the open ends where a new trip could pick up. Open it, add a trip to it, start a new
-  // cave, or bring one in from a file. Nothing here changes a cave except by opening it.
+  // cave, or bring one in from a file. Nothing here changes a cave except by opening it. Signed in, the caves kept on
+  // the CaveCAD server that this browser does not have yet (made on another device) are listed too, under "On your
+  // other devices"; opening one fetches it and keeps it here (server-caves.svelte.ts).
   import { untrack } from 'svelte';
   import { Copy, Star } from '@lucide/svelte';
-  import { leaveP2p, p2p } from '../lib/p2p.svelte';
-  import { classroom, openLinkText } from '../lib/classroom.svelte';
-  import { live, me, rename } from '../lib/sync.svelte';
   import { cave } from '../lib/cave.svelte';
   import { DEMOS } from '../lib/demos';
   import { engine, loadEngine, type CaveSummary } from '../lib/engine';
   import { openCave } from '../lib/files';
   import { openAtTrip, newTripOn, newTripOnSample, openKept, openSample } from '../lib/caves';
+  import { openServerCave, refreshServerCaves, serverCaves } from '../lib/server-caves.svelte';
+  import { account } from '../lib/account.svelte';
   import { dxfOf, forgetCave, homeOf, loadShelf, setFavorite, setRecordHome, setStartup, shelf, summaryOf, type ShelfRecord } from '../lib/shelf.svelte';
   import { findFolder, reachable, revealHome } from '../lib/cavefolder.svelte';
   import { folderExistsNative, isDesktop } from '../lib/desktop';
@@ -27,58 +27,44 @@
   let from = $state('');
   let message = $state('');
   let menu = $state<{ id: string; x: number; y: number } | null>(null);
-  /** Joining a session in progress: the host's link, pasted. */
-  let joining = $state(false);
-  let inviteText = $state('');
-  let joinProblem = $state('');
-
-  /** The link, pasted: the same page that opens when the link is opened in a browser comes up, asking for a name. */
-  function useLink() {
-    const problem = openLinkText(inviteText);
-    joinProblem = problem ?? '';
-    if (!problem) {
-      inviteText = '';
-      joining = false;
-      shelf.open = false;
-    }
-  }
-
-  function startJoin() {
-    joining = true;
-    joinProblem = '';
-    p2p.error = '';
-  }
-
-  function cancelJoin() {
-    leaveP2p();
-    joining = false;
-    inviteText = '';
-    joinProblem = '';
-  }
-
   $effect(() => {
     if (shelf.open) {
-      void loadEngine().then(() => loadShelf());
+      void loadEngine().then(() => loadShelf()).then(() => refreshServerCaves());
       message = '';
-      if (shelf.join) {
-        // Asked for from the ribbon: straight to the join page.
-        shelf.join = false;
-        joining = true;
-        joinProblem = '';
-        p2p.error = '';
-      }
     }
+  });
+
+  // While open, the caves on the server are read again now and then: a key handed over by another device shows up,
+  // and a cave someone asked to open opens by itself once its key is here (server-caves.svelte.ts).
+  $effect(() => {
+    if (!shelf.open) return;
+    void account.phase; // signing in (or out) while the shelf is open reads the list again
+    void account.member?.id;
+    untrack(() => void loadEngine().then(() => refreshServerCaves()));
+    const t = setInterval(() => void refreshServerCaves(), 15_000);
+    return () => clearInterval(t);
   });
 
   const shown = $derived(shelf.records.filter((r) => r.name.toLowerCase().includes(search.trim().toLowerCase())));
   const record = $derived(shelf.records.find((r) => r.id === picked) ?? null);
   const sample = $derived(picked.startsWith('sample:') ? (DEMOS.find((d) => `sample:${d.id}` === picked) ?? null) : null);
+  /** A cave on the server this browser does not keep yet. */
+  const remote = $derived(picked.startsWith('server:') ? (serverCaves.list.find((c) => `server:${c.id}` === picked) ?? null) : null);
+  const remoteShown = $derived(serverCaves.list.filter((c) => (c.name ?? '').toLowerCase().includes(search.trim().toLowerCase()) || (!c.name && !search.trim())));
+  const remoteMine = $derived(remoteShown.filter((c) => c.role === 'owner'));
+  const remoteShared = $derived(remoteShown.filter((c) => c.role !== 'owner'));
+  /** "Nathan's" (and "watching") for a cave shared with this member, or '' for their own. */
+  function whose(c: { role: string; ownerName: string }): string {
+    if (c.role === 'owner') return '';
+    return `${c.ownerName ? `${c.ownerName}'s` : 'shared with you'}${c.role === 'watcher' ? ' · watching' : ''}`;
+  }
+  const sharedOf = (shelfId: string) => serverCaves.all.find((c) => c.shelfId === shelfId && c.role !== 'owner');
 
   // Start on the cave in use, else the first one.
   $effect(() => {
     if (!shelf.open) return;
     untrack(() => {
-      if (!picked || (!record && !sample)) picked = shelf.records.find((r) => r.id === shelf.currentId)?.id ?? shelf.records[0]?.id ?? `sample:${DEMOS[0].id}`;
+      if (!picked || (!record && !sample && !remote)) picked = shelf.records.find((r) => r.id === shelf.currentId)?.id ?? shelf.records[0]?.id ?? `sample:${DEMOS[0].id}`;
     });
   });
 
@@ -87,9 +73,10 @@
   $effect(() => {
     const rec = record;
     const smp = sample;
+    const rem = remote;
     void loadEngine().then(() => {
       untrack(() => {
-        summary = rec?.summary ?? (smp ? engine.shelfSummarizeDemo(smp.json) : null);
+        summary = rec?.summary ?? (smp ? engine.shelfSummarizeDemo(smp.json) : (rem?.summary ?? null));
         from = '';
         if (rec && !rec.summary) void summaryOf(rec).then((s) => rec.id === picked && (summary = s));
       });
@@ -148,7 +135,10 @@
     if (!home || !(await revealHome(home).catch(() => false))) message = `That cave's folder is ${rec.home?.label ?? 'not set'}.`;
   }
 
-  const open = () => (record ? run(openKept(record.id)) : sample ? run(openSample(sample.id)) : undefined);
+  /** Fetches a cave from the server; one with no key here yet waits, and opens by itself when the key arrives. */
+  const openRemote = async (id: string) => (message = await openServerCave(id));
+
+  const open = () => (record ? run(openKept(record.id)) : sample ? run(openSample(sample.id)) : remote ? openRemote(remote.id) : undefined);
   const newTrip = () => (record ? run(newTripOn(record.id, from)) : sample ? run(newTripOnSample(sample.id, from)) : undefined);
   const atTrip = (index: number) => record && run(openAtTrip(record.id, index));
 
@@ -185,7 +175,7 @@
 
   function key(e: KeyboardEvent) {
     if (e.key === 'Escape') (menu ? (menu = null) : (shelf.open = false));
-    else if (e.key === 'Enter' && !joining && !(e.target as HTMLElement).closest('input,button,textarea')) void open();
+    else if (e.key === 'Enter' && !(e.target as HTMLElement).closest('input,button,textarea')) void open();
   }
 
   const close = () => (shelf.open = false);
@@ -193,33 +183,36 @@
 
 {#if shelf.open}
   <div class="veil" role="presentation" onclick={close}>
-    <div class="box" class:joinbox={joining} role="dialog" aria-modal="true" aria-label={joining ? 'Join a live session' : 'Caves'} tabindex="-1" onclick={(e) => e.stopPropagation()} onkeydown={key}>
-      {#if joining}
-        <div class="joinpage">
-          <h2>Join a live session</h2>
-          <p class="stats">Someone is sharing a cave live and sent you a link. Paste it here; then type your name and join. Their cave opens here and you work on it together, with nothing in between.</p>
-          <label class="field">Link <input bind:value={inviteText} placeholder="https://…?live=…" aria-label="Link from the host" onkeydown={(e) => e.key === 'Enter' && useLink()} /></label>
-          <div><button class="go" onclick={useLink} disabled={!inviteText.trim()}>Next</button></div>
-          <label class="check"><input type="checkbox" bind:checked={p2p.following} /> Follow what the host is looking at</label>
-          <label class="check" title="A public STUN service tells each device its public address so they can find each other across networks. No cave data goes through it."><input type="checkbox" bind:checked={p2p.stun} /> Connect across the internet</label>
-          <RelaySettings />
-          {#if joinProblem}<p class="err" role="alert">{joinProblem}</p>{/if}
-          {#if p2p.error}<p class="err" role="alert">{p2p.error}</p>{/if}
-          <div class="spacer"></div>
-          <div class="foot"><span class="grow"></span><button onclick={cancelJoin}>Back to my caves</button></div>
-        </div>
-      {:else}
+    <div class="box" role="dialog" aria-modal="true" aria-label="Caves" tabindex="-1" onclick={(e) => e.stopPropagation()} onkeydown={key}>
       <div class="rail">
         <input type="search" placeholder="Search caves" bind:value={search} aria-label="Search caves" />
         <div class="list" role="listbox" aria-label="Caves">
           {#each shown as r (r.id)}
             <button class="cave" class:sel={picked === r.id} role="option" aria-selected={picked === r.id} onclick={() => (picked = r.id)} ondblclick={open} oncontextmenu={(e) => rightClick(e, r.id)}>
               <span class="name">{#if r.favorite}<Star size={12} fill="currentColor" />{/if} {r.name}</span>
-              <span class="sub">{r.summary ? (r.summary.empty ? 'nothing surveyed yet' : `${r.summary.trips.length} trip${r.summary.trips.length === 1 ? '' : 's'} · ${length(r.summary.length_m)}`) : '…'}{r.id === shelf.currentId ? ' · open now' : ''}</span>
+              <span class="sub">{r.summary ? (r.summary.empty ? 'nothing surveyed yet' : `${r.summary.trips.length} trip${r.summary.trips.length === 1 ? '' : 's'} · ${length(r.summary.length_m)}`) : '…'}{r.id === shelf.currentId ? ' · open now' : ''}{sharedOf(r.id) ? ` · ${whose(sharedOf(r.id)!)}` : ''}</span>
             </button>
           {:else}
             <p class="none">{shelf.records.length ? 'No cave matches.' : 'No caves yet. Start one, or bring one in from a file.'}</p>
           {/each}
+          {#if remoteShared.length}
+            <div class="group" title="Caves of other members that you are a guest of">Shared with you</div>
+            {#each remoteShared as c (c.id)}
+              <button class="cave" class:sel={picked === `server:${c.id}`} role="option" aria-selected={picked === `server:${c.id}`} onclick={() => (picked = `server:${c.id}`)} ondblclick={open}>
+                <span class="name">{c.name ?? 'A shared cave'}</span>
+                <span class="sub">{serverCaves.opening === c.id ? 'fetching…' : whose(c)}</span>
+              </button>
+            {/each}
+          {/if}
+          {#if remoteMine.length}
+            <div class="group" title="Caves you keep on the CaveCAD server that this computer does not have yet">On your other devices</div>
+            {#each remoteMine as c (c.id)}
+              <button class="cave" class:sel={picked === `server:${c.id}`} role="option" aria-selected={picked === `server:${c.id}`} onclick={() => (picked = `server:${c.id}`)} ondblclick={open}>
+                <span class="name">{c.name ?? 'A cave from another device'}</span>
+                <span class="sub">{serverCaves.opening === c.id ? 'fetching…' : !c.hasKey ? 'waiting for a key' : c.summary && !c.summary.empty ? `${c.summary.trips.length} trip${c.summary.trips.length === 1 ? '' : 's'} · ${length(c.summary.length_m)}` : 'on the server'}</span>
+              </button>
+            {/each}
+          {/if}
           <div class="group">Samples</div>
           {#each DEMOS as d}
             <button class="cave" class:sel={picked === `sample:${d.id}`} onclick={() => (picked = `sample:${d.id}`)} ondblclick={open}>
@@ -230,18 +223,28 @@
         </div>
         <div class="row">
           <button onclick={() => { shelf.open = false; cave.newDialog = true; }}>New cave…</button>
-          <button onclick={importFile} title="A cave saved as a DXF file by CaveCAD">Import file…</button>
+          <button onclick={importFile} title="A cave saved as a DXF by CaveCAD, or a survey from Compass, Walls, Survex, Therion or a CSV file">Import file…</button>
         </div>
-        <button class="join" class:sel={joining} onclick={startJoin} title="Someone is sharing a cave live: paste the link they sent you">Join a live session…</button>
       </div>
 
       <div class="detail">
-        {#if (record || sample) && summary}
+        {#if remote && !summary}
+          <h2>{remote.name ?? 'A cave from another device'}</h2>
+          <p class="stats">Kept on the CaveCAD server by one of your other devices · made {when(remote.createdAt)}</p>
+          {#if !remote.hasKey}
+            <p class="wait">Waiting for a key: open CaveCAD once on a device that has this cave{serverCaves.waitingFor === remote.id ? '. It opens here by itself when the key arrives.' : ', then open it here.'}</p>
+          {:else}
+            <p class="stored">Open it to bring it onto this computer. It stays in step with your other devices.</p>
+          {/if}
+        {:else if (record || sample || remote) && summary}
           <h2>{summary.name}</h2>
           <p class="stats">
             {#if summary.empty}Nothing surveyed yet.{:else}{length(summary.length_m)} surveyed · {summary.stations} stations · {summary.trips.length} trip{summary.trips.length === 1 ? '' : 's'}{#if summary.depth_m !== null && summary.depth_m > 0} · {length(summary.depth_m)} deep{/if} · {health(summary)}{/if}
           </p>
-          {#if record?.home && lost}
+          {#if remote}
+            <p class="stored">On the CaveCAD server, from one of your other devices · made {when(remote.createdAt)}. Open it to bring it onto this computer; it stays in step with your other devices.</p>
+            {#if !remote.hasKey}<p class="wait">Waiting for a key: open CaveCAD once on a device that has this cave{serverCaves.waitingFor === remote.id ? '. It opens here by itself when the key arrives.' : ', then open it here.'}</p>{/if}
+          {:else if record?.home && lost}
             <div class="lost" role="alert">
               <span>Folder not found: {record.home.label}</span>
               <button onclick={() => find(record!)}>Find folder…</button>
@@ -273,17 +276,17 @@
           <p class="none big">Pick a cave on the left, or start a new one.</p>
         {/if}
         {#if shelf.problem}<p class="err" role="alert">{shelf.problem}</p>{/if}
+        {#if remote && serverCaves.problem}<p class="err" role="alert">{serverCaves.problem}</p>{/if}
         {#if message}<p class="err" role="alert">{message}</p>{/if}
         <div class="spacer"></div>
         <div class="foot">
           <label><input type="checkbox" checked={shelf.startup} onchange={(e) => setStartup(e.currentTarget.checked)} /> Open this window at startup</label>
           <span class="grow"></span>
           <button onclick={newTrip} disabled={(!record && !sample) || !summary} title="Open the cave and start a new trip on it">{from ? `New trip from ${from}` : 'New trip'}</button>
-          <button class="go" onclick={open} disabled={!record && !sample}>Open</button>
+          <button class="go" onclick={open} disabled={(!record && !sample && !remote) || !!serverCaves.opening}>{remote && serverCaves.opening === remote.id ? 'Fetching…' : remote && serverCaves.waitingFor === remote.id ? 'Waiting for key…' : 'Open'}</button>
           <button onclick={close}>{cave.hasCave ? 'Close' : 'Start empty'}</button>
         </div>
       </div>
-      {/if}
     </div>
   </div>
 
@@ -309,11 +312,6 @@
   .box { width: min(980px, 96vw); height: min(600px, 92vh); background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 10px; display: flex; outline: none; overflow: hidden; }
   .rail { width: 290px; flex: none; border-right: 1px solid var(--line); display: flex; flex-direction: column; gap: 8px; padding: 12px; }
   .list { flex: 1; overflow: auto; display: flex; flex-direction: column; gap: 2px; }
-  button.join { margin-top: 2px; }
-  button.join.sel { background: var(--accent-bg); border-color: var(--accent); }
-  .field { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); }
-  .field input { font: inherit; font-size: 13px; padding: 5px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel-2); color: var(--text); }
-  .check { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
   .group { font-size: 11px; font-weight: 600; color: var(--muted); padding: 10px 6px 2px; }
   .cave { text-align: left; display: flex; flex-direction: column; gap: 1px; padding: 6px 8px; border: none; background: none; border-radius: 6px; color: var(--text); cursor: pointer; font: inherit; }
   .cave:hover { background: var(--panel-2); }
@@ -322,9 +320,6 @@
   .cave .sub { font-size: 11px; color: var(--muted); }
   .row { display: flex; gap: 6px; }
   .row button { flex: 1; }
-  .joinbox { width: min(640px, 96vw); height: auto; max-height: 92vh; }
-  .joinpage .field input { flex: 1; min-width: 0; }
-  .joinpage { flex: 1; min-width: 0; padding: 20px 24px; display: flex; flex-direction: column; gap: 10px; overflow: auto; }
   .detail { flex: 1; min-width: 0; padding: 16px 20px; display: flex; flex-direction: column; gap: 8px; }
   h2 { margin: 0; font-size: 22px; }
   .stats { margin: 0; color: var(--text); font-size: 13px; }
@@ -348,6 +343,7 @@
   .grow { flex: 1; }
   .none { color: var(--muted); font-size: 12px; padding: 8px 6px; }
   .none.big { font-size: 14px; padding: 40px 0; text-align: center; }
+  .wait { margin: 0; font-size: 12px; color: var(--text); background: var(--accent-bg); border: 1px solid var(--accent); border-radius: 6px; padding: 6px 10px; }
   .err { margin: 0; color: var(--danger); font-size: 12px; }
   input[type='search'] { font: inherit; font-size: 13px; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel-2); color: var(--text); }
   button { font: inherit; font-size: 13px; padding: 6px 12px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel-2); color: var(--text); cursor: pointer; }
