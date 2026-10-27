@@ -281,6 +281,7 @@
         <div class="spacer"></div>
         <div class="foot">
           <label><input type="checkbox" checked={shelf.startup} onchange={(e) => setStartup(e.currentTarget.checked)} /> Open this window at startup</label>
+          {#if record}<button onclick={() => void forget(record!.id)} title="Take this cave off the shelf on this device">Forget…</button>{/if}
           <span class="grow"></span>
           <button onclick={newTrip} disabled={(!record && !sample) || !summary} title="Open the cave and start a new trip on it">{from ? `New trip from ${from}` : 'New trip'}</button>
           <button class="go" onclick={open} disabled={(!record && !sample && !remote) || !!serverCaves.opening}>{remote && serverCaves.opening === remote.id ? 'Fetching…' : remote && serverCaves.waitingFor === remote.id ? 'Waiting for key…' : 'Open'}</button>
