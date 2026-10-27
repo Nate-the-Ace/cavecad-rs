@@ -341,6 +341,7 @@ dependencies = [
  "cave-formats",
  "cave-geo",
  "cave-geom",
+ "cave-geomag",
  "cave-id",
  "cave-instrument",
  "cave-log",

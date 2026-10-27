@@ -77,6 +77,7 @@ export const READS: readonly string[] = [
   'surfacePlan',
   'surfaceGround',
   'surfaceLayers',
+  'surfaceTerrain',
   'surfacePick',
   'log',
   'events',

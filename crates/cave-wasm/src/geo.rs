@@ -21,19 +21,21 @@ fn entrance(scene: &cave_scene::Scene, station: cave_id::Id) -> Option<[f64; 3]>
     scene.stations.iter().find(|s| s.id == id).map(|s| s.at)
 }
 
-/// The placement of the cave on the Earth, the stored location, the entrance's solved position.
-fn placement(doc: &Document, adjusted: bool) -> Result<(Placement, Location, [f64; 3]), String> {
+type Placed = (Placement, Location, [f64; 3], cave_scene::Scene);
+
+/// The placement of the cave on the Earth, the stored location, the entrance's solved position, the scene.
+fn placement(doc: &Document, adjusted: bool) -> Result<Placed, String> {
     let loc = record::location(doc).ok_or("no location")?;
     let scene = cave_scene::build(doc, adjusted);
     let at = entrance(&scene, loc.station).ok_or("the entrance station has no position")?;
-    Ok((Placement::new([at[0], at[1]], loc.at()), loc, at))
+    Ok((Placement::new([at[0], at[1]], loc.at()), loc, at, scene))
 }
 
 type WithSurface = (Placement, Location, [f64; 3], SurfaceRecord);
 
 /// Placement in the zone the surface was cut in (a stored surface keeps its zone).
 fn surface_placement(doc: &Document, adjusted: bool) -> Result<WithSurface, String> {
-    let (p, loc, at) = placement(doc, adjusted)?;
+    let (p, loc, at, _) = placement(doc, adjusted)?;
     let s = record::surface(doc).ok_or("no surface")?;
     Ok((Placement::in_zone(p.anchor(), loc.at(), s.zone), loc, at, s))
 }
@@ -121,7 +123,10 @@ pub fn geo_set_location(json_in: &str) -> String {
         let Ok(station) = req.station.parse::<cave_id::Id>() else {
             return err("unknown station");
         };
-        if doc.entity(station).is_none() {
+        if doc
+            .entity(station)
+            .is_none_or(|e| e.kind() != Kind::Station)
+        {
             return err("unknown station");
         }
         let loc = Location {
@@ -162,16 +167,22 @@ pub fn surface_plan(photo: bool, elevation: bool, adjusted: bool) -> String {
         let Some(doc) = slot.as_ref() else {
             return err("no cave is open");
         };
-        let (place, loc, at) = match placement(doc, adjusted) {
+        let (place, loc, at, scene) = match placement(doc, adjusted) {
             Ok(v) => v,
             Err(e) => return err(e),
         };
-        let scene = cave_scene::build(doc, adjusted);
-        let cave = scene
-            .bounds
-            .map_or([at[0], at[1], at[0], at[1]], |b| [b[0], b[1], b[3], b[4]]);
-        let b = request::window(cave, &place);
-        let zone = place.zone();
+        // Re-fetching one part of a surface cut for this very location keeps its window, so the part
+        // already on disk still matches the new one.
+        let kept = record::surface(doc).filter(|s| s.for_at == loc.at() && !(photo && elevation));
+        let (b, zone) = match kept {
+            Some(s) => (s.bounds, s.zone),
+            None => {
+                let cave = scene
+                    .bounds
+                    .map_or([at[0], at[1], at[0], at[1]], |b| [b[0], b[1], b[3], b[4]]);
+                (request::window(cave, &place), place.zone())
+            }
+        };
         let part = |s, url: fn(&Bounds, i32, (u32, u32)) -> String| {
             let (w, h) = request::pixel_size(&b, s);
             Part {
@@ -218,7 +229,8 @@ pub fn surface_commit(plan_json: &str, ground_m: f64, today: &str) -> String {
         let Some(doc) = slot.as_mut() else {
             return err("no cave is open");
         };
-        let old = record::surface(doc);
+        // A stored part is kept only if it was cut to exactly this window; otherwise it is dropped.
+        let old = record::surface(doc).filter(|s| s.zone == plan.zone && s.bounds == plan.bounds);
         let rec = SurfaceRecord {
             zone: plan.zone,
             bounds: plan.bounds,
@@ -262,7 +274,7 @@ pub fn set_contour_interval(metres: f64) -> String {
     })
 }
 
-/// What the views draw (JSON `{photo_matrix?, photo_size?, contours, terrain?, stale}`). `tiff` may be empty (photo only).
+/// What the views draw (JSON `{photo_matrix?, photo_size?, contours, stale}`). `tiff` may be empty (photo only).
 #[wasm_bindgen]
 pub fn surface_layers(tiff: &[u8], interval: f64, feet: bool, adjusted: bool) -> String {
     DOC.with(|d| {
@@ -278,20 +290,40 @@ pub fn surface_layers(tiff: &[u8], interval: f64, feet: bool, adjusted: bool) ->
         let photo = s
             .photo
             .map(|[w, h]| cave_geo::layers::photo_matrix(&s.bounds, (w, h), &place));
-        let (contours, terrain) = match Grid::parse_tiff(tiff) {
-            Ok(g) => (
-                if interval.is_finite() && interval > 0.0 {
-                    cave_geo::layers::contours(
-                        &g, &s.bounds, &place, interval, feet, offset, at[2],
-                    )
-                } else {
-                    Vec::new()
-                },
-                cave_geo::layers::terrain(&g, &s.bounds, &place, offset),
-            ),
-            Err(_) => (Vec::new(), None),
+        let contours = match Grid::parse_tiff(tiff) {
+            Ok(g) if interval.is_finite() && interval > 0.0 => {
+                cave_geo::layers::contours(&g, &s.bounds, &place, interval, feet, offset, at[2])
+            }
+            _ => Vec::new(),
         };
-        json!({"photo_matrix": photo, "photo_size": s.photo, "contours": contours, "terrain": terrain, "stale": s.for_at != loc.at()}).to_string()
+        json!({"photo_matrix": photo, "photo_size": s.photo, "contours": contours, "stale": s.for_at != loc.at()}).to_string()
+    })
+}
+
+/// The ground as a mesh, as numbers not text: `[w, h, x0, y0, z0, x1, ...]` (cave metres, NaN z for holes).
+/// Empty when there is no surface, no datum offset, or the TIFF does not parse.
+#[wasm_bindgen]
+pub fn surface_terrain(tiff: &[u8], adjusted: bool) -> Vec<f32> {
+    DOC.with(|d| {
+        let slot = d.borrow();
+        let Some(doc) = slot.as_ref() else {
+            return Vec::new();
+        };
+        let Ok((place, loc, at, s)) = surface_placement(doc, adjusted) else {
+            return Vec::new();
+        };
+        let offset = cave_geo::layers::datum_offset(loc.ground_m, at[2]);
+        let Ok(g) = Grid::parse_tiff(tiff) else {
+            return Vec::new();
+        };
+        let Some(t) = cave_geo::layers::terrain(&g, &s.bounds, &place, offset) else {
+            return Vec::new();
+        };
+        let mut out = Vec::with_capacity(2 + t.xyz.len());
+        out.push(t.w as f32);
+        out.push(t.h as f32);
+        out.extend(t.xyz.iter().map(|v| *v as f32));
+        out
     })
 }
 
@@ -401,5 +433,96 @@ mod tests {
         assert_eq!(set_contour_interval(5.0), "ok");
         assert_eq!(status()["interval_m"], 5.0);
         assert!(set_contour_interval(0.0).starts_with("error"));
+    }
+
+    fn plan(photo: bool, elevation: bool) -> serde_json::Value {
+        serde_json::from_str(&surface_plan(photo, elevation, false)).unwrap()
+    }
+
+    #[test]
+    fn refetching_one_part_keeps_the_window_and_a_moved_cave_drops_the_old_part() {
+        crate::open_demo(CAVE);
+        assert_eq!(set_loc(""), "ok");
+        let both = plan(true, true);
+        assert_eq!(surface_commit(&both.to_string(), f64::NAN, "d1"), "ok");
+        // (i) same location, one part: the stored window is reused.
+        let one = plan(false, true);
+        assert_eq!(one["bounds"], both["bounds"]);
+        assert_eq!(one["zone"], both["zone"]);
+        assert_eq!(surface_commit(&one.to_string(), f64::NAN, "d2"), "ok");
+        let s = status();
+        assert!(s["surface"]["photo"].is_array() && s["surface"]["elevation"].is_array());
+
+        // (ii) moved cave, one part: a new window, and the old photo goes.
+        let moved = format!(
+            r#"{{"station":"{}","lat":36.95,"lon":-86.4,"source":"typed"}}"#,
+            station("A1")
+        );
+        assert_eq!(geo_set_location(&moved), "ok");
+        let one = plan(false, true);
+        assert_ne!(one["bounds"], both["bounds"]);
+        assert_eq!(surface_commit(&one.to_string(), f64::NAN, "d3"), "ok");
+        let s = status();
+        assert!(s["surface"]["photo"].is_null(), "the old photo is dropped");
+        assert!(s["surface"]["elevation"].is_array());
+    }
+
+    #[test]
+    fn the_location_station_must_be_a_station() {
+        crate::open_demo(CAVE);
+        let shot = crate::DOC.with(|d| {
+            let slot = d.borrow();
+            slot.as_ref().unwrap().ids_of(Kind::Shot)[0].to_string()
+        });
+        let r = geo_set_location(&format!(
+            r#"{{"station":"{shot}","lat":36.9,"lon":-86.4,"source":"typed"}}"#
+        ));
+        assert_eq!(r, "error: unknown station");
+        assert_eq!(set_loc(""), "ok");
+    }
+
+    #[test]
+    fn real_3dep_fixture_gives_contours_terrain_and_a_pick() {
+        const TIF: &[u8] = include_bytes!("../../cave-geo/tests/data/bowling-green-200.tif");
+        crate::open_demo(CAVE);
+        let (lat, lon) = cave_geomag::utm_to_latlon(550100.0, 4094100.0, 16);
+        let r = geo_set_location(&format!(
+            r#"{{"station":"{}","lat":{lat},"lon":{lon},"source":"typed"}}"#,
+            station("A1")
+        ));
+        assert_eq!(r, "ok");
+        let plan = serde_json::json!({
+            "zone": 16,
+            "bounds": {"xmin": 550000.0, "ymin": 4094000.0, "xmax": 550200.0, "ymax": 4094200.0},
+            "for_at": {"lat": lat, "lon": lon},
+            "elevation": {"w": 200, "h": 200, "url": "x"},
+        })
+        .to_string();
+        let ground = surface_ground(&plan, TIF);
+        assert!(ground.is_finite());
+        assert_eq!(surface_commit(&plan, ground, "2026-10-27"), "ok");
+
+        let l: serde_json::Value =
+            serde_json::from_str(&surface_layers(TIF, 2.0, false, false)).unwrap();
+        assert!(!l["contours"].as_array().unwrap().is_empty());
+        assert!(l.get("terrain").is_none());
+
+        let g = Grid::parse_tiff(TIF).unwrap();
+        let vals: Vec<f64> = (0..g.h)
+            .flat_map(|r| (0..g.w).map(move |c| (c, r)))
+            .filter_map(|(c, r)| g.at(c, r))
+            .collect();
+        let (lo, hi) = vals
+            .iter()
+            .fold((f64::MAX, f64::MIN), |(a, b), v| (a.min(*v), b.max(*v)));
+        let p: serde_json::Value =
+            serde_json::from_str(&surface_pick(TIF, 0.0, 0.0, 30.0, false)).unwrap();
+        let gm = p["ground_m"].as_f64().unwrap();
+        assert!(gm >= lo && gm <= hi, "{gm} not in {lo}..{hi}");
+
+        let t = surface_terrain(TIF, false);
+        assert_eq!(t.len(), 2 + 200 * 200 * 3);
+        assert_eq!((t[0], t[1]), (200.0, 200.0));
+        assert!(surface_terrain(&[], false).is_empty());
     }
 }

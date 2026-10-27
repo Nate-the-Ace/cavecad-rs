@@ -44,3 +44,6 @@ serde_json = { version = "1", features = ["float_roundtrip"] }
 
 [package.metadata.wasm-pack.profile.release]
 wasm-opt = false
+
+[dev-dependencies]
+cave-geomag = { path = "../cave-geomag" }
