@@ -28,6 +28,16 @@ thread_local! {
     static HISTORY: RefCell<HashMap<String, History>> = RefCell::new(HashMap::new());
     /// The line most recently added with `add_map_line`, `add_profile_sketch` or `add_section_sketch`.
     static LAST_ADDED: RefCell<String> = const { RefCell::new(String::new()) };
+    /// Counts every time the open cave is replaced (`install` is the only door), so work that began
+    /// against one cave can tell it landed in another.
+    static DOC_SERIAL: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+}
+
+/// Changes whenever the open cave is replaced (opening, syncing, starting a new one). Compare two
+/// readings to know whether the cave under a long-running job is still the one it began with.
+#[wasm_bindgen]
+pub fn doc_serial() -> u32 {
+    DOC_SERIAL.with(|s| s.get())
 }
 
 fn console() -> &'static LogBuffer {
@@ -108,6 +118,7 @@ fn install(mut doc: Document) {
     doc.set_actor(random_actor());
     doc.take_outbox();
     DOC.with(|d| *d.borrow_mut() = Some(doc));
+    DOC_SERIAL.with(|s| s.set(s.get().wrapping_add(1)));
     HISTORY.with(|h| h.borrow_mut().clear());
 }
 
@@ -1654,6 +1665,18 @@ mod tests {
 
     fn open_result(text: &str) -> serde_json::Value {
         serde_json::from_str(&open_dxf(text)).unwrap()
+    }
+
+    #[test]
+    fn the_document_serial_changes_whenever_the_cave_is_replaced() {
+        let a = doc_serial();
+        open_demo(CAVE);
+        let b = doc_serial();
+        assert_ne!(a, b);
+        assert_eq!(sync_load("[]"), "ok");
+        let c = doc_serial();
+        assert_ne!(b, c);
+        assert_eq!(doc_serial(), c, "reading it changes nothing");
     }
 
     #[test]

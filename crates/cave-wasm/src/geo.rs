@@ -354,6 +354,22 @@ pub fn surface_layers(tiff: &[u8], interval: f64, feet: bool, adjusted: bool) ->
     })
 }
 
+/// Where the entrance station sits now (cave metres, `[x, y, z]`), or empty when the cave has no
+/// location or the station is unknown. Cheap: lets the web app notice an edit that moved it.
+#[wasm_bindgen]
+pub fn geo_entrance_xyz(adjusted: bool) -> Vec<f64> {
+    DOC.with(|d| {
+        let slot = d.borrow();
+        let Some(doc) = slot.as_ref() else {
+            return Vec::new();
+        };
+        match placement(doc, adjusted) {
+            Ok((_, _, at, _)) => at.to_vec(),
+            Err(_) => Vec::new(),
+        }
+    })
+}
+
 /// The ground as a mesh, as numbers not text: `[w, h, x0, y0, z0, x1, ...]` (cave metres, NaN z for holes).
 /// Empty when there is no surface, no datum offset, or the TIFF does not parse.
 #[wasm_bindgen]

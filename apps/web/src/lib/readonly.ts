@@ -74,6 +74,8 @@ export const WRITES: readonly string[] = [
 export const READS: readonly string[] = [
   'version',
   'geoStatus',
+  'docSerial',
+  'geoEntranceXyz',
   'surfacePlan',
   'surfacePlanForRecord',
   'surfaceGround',
