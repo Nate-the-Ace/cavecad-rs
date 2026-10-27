@@ -59,11 +59,12 @@ each one value written whole, so the parts of a location can never be half-updat
   - `source`: `import`, `typed`, `map`, or `surface-pick`, for the report and for trust.
 - **`surface`**: what was downloaded (the same record as `surface/surface.json`, kept as a setting
   so edits and undo cover it):
-  `{zone, bounds:[xmin,ymin,xmax,ymax], photo:{w,h}?, elevation:{w,h}?, for:{lat,lon}}` in UTM
-  metres of `zone`. `for` is the location it was cut around; the 3D terrain and contours read
+  `{zone, bounds:{xmin,ymin,xmax,ymax}, photo:[w,h]?, elevation:[w,h]?, for_at:{lat,lon}, fetched}` in UTM
+  metres of `zone` (`surface/surface.json` is this exact JSON). `for_at` is the location it was cut around; the 3D terrain and contours read
   `bounds`, **never recompute it** (the window grows as the cave is drawn; recomputing slides the
   hillside, measured in the old app).
-- **`contour-interval`**: the contour spacing in the cave's display unit, default 10 ft / 5 m.
+- **`contour-interval`**: the contour spacing, stored in METRES (default 10 ft / 5 m); shown and
+  typed in the display unit, rounded to 3 decimals so 10 ft stays 10 ft.
 
 No survey `Elevation`, station position or fixed coordinate is rewritten by anything here.
 
