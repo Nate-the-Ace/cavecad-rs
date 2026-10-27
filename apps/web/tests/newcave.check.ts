@@ -106,6 +106,15 @@ check('an existing Scans/ is not doubled', !old.dirs.has('scans') && text(old.di
 check('no exports/ beside an old PDF/', !old.dirs.has('exports') && old.dirs.has('survey'));
 check('exports go to the old PDF/', (await exportsIn(old, plan)).name === 'PDF');
 
+// Chrome will not hand over Documents itself, so the picked folder may be the cave's own folder
+const own = dir('Lantern Cave');
+check('an empty folder picked with the cave\'s name counts as nothing there', (await lookIn(own, 'Lantern Cave', plan)).kind === 'empty');
+const same = await makeIn(own, 'Lantern Cave', plan);
+check('the picked folder is the cave folder: no folder inside it', same === own && !own.dirs.has('Lantern Cave') && own.dirs.has('scans'));
+own.files.set('Lantern Cave.cavecad', bytes('cave'));
+check('a picked cave folder holding a cave is found', (await lookIn(own, 'Lantern Cave', plan)).kind === 'hasCave');
+check('another name still makes a folder inside', (await lookIn(dir('Caves'), 'Lantern Cave', plan)).kind === 'empty');
+
 if (failures) {
   console.log(`${failures} failed`);
   process.exit(1);

@@ -8,6 +8,8 @@
   import { workLayout } from '../lib/workspace.svelte';
   import { shelf } from '../lib/shelf.svelte';
   import { canMakeFolders, choosePlace, folderNameOf, look, make, startPlace, type Place } from '../lib/cavefolder.svelte';
+  import { isDesktop } from '../lib/desktop';
+  import { isCaveFolder } from '../lib/folder-handle';
 
   let name = $state('');
   let unit = $state<'ft' | 'm'>(cave.units === 'imperial' ? 'ft' : 'm');
@@ -26,7 +28,15 @@
   });
 
   const typed = () => name.trim() || 'New cave';
-  const where = $derived(place ? `${place.label.replace(/[\\/]+$/, '')}/${folderNameOf(typed())}` : `Documents/${folderNameOf(typed())}`);
+  /** A browser starts with nothing picked: Chrome will not give a page Documents itself, only a folder inside it. */
+  const browser = !isDesktop();
+  const where = $derived(
+    !place
+      ? browser ? 'Not chosen yet' : `Documents/${folderNameOf(typed())}`
+      : place.kind === 'handle' && isCaveFolder(place.handle, folderNameOf(typed()))
+        ? place.label
+        : `${place.label.replace(/[\\/]+$/, '')}/${folderNameOf(typed())}`,
+  );
 
   async function choose() {
     found = null;
@@ -129,6 +139,7 @@
             <button onclick={choose} disabled={busy}>Choose…</button>
           </div>
           <span class="small">A folder named after the cave, with scans, survey, images, lidar, surface, documents, trips, exports and backup inside. The cave file goes in it.</span>
+          {#if browser}<span class="small">The browser can't use Documents itself: choose a folder inside it, such as Documents/Caves, or make one there with New Folder. A folder you make with the cave's name is used as the cave's folder.</span>{/if}
         </div>
       {:else}
         <p class="hint">This cave is kept in this browser. Export → Project gives you a folder of it; Chrome, Edge and the desktop app can make the folder for you.</p>

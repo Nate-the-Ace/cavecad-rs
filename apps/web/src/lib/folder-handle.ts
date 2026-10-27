@@ -47,15 +47,26 @@ export async function childDir(dir: Dir, name: string): Promise<Dir | null> {
   }
 }
 
-/** What is under `folder` in `parent`: nothing, a folder with a cave in it, or one without. */
+/**
+ * True when the folder picked is the cave's folder itself rather than the place for it. Chrome will not
+ * hand a page Documents, Desktop or Downloads themselves, only folders inside them, so someone may well
+ * make "Truitt Cave" in the picker and choose that.
+ */
+export const isCaveFolder = (picked: Dir, folder: string): boolean => picked.name.localeCompare(folder, undefined, { sensitivity: 'accent' }) === 0;
+
+/** What is under `folder` in `parent` (or in `parent` itself, when it is that folder): nothing, a folder with a cave in it, or one without. */
 export async function lookIn(parent: Dir, folder: string, plan: Plan): Promise<FolderPlan['place']> {
+  if (isCaveFolder(parent, folder)) {
+    const names = await namesIn(parent);
+    return plan(names.length ? names : null, [], '', '').place; // a folder just made for the cave is as good as none
+  }
   const dir = await childDir(parent, folder);
   return plan(dir ? await namesIn(dir) : null, [], '', '').place;
 }
 
-/** Makes (or completes) the cave's folder under `parent` with the subfolders it is missing. Nothing in it is touched. */
+/** Makes (or completes) the cave's folder under `parent` (or `parent` itself, when it is that folder) with the subfolders it is missing. Nothing in it is touched. */
 export async function makeIn(parent: Dir, folder: string, plan: Plan): Promise<Dir> {
-  const dir = await parent.getDirectoryHandle(folder, { create: true });
+  const dir = isCaveFolder(parent, folder) ? parent : await parent.getDirectoryHandle(folder, { create: true });
   for (const sub of plan(await namesIn(dir), [], '', '').missing) await dir.getDirectoryHandle(sub, { create: true });
   return dir;
 }
