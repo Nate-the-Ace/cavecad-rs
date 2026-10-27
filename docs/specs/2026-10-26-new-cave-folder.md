@@ -168,6 +168,12 @@ Where it differs from the plan above:
 - **"Make a project folder…" is the ribbon's File → Folder button**, not a line under Save. With a
   folder it reveals it (desktop) or says where it is (browser). It never switches the Scans panel,
   since the pages on show travel inside the file.
+- **Chrome will not give a page Documents itself** (nor Desktop or Downloads): it says the folder
+  "contains system files" and offers another. Folders inside them are fine. So in a browser the dialog
+  starts with nothing chosen and says to pick a folder inside Documents (such as `Documents/Caves`) or
+  make one with the picker's New Folder button; a picked folder with the cave's own name is used as the
+  cave's folder itself instead of getting a second one inside it. Found live 2026-10-27. The desktop
+  app has no such limit.
 - **A browser shelf only says "Folder not found" once it has permission to look**; before the first
   click of a session it shows the folder as usual and finds out on Open.
 

@@ -19,7 +19,7 @@ import {
   writeCaveNative,
   writeExportNative,
 } from './desktop';
-import { allowed, exportsIn, lookIn, makeIn, readIn, scansIn, writeIn, type Dir, type Plan } from './folder-handle';
+import { allowed, exportsIn, isCaveFolder, lookIn, makeIn, readIn, scansIn, writeIn, type Dir, type Plan } from './folder-handle';
 import { openHandle, openNative } from './scans.svelte';
 
 /** Where a cave's folder is. */
@@ -110,7 +110,8 @@ export async function look(place: Place, name: string): Promise<{ label: string;
     const r = await lookCavePlaceNative(place.path, name);
     return { label: r.folder, place: r.place };
   }
-  return { label: `${place.label}/${dir}`, place: await lookIn(place.handle, dir, plan) };
+  const label = isCaveFolder(place.handle, dir) ? place.label : `${place.label}/${dir}`;
+  return { label, place: await lookIn(place.handle, dir, plan) };
 }
 
 /** Makes (or completes) the cave's folder in `place`, for a cave file called `file`. */
@@ -121,7 +122,7 @@ export async function make(place: Place, name: string, file = `${folderNameOf(na
     return { kind: 'path', path, file, label: path };
   }
   const handle = await makeIn(place.handle, dir, plan);
-  return { kind: 'handle', handle, file, label: `${place.label}/${dir}` };
+  return { kind: 'handle', handle, file, label: isCaveFolder(place.handle, dir) ? place.label : `${place.label}/${dir}` };
 }
 
 /** The person's local time to the minute, as backups are named. */
