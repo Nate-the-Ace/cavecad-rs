@@ -21,7 +21,8 @@
 
 <script lang="ts">
   import { engine, loadEngine } from '../lib/engine';
-  import { exportDxf, exportProject, openCave, saveCave } from '../lib/files';
+  import { caveFolder, exportDxf, exportProject, openCave, saveCave } from '../lib/files';
+  import { folder } from '../lib/cavefolder.svelte';
   import { shelf } from '../lib/shelf.svelte';
   import { leaveP2p, p2p } from '../lib/p2p.svelte';
   import { leave, live } from '../lib/sync.svelte';
@@ -47,7 +48,7 @@
   import { fillLabel, isFillKind } from '../lib/fills';
   import { onMount, untrack } from 'svelte';
   import { PANELS, panelState, resetLayout, showPanel, surveyLayout, togglePanel, workLayout } from '../lib/workspace.svelte';
-  import { GraduationCap, Check, Trash2, LogIn, LogOut, Users, Library, FilePlus, FileInput, FolderOpen, Save, Ruler, Footprints, Route, Waypoints, Scissors, Map as MapIcon, Terminal, LayoutDashboard, Activity, Shapes, Table2, BookOpen, ScanLine, FileText, ChevronDown, PanelTop, FileOutput, Package, Mountain, SlidersHorizontal, Crosshair, Tent, Lock } from '@lucide/svelte';
+  import { GraduationCap, Check, Trash2, LogIn, LogOut, Users, Library, FilePlus, FileInput, FolderOpen, FolderTree, Save, Ruler, Footprints, Route, Waypoints, Scissors, Map as MapIcon, Terminal, LayoutDashboard, Activity, Shapes, Table2, BookOpen, ScanLine, FileText, ChevronDown, PanelTop, FileOutput, Package, Mountain, SlidersHorizontal, Crosshair, Tent, Lock } from '@lucide/svelte';
 
   /**
    * The app shows the ribbon as it is. A host that is only a part of the app (the survey harness) can give its own
@@ -78,7 +79,7 @@
 
   const own: Record<string, Group[]> = {
     Home: [
-      { name: 'File', items: [{ label: 'Caves', icon: Library, run: () => (shelf.open = true) }, { label: 'New', icon: FilePlus, run: () => (cave.newDialog = true) }, { label: 'Open', icon: FolderOpen, run: open }, { label: 'Save', icon: Save, run: save }, { label: 'Save as', icon: Save, run: saveAs }, { label: 'Scans in file', icon: ScanLine, run: () => setOption('saveScans', !option('saveScans', true)), pressed: () => option('saveScans', true) }] },
+      { name: 'File', items: [{ label: 'Caves', icon: Library, run: () => (shelf.open = true) }, { label: 'New', icon: FilePlus, run: () => (cave.newDialog = true) }, { label: 'Open', icon: FolderOpen, run: open }, { label: 'Save', icon: Save, run: save }, { label: 'Save as', icon: Save, run: saveAs }, { label: 'Folder', icon: FolderTree, run: () => run(caveFolder()), pressed: () => folder.label !== '' }, { label: 'Scans in file', icon: ScanLine, run: () => setOption('saveScans', !option('saveScans', true)), pressed: () => option('saveScans', true) }] },
       { name: 'Export', items: [{ label: 'DXF', icon: FileOutput, run: () => run(exportDxf()) }, { label: 'Project', icon: Package, run: () => run(exportProject()) }] },
       { name: 'Survey', items: [stub('Import', FileInput), stub('Draw', Route), stub('Adjust', Waypoints)] },
       {

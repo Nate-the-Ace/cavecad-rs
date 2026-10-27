@@ -1,6 +1,6 @@
 // Loads the Rust engine (WASM) once and re-exports the few calls the UI uses.
 import type { FillDef as PatternFillDef, LineDef, Motif, PatternKind, PatternLibrary, PatternMarks, Prim } from './patterns';
-import init, { start, log, console_events, console_clear, engine_version, open_demo, scene, profile_runs, profile_band, add_profile_sketch, undo, redo, edit_state, passage_mesh, shading, palette, open_dxf, save_dxf, section_stations, section_at, add_section_sketch, map_sections, place_section, map_profile_sketches, add_map_line, paste_lines, last_added_id, map_lines, draw_tools, edit_line, edit_leader, delete_line, set_line_closed, set_line_kind, line_info, set_line_flip, set_line_style, drawing_scale, set_drawing_scale, linetypes, pattern_library, motif_from_drawing, save_pattern, remove_pattern, check_pattern, line_pattern_marks, fill_pattern_marks, line_pattern_marks_named, fill_pattern_marks_named, set_line_text, ornament, callout, sheet_options, sheet_plan, flipped_lines, revision, station_rows, set_station_mark, station_detail, shot_detail, set_shot, set_station_walls, set_station_note, set_station_benchmark, symbols, fills, fill_marks, draw_tool_groups, sync_outbox, sync_apply, sync_snapshot, sync_load, notebook_trips, notebook_page, notebook_set_reading, notebook_set_walls, notebook_set_note, notebook_set_trip_field, notebook_set_declination, notebook_add_shot, notebook_remove_shot, notebook_rename_station, notebook_new_trip, scan_links, scan_link, scan_unlink, scan_placements, scan_alignment, scan_add_anchor, scan_remove_anchor, scan_set_mode, scan_trim, scan_set_trim, scan_view_stations, new_cave, scan_completed, scan_set_complete, shelf_summary, shelf_summarize, shelf_summarize_demo, shelf_summarize_native, survey_sync_trip, survey_snapshot, survey_connect, survey_frame, survey_flush_link, survey_disconnect, survey_link_down, survey_sim_station, survey_settle_now, survey_accept, survey_discard, survey_undo_last, survey_set_mode, survey_set_backsights, survey_set_auto, survey_skip_backsight, survey_next_station, survey_set_names, survey_set_standing_wall, instrument_catalog, instrument_identify, sketch_source, sketch_views, sketch_anchor, sketch_place, snap_pick, snap_commit, snap_session, snap_along, snap_catalog } from '../wasm/cave_wasm.js';
+import init, { start, log, console_events, console_clear, engine_version, open_demo, scene, profile_runs, profile_band, add_profile_sketch, undo, redo, edit_state, passage_mesh, shading, palette, open_dxf, save_dxf, section_stations, section_at, add_section_sketch, map_sections, place_section, map_profile_sketches, add_map_line, paste_lines, last_added_id, map_lines, draw_tools, edit_line, edit_leader, delete_line, set_line_closed, set_line_kind, line_info, set_line_flip, set_line_style, drawing_scale, set_drawing_scale, linetypes, pattern_library, motif_from_drawing, save_pattern, remove_pattern, check_pattern, line_pattern_marks, fill_pattern_marks, line_pattern_marks_named, fill_pattern_marks_named, set_line_text, ornament, callout, sheet_options, sheet_plan, flipped_lines, revision, station_rows, set_station_mark, station_detail, shot_detail, set_shot, set_station_walls, set_station_note, set_station_benchmark, symbols, fills, fill_marks, draw_tool_groups, sync_outbox, sync_apply, sync_snapshot, sync_load, notebook_trips, notebook_page, notebook_set_reading, notebook_set_walls, notebook_set_note, notebook_set_trip_field, notebook_set_declination, notebook_add_shot, notebook_remove_shot, notebook_rename_station, notebook_new_trip, scan_links, scan_link, scan_unlink, scan_placements, scan_alignment, scan_add_anchor, scan_remove_anchor, scan_set_mode, scan_trim, scan_set_trim, scan_view_stations, new_cave, scan_completed, scan_set_complete, shelf_summary, shelf_summarize, shelf_summarize_demo, shelf_summarize_native, folder_name, folder_plan, survey_sync_trip, survey_snapshot, survey_connect, survey_frame, survey_flush_link, survey_disconnect, survey_link_down, survey_sim_station, survey_settle_now, survey_accept, survey_discard, survey_undo_last, survey_set_mode, survey_set_backsights, survey_set_auto, survey_skip_backsight, survey_next_station, survey_set_names, survey_set_standing_wall, instrument_catalog, instrument_identify, sketch_source, sketch_views, sketch_anchor, sketch_place, snap_pick, snap_commit, snap_session, snap_along, snap_catalog } from '../wasm/cave_wasm.js';
 
 import { setInkPalette } from './ink';
 import { setOrnamentSource } from './section-glyph';
@@ -277,6 +277,26 @@ export interface ShelfTrip {
   ends: string[];
 }
 /** What the Cave Shelf shows about a cave. */
+/** What a cave's project folder holds and what a save there does (from `cave-folder`). */
+export interface FolderPlan {
+  /** What is under the cave's folder name: nothing, a folder with a cave in it, or a folder without one. */
+  place: { kind: 'empty' } | { kind: 'hasCave'; file: string } | { kind: 'notACave' };
+  /** Standard subfolders (and the hidden cache) to make. */
+  missing: string[];
+  /** The folder exports go to. */
+  exports: string;
+  /** The scans folder's name as it is on disk. */
+  scans: string;
+  /** The backup folder's name as it is on disk. */
+  backupFolder: string;
+  /** This save takes a backup first. */
+  backupDue: boolean;
+  /** The backup's file name. */
+  backupName: string | null;
+  /** Old backups to delete. */
+  prune: string[];
+}
+
 export interface CaveSummary {
   name: string;
   unit: 'ft' | 'm';
@@ -460,6 +480,10 @@ const rawEngine = {
   shelfSummarizeDemo: (json: string): CaveSummary | null => JSON.parse(shelf_summarize_demo(json)),
   /** Starts a brand new cave with one empty trip (`ft` or `m`); returns `ok` or `error: ...`. */
   newCave: (name: string, trip: string, unit: 'ft' | 'm'): string => new_cave(name, trip, unit),
+  /** The folder a cave's name becomes. */
+  folderName: (name: string): string => folder_name(name),
+  /** The project folder's rules for what is in it (see `folder_plan` in cave-wasm). */
+  folderPlan: (inside: string[] | null, backups: string[], stem: string, now: string): FolderPlan => JSON.parse(folder_plan(JSON.stringify(inside), JSON.stringify(backups), stem, now)),
   /** Goes up whenever the open cave really changes; compared with the value at the last save. */
   revision: (): number => revision(),
   /** Local edits since the last call (JSON ops, as a string; `[]` when none). */

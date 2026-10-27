@@ -5,6 +5,8 @@
 import { cave, changed, markSaved, unsaved } from './cave.svelte';
 import { readOnly } from './readonly';
 import { engine, type CaveSummary } from './engine';
+import { currentHome, folder, type Home } from './cavefolder.svelte';
+import type { Dir } from './folder-handle';
 
 export interface ShelfRecord {
   id: string;
@@ -15,6 +17,8 @@ export interface ShelfRecord {
   /** Milliseconds since 1970 of the last save. */
   updated: number;
   summary: CaveSummary | null;
+  /** Where its project folder is (the browser's handle to it is kept apart, under the same id), if it has one. */
+  home?: { label: string; file: string; path?: string };
 }
 
 const DB = 'cavecad-shelf';
@@ -55,10 +59,12 @@ export function setStartup(on: boolean) {
 
 function db(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
-    const r = indexedDB.open(DB, 1);
+    const r = indexedDB.open(DB, 2);
     r.onupgradeneeded = () => {
-      r.result.createObjectStore('meta', { keyPath: 'id' });
-      r.result.createObjectStore('dxf');
+      const names = r.result.objectStoreNames;
+      if (!names.contains('meta')) r.result.createObjectStore('meta', { keyPath: 'id' });
+      if (!names.contains('dxf')) r.result.createObjectStore('dxf');
+      if (!names.contains('homes')) r.result.createObjectStore('homes'); // a browser's folder handles, by record id
     };
     r.onsuccess = () => resolve(r.result);
     r.onerror = () => reject(r.error);
@@ -135,11 +141,26 @@ export async function storeOpenCave(source = ''): Promise<boolean> {
     updated: Date.now(),
     summary,
   };
+  const home = currentHome();
+  if (home) rec.home = { label: home.label, file: home.file, ...(home.kind === 'path' ? { path: home.path } : {}) };
+  else if (existing?.home) rec.home = existing.home; // a folder not found today is still the cave's folder
   try {
     await put(rec, engine.saveNative()); // the cave in its own format: nothing lost on the way in or out
+    if (home?.kind === 'handle') await putHandle(rec.id, home.handle);
   } catch {
     shelf.problem = 'This browser would not keep the cave (storage is full or blocked). Save a file to be safe.';
     return false;
+  }
+  if (home && homeWriter) {
+    // the cave file in its folder is the cave: it is written every time the shelf copy is
+    try {
+      await homeWriter(home);
+      folder.problem = '';
+    } catch (e) {
+      const problem = `The cave could not be written to its folder (${home.label}): ${e instanceof Error ? e.message : String(e)}`;
+      if (problem !== folder.problem) engine.log('error', 'file', problem); // said once, not after every edit
+      folder.problem = problem;
+    }
   }
   shelf.problem = '';
   shelf.currentId = rec.id;
@@ -149,13 +170,62 @@ export async function storeOpenCave(source = ''): Promise<boolean> {
   return true;
 }
 
+let homeWriter: ((home: Home) => Promise<void>) | null = null;
+
+/** How the open cave's file is written into its folder (set by `files.ts`, which packs the file). */
+export function setHomeWriter(write: (home: Home) => Promise<void>) {
+  homeWriter = write;
+}
+
+async function putHandle(id: string, handle: Dir) {
+  const d = await db();
+  const tx = d.transaction('homes', 'readwrite');
+  tx.objectStore('homes').put(handle, id);
+  await done(tx);
+}
+
+/** A kept cave's folder, as a place to read and write, or `null` (none, or this browser lost its handle). */
+export async function homeOf(rec: ShelfRecord): Promise<Home | null> {
+  const h = rec.home;
+  if (!h) return null;
+  if (h.path) return { kind: 'path', path: h.path, file: h.file, label: h.label };
+  try {
+    const d = await db();
+    const handle = await new Promise<Dir | null>((resolve) => {
+      const r = d.transaction('homes').objectStore('homes').get(rec.id);
+      r.onsuccess = () => resolve((r.result as Dir | undefined) ?? null);
+      r.onerror = () => resolve(null);
+    });
+    return handle ? { kind: 'handle', handle, file: h.file, label: h.label } : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Gives a kept cave a (new) folder, or takes its folder away (`null`: kept in this browser only). */
+export async function setRecordHome(id: string, home: Home | null) {
+  const rec = shelf.records.find((r) => r.id === id);
+  if (!rec) return;
+  const next: ShelfRecord = { ...rec };
+  if (home) next.home = { label: home.label, file: home.file, ...(home.kind === 'path' ? { path: home.path } : {}) };
+  else delete next.home;
+  await put(next, null);
+  const d = await db();
+  const tx = d.transaction('homes', 'readwrite');
+  if (home?.kind === 'handle') tx.objectStore('homes').put(home.handle, id);
+  else tx.objectStore('homes').delete(id);
+  await done(tx);
+  shelf.records = sorted(shelf.records.map((r) => (r.id === id ? next : r)));
+}
+
 /** Removes a cave from the shelf (only the copy kept in this browser). */
 export async function forgetCave(id: string) {
   try {
     const d = await db();
-    const tx = d.transaction(['meta', 'dxf'], 'readwrite');
+    const tx = d.transaction(['meta', 'dxf', 'homes'], 'readwrite');
     tx.objectStore('meta').delete(id);
     tx.objectStore('dxf').delete(id);
+    tx.objectStore('homes').delete(id); // the folder on disk is untouched
     await done(tx);
   } catch {
     /* nothing to forget */

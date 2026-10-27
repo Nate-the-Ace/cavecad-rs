@@ -25,6 +25,7 @@ cave-sketch = { path = "../cave-sketch" }
 cave-snap = { path = "../cave-snap" }
 cave-scans = { path = "../cave-scans" }
 cave-shelf = { path = "../cave-shelf" }
+cave-folder = { path = "../cave-folder" }
 cave-shape = { path = "../cave-shape" }
 cave-sheet = { path = "../cave-sheet" }
 cave-symbols = { path = "../cave-symbols" }

@@ -1,6 +1,6 @@
 # New cave: the project folder
 
-Decided 2026-10-26 (Nathan). Not built.
+Decided 2026-10-26 (Nathan). First slice built 2026-10-26 on branch `new-cave-folder`; see **As built** at the end.
 
 ## What changes for the person
 
@@ -140,3 +140,38 @@ folder with a cave, an existing folder without one, unsafe names, case-insensiti
 matching, and backup naming and pruning. Web: a `test:newcave` check against a fake directory
 handle (subfolders made, file written, handle stored), plus the Safari/Firefox path leaving the
 shelf behaviour unchanged.
+
+## As built (2026-10-26)
+
+Rules in `crates/cave-folder` (names, subfolders, backup naming, ten-minute gap, pruning), used by the
+desktop app natively (`apps/desktop/src-tauri/src/cavefolder.rs`, commands in `lib.rs`) and by the
+browser through `folder_plan` in `cave-wasm`. Browser reading and writing: `lib/folder-handle.ts`.
+The open cave's folder and the dispatch between the two: `lib/cavefolder.svelte.ts`. Checks:
+`cargo test -p cave-folder`, `cargo test` in `apps/desktop/src-tauri`, `npm run test:newcave`
+(an in-memory directory handle with the real rules through WASM).
+
+Verified in Chromium against the browser's private file system standing in for the picked place:
+New cave made all nine subfolders plus `.cavecad/` and the file; an edit was written to the file with
+one backup; DXF export opened its save dialog in `exports/`; after a reload the shelf showed the
+folder and Open read the file from it; with the folder deleted, Open fell back to the shelf copy with
+a warning, the shelf line said "Folder not found" and Find folder… re-linked it. The desktop app was
+built but its folder dialog was not driven (a native dialog cannot be clicked by the test tools).
+
+Where it differs from the plan above:
+
+- **The file is written on every keep, not only on Save.** The shelf keeps the open cave about a
+  second after each edit; a cave with a folder is written to its file at the same moment, so the file
+  is never behind the shelf copy (which matters because opening reads the file). The ten-minute rule
+  keeps backups from piling up.
+- **Desktop exports go straight into `exports/`** with no dialog (the desktop window has no save
+  dialog; the message says where the file went). In a browser the save dialog starts in `exports/`.
+- **"Make a project folder…" is the ribbon's File → Folder button**, not a line under Save. With a
+  folder it reveals it (desktop) or says where it is (browser). It never switches the Scans panel,
+  since the pages on show travel inside the file.
+- **A browser shelf only says "Folder not found" once it has permission to look**; before the first
+  click of a session it shows the folder as usual and finds out on Open.
+
+Not built yet: copying imports into `survey/` (the importers live on branch `project-import`),
+filling `surface/` and `trips/` (Entrance/basemap and Trip Plan are not ported), the sanitized
+package, adopting a QCAD-era cave folder, and adopting the folder of a `.cavecad` opened from a file
+(a browser cannot see which folder a picked file is in).

@@ -125,6 +125,8 @@ export const READS: readonly string[] = [
   'shelfSummarize',
   'shelfSummarizeDemo',
   'shelfSummarizeNative',
+  'folderName',
+  'folderPlan',
   'revision',
   'syncOutbox',
   'syncApply',

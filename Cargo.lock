@@ -69,6 +69,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "cave-folder"
+version = "0.0.1"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "cave-geom"
 version = "0.0.1"
 dependencies = [
@@ -290,6 +297,7 @@ dependencies = [
  "cave-dxf",
  "cave-fill",
  "cave-fixture",
+ "cave-folder",
  "cave-geom",
  "cave-id",
  "cave-instrument",

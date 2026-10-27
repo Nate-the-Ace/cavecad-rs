@@ -418,9 +418,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "cave-folder"
+version = "0.0.1"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "cavecad-desktop"
 version = "0.0.1"
 dependencies = [
+ "cave-folder",
  "serde",
  "serde_json",
  "tauri",
