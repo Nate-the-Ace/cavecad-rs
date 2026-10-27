@@ -406,9 +406,42 @@
         view.setShowLabels(!filter.hiddenTypes.includes('label'));
         view.setScene(scene, false);
         loadPassage();
+        hopped = engine.hoppedLines(cave.adjusted).length;
       });
     });
   });
+
+  let levelChoice = $state<{ id: string; other: [string, string] } | null>(null);
+  let levelTimer = 0;
+  let hopped = $state(0);
+
+  /** Glows the legs a map line took and offers the other level when its start was ambiguous. */
+  function showLevel(id: string) {
+    const info = engine.mapLineLevel(id, cave.adjusted);
+    view?.setAttachedLegs(info?.legs ?? []);
+    levelChoice = info?.other ? { id, other: info.other } : null;
+    clearTimeout(levelTimer);
+    levelTimer = window.setTimeout(() => {
+      view?.setAttachedLegs([]);
+      levelChoice = null;
+    }, 6000);
+  }
+
+  /** Moves the line just drawn onto the other level; offered again, so it can go back. */
+  function flipLevel() {
+    if (!levelChoice) return;
+    const { id, other } = levelChoice;
+    const r = engine.reanchorLine(id, other[0], other[1], cave.adjusted);
+    if (r !== 'ok') engine.log('warn', 'draw', r);
+    changed();
+    showLevel(id);
+  }
+
+  function fixHopped() {
+    const r = engine.fixHoppedLines(cave.adjusted);
+    if (!r.startsWith('ok')) engine.log('warn', 'draw', r);
+    changed();
+  }
 
   function refresh() {
     if (!view) return;
@@ -487,6 +520,7 @@
       const r = engine.addMapLine(cave.tool, withLabelSpot(cave.tool, points, text), widths, closed, cave.adjusted, text, toolStyle());
       if (r !== 'ok') engine.log('warn', 'draw', r);
       changed();
+      if (r === 'ok') showLevel(engine.lastAddedId());
       // a leader placed without words asks for them at once
       if (r === 'ok' && cave.tool === 'callout' && !text.trim()) view?.editWordsAtPlan(engine.lastAddedId(), 'callout', '', points);
     };
@@ -582,6 +616,12 @@
     <PanelUndo scope="map" label="on the map" />
     <SnapButton />
     <button class:on={depthColor} title="Colour by elevation" onclick={() => ((depthColor = !depthColor), view?.setElevationColors(depthColor), loadPassage())}><Palette size={15} /></button>
+    {#if hopped > 0}
+      <button title="Some lines hop between passages on different levels. Re-attach each to the level it starts on." onclick={fixHopped}>Fix {hopped} line{hopped === 1 ? '' : 's'}</button>
+    {/if}
+    {#if levelChoice}
+      <button class="on" title="This line starts where two passages overlap. Move it to the other level." onclick={flipLevel}>Other level</button>
+    {/if}
     {#if drawHint}<span class="status">{drawHint}</span>{:else if entrancePick.message}<span class="status pick">{entrancePick.message}{#if entrancePick.canUndo}<button title="Put the entrance and its surface back as they were before this pick" onclick={undoPick}>Undo</button>{/if}<button title="Dismiss" aria-label="Dismiss" onclick={() => ((entrancePick.message = ''), (entrancePick.canUndo = false))}>×</button></span>{:else if status}<span class="status">{status}</span>{/if}
   </div>
   <div class="cube" class:locked>
