@@ -862,6 +862,8 @@ mod tests {
             b,
             pa: [0.0, 0.0],
             pb: [10.0, 0.0],
+            za: 0.0,
+            zb: 0.0,
         }];
         (doc, frames, [a, b])
     }
