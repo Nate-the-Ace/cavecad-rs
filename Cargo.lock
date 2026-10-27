@@ -339,6 +339,7 @@ dependencies = [
  "cave-fill",
  "cave-fixture",
  "cave-formats",
+ "cave-geo",
  "cave-geom",
  "cave-id",
  "cave-instrument",

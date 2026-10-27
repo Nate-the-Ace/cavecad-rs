@@ -60,6 +60,9 @@ export const WRITES: readonly string[] = [
   'setLineFlip',
   'setLineStyle',
   'setDrawingScale',
+  'geoSetLocation',
+  'surfaceCommit',
+  'setContourInterval',
   'deleteLine',
   'addSketch',
   'undo',
@@ -70,6 +73,11 @@ export const WRITES: readonly string[] = [
  *  arrive from the server, and nothing a person does can call them.) */
 export const READS: readonly string[] = [
   'version',
+  'geoStatus',
+  'surfacePlan',
+  'surfaceGround',
+  'surfaceLayers',
+  'surfacePick',
   'log',
   'events',
   'clear',
