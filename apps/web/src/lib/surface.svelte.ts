@@ -1,0 +1,182 @@
+// Surface Data: the cave's surface (aerial photo + ground elevation) as this screen holds it, and the steps
+// that change it. The record of what was downloaded lives in the cave (the engine's `surface` setting); the
+// files themselves live in OPFS (surface-files.ts) and travel inside the .cavecad file.
+// Coordinates and URLs are never logged: they locate the cave.
+
+import { engine, type GeoStatus, type SurfaceLayers, type SurfacePlan, type SurfaceRecord } from './engine';
+import { download, load, requestKey, store, type Part } from './surface-files';
+import type { SurfaceParts } from './cavefile';
+import { cave, changed } from './cave.svelte';
+import { setSurfaceAdopter, setSurfacePartsSource } from './files';
+import { formatLength } from './units';
+
+export const surface = $state({
+  /** Object URL of the photo, or ''. */
+  photoUrl: '',
+  /** The elevation TIFF bytes, or null. */
+  tiff: null as Uint8Array | null,
+  /** What the views draw (recomputed on cave/interval/unit change). */
+  layers: null as SurfaceLayers | null,
+  /** Bumps when the files change. */
+  version: 0,
+  /** A download is running. */
+  busy: false,
+  /** The Surface Data dialog is open. */
+  dialog: false,
+});
+
+/** "Pick entrance on surface": the Map's pointer mode (wired in Viewport3D). */
+export const entrancePick = $state({ on: false, message: '' });
+
+let photoBytes: Uint8Array | null = null;
+
+function setPhoto(bytes: Uint8Array | null) {
+  if (surface.photoUrl) URL.revokeObjectURL(surface.photoUrl);
+  photoBytes = bytes;
+  surface.photoUrl = bytes ? URL.createObjectURL(new Blob([bytes as BlobPart], { type: 'image/jpeg' })) : '';
+}
+
+const today = () => new Date().toISOString().slice(0, 10);
+
+/** The open cave's geo status, or null with no cave open. */
+export function geoStatus(): GeoStatus | null {
+  const s = engine.geoStatus();
+  return 'error' in s ? null : s;
+}
+
+/** The stored surface record, or null. */
+function storedRecord(): SurfaceRecord | null {
+  return geoStatus()?.surface ?? null;
+}
+
+/** The record as a plan (for the OPFS keys: they are made from the request). */
+function planOf(s: SurfaceRecord): Pick<SurfacePlan, 'zone' | 'bounds'> & Partial<SurfacePlan> {
+  return { zone: s.zone, bounds: s.bounds, for_at: s.for_at, photo: s.photo ? { w: s.photo[0], h: s.photo[1], url: '' } : undefined, elevation: s.elevation ? { w: s.elevation[0], h: s.elevation[1], url: '' } : undefined };
+}
+
+/** The stored record as text, for noticing when it changes (open, undo, redo, another device). */
+export function surfaceKey(): string {
+  return JSON.stringify(storedRecord());
+}
+
+let generation = 0;
+
+/** Loads the stored surface's files from OPFS (after open, undo, or a cave switch). Returns what is missing. */
+export async function reloadSurface(): Promise<Part[]> {
+  const gen = ++generation;
+  const s = storedRecord();
+  if (!s) {
+    setPhoto(null);
+    surface.tiff = null;
+    surface.version++;
+    return [];
+  }
+  const plan = planOf(s);
+  const missing: Part[] = [];
+  const p = s.photo ? await load(requestKey(plan, 'photo')) : null;
+  const e = s.elevation ? await load(requestKey(plan, 'elevation')) : null;
+  if (gen !== generation) return []; // a newer reload overtook this one
+  if (s.photo && !p) missing.push('photo');
+  if (s.elevation && !e) missing.push('elevation');
+  setPhoto(p);
+  surface.tiff = e;
+  surface.version++;
+  return missing;
+}
+
+/** Reloads, and downloads again any part the record lists but this device does not have (a cave synced without its files). */
+export async function syncSurface(): Promise<string | null> {
+  if (surface.busy) return null;
+  const missing = await reloadSurface();
+  if (!missing.length) return null;
+  const r = await fetchSurface({ photo: missing.includes('photo'), elevation: missing.includes('elevation') });
+  const message = r.ok ? 'The surface for this cave was downloaded again on this device.' : `The surface for this cave could not be downloaded again on this device. ${r.lines.join(' ')}`;
+  engine.log(r.ok ? 'info' : 'warn', 'surface', message); // no coordinates in here
+  return message;
+}
+
+/** What a failed download says, in words a person can act on. */
+function failure(e: unknown): string {
+  const err = e as Error;
+  if (err?.name === 'TypeError') return 'could not reach the USGS service. Check the internet connection and try again.';
+  return err?.message ?? String(e);
+}
+
+/** Downloads what is asked for, keeps it, records it. Returns the report lines. */
+export async function fetchSurface(want: { photo: boolean; elevation: boolean }): Promise<{ ok: boolean; lines: string[] }> {
+  if (surface.busy) return { ok: false, lines: ['A download is already running.'] };
+  if (!want.photo && !want.elevation) return { ok: false, lines: ['Nothing to download: tick the aerial photo, the ground elevation, or both.'] };
+  const plan = engine.surfacePlan(want.photo, want.elevation, cave.adjusted);
+  if ('error' in plan) return { ok: false, lines: [plan.error] };
+  surface.busy = true;
+  generation++; // a reload still running must not overwrite what this download puts on screen
+  const lines: string[] = [];
+  let ground = NaN;
+  let photo: Uint8Array | null = null;
+  let tiff: Uint8Array | null = null;
+  try {
+    if (plan.photo) {
+      try {
+        photo = await download(plan, 'photo');
+        await store(requestKey(plan, 'photo'), photo);
+        lines.push(`Aerial photo: ${plan.photo.w} x ${plan.photo.h} pixels, about ${Math.round(plan.bounds.xmax - plan.bounds.xmin)} m across.`);
+      } catch (e) {
+        lines.push(`Aerial photo: ${failure(e)}`);
+        delete plan.photo;
+      }
+    }
+    if (plan.elevation) {
+      try {
+        tiff = await download(plan, 'elevation');
+        ground = engine.surfaceGround(plan, tiff);
+        await store(requestKey(plan, 'elevation'), tiff);
+        lines.push(Number.isFinite(ground) ? `Ground elevation: ground at the entrance ${formatLength(ground, cave.units, 1)} (NAVD88).` : 'Ground elevation: the service has no elevation data at the entrance. This place is probably outside 3DEP coverage (the United States).');
+      } catch (e) {
+        lines.push(`Ground elevation: ${failure(e)}`);
+        delete plan.elevation;
+      }
+    }
+    if (!plan.photo && !plan.elevation) return { ok: false, lines };
+    const r = engine.surfaceCommit(plan, ground, today());
+    if (r !== 'ok') lines.push(r.replace(/^error: /, ''));
+    changed();
+    // The record decides what is shown: a kept part whose window changed was dropped by the commit.
+    const s = storedRecord();
+    if (r === 'ok') {
+      if (photo) setPhoto(photo);
+      if (tiff) surface.tiff = tiff;
+    }
+    if (!s?.photo && photoBytes) {
+      setPhoto(null);
+      if (!want.photo) lines.push('Aerial photo: the earlier one no longer fits the new window, so it was dropped. Download it again to see it.');
+    }
+    if (!s?.elevation && surface.tiff) {
+      surface.tiff = null;
+      if (!want.elevation) lines.push('Ground elevation: the earlier one no longer fits the new window, so it was dropped. Download it again to see it.');
+    }
+    surface.version++;
+    return { ok: r === 'ok', lines };
+  } finally {
+    surface.busy = false;
+  }
+}
+
+/** The parts for saving into the .cavecad file. */
+export async function currentSurfaceParts(): Promise<SurfaceParts | null> {
+  const s = storedRecord();
+  if (!s) return null;
+  return { record: JSON.stringify(s), photo: s.photo ? photoBytes : null, elevation: s.elevation ? surface.tiff : null };
+}
+
+/** Takes the surface files out of an opened .cavecad file. */
+export async function adoptSurfaceParts(parts: SurfaceParts): Promise<void> {
+  const s = storedRecord();
+  if (!s) return;
+  const plan = planOf(s);
+  if (parts.photo && s.photo) await store(requestKey(plan, 'photo'), parts.photo);
+  if (parts.elevation && s.elevation) await store(requestKey(plan, 'elevation'), parts.elevation);
+  await reloadSurface();
+}
+
+setSurfacePartsSource(currentSurfaceParts);
+setSurfaceAdopter(adoptSurfaceParts);

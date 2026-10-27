@@ -7,6 +7,8 @@
   import { onMount, untrack } from 'svelte';
   import Ribbon from './components/Ribbon.svelte';
   import NewCave from './components/NewCave.svelte';
+  import SurfaceData from './components/SurfaceData.svelte';
+  import { surfaceKey, syncSurface } from './lib/surface.svelte';
   import { initWorkspace } from './lib/workspace.svelte';
   import { engine, loadEngine, loadBuildInfo, type BuildInfo } from './lib/engine';
   import { cave, unsaved } from './lib/cave.svelte';
@@ -36,6 +38,21 @@
     void cave.version;
     void cave.opened;
     if (engineReady) untrack(syncDrawing);
+  });
+
+  // The surface files follow the cave's surface record: a cave opened or switched, or an undo/redo that
+  // changes the record, loads them again (and downloads any this device does not have).
+  let lastSurface = '';
+  $effect(() => {
+    void cave.version;
+    void cave.opened;
+    if (!engineReady) return;
+    untrack(() => {
+      const key = `${cave.opened}|${surfaceKey()}`;
+      if (key === lastSurface) return;
+      lastSurface = key;
+      void syncSurface();
+    });
   });
 
   // Select All outside a text field must not select the page's own buttons and labels.
@@ -148,6 +165,7 @@
   <Ribbon />
   <SnapMenu />
   <NewCave />
+  <SurfaceData />
   <CaveShelf />
   <MovedPage bind:open={moved} />
   <LineMenu />
