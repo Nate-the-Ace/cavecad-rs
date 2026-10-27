@@ -1,8 +1,10 @@
 //! What the Map and 3D view draw from a stored surface, in cave metres.
 //!
 //! Heights: the survey's own elevations are never rewritten. One rigid shift relates them to the
-//! ground: offset = (ground at the entrance − entrance depth) − the entrance station's survey z,
-//! applied to the GROUND when it is drawn (old CsElevation). No stored ground means no terrain,
+//! ground: offset = (ground at the entrance − entrance depth) − the entrance station's survey z, so
+//! absolute = survey z + offset (old CsElevation). The GROUND is brought into the survey's frame by
+//! SUBTRACTING it: survey-frame z = ground − offset, which puts the entrance's own ground cell
+//! `entrance depth` above the entrance station. No stored ground means no terrain,
 //! never terrain at 0 (the old suite's elevation datum trap).
 
 use crate::contour::{levels, lines};
@@ -17,7 +19,8 @@ pub const ENTRANCE_DEPTH_M: f64 = 5.0 * 0.3048;
 pub const MAJOR_EVERY: i64 = 5;
 const FT_PER_M: f64 = 1.0 / 0.3048;
 
-/// Metres to add to a ground height to put it in the survey's frame, or `None` when the ground at
+/// Metres to add to a survey elevation to make it absolute (NAVD88); subtract it from a ground height to
+/// put the ground in the survey's frame. `None` when the ground at
 /// the entrance is unknown. `entrance_z` is the entrance station's solved z (metres).
 pub fn datum_offset(ground_m: Option<f64>, entrance_z: f64) -> Option<f64> {
     ground_m.map(|g| g - ENTRANCE_DEPTH_M - entrance_z)
@@ -82,7 +85,7 @@ pub fn contours(
             for p in &run.points {
                 let (e, n) = g.cell_utm(b, p[0], p[1]);
                 let c = place.utm_to_cave(e, n);
-                xyz.extend_from_slice(&[c[0], c[1], offset.map_or(flat_z, |o| level_m + o)]);
+                xyz.extend_from_slice(&[c[0], c[1], offset.map_or(flat_z, |o| level_m - o)]);
             }
             out.push(Contour {
                 level,
@@ -115,7 +118,7 @@ pub fn terrain(g: &Grid, b: &Bounds, place: &Placement, offset: Option<f64>) -> 
         for c in 0..g.w {
             let (e, n) = g.cell_utm(b, c as f64, r as f64);
             let p = place.utm_to_cave(e, n);
-            xyz.extend_from_slice(&[p[0], p[1], g.at(c, r).map_or(f64::NAN, |v| v + off)]);
+            xyz.extend_from_slice(&[p[0], p[1], g.at(c, r).map_or(f64::NAN, |v| v - off)]);
         }
     }
     Some(Terrain {

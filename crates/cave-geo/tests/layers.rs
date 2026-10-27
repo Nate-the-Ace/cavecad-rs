@@ -78,7 +78,7 @@ fn terrain_needs_a_datum() {
     assert!(terrain(&g, &b, &p, None).is_none());
     let t = terrain(&g, &b, &p, Some(-100.0)).unwrap();
     assert_eq!(t.xyz.len(), 12);
-    assert_eq!(t.xyz[2], 1.0 - 100.0);
+    assert_eq!(t.xyz[2], 1.0 + 100.0);
 }
 
 #[test]
@@ -102,7 +102,7 @@ fn contours_lie_flat_at_the_given_z_without_an_offset() {
     let up = contours(&g, &b, &p, 10.0, false, Some(100.0), -42.0);
     assert!(
         up.iter()
-            .all(|c| c.xyz.chunks(3).all(|v| v[2] == c.level + 100.0))
+            .all(|c| c.xyz.chunks(3).all(|v| v[2] == c.level - 100.0))
     );
 }
 
@@ -146,9 +146,9 @@ fn terrain_keeps_a_hole_as_nan() {
     };
     let t = terrain(&g, &b, &p, Some(10.0)).unwrap();
     assert_eq!(t.xyz.len(), 12);
-    assert_eq!(t.xyz[2], 11.0);
+    assert_eq!(t.xyz[2], -9.0);
     assert!(t.xyz[5].is_nan(), "the hole");
-    assert_eq!(t.xyz[8], 13.0);
+    assert_eq!(t.xyz[8], -7.0);
 }
 
 #[test]
@@ -162,4 +162,29 @@ fn a_zero_sized_photo_does_not_divide_by_zero() {
         ymax: n + 10.0,
     };
     assert!(photo_matrix(&b, (0, 0), &p).iter().all(|v| v.is_finite()));
+}
+
+#[test]
+fn the_entrance_ground_sits_one_entrance_depth_above_the_entrance() {
+    // Ground 166 m NAVD88 at the entrance; the entrance station is at survey z = -3 m.
+    let g = Grid {
+        w: 1,
+        h: 1,
+        values: vec![166.0],
+    };
+    let p = Placement::new([0.0, 0.0], BG);
+    let (e, n) = p.cave_to_utm(0.0, 0.0);
+    let b = Bounds {
+        xmin: e - 0.5,
+        ymin: n - 0.5,
+        xmax: e + 0.5,
+        ymax: n + 0.5,
+    };
+    let off = datum_offset(Some(166.0), -3.0);
+    let t = terrain(&g, &b, &p, off).unwrap();
+    assert!(
+        (t.xyz[2] - (-3.0 + ENTRANCE_DEPTH_M)).abs() < 1e-9,
+        "z = {}",
+        t.xyz[2]
+    );
 }
