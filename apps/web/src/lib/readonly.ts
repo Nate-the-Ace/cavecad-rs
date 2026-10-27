@@ -75,6 +75,7 @@ export const READS: readonly string[] = [
   'version',
   'geoStatus',
   'surfacePlan',
+  'surfacePlanForRecord',
   'surfaceGround',
   'surfaceLayers',
   'surfaceTerrain',

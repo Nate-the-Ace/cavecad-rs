@@ -40,14 +40,28 @@ fn surface_placement(doc: &Document, adjusted: bool) -> Result<WithSurface, Stri
     Ok((Placement::in_zone(p.anchor(), loc.at(), s.zone), loc, at, s))
 }
 
-/// Applies `actions` as one edit on the settings history. Returns `ok` or `error: ...`.
-fn commit(doc: &mut Document, actions: Vec<Action>) -> String {
+/// The panel histories an edit may be recorded under (the web app's `Scope` in `engine.ts`).
+const SCOPES: &[&str] = &[
+    "profile", "section", "map", "stations", "notebook", "scans", "settings",
+];
+
+/// `Err` naming the problem when `scope` is not a panel history.
+fn check_scope(scope: &str) -> Result<(), String> {
+    if SCOPES.contains(&scope) {
+        Ok(())
+    } else {
+        Err(err(format!("unknown undo scope {scope:?}")))
+    }
+}
+
+/// Applies `actions` as one edit on `scope`'s history. Returns `ok` or `error: ...`.
+fn commit(doc: &mut Document, actions: Vec<Action>, scope: &str) -> String {
     if actions.is_empty() {
         return "ok".into();
     }
     match doc.edit(actions) {
         Ok(edit) => {
-            record_edit("settings", &edit);
+            record_edit(scope, &edit);
             "ok".into()
         }
         Err(e) => err(format!("{e:?}")),
@@ -105,9 +119,13 @@ struct SetLocation {
     ground_m: Option<f64>,
 }
 
-/// Stores the cave's location (one undoable edit). JSON `{station, lat, lon, source, ground_m?}`.
+/// Stores the cave's location (one undoable edit on `scope`'s history: `settings` from the Surface
+/// Data dialog, `map` for a pick on the Map). JSON `{station, lat, lon, source, ground_m?}`.
 #[wasm_bindgen]
-pub fn geo_set_location(json_in: &str) -> String {
+pub fn geo_set_location(json_in: &str, scope: &str) -> String {
+    if let Err(e) = check_scope(scope) {
+        return e;
+    }
     let req: SetLocation = match serde_json::from_str(json_in) {
         Ok(r) => r,
         Err(e) => return err(e),
@@ -137,7 +155,7 @@ pub fn geo_set_location(json_in: &str) -> String {
             source: req.source,
         };
         let actions = record::set_location(doc, &loc);
-        commit(doc, actions)
+        commit(doc, actions, scope)
     })
 }
 
@@ -202,6 +220,38 @@ pub fn surface_plan(photo: bool, elevation: bool, adjusted: bool) -> String {
     })
 }
 
+/// The plan that downloads again exactly what the stored surface record lists (its zone, window,
+/// pixel sizes and `for_at`), for a device that lacks the files. Never a new window, so the files
+/// match the record; same JSON shape as [`surface_plan`]. `adjusted` is unused: the record decides.
+#[wasm_bindgen]
+pub fn surface_plan_for_record(adjusted: bool) -> String {
+    let _ = adjusted;
+    DOC.with(|d| {
+        let slot = d.borrow();
+        let Some(doc) = slot.as_ref() else {
+            return err("no cave is open");
+        };
+        let Some(s) = record::surface(doc) else {
+            return err("no surface");
+        };
+        let part = |size: Option<[u32; 2]>, url: fn(&Bounds, i32, (u32, u32)) -> String| {
+            size.map(|[w, h]| Part {
+                w,
+                h,
+                url: url(&s.bounds, s.zone, (w, h)),
+            })
+        };
+        let plan = Plan {
+            zone: s.zone,
+            bounds: s.bounds,
+            for_at: s.for_at,
+            photo: part(s.photo, request::naip_url),
+            elevation: part(s.elevation, request::dem_url),
+        };
+        serde_json::to_string(&plan).unwrap_or_else(err)
+    })
+}
+
 /// Ground (metres NAVD88) at the stored location from an elevation TIFF cut to `plan_json`'s bounds, or NaN.
 #[wasm_bindgen]
 pub fn surface_ground(plan_json: &str, tiff: &[u8]) -> f64 {
@@ -217,9 +267,13 @@ pub fn surface_ground(plan_json: &str, tiff: &[u8]) -> f64 {
     grid.sample_at(c, r).unwrap_or(f64::NAN)
 }
 
-/// Records a finished download (one edit): the surface request and, when finite, the ground at the entrance.
+/// Records a finished download (one edit on `scope`'s history): the surface request and, when finite,
+/// the ground at the entrance.
 #[wasm_bindgen]
-pub fn surface_commit(plan_json: &str, ground_m: f64, today: &str) -> String {
+pub fn surface_commit(plan_json: &str, ground_m: f64, today: &str, scope: &str) -> String {
+    if let Err(e) = check_scope(scope) {
+        return e;
+    }
     let plan: Plan = match serde_json::from_str(plan_json) {
         Ok(p) => p,
         Err(e) => return err(e),
@@ -254,7 +308,7 @@ pub fn surface_commit(plan_json: &str, ground_m: f64, today: &str) -> String {
             loc.ground_m = Some(ground_m);
             actions.extend(record::set_location(doc, &loc));
         }
-        commit(doc, actions)
+        commit(doc, actions, scope)
     })
 }
 
@@ -270,7 +324,7 @@ pub fn set_contour_interval(metres: f64) -> String {
             return err("no cave is open");
         };
         let actions = record::set_contour_interval_m(doc, metres);
-        commit(doc, actions)
+        commit(doc, actions, "settings")
     })
 }
 
@@ -354,6 +408,15 @@ pub fn surface_pick(tiff: &[u8], cx: f64, cy: f64, radius: f64, adjusted: bool) 
 mod tests {
     use super::*;
 
+    /// The Surface Data dialog's way in: edits on the settings history.
+    fn geo_set_location(json_in: &str) -> String {
+        super::geo_set_location(json_in, "settings")
+    }
+
+    fn surface_commit(plan_json: &str, ground_m: f64, today: &str) -> String {
+        super::surface_commit(plan_json, ground_m, today, "settings")
+    }
+
     const CAVE: &str = r#"{"unit":"m","name":"t","shots":[
         {"from":"A1","to":"B","distance":10,"azimuth":0,"inclination":0},
         {"from":"B","to":"C","distance":8,"azimuth":90,"inclination":-5}]}"#;
@@ -375,10 +438,13 @@ mod tests {
     }
 
     fn set_loc(extra: &str) -> String {
-        geo_set_location(&format!(
-            r#"{{"station":"{}","lat":36.9,"lon":-86.4,"source":"typed"{extra}}}"#,
-            station("A1")
-        ))
+        super::geo_set_location(
+            &format!(
+                r#"{{"station":"{}","lat":36.9,"lon":-86.4,"source":"typed"{extra}}}"#,
+                station("A1")
+            ),
+            "settings",
+        )
     }
 
     #[test]
@@ -524,5 +590,80 @@ mod tests {
         assert_eq!(t.len(), 2 + 200 * 200 * 3);
         assert_eq!((t[0], t[1]), (200.0, 200.0));
         assert!(surface_terrain(&[], false).is_empty());
+    }
+
+    #[test]
+    fn plan_for_record_asks_again_for_exactly_what_is_recorded() {
+        crate::open_demo(CAVE);
+        assert_eq!(surface_plan_for_record(false), "error: no surface");
+        assert_eq!(set_loc(""), "ok");
+        let both = plan(true, true);
+        assert_eq!(surface_commit(&both.to_string(), f64::NAN, "d1"), "ok");
+        let again: serde_json::Value =
+            serde_json::from_str(&surface_plan_for_record(false)).unwrap();
+        assert_eq!(again, both, "same zone, bounds, for_at, sizes and URLs");
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&surface_plan_for_record(true)).unwrap(),
+            both
+        );
+
+        // The cave moves: a fresh plan gets a new window, the record's plan does not.
+        let moved = format!(
+            r#"{{"station":"{}","lat":36.95,"lon":-86.4,"source":"typed"}}"#,
+            station("A1")
+        );
+        assert_eq!(geo_set_location(&moved), "ok");
+        assert_ne!(plan(true, true)["bounds"], both["bounds"]);
+        let again: serde_json::Value =
+            serde_json::from_str(&surface_plan_for_record(false)).unwrap();
+        assert_eq!(again, both);
+
+        // Only the parts the record lists are asked for.
+        let one = plan(false, true);
+        assert_eq!(surface_commit(&one.to_string(), f64::NAN, "d2"), "ok");
+        let again: serde_json::Value =
+            serde_json::from_str(&surface_plan_for_record(false)).unwrap();
+        assert!(again.get("photo").is_none());
+        assert_eq!(again["elevation"], one["elevation"]);
+        assert_eq!(again["bounds"], one["bounds"]);
+    }
+
+    #[test]
+    fn location_and_surface_edits_land_on_the_named_history() {
+        crate::open_demo(CAVE);
+        let id = station("A1");
+        let at =
+            |lat: f64| format!(r#"{{"station":"{id}","lat":{lat},"lon":-86.4,"source":"typed"}}"#);
+        assert!(
+            super::geo_set_location(&at(36.9), "nowhere").starts_with("error: unknown undo scope")
+        );
+        assert!(
+            status()["location"].is_null(),
+            "a bad scope changes nothing"
+        );
+        assert_eq!(super::geo_set_location(&at(36.9), "settings"), "ok");
+        assert_eq!(super::geo_set_location(&at(36.95), "map"), "ok");
+        let p = plan(true, true);
+        assert!(
+            super::surface_commit(&p.to_string(), f64::NAN, "d", "nowhere").starts_with("error")
+        );
+        assert!(status()["surface"].is_null());
+        assert_eq!(
+            super::surface_commit(&p.to_string(), f64::NAN, "d", "map"),
+            "ok"
+        );
+
+        // The settings history cannot reach the map's edits; the map's undo takes them back in order.
+        assert!(crate::undo("map"));
+        assert!(
+            status()["surface"].is_null(),
+            "the download is undone first"
+        );
+        assert_eq!(status()["location"]["lat"], 36.95);
+        assert!(crate::undo("map"));
+        assert_eq!(status()["location"]["lat"], 36.9, "then the move");
+        assert!(!crate::undo("map"));
+        assert!(crate::undo("settings"));
+        assert!(status()["location"].is_null());
     }
 }
