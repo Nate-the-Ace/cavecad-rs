@@ -14,7 +14,9 @@
   import { openAtTrip, newTripOn, newTripOnSample, openKept, openSample } from '../lib/caves';
   import { openServerCave, refreshServerCaves, serverCaves } from '../lib/server-caves.svelte';
   import { account } from '../lib/account.svelte';
-  import { dxfOf, forgetCave, loadShelf, setFavorite, setStartup, shelf, summaryOf, type ShelfRecord } from '../lib/shelf.svelte';
+  import { dxfOf, forgetCave, homeOf, loadShelf, setFavorite, setRecordHome, setStartup, shelf, summaryOf, type ShelfRecord } from '../lib/shelf.svelte';
+  import { findFolder, reachable, revealHome } from '../lib/cavefolder.svelte';
+  import { folderExistsNative, isDesktop } from '../lib/desktop';
   import { formatLength } from '../lib/units';
 
   let search = $state('');
@@ -96,6 +98,41 @@
   async function run(job: Promise<string | null>) {
     const problem = await job;
     message = problem ?? '';
+  }
+
+  /** The picked cave's folder is not where it was. A browser that has not been allowed to look yet is not asked here. */
+  let lost = $state(false);
+  $effect(() => {
+    const rec = record;
+    lost = false;
+    if (!rec?.home) return;
+    void (async () => {
+      const home = await homeOf(rec);
+      let gone = !home;
+      if (home?.kind === 'path') gone = !isDesktop() || !(await folderExistsNative(home.path));
+      else if (home && (await home.handle.queryPermission?.({ mode: 'readwrite' })) === 'granted') gone = !(await reachable(home, false));
+      if (record?.id === rec.id) lost = gone;
+    })();
+  });
+
+  async function find(rec: ShelfRecord) {
+    const home = await findFolder(rec.home?.file ?? `${rec.name}.cavecad`).catch((e) => String(e));
+    if (home === null) return;
+    if (typeof home === 'string') return (message = home);
+    await setRecordHome(rec.id, home);
+    lost = false;
+    message = '';
+  }
+
+  async function keepHere(rec: ShelfRecord) {
+    if (!window.confirm(`Keep “${rec.name}” in this browser only? Nothing more is written to ${rec.home?.label}; the folder itself is not touched.`)) return;
+    await setRecordHome(rec.id, null);
+    lost = false;
+  }
+
+  async function reveal(rec: ShelfRecord) {
+    const home = await homeOf(rec);
+    if (!home || !(await revealHome(home).catch(() => false))) message = `That cave's folder is ${rec.home?.label ?? 'not set'}.`;
   }
 
   /** Fetches a cave from the server; one with no key here yet waits, and opens by itself when the key arrives. */
@@ -207,6 +244,13 @@
           {#if remote}
             <p class="stored">On the CaveCAD server, from one of your other devices · made {when(remote.createdAt)}. Open it to bring it onto this computer; it stays in step with your other devices.</p>
             {#if !remote.hasKey}<p class="wait">Waiting for a key: open CaveCAD once on a device that has this cave{serverCaves.waitingFor === remote.id ? '. It opens here by itself when the key arrives.' : ', then open it here.'}</p>{/if}
+          {:else if record?.home && lost}
+            <div class="lost" role="alert">
+              <span>Folder not found: {record.home.label}</span>
+              <button onclick={() => find(record!)}>Find folder…</button>
+              <button onclick={() => keepHere(record!)}>Keep in this browser</button>
+            </div>
+          {:else if record?.home}<p class="stored" title={record.home.label}>In its folder, {record.home.label} · last saved {when(record.updated)}</p>
           {:else if record}<p class="stored">Kept in this browser · last saved {when(record.updated)}</p>{:else}<p class="stored">A sample cave. Open it to look around, or start a trip on it (it is then kept in this browser as your own copy).</p>{/if}
           {#if summary.ends.length}
             <div class="ends">
@@ -255,6 +299,8 @@
       <hr />
       <button role="menuitem" onclick={() => { const id = menu!.id; menu = null; void setFavorite(id, !rec?.favorite); }}>{rec?.favorite ? 'Unfavorite' : 'Favorite ★'}</button>
       <button role="menuitem" onclick={() => { const id = menu!.id; menu = null; void download(id); }}>Download a file…</button>
+      {#if rec?.home?.path && isDesktop()}<button role="menuitem" onclick={() => { menu = null; void reveal(rec!); }}>Reveal folder</button>{/if}
+      {#if rec?.home}<button role="menuitem" onclick={() => { menu = null; void find(rec!); }}>Find folder…</button>{/if}
       <hr />
       <button role="menuitem" onclick={() => { const id = menu!.id; menu = null; void forget(id); }}>Forget…</button>
     </div>
@@ -277,6 +323,8 @@
   .detail { flex: 1; min-width: 0; padding: 16px 20px; display: flex; flex-direction: column; gap: 8px; }
   h2 { margin: 0; font-size: 22px; }
   .stats { margin: 0; color: var(--text); font-size: 13px; }
+  .lost { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 12px; color: var(--danger); }
+  .lost span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .stored { margin: 0; color: var(--muted); font-size: 11px; }
   .ends { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
   .lead { font-size: 12px; color: var(--muted); }

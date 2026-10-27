@@ -2353,3 +2353,42 @@ pub fn shelf_summarize_demo(json: &str) -> String {
     serde_json::to_string(&doc.as_ref().map(cave_shelf::summarize))
         .unwrap_or_else(|_| "null".into())
 }
+
+/// The folder a cave's name becomes (see `cave_folder::folder_name`).
+#[wasm_bindgen]
+pub fn folder_name(name: &str) -> String {
+    cave_folder::folder_name(name)
+}
+
+/// The project folder's rules for the browser, which reads and writes the folder itself: given the
+/// names directly inside the cave's folder (`inside`, a JSON array, or `null` when there is no
+/// folder) and in its `backup/` (`backups`), and the person's local time as `yyyy-mm-dd hhmm`, says
+/// what New cave finds there, which subfolders to make, where exports go, whether this save takes a
+/// backup, what it is called, and which old backups to delete. `stem` is the cave file's name
+/// without `.cavecad`.
+#[wasm_bindgen]
+pub fn folder_plan(inside: &str, backups: &str, stem: &str, now: &str) -> String {
+    let inside: Option<Vec<String>> = serde_json::from_str(inside).unwrap_or(None);
+    let backups: Vec<String> = serde_json::from_str(backups).unwrap_or_default();
+    let names: Vec<&str> = inside.iter().flatten().map(String::as_str).collect();
+    let backups: Vec<&str> = backups.iter().map(String::as_str).collect();
+    let now = cave_folder::Stamp::parse(now);
+    let due = now.is_some_and(|n| cave_folder::backup_due(stem, &backups, n));
+    let backup_name = now.map(|n| cave_folder::backup_name(stem, n));
+    let mut subfolders: Vec<&str> = cave_folder::missing(&names);
+    if cave_folder::find(&names, cave_folder::CACHE).is_none() {
+        subfolders.push(cave_folder::CACHE);
+    }
+    let backup = cave_folder::find(&names, cave_folder::BACKUP).unwrap_or(cave_folder::BACKUP);
+    serde_json::json!({
+        "place": cave_folder::place(inside.as_ref().map(|_| names.as_slice())),
+        "missing": subfolders,
+        "exports": cave_folder::exports_folder(&names),
+        "scans": cave_folder::find(&names, cave_folder::SCANS).unwrap_or(cave_folder::SCANS),
+        "backupFolder": backup,
+        "backupDue": due,
+        "backupName": backup_name,
+        "prune": cave_folder::prune(stem, &backups),
+    })
+    .to_string()
+}

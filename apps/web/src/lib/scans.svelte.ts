@@ -380,6 +380,20 @@ async function readFolder(handle: DirHandle) {
   load(handle.name, found);
 }
 
+/** Reads a folder the app already has a handle for (a cave's own `scans/`), and remembers it for next time. */
+export async function openHandle(handle: DirHandle): Promise<boolean> {
+  try {
+    await readFolder(handle);
+    await keep(handle);
+    remembered = handle;
+    scans.remembered = '';
+    return true;
+  } catch {
+    scans.message = 'The scans folder could not be read.';
+    return false;
+  }
+}
+
 /** Opens the folder remembered from last time (needs a click: the browser asks again before reading). */
 export async function reopenRemembered(): Promise<boolean> {
   if (!remembered) return false;

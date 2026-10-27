@@ -7,7 +7,8 @@
 import { decodeSurveyText } from './text-decode';
 import { engine } from './engine';
 import { cave, changed, markSaved, markUnsaved, option, unsaved } from './cave.svelte';
-import { shelf as shelfState, storeOpenCave } from './shelf.svelte';
+import { setHomeWriter, shelf as shelfState, storeOpenCave } from './shelf.svelte';
+import { canMakeFolders, choosePlace, currentHome, exportPlace, folder, look, make, openScans, readHome, revealHome, setHome, writeHome, type Home } from './cavefolder.svelte';
 import { EXT, pack, unpack, type SurfaceParts } from './cavefile';
 import { unzip } from './unzip';
 import { zip } from './zip';
@@ -104,6 +105,25 @@ function download(name: string, data: Uint8Array | string, type: string) {
 
 /** Writes a file where the person chooses (or downloads it where there is no picker). Returns the name, or `null` if cancelled. */
 async function writeNew(name: string, data: Uint8Array | string, type: string, types: unknown): Promise<string | null> {
+  const home = currentHome();
+  if (home) {
+    // a cave with a folder: exports go to its exports/ (the browser's dialog starts there and can go elsewhere)
+    const bytes = typeof data === 'string' ? new TextEncoder().encode(data) : data;
+    const at = await exportPlace(home, name, bytes);
+    if ('wrote' in at) return at.wrote;
+    if (picker.showSaveFilePicker) {
+      try {
+        const h = await picker.showSaveFilePicker({ suggestedName: name, types, startIn: at.startIn });
+        const w = await h.createWritable();
+        await w.write(data);
+        await w.close();
+        return h.name;
+      } catch (e) {
+        if (isAbort(e)) return null;
+        throw e;
+      }
+    }
+  }
   try {
     if (picker.showSaveFilePicker) {
       const h = await picker.showSaveFilePicker({ suggestedName: name, types });
@@ -168,12 +188,15 @@ export async function caveBytes(withScans: boolean, withSurface = true): Promise
   return pack({ name: cave.name || stem(cave.fileName), app: `cavecad-rs ${engine.version()}`, cave: engine.syncSnapshot(), scans: withScans ? await usedScans() : [], surface: withSurface ? await surfaceParts() : null });
 }
 
+// Every time the shelf keeps the open cave, a cave with a folder is written there as well.
+setHomeWriter(async (home) => writeHome(home, await caveBytes(option('saveScans', true), option('saveSurface', true))));
+
 /**
  * Starts a brand new cave with one empty trip, replacing the one on screen (after asking, if it has
  * unsaved changes). Returns what to tell the person, or `null` if they declined.
  */
-export function startCave(name: string, unit: 'ft' | 'm'): { ok: boolean; message: string } | null {
-  if (!confirmDiscard()) return null;
+export function startCave(name: string, unit: 'ft' | 'm', home: Home | null = null, asked = false): { ok: boolean; message: string } | null {
+  if (!asked && !confirmDiscard()) return null;
   const clean = name.trim() || 'New cave';
   const r = engine.newCave(clean, 'First trip', unit);
   if (r !== 'ok') return { ok: false, message: r.replace(/^error: /, '') };
@@ -185,11 +208,14 @@ export function startCave(name: string, unit: 'ft' | 'm'): { ok: boolean; messag
   cave.hasCave = true;
   cave.name = clean;
   shelf0();
+  setHome(home);
+  if (home) cave.fileName = home.file;
   cave.opened += 1; // the canvas re-reads and re-frames
   changed();
   markUnsaved();
-  void storeOpenCave(); // a new cave goes on the shelf at once, and is kept as it grows
-  return { ok: true, message: `Started ${clean}` };
+  void storeOpenCave(); // a new cave goes on the shelf at once, and is kept as it grows (and written into its folder)
+  if (home) void openScans(home); // the Scans panel opens on the cave's own scans/
+  return { ok: true, message: home ? `Started ${clean} in ${home.label}` : `Started ${clean}` };
 }
 
 /** Asks for a file and opens it. Returns what to tell the person, or `null` if they cancelled. */
@@ -197,6 +223,22 @@ export async function openCave(): Promise<{ ok: boolean; message: string } | nul
   const picked = await chooseFile();
   if (!picked) return null;
   if (!confirmDiscard()) return null;
+  return openPicked(picked, null);
+}
+
+/** Opens the cave file in a cave's folder (New cave found one there). The folder becomes the open cave's. */
+export async function openFromHome(home: Home, asked = false): Promise<{ ok: boolean; message: string } | null> {
+  if (!asked && !confirmDiscard()) return null;
+  let bytes: Uint8Array;
+  try {
+    bytes = await readHome(home);
+  } catch (e) {
+    return { ok: false, message: `${home.file} could not be read: ${e instanceof Error ? e.message : String(e)}` };
+  }
+  return openPicked({ bytes, name: home.file, handle: null }, home);
+}
+
+async function openPicked(picked: { bytes: Uint8Array; name: string; handle: Handle | null }, home: Home | null): Promise<{ ok: boolean; message: string }> {
   const lower = picked.name.toLowerCase();
   const text = () => decodeSurveyText(picked.bytes);
   let ok = false;
@@ -242,6 +284,7 @@ export async function openCave(): Promise<{ ok: boolean; message: string } | nul
   cave.hasCave = true;
   cave.name = stem(picked.name);
   shelf0();
+  setHome(native ? home : null);
   for (const w of warnings) engine.log('warn', 'file', w);
   // the scans that travelled inside the file are there to use, as if their folder were open
   for (const s of bundled) addRemoteFile(s.path, new File([s.data as BlobPart], s.path.slice(s.path.lastIndexOf('/') + 1), { type: mimeOf(s.path) }));
@@ -253,13 +296,20 @@ export async function openCave(): Promise<{ ok: boolean; message: string } | nul
   if (bundledSurface) await adoptSurface(bundledSurface);
   changed();
   markSaved();
-  void storeOpenCave(picked.name); // a file opened is kept on the shelf (the same file again updates its record)
+  void storeOpenCave(home ? `${home.label}/${home.file}` : picked.name); // a file opened is kept on the shelf (the same file again updates its record)
+  if (home && native) void openScans(home).then(() => bundled.forEach((b) => fileOf(b.path) || addRemoteFile(b.path, new File([b.data as BlobPart], b.path.slice(b.path.lastIndexOf('/') + 1), { type: mimeOf(b.path) }))));
   return { ok: true, message: `Opened ${picked.name}${native ? '' : ': ' + message}` };
 }
 
 /** Saves the open cave as a CaveCAD file. `saveAs` always asks where. Returns what to tell the person, or `null` if they cancelled. */
 export async function saveCave(saveAs = false): Promise<string | null> {
   if (!cave.hasCave) return 'Nothing to save: no cave is open.';
+  const home = currentHome();
+  if (home && !saveAs) {
+    // the cave's folder is where it is saved: the shelf copy and the file are written together
+    if (!(await storeOpenCave())) return shelfState.problem || 'The cave could not be kept.';
+    return folder.problem || `Saved ${home.file} in ${home.label}`;
+  }
   const bytes = await caveBytes(option('saveScans', true), option('saveSurface', true));
   try {
     if (picker.showSaveFilePicker) {
@@ -421,6 +471,30 @@ export async function exportProject(): Promise<string | null> {
 /** The next demo or file that opens starts with no remembered file to save back to. */
 export function forgetFile() {
   handle = null;
+  setHome(null);
+}
+
+/**
+ * Gives the open cave a project folder (asking where it goes), or shows the one it has. Returns what
+ * to tell the person, or `null` if they cancelled.
+ */
+export async function caveFolder(): Promise<string | null> {
+  if (!cave.hasCave) return 'No cave is open.';
+  const have = currentHome();
+  if (have) return (await revealHome(have)) ? null : `This cave's folder is ${have.label}`;
+  if (!canMakeFolders()) return 'This browser cannot make folders. Use Export → Project for a folder of the cave, or open CaveCAD in Chrome, Edge or the desktop app.';
+  const place = await choosePlace(null);
+  if (!place) return null;
+  const name = cave.name || stem(cave.fileName);
+  const there = await look(place, name);
+  if (there.place.kind === 'hasCave') return `${there.label} already holds a cave (${there.place.file}). Choose another place.`;
+  if (there.place.kind === 'notACave' && !window.confirm(`${there.label} already exists. Use it for this cave? Nothing in it will be changed; the missing folders are added.`)) return null;
+  const home = await make(place, name);
+  setHome(home);
+  cave.fileName = home.file;
+  if (!(await storeOpenCave())) return shelfState.problem || 'The cave could not be kept.';
+  // the Scans panel stays on whatever it shows: those pages travel inside the cave file
+  return folder.problem || `Made ${home.label} and saved the cave in it`;
 }
 
 /** A different cave is now open: it is not any record of the shelf until it is stored. */
