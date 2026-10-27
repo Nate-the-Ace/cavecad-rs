@@ -81,6 +81,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "cave-geo"
+version = "0.0.1"
+dependencies = [
+ "cave-doc",
+ "cave-draw",
+ "cave-geomag",
+ "cave-id",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "cave-geom"
 version = "0.0.1"
 dependencies = [
