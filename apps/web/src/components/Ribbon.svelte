@@ -7,6 +7,10 @@
     icon: Component<any>;
     run: () => void;
     pressed?: () => boolean;
+    /** Greyed out while this says so. */
+    disabled?: () => boolean;
+    /** Says more than the label, on hover. */
+    title?: string;
   }
   /** One group of a ribbon tab. */
   export interface Group {
@@ -45,7 +49,8 @@
   import { fillLabel, isFillKind } from '../lib/fills';
   import { onMount, untrack } from 'svelte';
   import { PANELS, panelState, resetLayout, showPanel, surveyLayout, togglePanel, workLayout } from '../lib/workspace.svelte';
-  import { Check, Trash2, Library, FilePlus, FolderOpen, FolderTree, Save, Ruler, Footprints, Scissors, Map as MapIcon, Terminal, LayoutDashboard, Activity, Shapes, Table2, BookOpen, ScanLine, FileText, ChevronDown, PanelTop, Mountain, SlidersHorizontal, Crosshair, Tent, Lock, Cloud } from '@lucide/svelte';
+  import { Check, Trash2, Library, FilePlus, FolderOpen, FolderTree, Save, Ruler, Footprints, Scissors, Map as MapIcon, Terminal, LayoutDashboard, Activity, Shapes, Table2, BookOpen, ScanLine, FileText, ChevronDown, PanelTop, Mountain, SlidersHorizontal, Crosshair, Tent, Lock, Cloud, MountainSnow } from '@lucide/svelte';
+  import { entrancePick, surface } from '../lib/surface.svelte';
 
   /**
    * The app shows the ribbon as it is. A host that is only a part of the app (the survey harness) can give its own
@@ -74,8 +79,15 @@
 
   const own: Record<string, Group[]> = {
     Home: [
-      { name: 'File', items: [{ label: 'Caves', icon: Library, run: () => (shelf.open = true) }, { label: 'New', icon: FilePlus, run: () => (cave.newDialog = true) }, { label: 'Open', icon: FolderOpen, run: open }, { label: 'Save', icon: Save, run: save }, { label: 'Save as', icon: Save, run: saveAs }, { label: 'Folder', icon: FolderTree, run: () => run(caveFolder()), pressed: () => folder.label !== '' }, { label: 'Scans in file', icon: ScanLine, run: () => setOption('saveScans', !option('saveScans', true)), pressed: () => option('saveScans', true) }] },
+      { name: 'File', items: [{ label: 'Caves', icon: Library, run: () => (shelf.open = true) }, { label: 'New', icon: FilePlus, run: () => (cave.newDialog = true) }, { label: 'Open', icon: FolderOpen, run: open }, { label: 'Save', icon: Save, run: save }, { label: 'Save as', icon: Save, run: saveAs }, { label: 'Folder', icon: FolderTree, run: () => run(caveFolder()), pressed: () => folder.label !== '' }, { label: 'Scans in file', icon: ScanLine, run: () => setOption('saveScans', !option('saveScans', true)), pressed: () => option('saveScans', true) }, { label: 'Surface in file', icon: MountainSnow, run: () => setOption('saveSurface', !option('saveSurface', true)), pressed: () => option('saveSurface', true) }] },
       { name: 'Project files', items: [], custom: ProjectFiles },
+      {
+        name: 'Surface',
+        items: [
+          { label: 'Surface Data', icon: Mountain, title: 'Download the aerial photo and ground elevation above the cave', run: () => (surface.dialog = true), pressed: () => surface.dialog },
+          { label: 'Pick entrance', icon: Crosshair, title: 'Pick entrance on surface: drag a circle on the Map round the entrance (needs the ground elevation)', run: () => ((entrancePick.on = !entrancePick.on), entrancePick.on && showPanel('map')), pressed: () => entrancePick.on, disabled: () => !surface.tiff || surface.busy },
+        ],
+      },
       {
         name: 'Rooms',
         items: [
@@ -297,7 +309,7 @@
     <div class="btns">
       {#if g.custom}<g.custom {...(g.props ?? {})} />{/if}
       {#each g.items as item}
-        <button class="tool" class:pressed={item.pressed?.()} onclick={item.run}>
+        <button class="tool" class:pressed={item.pressed?.()} disabled={item.disabled?.()} title={item.title} onclick={item.run}>
           <item.icon size={22} strokeWidth={1.6} />
           <span>{item.label}</span>
         </button>
@@ -361,7 +373,7 @@
       <div class="grid">
         {#if g.custom}<g.custom {...(g.props ?? {})} />{/if}
         {#each g.items as item}
-          <button class="tool" class:pressed={item.pressed?.()} role="menuitem" onclick={() => { item.run(); openAt = null; }}>
+          <button class="tool" class:pressed={item.pressed?.()} disabled={item.disabled?.()} title={item.title} role="menuitem" onclick={() => { item.run(); openAt = null; }}>
             <item.icon size={16} strokeWidth={1.6} />
             <span>{item.label}</span>
           </button>
@@ -383,6 +395,7 @@
   .btns { display: flex; align-items: center; gap: 4px; height: var(--ribbon-body); overflow: hidden; }
   .tool { display: flex; flex-direction: column; align-items: center; gap: 4px; min-width: 58px; box-sizing: border-box; height: calc(var(--ribbon-body) - 1px); justify-content: center; overflow: hidden; padding: 4px 8px; background: none; border: 0; border-radius: var(--radius); cursor: pointer; font-size: 12px; }
   .tool:hover { background: var(--panel-2); }
+  .tool:disabled { opacity: 0.45; cursor: default; background: none; }
   .tool:active, .tool.pressed { background: var(--accent-bg); }
   .gname { height: var(--ribbon-name); line-height: var(--ribbon-name); font-size: 11px; color: var(--muted); white-space: nowrap; }
   section.collapsed { width: 96px; box-sizing: border-box; padding: 0 8px; }

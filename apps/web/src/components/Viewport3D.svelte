@@ -22,12 +22,17 @@
   import { panelState, showPanel } from '../lib/workspace.svelte';
   import { setActiveView } from '../lib/snapshot';
   import { have, mapUrl, scans } from '../lib/scans.svelte';
+  import { entrancePick, pickEntrance, pickUndoable, surface, undoEntrancePick } from '../lib/surface.svelte';
+  import { terrainSampler } from '../lib/terrain';
+  import { formatLength, unitName } from '../lib/units';
 
   let wrap: HTMLDivElement;
   let gl: HTMLCanvasElement;
   let overlay: HTMLCanvasElement;
   let cubeHost: HTMLDivElement;
   let view: CaveView | null = null;
+  /** Set once the view exists, so the effects that feed it run again then. */
+  let viewReady = $state(false);
 
   let depthColor = $state(false);
   let walls = $state(true);
@@ -95,8 +100,16 @@
     const halo = option('halo', true);
     const haloM = haloReach();
     const haloF = haloFade();
+    // the surface photo rides with the scans, under all of them
+    void viewReady;
+    const layers = surface.layers;
+    const photoUrl = surface.photoUrl;
+    const photoActual = photoSize;
+    const terrain = surface.terrain;
+    const photoOn = option('surfacePhoto', true);
+    const engineLoaded = loaded; // nothing can be asked of the engine before it has loaded
     untrack(() => {
-      if (!view) return;
+      if (!view || !engineLoaded) return;
       view.setHalo(halo, haloM, haloF);
       // A scan lies in the plane of the stations it is matched to, so it touches them (and lies level when it has none, at the survey's average height).
       const all = scene?.stations ?? [];
@@ -110,13 +123,99 @@
         const pts = (ids ?? []).map((id) => all.find((st) => st.id === id)?.at).filter((v): v is [number, number, number] => !!v);
         return pts.length >= 3 ? heightSurface(pts, surveyZ) : null;
       };
-      const list = on
+      const list: Parameters<CaveView['setScans']>[0] = on
         ? engine
             .scanPlacements('map', cave.adjusted)
             .filter((p) => !filter.hiddenTrips.includes(p.trip) && have(p.path))
             .map((p) => ({ key: `${p.trip}/${p.path}`, url: mapUrl(p.path)!, matrix: p.matrix, z: surveyZ, plane: planeFor(p.stations), height: heightFor(p.stations), opacity, trim: p.trim, warp: p.warp }))
         : [];
+      if (photoOn && photoUrl && layers?.photo_matrix) {
+        // The picture must cover the recorded window whatever size the service sent: scale the pixel columns by recorded / actual.
+        const m = layers.photo_matrix.slice();
+        const rec = layers.photo_size;
+        if (rec && photoActual && photoActual.url === photoUrl && photoActual.w > 0 && photoActual.h > 0 && (photoActual.w !== rec[0] || photoActual.h !== rec[1])) {
+          const kx = rec[0] / photoActual.w;
+          const ky = rec[1] / photoActual.h;
+          m[0] *= kx; m[3] *= kx; // a, d: per pixel across
+          m[1] *= ky; m[4] *= ky; // b, e: per pixel down
+        }
+        // On the ground when its heights are known, else level at the survey's height like a scan.
+        const ground = terrain ? terrainSampler(terrain) : null;
+        const height = ground ? (x: number, y: number) => ground(x, y) ?? surveyZ : null;
+        list.push({ key: 'surface-photo', url: photoUrl, matrix: m, z: surveyZ, plane: null, height, opacity: 0.5, trim: null, warp: null, order: -11 });
+      }
       view.setScans(list);
+    });
+  });
+
+  // The photo's received size, read once per picture (it may differ from the size recorded).
+  let photoSize = $state<{ url: string; w: number; h: number } | null>(null);
+  $effect(() => {
+    const url = surface.photoUrl;
+    if (!url) {
+      photoSize = null;
+      return;
+    }
+    const img = new Image();
+    let live = true;
+    img.onload = () => { if (live) photoSize = { url, w: img.naturalWidth, h: img.naturalHeight }; };
+    img.src = url;
+    return () => { live = false; };
+  });
+
+  // The ground above the cave: contours (labelled in the display unit) and the terrain, each with its own switch.
+  const surfaceShown = $derived(surface.layers !== null);
+  $effect(() => {
+    void viewReady;
+    const layers = surface.layers;
+    const terrain = surface.terrain;
+    const contoursOn = option('surfaceContours', true);
+    const terrainOn = option('surfaceTerrain', false);
+    const unit = unitName(cave.units);
+    untrack(() => {
+      view?.setContours(layers?.contours ?? [], unit, contoursOn);
+      view?.setTerrain(terrain, terrainOn);
+    });
+  });
+
+  // "Pick entrance on surface" (the ribbon's Pick entrance button): press for the centre, drag for the
+  // radius, let go. Escape gives up. It runs while the pointer is down on the map, so the keys are
+  // heard on the window: the press does not reach the map's own handlers to give it focus.
+  $effect(() => {
+    const on = entrancePick.on;
+    void viewReady;
+    untrack(() => {
+      view?.setCirclePick(on);
+      if (on) entrancePick.message = 'Drag a circle round the entrance on the map; Escape to stop.';
+      else if (entrancePick.message.startsWith('Drag a circle')) entrancePick.message = '';
+    });
+    if (!on) return;
+    const esc = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      e.preventDefault();
+      entrancePick.on = false;
+    };
+    window.addEventListener('keydown', esc);
+    return () => window.removeEventListener('keydown', esc);
+  });
+  async function circlePicked(cx: number, cy: number, r: number) {
+    if (r < 1) {
+      entrancePick.message = `Drag a bigger circle: at least ${formatLength(1, cave.units, 1)} across from the centre.`;
+      return; // stays on for another try
+    }
+    entrancePick.on = false;
+    entrancePick.message = 'Moving the entrance and downloading the surface for it…';
+    entrancePick.message = await pickEntrance(cx, cy, r);
+  }
+  function undoPick() {
+    entrancePick.message = undoEntrancePick();
+  }
+  // The message's Undo goes once anything else is edited or undone (the Map's Undo may already have taken the pick back).
+  $effect(() => {
+    void cave.version;
+    void cave.opened;
+    untrack(() => {
+      if (entrancePick.canUndo && !pickUndoable()) entrancePick.canUndo = false;
     });
   });
 
@@ -405,8 +504,10 @@
       if (r !== 'ok') engine.log('warn', 'section', r);
       changed();
     };
+    v.onCirclePicked = (cx, cy, r) => void circlePicked(cx, cy, r);
     v.shadingFor = (dir, persp) => engine.shading(cave.adjusted, dir, persp, wireFilter());
     view = v;
+    viewReady = true;
     if (import.meta.env.DEV) (window as unknown as { __view: CaveView }).__view = v; // for tests
     setActiveView(v);
 
@@ -428,6 +529,7 @@
       cube.dispose();
       v.dispose();
       view = null;
+      viewReady = false;
     };
   });
 </script>
@@ -449,6 +551,12 @@
           <label title="Show the profile sketches along their runs (they fade out from the top or bottom, where they cannot be read)"><input type="checkbox" checked={cave.showSections.profileSketches} onchange={(e) => setShowSections('profileSketches', e.currentTarget.checked)} /> Profile sketches</label>
           <label title="Show the cross sections drawn at stations, next to their stations (drag one to place it)"><input type="checkbox" checked={cave.showSections.map} onchange={(e) => setShowSections('map', e.currentTarget.checked)} /> Sections</label>
           <label title="Draw a paler section through stations with no measurements"><input type="checkbox" bind:checked={fillGaps} onchange={loadPassage} /> Fill gaps</label>
+          {#if surfaceShown}
+            <h4>Surface</h4>
+            <label title="The aerial photo under the cave, at half strength"><input type="checkbox" checked={option('surfacePhoto', true)} onchange={(e) => setOption('surfacePhoto', e.currentTarget.checked)} /> Photo</label>
+            <label title="Contour lines of the ground; the thicker ones are labelled with their height"><input type="checkbox" checked={option('surfaceContours', true)} onchange={(e) => setOption('surfaceContours', e.currentTarget.checked)} /> Contours</label>
+            <label title="The ground as a see-through surface, best seen from the side"><input type="checkbox" checked={option('surfaceTerrain', false)} onchange={(e) => setOption('surfaceTerrain', e.currentTarget.checked)} /> Terrain</label>
+          {/if}
           <h4>Types</h4>
           {#each listed as t}
             <label><input type="checkbox" checked={!filter.hiddenTypes.includes(t.key)} onchange={(e) => (setShown('types', t.key, e.currentTarget.checked), refresh())} /> {t.label}</label>
@@ -474,7 +582,7 @@
     <PanelUndo scope="map" label="on the map" />
     <SnapButton />
     <button class:on={depthColor} title="Colour by elevation" onclick={() => ((depthColor = !depthColor), view?.setElevationColors(depthColor), loadPassage())}><Palette size={15} /></button>
-    {#if drawHint}<span class="status">{drawHint}</span>{:else if status}<span class="status">{status}</span>{/if}
+    {#if drawHint}<span class="status">{drawHint}</span>{:else if entrancePick.message}<span class="status pick">{entrancePick.message}{#if entrancePick.canUndo}<button title="Put the entrance and its surface back as they were before this pick" onclick={undoPick}>Undo</button>{/if}<button title="Dismiss" aria-label="Dismiss" onclick={() => ((entrancePick.message = ''), (entrancePick.canUndo = false))}>×</button></span>{:else if status}<span class="status">{status}</span>{/if}
   </div>
   <div class="cube" class:locked>
     <div bind:this={cubeHost}></div>
@@ -505,6 +613,7 @@
   button.on { background: var(--accent-bg); }
   label { display: flex; gap: 4px; align-items: center; color: var(--muted); white-space: nowrap; }
   .status { color: var(--muted); }
+  .status.pick { display: inline-flex; flex-wrap: wrap; gap: 6px; align-items: center; color: var(--text); max-width: 46em; }
   .menu { position: relative; }
   .menu > button { gap: 5px; grid-auto-flow: column; }
   .pop { position: absolute; top: calc(100% + 10px); left: 0; z-index: 5; min-width: 200px; max-height: 60vh; overflow: auto; display: flex; flex-direction: column; gap: 4px; padding: 8px 10px; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: 0 6px 20px rgb(0 0 0 / 0.25); }

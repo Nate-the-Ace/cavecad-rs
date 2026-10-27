@@ -215,6 +215,10 @@ pub fn to_document(survey: &Survey, actor: ActorId) -> Result<Document, String> 
             ],
         )?;
     }
+    if let Some(frame) = survey.fixed_frame {
+        let acts = cave_geo::record::set_fixed_frame(&doc, frame);
+        edit(&mut doc, acts)?;
+    }
     Ok(doc)
 }
 
@@ -379,6 +383,7 @@ pub fn from_document(doc: &Document) -> Survey {
             },
         );
     }
+    survey.fixed_frame = cave_geo::record::fixed_frame(doc);
     survey.ensure_trips();
     survey
 }

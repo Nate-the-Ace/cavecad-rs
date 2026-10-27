@@ -7,6 +7,8 @@
   import { onMount, untrack } from 'svelte';
   import Ribbon from './components/Ribbon.svelte';
   import NewCave from './components/NewCave.svelte';
+  import SurfaceData from './components/SurfaceData.svelte';
+  import { recomputeLayers, resetEntrancePick, surface, surfaceKey, syncSurface } from './lib/surface.svelte';
   import { initWorkspace } from './lib/workspace.svelte';
   import { engine, loadEngine, loadBuildInfo, type BuildInfo } from './lib/engine';
   import { cave, unsaved } from './lib/cave.svelte';
@@ -36,6 +38,54 @@
     void cave.version;
     void cave.opened;
     if (engineReady) untrack(syncDrawing);
+  });
+
+  // The surface files follow the cave's surface record: a cave opened or switched, or an undo/redo that
+  // changes the record, loads them again (and downloads any this device does not have).
+  let lastSurface = '';
+  let lastPickCave = cave.opened;
+  $effect(() => {
+    void cave.version;
+    void cave.opened;
+    if (!engineReady) return;
+    untrack(() => {
+      const key = `${cave.opened}|${surfaceKey()}`;
+      if (key === lastSurface) return;
+      lastSurface = key;
+      // Recording the key here is safe even while a download runs: syncSurface then waits and runs
+      // again when that download ends (its pending flag), so this cave's files are still fetched.
+      void syncSurface();
+    });
+  });
+
+  // Pick mode belongs to one cave's ground: another cave opened, or the elevation gone, ends it.
+  $effect(() => {
+    void cave.opened;
+    void surface.tiff;
+    untrack(() => {
+      if (!surface.tiff || lastPickCave !== cave.opened) resetEntrancePick();
+      lastPickCave = cave.opened;
+    });
+  });
+
+  // What the views draw of the surface (photo place, contours, terrain) is rebuilt from the kept files when
+  // they change, the cave changes, or the unit or Adjusted setting does: never a download. Edits that come
+  // in a burst are rebuilt once, on the next frame.
+  let layersFrame = 0;
+  $effect(() => {
+    void surface.version;
+    void cave.version;
+    void cave.opened;
+    void cave.units;
+    void cave.adjusted;
+    if (!engineReady) return;
+    untrack(() => {
+      if (layersFrame) return;
+      layersFrame = requestAnimationFrame(() => {
+        layersFrame = 0;
+        recomputeLayers();
+      });
+    });
   });
 
   // Select All outside a text field must not select the page's own buttons and labels.
@@ -148,6 +198,7 @@
   <Ribbon />
   <SnapMenu />
   <NewCave />
+  <SurfaceData />
   <CaveShelf />
   <MovedPage bind:open={moved} />
   <LineMenu />

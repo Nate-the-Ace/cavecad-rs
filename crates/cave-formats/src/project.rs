@@ -2,10 +2,10 @@
 //!
 //! - **Compass .mak**: `#FILE.DAT,STA[F,e,n,z],STA;` lists the data files and the stations fixed in
 //!   them (feet `F` or metres `M`; a station with no brackets is only a link). `@` base location, `&`
-//!   datum, `$` UTM zone, `%`/`*` convergence and `!` options are read past. `/` starts a comment.
+//!   datum (with a zone, it names the fixed points' coordinate system), `$` UTM zone, `%`/`*` convergence and `!` options are read. `/` starts a comment.
 //! - **Walls .wpj**: `.BOOK`/`.ENDBOOK` nest, `.PATH` is a folder relative to the book it is in,
 //!   `.SURVEY` with `.NAME` is a data file (`NAME.SRV`), `.OPTIONS` are `#Units` options that hold
-//!   for everything below them. `.REF` (geographic reference) and `.STATUS` are read past.
+//!   for everything below them. `.REF` (geographic reference: place, zone and datum) is read; `.STATUS` is read past.
 //! - **Therion thconfig**: `source` lines name the .th files; `input` inside them is followed as
 //!   for a single .th.
 //!
@@ -337,6 +337,8 @@ fn read_mak(path: &str, content: &str, read: &dyn Fn(&str) -> Option<String>) ->
 struct MakOptions {
     base: Option<(f64, f64, f64)>,
     zone: Option<i32>,
+    /// From the `&` line.
+    datum: Option<cave_geo::datum::Datum>,
     /// From a `%`/`*` line.
     convergence: Option<f64>,
     /// From the `@` line (Compass's own figure; 0.0 there is a placeholder).
@@ -364,6 +366,8 @@ impl MakOptions {
                     }
                 }
             }
+            // last statement wins; an unrecognised datum means unknown
+            Some('&') => self.datum = cave_geo::datum::Datum::parse(body),
             Some('$') => self.zone = body.parse().ok().or(self.zone),
             Some('%') => {
                 self.convergence = body.parse().ok().or(self.convergence);
@@ -381,6 +385,9 @@ impl MakOptions {
 
     /// Applies the settings to the merged survey.
     fn apply(&self, survey: &mut Survey) {
+        if let (Some(zone), Some(datum)) = (self.zone.filter(|z| *z != 0), self.datum) {
+            survey.fixed_frame = Some(cave_geo::datum::FixedFrame { zone, datum });
+        }
         // flags a project switches off
         let off = |c: char| self.letters.contains(c);
         for s in &mut survey.shots {
@@ -486,7 +493,7 @@ const WPJ_DETACHED: u64 = 0x2;
 
 /// `.REF northing easting zone convergence elevation flags latd latm lats lond lonm lons datum "name"`:
 /// the place, from its latitude and longitude (flag 0x4: west, 0x8: south).
-fn wpj_ref(rest: &str) -> Option<GeoRef> {
+fn wpj_ref(rest: &str) -> Option<(GeoRef, Option<cave_geo::datum::Datum>)> {
     let v: Vec<f64> = rest
         .split_whitespace()
         .take(12)
@@ -498,12 +505,19 @@ fn wpj_ref(rest: &str) -> Option<GeoRef> {
     let flags = v[5] as u64;
     let lat = (v[6] + v[7] / 60.0 + v[8] / 3600.0) * if flags & 0x8 != 0 { -1.0 } else { 1.0 };
     let lon = (v[9] + v[10] / 60.0 + v[11] / 3600.0) * if flags & 0x4 != 0 { -1.0 } else { 1.0 };
-    Some(GeoRef {
-        lat,
-        lon,
-        zone: v[2] as i32,
-        alt: v[4],
-    })
+    let datum = rest
+        .split('"')
+        .nth(1)
+        .and_then(cave_geo::datum::Datum::parse);
+    Some((
+        GeoRef {
+            lat,
+            lon,
+            zone: v[2] as i32,
+            alt: v[4],
+        },
+        datum,
+    ))
 }
 const WPJ_NOT_SURVEY: u64 = 0x10000;
 
@@ -529,6 +543,7 @@ fn read_wpj(path: &str, content: &str, read: &dyn Fn(&str) -> Option<String>) ->
     let mut in_survey = false;
     let mut name = String::new();
     let mut skipped = 0usize;
+    let mut frame_of_fixed: Option<cave_geo::datum::FixedFrame> = None;
 
     // reads the survey entry that just ended; true when it was left out as detached
     let mut finish = |frames: &mut Vec<Frame>, depth: usize, status: u64, name: &str| -> bool {
@@ -632,8 +647,19 @@ fn read_wpj(path: &str, content: &str, read: &dyn Fn(&str) -> Option<String>) ->
                 }
             }
             "REF" => {
+                let r = wpj_ref(rest);
                 if let Some(f) = frames.last_mut() {
-                    f.georef = wpj_ref(rest);
+                    f.georef = r.map(|(g, _)| g);
+                }
+                // the first .REF (the root book's) names the fixed points' system
+                if frame_of_fixed.is_none()
+                    && let Some((g, Some(datum))) = r
+                    && g.zone != 0
+                {
+                    frame_of_fixed = Some(cave_geo::datum::FixedFrame {
+                        zone: g.zone,
+                        datum,
+                    });
                 }
             }
             "PATH" => {
@@ -674,6 +700,7 @@ fn read_wpj(path: &str, content: &str, read: &dyn Fn(&str) -> Option<String>) ->
         );
     }
     let mut survey = merge(parts, notes);
+    survey.fixed_frame = frame_of_fixed;
     if survey.cave_name.is_empty() {
         survey.cave_name = if title.is_empty() {
             project
@@ -965,6 +992,26 @@ mod tests {
             !mak("!s;").shots[0].exclude_from_all,
             "s switches every shot flag off"
         );
+    }
+
+    #[test]
+    fn the_last_datum_statement_wins_and_unknown_means_unknown() {
+        let ok = mak("@450000,4100000,500,16,0;\n&North American 1983;");
+        assert!(ok.fixed_frame.is_some());
+        let s = mak("@450000,4100000,500,16,0;\n&North American 1927;\n&Adindan;");
+        assert_eq!(s.fixed_frame, None);
+    }
+
+    #[test]
+    fn a_dollar_zone_without_an_at_zone_is_enough() {
+        let s = mak("&North American 1983;\n$16;");
+        assert_eq!(s.fixed_frame.map(|f| f.zone), Some(16));
+    }
+
+    #[test]
+    fn an_explicit_zero_zone_is_no_frame() {
+        let s = mak("&North American 1983;\n@450000,4100000,500,0,0;");
+        assert_eq!(s.fixed_frame, None);
     }
 
     #[test]

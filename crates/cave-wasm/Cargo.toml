@@ -35,6 +35,7 @@ cave-fill = { path = "../cave-fill" }
 cave-pattern = { path = "../cave-pattern" }
 cave-id = { path = "../cave-id" }
 cave-geom = { path = "../cave-geom" }
+cave-geo = { path = "../cave-geo" }
 js-sys = "0.3"
 tracing.workspace = true
 tracing-subscriber.workspace = true
@@ -44,3 +45,6 @@ serde_json = { version = "1", features = ["float_roundtrip"] }
 
 [package.metadata.wasm-pack.profile.release]
 wasm-opt = false
+
+[dev-dependencies]
+cave-geomag = { path = "../cave-geomag" }

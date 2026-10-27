@@ -1,0 +1,18 @@
+import { parseLatLon } from '../src/lib/latlon-text.ts';
+const ok = (c: boolean, m: string) => { if (!c) { console.error('FAIL', m); process.exit(1); } console.log('ok', m); };
+const near = (p: { lat: number; lon: number } | null) => !!p && Math.abs(p.lat - 36.99) < 1e-6 && Math.abs(p.lon + 86.44) < 1e-6;
+ok(near(parseLatLon('36.99, -86.44')), 'decimal');
+ok(near(parseLatLon('36.99 -86.44')), 'decimal, space');
+ok(near(parseLatLon('36 59 24 N 86 26 24 W')), 'DMS spaced');
+ok(near(parseLatLon(`36°59'24"N 86°26'24"W`)), 'DMS symbols');
+ok(near(parseLatLon(`N 36°59.4' W 86°26.4'`)), 'hemisphere first, decimal minutes');
+ok(near(parseLatLon('36.99N, 86.44W')), 'decimal degrees with letters');
+ok(parseLatLon('banana') === null, 'garbage');
+ok(parseLatLon('') === null, 'empty');
+ok(parseLatLon('91, 0') === null, 'range lat');
+ok(parseLatLon('0, 181') === null, 'range lon');
+ok(parseLatLon('36 59 24 N 86 26 24 N') === null, 'two latitudes');
+ok(parseLatLon('36 75 00 N 86 0 0 W') === null, 'minutes out of range');
+ok(near(parseLatLon('36°59’24”N 86°26’24”W')), 'DMS with curly quotes');
+ok(near(parseLatLon('36°59‘24“N 86°26‘24“W')), 'DMS with opening curly quotes');
+ok(near(parseLatLon('36°59′24″N 86°26′24″W')), 'DMS with primes');

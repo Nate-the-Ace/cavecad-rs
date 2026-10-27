@@ -25,9 +25,9 @@ the index useful; `missing_docs` is a warning for that reason.
   This is what makes undo, history and later co-editing possible.
 - **Source vs derived.** Store only what a person authored. Anything computed (adjustment, shaped
   lines, fills, profile views) is regenerated deterministically, with seeded randomness.
-- **Never log entrance coordinates or put them in URLs or files meant for sharing (exports, packages).**
-  The server stores caves, coordinates included (Nathan, 2026-10-26); `cave-log` redaction stays as a
-  safety net. The per-cave `<cave>.log` is excluded from sanitized packages.
+- **Entrance location is not a sharing concern** (Nathan, 2026-10-27): he trusts whoever he invites
+  to a cave or hands it to, so coordinates may travel in saved caves, exports, project zips and server
+  caves. `cave-log` redaction stays as a plain tidiness net. Do not add stripping or raise it in reviews.
 - **Tests with every change.** Convergence (order-independence) tests for anything merged.
 
 ## Commands
@@ -40,7 +40,7 @@ the index useful; `missing_docs` is a warning for that reason.
 Toolchain: use rustup's, not Homebrew's `rustc` (no wasm32 target). Put it first on PATH:
 `export PATH=/opt/homebrew/opt/rustup/bin:$PATH`. Local browser-build check:
 
-    cargo build --target wasm32-unknown-unknown -p cave-id -p cave-store -p cave-log -p cave-geom -p cave-doc -p cave-survey -p cave-notebook -p cave-scans -p cave-pattern -p cave-snap
+    cargo build --target wasm32-unknown-unknown -p cave-id -p cave-store -p cave-log -p cave-geom -p cave-doc -p cave-survey -p cave-notebook -p cave-scans -p cave-pattern -p cave-snap -p cave-geo
 
 ## Web app (apps/web)
 

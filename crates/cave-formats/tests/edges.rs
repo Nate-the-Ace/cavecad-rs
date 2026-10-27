@@ -178,3 +178,77 @@ fn include_paths_written_on_windows_or_with_dots_are_found() {
     .unwrap();
     assert_eq!(s.shots.len(), 1);
 }
+
+// ---- the fixed points' coordinate system ----
+
+fn frame_of(
+    format: cave_formats::ProjectFormat,
+    name: &str,
+    text: &str,
+    file: &str,
+    data: &str,
+) -> Option<cave_geo::datum::FixedFrame> {
+    let (file, data) = (file.to_string(), data.to_string());
+    let read = move |p: &str| (p == file).then(|| data.clone());
+    cave_formats::read_project(format, name, text, &read)
+        .survey
+        .fixed_frame
+}
+
+#[test]
+fn mak_records_fixed_frame() {
+    use cave_formats::ProjectFormat::CompassMak;
+    use cave_geo::datum::{Datum, FixedFrame};
+    let dat = format!("{HEAD}A1 A2 10.00 90.00 0.00 1 1 1 1\r\n\u{0C}");
+    let mak = "@550000.0,4094000.0,150.0,16,0.0;\n&North American 1927;\n#a.dat,A1[m,550000.0,4094000.0,150.0];\n";
+    assert_eq!(
+        frame_of(CompassMak, "c.mak", mak, "a.dat", &dat),
+        Some(FixedFrame {
+            zone: 16,
+            datum: Datum::Nad27
+        })
+    );
+    let no_datum = mak.replace("&North American 1927;\n", "");
+    assert_eq!(
+        frame_of(CompassMak, "c.mak", &no_datum, "a.dat", &dat),
+        None
+    );
+    let no_zone = "&North American 1927;\n#a.dat,A1[m,550000.0,4094000.0,150.0];\n";
+    assert_eq!(frame_of(CompassMak, "c.mak", no_zone, "a.dat", &dat), None);
+}
+
+#[test]
+fn wpj_records_fixed_frame() {
+    use cave_formats::ProjectFormat::WallsWpj;
+    use cave_geo::datum::{Datum, FixedFrame};
+    let srv = "#Units Meters\r\n#Fix A1 550000 4094000 150\r\nA1 A2 10 90 0\r\n";
+    let wpj = |reference: &str| {
+        format!(".BOOK\tCave\n.NAME\tPROJ\n{reference}.SURVEY\tEnt\n.NAME\tENT\n.ENDBOOK\n")
+    };
+    let good = wpj(".REF\t4094000 550000 16 0 150 4 36 59 0 86 26 0 27 \"North American 1927\"\n");
+    assert_eq!(
+        frame_of(WallsWpj, "c.wpj", &good, "ENT.SRV", srv),
+        Some(FixedFrame {
+            zone: 16,
+            datum: Datum::Nad27
+        })
+    );
+    assert_eq!(frame_of(WallsWpj, "c.wpj", &wpj(""), "ENT.SRV", srv), None);
+}
+
+#[test]
+fn document_stores_fixed_frame() {
+    use cave_doc::ActorId;
+    use cave_geo::datum::{Datum, FixedFrame};
+    let want = FixedFrame {
+        zone: 16,
+        datum: Datum::Nad83,
+    };
+    let s = cave_formats::Survey {
+        fixed_frame: Some(want),
+        ..cave_formats::Survey::default()
+    };
+    let doc = cave_formats::to_document(&s, ActorId(1)).unwrap();
+    assert_eq!(cave_geo::record::fixed_frame(&doc), Some(want));
+    assert_eq!(cave_formats::from_document(&doc).fixed_frame, Some(want));
+}

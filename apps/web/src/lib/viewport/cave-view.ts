@@ -30,6 +30,7 @@ import { PICKUP_REACH, joinFit } from '../line-editor';
 import { looks } from '../ink';
 import { elevationColor, inkColor, readTheme, type ViewTheme } from './theme';
 import { metresPer, niceNumber, unitName, type Units } from '../units';
+import { thinTerrain, type Terrain } from '../terrain';
 
 export type Projection = 'perspective' | 'orthographic';
 export type Dir = [number, number, number];
@@ -66,6 +67,16 @@ export class CaveView {
   private camera: THREE.PerspectiveCamera | THREE.OrthographicCamera = this.persp;
   private content = new THREE.Group();
   private materials: LineMaterial[] = [];
+  /** The ground above the cave (contours, terrain): beside `content`, never cleared by `rebuild()`. */
+  private surfaceGroup = new THREE.Group();
+  private surfaceMaterials: LineMaterial[] = [];
+  /** "Pick entrance on surface": on, and the circle being dragged (centre on the plan, and on screen). */
+  private circlePick: { at: [number, number]; px: [number, number]; now: [number, number] } | null = null;
+  private circlePickOn = false;
+  /** A circle was let go: its centre and radius in cave metres on the plan. */
+  onCirclePicked: (cx: number, cy: number, r: number) => void = () => {};
+  /** Where each major contour's level is written (its run's middle point) and what it says. */
+  private contourLabels: { at: [number, number, number]; text: string }[] = [];
   private data: Scene | null = null;
   private theme: ViewTheme = readTheme();
   private width = 1;
@@ -202,6 +213,7 @@ export class CaveView {
     this.ortho.up.set(0, 0, 1);
     this.persp.position.copy(viewDirection(HOME_DIR).multiplyScalar(50));
     this.scene.add(this.content);
+    this.scene.add(this.surfaceGroup);
     this.scene.add(new THREE.AmbientLight(0xffffff, 0.9));
     this.scene.add(this.headlamp);
     this.controls = new OrbitControls(this.persp, canvas);
@@ -331,6 +343,20 @@ export class CaveView {
       'pointerdown',
       (e) => {
         if (e.button !== 0) return;
+        if (this.circlePickOn) {
+          // Picking the entrance: the press is the circle's centre; nothing else gets it.
+          e.stopImmediatePropagation();
+          e.stopPropagation();
+          const at = this.planPoint(e.clientX, e.clientY);
+          if (!at) return;
+          const rect = canvas.getBoundingClientRect();
+          const px: [number, number] = [e.clientX - rect.left, e.clientY - rect.top];
+          this.circlePick = { at, px, now: px };
+          this.controls.enabled = false;
+          canvas.setPointerCapture(e.pointerId);
+          this.requestRender();
+          return;
+        }
         if (this.drawTool) {
           // Drawing on the map: only from straight above or below, where plan is what is seen.
           if (!this.canDrawHere || this.fingers.size > 1 || (e.pointerType === 'touch' && !this.drawOptions.finger)) return;
@@ -372,6 +398,16 @@ export class CaveView {
       true,
     );
     canvas.addEventListener('pointermove', (e) => {
+      if (this.circlePickOn) {
+        canvas.style.cursor = 'crosshair';
+        const c = this.circlePick;
+        if (c) {
+          const rect = canvas.getBoundingClientRect();
+          c.now = [e.clientX - rect.left, e.clientY - rect.top];
+          this.requestRender();
+        }
+        return;
+      }
       if (e.pointerType !== 'touch') {
         const cp = this.planPoint(e.clientX, e.clientY);
         this.lastPlan = cp;
@@ -441,6 +477,16 @@ export class CaveView {
       }
     });
     const drop = (e: PointerEvent) => {
+      const circle = this.circlePick;
+      if (circle) {
+        this.circlePick = null;
+        this.controls.enabled = true;
+        this.requestRender();
+        if (e.type !== 'pointerup') return; // a cancelled press picks nothing
+        const end = this.planPoint(e.clientX, e.clientY);
+        if (end) this.onCirclePicked(circle.at[0], circle.at[1], Math.hypot(end[0] - circle.at[0], end[1] - circle.at[1]));
+        return;
+      }
       const edit = this.lineEdit;
       if (edit) {
         this.lineEdit = null;
@@ -530,6 +576,7 @@ export class CaveView {
     this.overlay.style.width = `${this.width}px`;
     this.overlay.style.height = `${this.height}px`;
     for (const m of this.materials) m.resolution.set(this.width, this.height);
+    for (const m of this.surfaceMaterials) m.resolution.set(this.width, this.height);
     this.persp.aspect = this.width / this.height;
     this.persp.updateProjectionMatrix();
     this.setOrthoHeight(this.visibleHalfHeight());
@@ -725,6 +772,10 @@ export class CaveView {
   }
 
   private readonly scans = new Map<string, { mesh: THREE.Mesh; url: string }>();
+  /** The latest request for each scan, so a picture that finishes loading after a newer request is dropped and the newest placement is the one used. */
+  private readonly scanWanted = new Map<string, { sig: string; item: Parameters<CaveView['setScans']>[0][number] }>();
+  /** `key|sig` of pictures still loading, so a repeat request does not load them twice. */
+  private readonly scanLoading = new Set<string>();
   private static readonly SCAN_MAX = 4096;
 
   /**
@@ -733,24 +784,33 @@ export class CaveView {
    * at height `z`. Drawn before the lines and without depth, so the passage never hides it and the
    * survey is drawn over it.
    */
-  setScans(list: { key: string; url: string; matrix: number[]; z: number; opacity: number; trim?: [number, number][] | null; warp?: Warp | null; plane?: [number, number, number] | null; height?: ((x: number, y: number) => number) | null }[]) {
+  setScans(list: { key: string; url: string; matrix: number[]; z: number; opacity: number; trim?: [number, number][] | null; warp?: Warp | null; plane?: [number, number, number] | null; height?: ((x: number, y: number) => number) | null; order?: number }[]) {
     const keep = new Set(list.map((l) => l.key));
     for (const [key, s] of this.scans) {
       if (!keep.has(key)) this.removeScan(key, s);
     }
-    for (const item of list) {
-      const have = this.scans.get(item.key);
-      const sig = item.url + '|' + (item.trim ? item.trim.join(';') : '');
+    for (const key of [...this.scanWanted.keys()]) if (!keep.has(key)) this.scanWanted.delete(key);
+    for (const request of list) {
+      const have = this.scans.get(request.key);
+      const sig = request.url + '|' + (request.trim ? request.trim.join(';') : '');
+      this.scanWanted.set(request.key, { sig, item: request });
       if (have && have.url === sig) {
-        this.placeScan(have.mesh, item);
+        this.placeScan(have.mesh, request);
         continue;
       }
-      if (have) this.removeScan(item.key, have);
-      new THREE.TextureLoader().load(item.url, (loaded) => {
-        if (this.scans.has(item.key) || !keep.has(item.key)) {
+      if (have) this.removeScan(request.key, have);
+      const loading = `${request.key}|${sig}`;
+      if (this.scanLoading.has(loading)) continue; // already on its way; it will use the newest placement
+      this.scanLoading.add(loading);
+      new THREE.TextureLoader().load(request.url, (loaded) => {
+        this.scanLoading.delete(loading);
+        // A newer request for this scan (another picture, or none) wins over a load that finished late.
+        const want = this.scanWanted.get(request.key);
+        if (!want || want.sig !== sig || this.scans.has(request.key)) {
           loaded.dispose();
           return;
         }
+        const item = want.item;
         const img = loaded.image as CanvasImageSource & { width: number; height: number };
         const full = { x0: 0, y0: 0, w: img.width as number, h: img.height as number };
         let tex: THREE.Texture = loaded;
@@ -791,13 +851,13 @@ export class CaveView {
         mesh.userData.box = box;
         mesh.userData.flat = geo;
         mesh.matrixAutoUpdate = false;
-        mesh.renderOrder = -10;
+        mesh.renderOrder = item.order ?? -10; // the surface photo asks to be lower still, under every scan
         mesh.frustumCulled = false;
         this.scans.set(item.key, { mesh, url: sig });
         this.placeScan(mesh, item);
         this.scene.add(mesh);
         this.requestRender();
-      });
+      }, undefined, () => this.scanLoading.delete(loading));
     }
     this.requestRender();
   }
@@ -840,6 +900,102 @@ export class CaveView {
     }
     mesh.matrixWorldNeedsUpdate = true;
     (mesh.material as THREE.MeshBasicMaterial).opacity = item.opacity;
+    this.requestRender();
+  }
+
+  /**
+   * Contour lines over the surface photo: minor lines thin and pale, majors thicker and darker, each
+   * major run labelled at its middle point. Points are cave metres (z in the survey frame, or level at
+   * the entrance's height when the ground's datum is unknown). `unit` is the label's unit name.
+   */
+  setContours(list: { xyz: number[]; major: boolean; closed: boolean; level: number }[], unit: string, visible: boolean) {
+    for (const c of [...this.surfaceGroup.children]) {
+      if (c.userData.kind !== 'contour') continue;
+      this.surfaceGroup.remove(c);
+      (c as LineSegments2).geometry.dispose();
+    }
+    for (const m of this.surfaceMaterials) m.dispose();
+    this.surfaceMaterials = [];
+    this.contourLabels = [];
+    if (!visible) return this.requestRender();
+    for (const major of [false, true]) {
+      const segs: number[] = [];
+      for (const c of list) {
+        if (c.major !== major) continue;
+        const p = c.xyz;
+        const n = Math.floor(p.length / 3);
+        const count = c.closed ? n : n - 1;
+        for (let i = 0; i < count; i++) {
+          const a = i * 3;
+          const b = ((i + 1) % n) * 3;
+          segs.push(p[a], p[a + 1], p[a + 2], p[b], p[b + 1], p[b + 2]);
+        }
+      }
+      if (!segs.length) continue;
+      const geo = new LineSegmentsGeometry();
+      geo.setPositions(segs);
+      // Opaque and without depth: drawn first (render order), so the survey's lines always draw over them.
+      const mat = new LineMaterial({ color: major ? 0x8a5a2b : 0xb89a78, linewidth: major ? 1.6 : 0.8, depthTest: false, depthWrite: false });
+      mat.resolution.set(this.width, this.height);
+      const mesh = new LineSegments2(geo, mat);
+      mesh.userData.kind = 'contour';
+      mesh.renderOrder = -1;
+      mesh.frustumCulled = false;
+      this.surfaceGroup.add(mesh);
+      this.surfaceMaterials.push(mat);
+    }
+    for (const c of list) {
+      const n = Math.floor(c.xyz.length / 3);
+      if (!c.major || n === 0) continue;
+      const m = Math.floor(n / 2) * 3;
+      this.contourLabels.push({ at: [c.xyz[m], c.xyz[m + 1], c.xyz[m + 2]], text: `${+c.level.toFixed(3)} ${unit}` });
+    }
+    this.requestRender();
+  }
+
+  /** Switches the entrance pick: a press and drag on the map draws a circle; letting go calls `onCirclePicked`. */
+  setCirclePick(on: boolean) {
+    this.circlePickOn = on;
+    if (!on && this.circlePick) {
+      this.circlePick = null;
+      this.controls.enabled = true;
+    }
+    this.canvas.style.cursor = on ? 'crosshair' : '';
+    this.requestRender();
+  }
+
+  /** The ground as a translucent surface (a w x h grid of cave-metre points, NaN z = hole), or none. */
+  setTerrain(t: Terrain | null, visible: boolean) {
+    for (const c of [...this.surfaceGroup.children]) {
+      if (c.userData.kind !== 'terrain') continue;
+      this.surfaceGroup.remove(c);
+      const mesh = c as THREE.Mesh;
+      mesh.geometry.dispose();
+      (mesh.material as THREE.Material).dispose();
+    }
+    if (!t || !visible) return this.requestRender();
+    // A full 512 x 512 grid is a quarter of a million points: every other one draws the same ground.
+    const g = t.w * t.h > 200_000 ? thinTerrain(t, 2) : t;
+    const ok = (i: number) => Number.isFinite(g.xyz[i * 3 + 2]);
+    const idx: number[] = [];
+    for (let r = 0; r + 1 < g.h; r++)
+      for (let c = 0; c + 1 < g.w; c++) {
+        const a = r * g.w + c;
+        const b = a + 1;
+        const d = a + g.w;
+        const e = d + 1;
+        if (ok(a) && ok(b) && ok(d) && ok(e)) idx.push(a, d, b, b, d, e);
+      }
+    const pos = Float32Array.from(g.xyz, (v) => (Number.isFinite(v) ? v : 0));
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    geo.setIndex(idx);
+    geo.computeVertexNormals();
+    const mat = new THREE.MeshLambertMaterial({ color: 0x9c8f73, transparent: true, opacity: 0.35, depthWrite: false, side: THREE.DoubleSide });
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.userData.kind = 'terrain';
+    mesh.renderOrder = -2;
+    this.surfaceGroup.add(mesh);
     this.requestRender();
   }
 
@@ -1720,6 +1876,34 @@ export class CaveView {
     g.font = '11px system-ui, sans-serif';
     g.textAlign = 'left';
     if (this.halo) this.drawHaloPlan(g, s.walls);
+    const circle = this.circlePick;
+    if (circle) {
+      // the circle being dragged for the entrance pick, in screen space
+      const r = Math.hypot(circle.now[0] - circle.px[0], circle.now[1] - circle.px[1]);
+      const hi = `#${this.theme.accent.getHexString()}`;
+      g.strokeStyle = hi;
+      g.fillStyle = hi;
+      g.lineWidth = 2;
+      g.globalAlpha = 0.15;
+      g.beginPath();
+      g.arc(circle.px[0], circle.px[1], r, 0, Math.PI * 2);
+      g.fill();
+      g.globalAlpha = 1;
+      g.stroke();
+      g.beginPath();
+      g.arc(circle.px[0], circle.px[1], 2.5, 0, Math.PI * 2);
+      g.fill();
+    }
+    if (this.contourLabels.length) {
+      // the major contours' levels, under everything else the overlay draws
+      g.fillStyle = '#8a5a2b';
+      g.textAlign = 'center';
+      for (const l of this.contourLabels) {
+        const p = this.project(l.at);
+        if (p && p[0] > -40 && p[1] > -20 && p[0] < this.width + 40 && p[1] < this.height + 20) g.fillText(l.text, p[0], p[1] - 3);
+      }
+      g.textAlign = 'left';
+    }
 
     const zmin = s.bounds?.[2] ?? 0;
     const zspan = Math.max(1e-6, (s.bounds?.[5] ?? 0) - zmin);
