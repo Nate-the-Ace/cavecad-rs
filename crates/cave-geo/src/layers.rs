@@ -25,10 +25,11 @@ pub fn datum_offset(ground_m: Option<f64>, entrance_z: f64) -> Option<f64> {
 
 /// The six numbers `[a, b, c, d, e, f]` taking photo pixel corners `(px, py)` (py down) to cave
 /// metres: `x = a·px + b·py + c`, `y = d·px + e·py + f` (the scans' matrix convention).
+/// A 0 in `size` is clamped to 1, so a degenerate image never divides by zero.
 pub fn photo_matrix(b: &Bounds, size: (u32, u32), place: &Placement) -> [f64; 6] {
     let (sx, sy) = (
-        b.width() / f64::from(size.0),
-        b.height() / f64::from(size.1),
+        b.width() / f64::from(size.0.max(1)),
+        b.height() / f64::from(size.1.max(1)),
     );
     let o = place.utm_to_cave(b.xmin, b.ymax);
     let px = place.utm_to_cave(b.xmin + sx, b.ymax);
@@ -94,7 +95,8 @@ pub fn contours(
     out
 }
 
-/// The ground as a mesh: `w*h` vertices row by row (holes get NaN z and are skipped by the view).
+/// The ground as a mesh: `w*h` vertices row by row (holes get NaN z and are skipped by the view;
+/// NaN serialises as `null` in JSON).
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct Terrain {
     /// Columns.

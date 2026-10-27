@@ -68,11 +68,14 @@ pub struct SurfaceRecord {
     pub fetched: String,
 }
 
+/// Malformed JSON reads as absent.
 fn read<T: for<'de> Deserialize<'de>>(doc: &Document, key: &str) -> Option<T> {
     let e = doc.entity(setting_id(key))?;
     serde_json::from_str(&e.text(Field::SettingValue)).ok()
 }
 
+/// Actions storing `value` under `key`. A concurrent removal of the setting entity can win over a
+/// later value set (accepted; nothing removes these settings today); the `set_*` functions share this.
 fn write<T: Serialize>(doc: &Document, key: &str, value: &T) -> Vec<Action> {
     let id = setting_id(key);
     let text = serde_json::to_string(value).expect("records serialize");
@@ -153,7 +156,7 @@ pub enum Candidate {
     },
 }
 
-/// Stored location, else the first fixed station (by label) when the import named its frame, else ask.
+/// Stored location, else the first fixed station (by label) with plausible UTM numbers when the import named its frame, else ask.
 pub fn candidate(doc: &Document) -> Candidate {
     if let Some(l) = location(doc) {
         return Candidate::Stored(l);
@@ -171,10 +174,15 @@ pub fn candidate(doc: &Document) -> Candidate {
                 e.number(Field::StationFixedX),
                 e.number(Field::StationFixedY),
             ) {
-                return Candidate::Imported {
-                    station: *id,
-                    at: frame.to_latlon(x, y),
-                };
+                // Compass projects often name a datum and zone while their fixes are local
+                // (`A1[f,0,0,0]`); only plausible UTM numbers count.
+                if !((100_000.0..=900_000.0).contains(&x) && (0.0..=10_000_000.0).contains(&y)) {
+                    continue;
+                }
+                let at = frame.to_latlon(x, y);
+                if at.lat.is_finite() && at.lon.is_finite() {
+                    return Candidate::Imported { station: *id, at };
+                }
             }
         }
     }

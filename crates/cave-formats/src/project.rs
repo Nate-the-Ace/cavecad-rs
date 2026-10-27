@@ -366,7 +366,8 @@ impl MakOptions {
                     }
                 }
             }
-            Some('&') => self.datum = cave_geo::datum::Datum::parse(body).or(self.datum),
+            // last statement wins; an unrecognised datum means unknown
+            Some('&') => self.datum = cave_geo::datum::Datum::parse(body),
             Some('$') => self.zone = body.parse().ok().or(self.zone),
             Some('%') => {
                 self.convergence = body.parse().ok().or(self.convergence);
@@ -991,6 +992,26 @@ mod tests {
             !mak("!s;").shots[0].exclude_from_all,
             "s switches every shot flag off"
         );
+    }
+
+    #[test]
+    fn the_last_datum_statement_wins_and_unknown_means_unknown() {
+        let ok = mak("@450000,4100000,500,16,0;\n&North American 1983;");
+        assert!(ok.fixed_frame.is_some());
+        let s = mak("@450000,4100000,500,16,0;\n&North American 1927;\n&Adindan;");
+        assert_eq!(s.fixed_frame, None);
+    }
+
+    #[test]
+    fn a_dollar_zone_without_an_at_zone_is_enough() {
+        let s = mak("&North American 1983;\n$16;");
+        assert_eq!(s.fixed_frame.map(|f| f.zone), Some(16));
+    }
+
+    #[test]
+    fn an_explicit_zero_zone_is_no_frame() {
+        let s = mak("&North American 1983;\n@450000,4100000,500,0,0;");
+        assert_eq!(s.fixed_frame, None);
     }
 
     #[test]

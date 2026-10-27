@@ -110,6 +110,34 @@ fn candidate_order() {
     assert_eq!(candidate(&doc), Candidate::Stored(loc));
 }
 
+#[test]
+fn local_fixes_are_not_a_location() {
+    let mut doc = Document::new(ActorId(1));
+    let a1 = station(&mut doc, "A1");
+    doc.edit(vec![
+        Action::Set {
+            id: a1,
+            field: Field::StationFixedX,
+            value: Value::Number(Some(0.0)),
+        },
+        Action::Set {
+            id: a1,
+            field: Field::StationFixedY,
+            value: Value::Number(Some(0.0)),
+        },
+    ])
+    .unwrap();
+    doc.edit(set_fixed_frame(
+        &doc,
+        FixedFrame {
+            zone: 16,
+            datum: Datum::Nad83,
+        },
+    ))
+    .unwrap();
+    assert_eq!(candidate(&doc), Candidate::Ask { station: Some(a1) });
+}
+
 fn join(from: &Document, actor: u64) -> Document {
     let mut d = Document::new(ActorId(actor));
     for op in from.snapshot() {

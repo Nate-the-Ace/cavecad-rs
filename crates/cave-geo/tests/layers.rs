@@ -105,3 +105,61 @@ fn contours_lie_flat_at_the_given_z_without_an_offset() {
             .all(|c| c.xyz.chunks(3).all(|v| v[2] == c.level + 100.0))
     );
 }
+
+#[test]
+fn negative_levels_have_majors_too() {
+    let g = Grid {
+        w: 3,
+        h: 3,
+        values: vec![-60., -30., 0., -60., -30., 0., -60., -30., 0.],
+    };
+    let p = Placement::new([0.0, 0.0], BG);
+    let (e, n) = p.cave_to_utm(0.0, 0.0);
+    let b = Bounds {
+        xmin: e,
+        ymin: n,
+        xmax: e + 3.0,
+        ymax: n + 3.0,
+    };
+    let lv: Vec<(f64, bool)> = contours(&g, &b, &p, 10.0, false, None, 0.0)
+        .iter()
+        .map(|l| (l.level, l.major))
+        .collect();
+    assert!(lv.contains(&(-50.0, true)), "{lv:?}");
+    assert!(lv.contains(&(-40.0, false)), "{lv:?}");
+}
+
+#[test]
+fn terrain_keeps_a_hole_as_nan() {
+    let g = Grid {
+        w: 2,
+        h: 2,
+        values: vec![1., f32::NAN, 3., 4.],
+    };
+    let p = Placement::new([0.0, 0.0], BG);
+    let (e, n) = p.cave_to_utm(0.0, 0.0);
+    let b = Bounds {
+        xmin: e,
+        ymin: n,
+        xmax: e + 2.0,
+        ymax: n + 2.0,
+    };
+    let t = terrain(&g, &b, &p, Some(10.0)).unwrap();
+    assert_eq!(t.xyz.len(), 12);
+    assert_eq!(t.xyz[2], 11.0);
+    assert!(t.xyz[5].is_nan(), "the hole");
+    assert_eq!(t.xyz[8], 13.0);
+}
+
+#[test]
+fn a_zero_sized_photo_does_not_divide_by_zero() {
+    let p = Placement::new([0.0, 0.0], BG);
+    let (e, n) = p.cave_to_utm(0.0, 0.0);
+    let b = Bounds {
+        xmin: e,
+        ymin: n,
+        xmax: e + 10.0,
+        ymax: n + 10.0,
+    };
+    assert!(photo_matrix(&b, (0, 0), &p).iter().all(|v| v.is_finite()));
+}
