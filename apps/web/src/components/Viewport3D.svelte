@@ -106,8 +106,9 @@
     const photoUrl = surface.photoUrl;
     const terrain = surface.terrain;
     const photoOn = option('surfacePhoto', true);
+    const engineLoaded = loaded; // nothing can be asked of the engine before it has loaded
     untrack(() => {
-      if (!view) return;
+      if (!view || !engineLoaded) return;
       view.setHalo(halo, haloM, haloF);
       // A scan lies in the plane of the stations it is matched to, so it touches them (and lies level when it has none, at the survey's average height).
       const all = scene?.stations ?? [];

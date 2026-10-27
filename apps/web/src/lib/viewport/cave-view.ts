@@ -772,6 +772,10 @@ export class CaveView {
   }
 
   private readonly scans = new Map<string, { mesh: THREE.Mesh; url: string }>();
+  /** The latest request for each scan, so a picture that finishes loading after a newer request is dropped and the newest placement is the one used. */
+  private readonly scanWanted = new Map<string, { sig: string; item: Parameters<CaveView['setScans']>[0][number] }>();
+  /** `key|sig` of pictures still loading, so a repeat request does not load them twice. */
+  private readonly scanLoading = new Set<string>();
   private static readonly SCAN_MAX = 4096;
 
   /**
@@ -785,19 +789,28 @@ export class CaveView {
     for (const [key, s] of this.scans) {
       if (!keep.has(key)) this.removeScan(key, s);
     }
-    for (const item of list) {
-      const have = this.scans.get(item.key);
-      const sig = item.url + '|' + (item.trim ? item.trim.join(';') : '');
+    for (const key of [...this.scanWanted.keys()]) if (!keep.has(key)) this.scanWanted.delete(key);
+    for (const request of list) {
+      const have = this.scans.get(request.key);
+      const sig = request.url + '|' + (request.trim ? request.trim.join(';') : '');
+      this.scanWanted.set(request.key, { sig, item: request });
       if (have && have.url === sig) {
-        this.placeScan(have.mesh, item);
+        this.placeScan(have.mesh, request);
         continue;
       }
-      if (have) this.removeScan(item.key, have);
-      new THREE.TextureLoader().load(item.url, (loaded) => {
-        if (this.scans.has(item.key) || !keep.has(item.key)) {
+      if (have) this.removeScan(request.key, have);
+      const loading = `${request.key}|${sig}`;
+      if (this.scanLoading.has(loading)) continue; // already on its way; it will use the newest placement
+      this.scanLoading.add(loading);
+      new THREE.TextureLoader().load(request.url, (loaded) => {
+        this.scanLoading.delete(loading);
+        // A newer request for this scan (another picture, or none) wins over a load that finished late.
+        const want = this.scanWanted.get(request.key);
+        if (!want || want.sig !== sig || this.scans.has(request.key)) {
           loaded.dispose();
           return;
         }
+        const item = want.item;
         const img = loaded.image as CanvasImageSource & { width: number; height: number };
         const full = { x0: 0, y0: 0, w: img.width as number, h: img.height as number };
         let tex: THREE.Texture = loaded;
@@ -844,7 +857,7 @@ export class CaveView {
         this.placeScan(mesh, item);
         this.scene.add(mesh);
         this.requestRender();
-      });
+      }, undefined, () => this.scanLoading.delete(loading));
     }
     this.requestRender();
   }
