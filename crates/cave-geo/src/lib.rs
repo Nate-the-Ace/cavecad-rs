@@ -4,4 +4,5 @@
 
 pub mod datum;
 pub mod frame;
+pub mod grid;
 pub mod request;
