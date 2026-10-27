@@ -104,6 +104,7 @@
     void viewReady;
     const layers = surface.layers;
     const photoUrl = surface.photoUrl;
+    const photoActual = photoSize;
     const terrain = surface.terrain;
     const photoOn = option('surfacePhoto', true);
     const engineLoaded = loaded; // nothing can be asked of the engine before it has loaded
@@ -129,13 +130,37 @@
             .map((p) => ({ key: `${p.trip}/${p.path}`, url: mapUrl(p.path)!, matrix: p.matrix, z: surveyZ, plane: planeFor(p.stations), height: heightFor(p.stations), opacity, trim: p.trim, warp: p.warp }))
         : [];
       if (photoOn && photoUrl && layers?.photo_matrix) {
+        // The picture must cover the recorded window whatever size the service sent: scale the pixel columns by recorded / actual.
+        const m = layers.photo_matrix.slice();
+        const rec = layers.photo_size;
+        if (rec && photoActual && photoActual.url === photoUrl && photoActual.w > 0 && photoActual.h > 0 && (photoActual.w !== rec[0] || photoActual.h !== rec[1])) {
+          const kx = rec[0] / photoActual.w;
+          const ky = rec[1] / photoActual.h;
+          m[0] *= kx; m[3] *= kx; // a, d: per pixel across
+          m[1] *= ky; m[4] *= ky; // b, e: per pixel down
+        }
         // On the ground when its heights are known, else level at the survey's height like a scan.
         const ground = terrain ? terrainSampler(terrain) : null;
         const height = ground ? (x: number, y: number) => ground(x, y) ?? surveyZ : null;
-        list.push({ key: 'surface-photo', url: photoUrl, matrix: layers.photo_matrix, z: surveyZ, plane: null, height, opacity: 0.5, trim: null, warp: null, order: -11 });
+        list.push({ key: 'surface-photo', url: photoUrl, matrix: m, z: surveyZ, plane: null, height, opacity: 0.5, trim: null, warp: null, order: -11 });
       }
       view.setScans(list);
     });
+  });
+
+  // The photo's received size, read once per picture (it may differ from the size recorded).
+  let photoSize = $state<{ url: string; w: number; h: number } | null>(null);
+  $effect(() => {
+    const url = surface.photoUrl;
+    if (!url) {
+      photoSize = null;
+      return;
+    }
+    const img = new Image();
+    let live = true;
+    img.onload = () => { if (live) photoSize = { url, w: img.naturalWidth, h: img.naturalHeight }; };
+    img.src = url;
+    return () => { live = false; };
   });
 
   // The ground above the cave: contours (labelled in the display unit) and the terrain, each with its own switch.

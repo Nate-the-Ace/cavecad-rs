@@ -134,6 +134,9 @@
           {/if}
           {#if status.surface}
             <div class="muted">Downloaded {status.surface.fetched}: {[status.surface.photo ? 'aerial photo' : '', status.surface.elevation ? 'ground elevation' : ''].filter(Boolean).join(' and ') || 'nothing kept'}.</div>
+            {#if surface.layers?.stale || (status.location && (status.surface.for_at.lat !== status.location.lat || status.surface.for_at.lon !== status.location.lon))}
+              <div class="warn">The surface was downloaded for the entrance's old spot. Download again to bring it up to date.</div>
+            {/if}
           {/if}
           <button class="link" disabled={surface.busy} onclick={changeLocation}>Change location…</button>
         </section>
@@ -168,6 +171,7 @@
   .box { width: min(480px, 92vw); max-height: 92vh; overflow: auto; background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 10px; padding: 18px 20px; display: flex; flex-direction: column; gap: 12px; outline: none; box-sizing: border-box; }
   h2 { margin: 0; font-size: 17px; }
   .where { display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
+  .warn { color: var(--danger); }
   .muted { color: var(--muted); }
   fieldset { border: 1px solid var(--line); border-radius: 8px; display: flex; gap: 16px; padding: 6px 10px 8px; font-size: 13px; }
   fieldset label { display: flex; align-items: center; gap: 6px; }
