@@ -70,6 +70,11 @@ export class CaveView {
   /** The ground above the cave (contours, terrain): beside `content`, never cleared by `rebuild()`. */
   private surfaceGroup = new THREE.Group();
   private surfaceMaterials: LineMaterial[] = [];
+  /** "Pick entrance on surface": on, and the circle being dragged (centre on the plan, and on screen). */
+  private circlePick: { at: [number, number]; px: [number, number]; now: [number, number] } | null = null;
+  private circlePickOn = false;
+  /** A circle was let go: its centre and radius in cave metres on the plan. */
+  onCirclePicked: (cx: number, cy: number, r: number) => void = () => {};
   /** Where each major contour's level is written (its run's middle point) and what it says. */
   private contourLabels: { at: [number, number, number]; text: string }[] = [];
   private data: Scene | null = null;
@@ -338,6 +343,20 @@ export class CaveView {
       'pointerdown',
       (e) => {
         if (e.button !== 0) return;
+        if (this.circlePickOn) {
+          // Picking the entrance: the press is the circle's centre; nothing else gets it.
+          e.stopImmediatePropagation();
+          e.stopPropagation();
+          const at = this.planPoint(e.clientX, e.clientY);
+          if (!at) return;
+          const rect = canvas.getBoundingClientRect();
+          const px: [number, number] = [e.clientX - rect.left, e.clientY - rect.top];
+          this.circlePick = { at, px, now: px };
+          this.controls.enabled = false;
+          canvas.setPointerCapture(e.pointerId);
+          this.requestRender();
+          return;
+        }
         if (this.drawTool) {
           // Drawing on the map: only from straight above or below, where plan is what is seen.
           if (!this.canDrawHere || this.fingers.size > 1 || (e.pointerType === 'touch' && !this.drawOptions.finger)) return;
@@ -379,6 +398,16 @@ export class CaveView {
       true,
     );
     canvas.addEventListener('pointermove', (e) => {
+      if (this.circlePickOn) {
+        canvas.style.cursor = 'crosshair';
+        const c = this.circlePick;
+        if (c) {
+          const rect = canvas.getBoundingClientRect();
+          c.now = [e.clientX - rect.left, e.clientY - rect.top];
+          this.requestRender();
+        }
+        return;
+      }
       if (e.pointerType !== 'touch') {
         const cp = this.planPoint(e.clientX, e.clientY);
         this.lastPlan = cp;
@@ -448,6 +477,16 @@ export class CaveView {
       }
     });
     const drop = (e: PointerEvent) => {
+      const circle = this.circlePick;
+      if (circle) {
+        this.circlePick = null;
+        this.controls.enabled = true;
+        this.requestRender();
+        if (e.type !== 'pointerup') return; // a cancelled press picks nothing
+        const end = this.planPoint(e.clientX, e.clientY);
+        if (end) this.onCirclePicked(circle.at[0], circle.at[1], Math.hypot(end[0] - circle.at[0], end[1] - circle.at[1]));
+        return;
+      }
       const edit = this.lineEdit;
       if (edit) {
         this.lineEdit = null;
@@ -898,6 +937,17 @@ export class CaveView {
       const m = Math.floor(n / 2) * 3;
       this.contourLabels.push({ at: [c.xyz[m], c.xyz[m + 1], c.xyz[m + 2]], text: `${+c.level.toFixed(3)} ${unit}` });
     }
+    this.requestRender();
+  }
+
+  /** Switches the entrance pick: a press and drag on the map draws a circle; letting go calls `onCirclePicked`. */
+  setCirclePick(on: boolean) {
+    this.circlePickOn = on;
+    if (!on && this.circlePick) {
+      this.circlePick = null;
+      this.controls.enabled = true;
+    }
+    this.canvas.style.cursor = on ? 'crosshair' : '';
     this.requestRender();
   }
 
@@ -1813,6 +1863,24 @@ export class CaveView {
     g.font = '11px system-ui, sans-serif';
     g.textAlign = 'left';
     if (this.halo) this.drawHaloPlan(g, s.walls);
+    const circle = this.circlePick;
+    if (circle) {
+      // the circle being dragged for the entrance pick, in screen space
+      const r = Math.hypot(circle.now[0] - circle.px[0], circle.now[1] - circle.px[1]);
+      const hi = `#${this.theme.accent.getHexString()}`;
+      g.strokeStyle = hi;
+      g.fillStyle = hi;
+      g.lineWidth = 2;
+      g.globalAlpha = 0.15;
+      g.beginPath();
+      g.arc(circle.px[0], circle.px[1], r, 0, Math.PI * 2);
+      g.fill();
+      g.globalAlpha = 1;
+      g.stroke();
+      g.beginPath();
+      g.arc(circle.px[0], circle.px[1], 2.5, 0, Math.PI * 2);
+      g.fill();
+    }
     if (this.contourLabels.length) {
       // the major contours' levels, under everything else the overlay draws
       g.fillStyle = '#8a5a2b';

@@ -29,8 +29,8 @@ export interface SurfacePlan { zone: number; bounds: SurfaceRecord['bounds']; fo
 export interface SurfaceContour { level: number; major: boolean; closed: boolean; xyz: number[] }
 export interface SurfaceLayers { photo_matrix: number[] | null; photo_size: [number, number] | null; contours: SurfaceContour[]; stale: boolean }
 
-/** The panels that keep their own undo history. */
-export type Scope = 'profile' | 'section' | 'map' | 'stations' | 'notebook' | 'scans';
+/** The panels that keep their own undo history (`settings`: the cave's own settings, such as its location and surface). */
+export type Scope = 'profile' | 'section' | 'map' | 'stations' | 'notebook' | 'scans' | 'settings';
 
 export type Level = 'debug' | 'detail' | 'info' | 'warn' | 'error';
 export interface ConsoleEvent {

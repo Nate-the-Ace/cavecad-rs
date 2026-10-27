@@ -32,8 +32,11 @@ class SurfaceState {
 
 export const surface = new SurfaceState();
 
-/** "Pick entrance on surface": the Map's pointer mode (wired in Viewport3D). */
-export const entrancePick = $state({ on: false, message: '' });
+/**
+ * "Pick entrance on surface": the Map's pointer mode (wired in Viewport3D), what the last pick said,
+ * and whether that pick can still be undone from the message.
+ */
+export const entrancePick = $state({ on: false, message: '', canUndo: false });
 
 let photoBytes: Uint8Array | null = null;
 
@@ -189,6 +192,64 @@ export function recomputeLayers() {
   if (JSON.stringify(layers) !== JSON.stringify(surface.layers)) surface.layers = layers;
   const terrain = surface.tiff ? engine.surfaceTerrain(surface.tiff, cave.adjusted) : null;
   if (!sameTerrain(terrain, surface.terrain)) surface.terrain = terrain;
+}
+
+/** The location and surface record as they stand, for telling whether anything else changed them since. */
+function geoKey(): string {
+  const st = geoStatus();
+  return JSON.stringify([st?.location ?? null, st?.surface ?? null, st?.interval_m ?? null]);
+}
+
+/** What the last entrance pick put in the settings history (its edits, and the state they left). */
+let lastPick: { steps: number; after: string } | null = null;
+
+/**
+ * Moves the entrance to the lowest ground inside the circle (cave metres on the plan), then downloads
+ * the surface again for the new spot, without asking. Returns what to tell the person (no coordinates).
+ */
+export async function pickEntrance(cx: number, cy: number, r: number): Promise<string> {
+  lastPick = null;
+  entrancePick.canUndo = false;
+  if (!surface.tiff) return 'Download the ground elevation first (Surface Data).';
+  if (surface.busy) return 'A download is running: try again when it has finished.';
+  const st = geoStatus();
+  if (!st?.location) return 'Set the cave location first (Surface Data).';
+  const hit = engine.surfacePick(surface.tiff, cx, cy, r, cave.adjusted);
+  if ('error' in hit) return 'No ground data inside that circle.';
+  const before = geoKey();
+  const res = engine.geoSetLocation({ station: st.location.station, lat: hit.lat, lon: hit.lon, ground_m: hit.ground_m, source: 'surface-pick' });
+  if (res !== 'ok') return res.replace(/^error: /, '');
+  changed();
+  const moved = geoKey();
+  const where = `the lowest ground in the circle (${formatLength(hit.ground_m, cave.units, 1)})`;
+  if (moved === before) return `The entrance is already at ${where}.`;
+  const had = st.surface;
+  const again = await fetchSurface({ photo: !!had?.photo, elevation: true });
+  const after = geoKey();
+  // the move is one edit; a download that was recorded is a second one, undone with it
+  lastPick = { steps: after === moved ? 1 : 2, after };
+  entrancePick.canUndo = true;
+  if (!again.ok) return `The entrance moved, but the surface could not be downloaded again (${again.lines.join(' ')}). It still shows the old area; Surface Data will offer it again. It now sits at ${where}.`;
+  const now = geoStatus()?.surface;
+  const noPhoto = had?.photo && !now?.photo ? ' The aerial photo could not be downloaded again: Surface Data will offer it.' : '';
+  return `The entrance moved to ${where}. The surface was downloaded again for the new spot.${noPhoto}`;
+}
+
+/**
+ * Undoes the last entrance pick (the move, and the download it set off). The earlier files come back
+ * from the device's store through the record (App.svelte reloads them when the record changes).
+ * Refused when anything else changed the location or surface since.
+ */
+export function undoEntrancePick(): string {
+  const p = lastPick;
+  lastPick = null;
+  entrancePick.canUndo = false;
+  if (!p) return '';
+  if (geoKey() !== p.after) return 'The location or surface changed again since that pick, so it was not undone.';
+  let undone = 0;
+  for (let i = 0; i < p.steps; i++) if (engine.undo('settings')) undone++;
+  changed();
+  return undone === p.steps ? 'The entrance is back where it was, with its surface.' : 'Only part of that pick could be undone.';
 }
 
 /** The parts for saving into the .cavecad file. */

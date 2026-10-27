@@ -22,9 +22,9 @@
   import { panelState, showPanel } from '../lib/workspace.svelte';
   import { setActiveView } from '../lib/snapshot';
   import { have, mapUrl, scans } from '../lib/scans.svelte';
-  import { surface } from '../lib/surface.svelte';
+  import { entrancePick, pickEntrance, surface, undoEntrancePick } from '../lib/surface.svelte';
   import { terrainSampler } from '../lib/terrain';
-  import { unitName } from '../lib/units';
+  import { formatLength, unitName } from '../lib/units';
 
   let wrap: HTMLDivElement;
   let gl: HTMLCanvasElement;
@@ -151,6 +151,39 @@
       view?.setTerrain(terrain, terrainOn);
     });
   });
+
+  // "Pick entrance on surface" (the ribbon's Pick entrance button): press for the centre, drag for the
+  // radius, let go. Escape gives up. It runs while the pointer is down on the map, so the keys are
+  // heard on the window: the press does not reach the map's own handlers to give it focus.
+  $effect(() => {
+    const on = entrancePick.on;
+    void viewReady;
+    untrack(() => {
+      view?.setCirclePick(on);
+      if (on) entrancePick.message = 'Drag a circle round the entrance on the map; Escape to stop.';
+      else if (entrancePick.message.startsWith('Drag a circle')) entrancePick.message = '';
+    });
+    if (!on) return;
+    const esc = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      e.preventDefault();
+      entrancePick.on = false;
+    };
+    window.addEventListener('keydown', esc);
+    return () => window.removeEventListener('keydown', esc);
+  });
+  async function circlePicked(cx: number, cy: number, r: number) {
+    if (r < 1) {
+      entrancePick.message = `Drag a bigger circle: at least ${formatLength(1, cave.units, 1)} across from the centre.`;
+      return; // stays on for another try
+    }
+    entrancePick.on = false;
+    entrancePick.message = 'Moving the entrance and downloading the surface for it…';
+    entrancePick.message = await pickEntrance(cx, cy, r);
+  }
+  function undoPick() {
+    entrancePick.message = undoEntrancePick();
+  }
 
   // The Stations panel asks the Map to centre on a station.
   let handledFocus = cave.focus.seq;
@@ -437,6 +470,7 @@
       if (r !== 'ok') engine.log('warn', 'section', r);
       changed();
     };
+    v.onCirclePicked = (cx, cy, r) => void circlePicked(cx, cy, r);
     v.shadingFor = (dir, persp) => engine.shading(cave.adjusted, dir, persp, wireFilter());
     view = v;
     viewReady = true;
@@ -514,7 +548,7 @@
     <PanelUndo scope="map" label="on the map" />
     <SnapButton />
     <button class:on={depthColor} title="Colour by elevation" onclick={() => ((depthColor = !depthColor), view?.setElevationColors(depthColor), loadPassage())}><Palette size={15} /></button>
-    {#if drawHint}<span class="status">{drawHint}</span>{:else if status}<span class="status">{status}</span>{/if}
+    {#if drawHint}<span class="status">{drawHint}</span>{:else if entrancePick.message}<span class="status pick">{entrancePick.message}{#if entrancePick.canUndo}<button title="Put the entrance and its surface back as they were before this pick" onclick={undoPick}>Undo</button>{/if}<button title="Dismiss" aria-label="Dismiss" onclick={() => ((entrancePick.message = ''), (entrancePick.canUndo = false))}>×</button></span>{:else if status}<span class="status">{status}</span>{/if}
   </div>
   <div class="cube" class:locked>
     <div bind:this={cubeHost}></div>
@@ -545,6 +579,7 @@
   button.on { background: var(--accent-bg); }
   label { display: flex; gap: 4px; align-items: center; color: var(--muted); white-space: nowrap; }
   .status { color: var(--muted); }
+  .status.pick { display: inline-flex; flex-wrap: wrap; gap: 6px; align-items: center; color: var(--text); max-width: 46em; }
   .menu { position: relative; }
   .menu > button { gap: 5px; grid-auto-flow: column; }
   .pop { position: absolute; top: calc(100% + 10px); left: 0; z-index: 5; min-width: 200px; max-height: 60vh; overflow: auto; display: flex; flex-direction: column; gap: 4px; padding: 8px 10px; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: 0 6px 20px rgb(0 0 0 / 0.25); }

@@ -42,7 +42,7 @@
 
   const label = (id: string) => status?.stations.find((s) => s.id === id)?.label ?? id;
   const coord = (p: { lat: number; lon: number }) => `${p.lat.toFixed(6)}, ${p.lon.toFixed(6)}`;
-  const SOURCES: Record<string, string> = { import: 'from the imported survey', map: 'picked on the map', typed: 'typed in', pick: 'picked on the surface' };
+  const SOURCES: Record<string, string> = { import: 'from the imported survey', map: 'picked on the map', typed: 'typed in', pick: 'picked on the surface', 'surface-pick': 'picked on the surface' };
 
   /** Stores the contour spacing when it changed (metres, rounded to 3 decimals in the display unit). */
   function applyInterval() {

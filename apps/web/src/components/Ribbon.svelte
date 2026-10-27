@@ -84,7 +84,7 @@
         name: 'Surface',
         items: [
           { label: 'Surface Data', icon: Mountain, title: 'Download the aerial photo and ground elevation above the cave', run: () => (surface.dialog = true), pressed: () => surface.dialog },
-          { label: 'Pick entrance', icon: Crosshair, title: 'Pick entrance on surface: drag a circle on the Map round the entrance (needs the ground elevation)', run: () => (entrancePick.on = !entrancePick.on), pressed: () => entrancePick.on, disabled: () => !surface.tiff },
+          { label: 'Pick entrance', icon: Crosshair, title: 'Pick entrance on surface: drag a circle on the Map round the entrance (needs the ground elevation)', run: () => ((entrancePick.on = !entrancePick.on), entrancePick.on && showPanel('map')), pressed: () => entrancePick.on, disabled: () => !surface.tiff || surface.busy },
         ],
       },
       {
