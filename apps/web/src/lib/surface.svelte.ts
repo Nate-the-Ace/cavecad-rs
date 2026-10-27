@@ -38,11 +38,27 @@ export const surface = new SurfaceState();
  */
 export const entrancePick = $state({ on: false, message: '', canUndo: false });
 
+/** Leaves pick mode and clears its message (the cave it was for is gone, or the ground it needs is). */
+export function resetEntrancePick() {
+  entrancePick.on = false;
+  entrancePick.message = '';
+  entrancePick.canUndo = false;
+}
+
 let photoBytes: Uint8Array | null = null;
 
 const nextFrame = (f: () => void) => (typeof requestAnimationFrame === 'function' ? requestAnimationFrame(f) : setTimeout(f, 16));
 
-function setPhoto(bytes: Uint8Array | null) {
+/** The store key each part on screen was loaded or kept under ('' when none), so a save can tell the bytes match the record. */
+const shownKey: Record<Part, string> = { photo: '', elevation: '' };
+
+function setTiff(bytes: Uint8Array | null, key = '') {
+  surface.tiff = bytes;
+  shownKey.elevation = bytes ? key : '';
+}
+
+function setPhoto(bytes: Uint8Array | null, key = '') {
+  shownKey.photo = bytes ? key : '';
   const old = surface.photoUrl;
   photoBytes = bytes;
   surface.photoUrl = bytes ? URL.createObjectURL(new Blob([bytes as BlobPart], { type: 'image/jpeg' })) : '';
@@ -78,10 +94,11 @@ let generation = 0;
 /** Loads the stored surface's files from OPFS (after open, undo, or a cave switch). Returns what is missing. */
 export async function reloadSurface(): Promise<Part[]> {
   const gen = ++generation;
+  const serial = engine.docSerial();
   const s = storedRecord();
   if (!s) {
     setPhoto(null);
-    surface.tiff = null;
+    setTiff(null);
     surface.version++;
     return [];
   }
@@ -89,11 +106,11 @@ export async function reloadSurface(): Promise<Part[]> {
   const missing: Part[] = [];
   const p = s.photo ? await load(requestKey(plan, 'photo')) : null;
   const e = s.elevation ? await load(requestKey(plan, 'elevation')) : null;
-  if (gen !== generation) return []; // a newer reload overtook this one
+  if (gen !== generation || engine.docSerial() !== serial) return []; // a newer reload overtook this one, or another cave was opened
   if (s.photo && !p) missing.push('photo');
   if (s.elevation && !e) missing.push('elevation');
-  setPhoto(p);
-  surface.tiff = e;
+  setPhoto(p, requestKey(plan, 'photo'));
+  setTiff(e, requestKey(plan, 'elevation'));
   surface.version++;
   return missing;
 }
@@ -121,9 +138,10 @@ export async function syncSurface(): Promise<string | null> {
     return null;
   }
   const opened = cave.opened;
+  const serial = engine.docSerial();
   const key = surfaceKey();
   const missing = await reloadSurface();
-  if (!missing.length || cave.opened !== opened || surfaceKey() !== key) return null;
+  if (!missing.length || cave.opened !== opened || engine.docSerial() !== serial || surfaceKey() !== key) return null;
   if (surface.busy) {
     pendingSync = true; // a download started while the files were read
     return null;
@@ -132,7 +150,7 @@ export async function syncSurface(): Promise<string | null> {
   if ('error' in plan) return null;
   surface.busy = true;
   const gen = ++generation; // a reload still running must not overwrite what this puts on screen
-  const stale = () => cave.opened !== opened || surfaceKey() !== key || gen !== generation;
+  const stale = () => cave.opened !== opened || engine.docSerial() !== serial || surfaceKey() !== key || gen !== generation;
   let failed = false;
   try {
     for (const part of missing) {
@@ -146,8 +164,8 @@ export async function syncSurface(): Promise<string | null> {
       if (stale()) return null;
       await store(requestKey(plan, part), bytes);
       if (stale()) return null;
-      if (part === 'photo') setPhoto(bytes);
-      else surface.tiff = bytes;
+      if (part === 'photo') setPhoto(bytes, requestKey(plan, part));
+      else setTiff(bytes, requestKey(plan, part));
       surface.version++;
     }
   } finally {
@@ -181,13 +199,16 @@ export async function fetchSurface(want: { photo: boolean; elevation: boolean },
   surface.busy = true;
   generation++; // a reload still running must not overwrite what this download puts on screen
   const opened = cave.opened;
-  const stale = () => cave.opened !== opened;
+  const serial = engine.docSerial();
+  const stale = () => cave.opened !== opened || engine.docSerial() !== serial;
   const gone = { ok: false, lines: [CAVE_CHANGED] };
   const lines: string[] = [];
   const sessionOnly = ' (This browser would not keep it on the device, so it lasts until the page closes; saving the cave keeps it in the file.)';
   let ground = NaN;
   let photo: Uint8Array | null = null;
   let tiff: Uint8Array | null = null;
+  let photoKey = '';
+  let tiffKey = '';
   try {
     if (plan.photo) {
       try {
@@ -198,7 +219,8 @@ export async function fetchSurface(want: { photo: boolean; elevation: boolean },
       }
       if (stale()) return gone;
       if (photo && plan.photo) {
-        const kept = await store(requestKey(plan, 'photo'), photo);
+        photoKey = requestKey(plan, 'photo');
+        const kept = await store(photoKey, photo);
         if (stale()) return gone;
         lines.push(`Aerial photo: ${plan.photo.w} x ${plan.photo.h} pixels, about ${Math.round(plan.bounds.xmax - plan.bounds.xmin)} m across.${kept ? '' : sessionOnly}`);
       }
@@ -213,7 +235,8 @@ export async function fetchSurface(want: { photo: boolean; elevation: boolean },
       if (stale()) return gone;
       if (tiff) {
         ground = engine.surfaceGround(plan, tiff);
-        const kept = await store(requestKey(plan, 'elevation'), tiff);
+        tiffKey = requestKey(plan, 'elevation');
+        const kept = await store(tiffKey, tiff);
         if (stale()) return gone;
         lines.push((Number.isFinite(ground) ? `Ground elevation: ground at the entrance ${formatLength(ground, cave.units, 1)} (NAVD88).` : 'Ground elevation: the service has no elevation data at the entrance. This place is probably outside 3DEP coverage (the United States).') + (kept ? '' : sessionOnly));
       }
@@ -225,15 +248,15 @@ export async function fetchSurface(want: { photo: boolean; elevation: boolean },
     // The record decides what is shown: a kept part whose window changed was dropped by the commit.
     const s = storedRecord();
     if (r === 'ok') {
-      if (photo) setPhoto(photo);
-      if (tiff) surface.tiff = tiff;
+      if (photo) setPhoto(photo, photoKey);
+      if (tiff) setTiff(tiff, tiffKey);
     }
     if (!s?.photo && photoBytes) {
       setPhoto(null);
       if (!want.photo) lines.push('Aerial photo: the earlier one no longer fits the new window, so it was dropped. Download it again to see it.');
     }
     if (!s?.elevation && surface.tiff) {
-      surface.tiff = null;
+      setTiff(null);
       if (!want.elevation) lines.push('Ground elevation: the earlier one no longer fits the new window, so it was dropped. Download it again to see it.');
     }
     surface.version++;
@@ -248,13 +271,19 @@ export async function fetchSurface(want: { photo: boolean; elevation: boolean },
  * the display unit, and the terrain. A result equal to the last one is kept as it was, so the views
  * redraw nothing when an edit far from the entrance changed nothing here.
  */
+let layersKey = '';
 export function recomputeLayers() {
   const st = geoStatus();
   if (!st?.surface || !st.location) {
+    layersKey = '';
     surface.layers = null;
     surface.terrain = null;
     return;
   }
+  // Cheap key first: an edit far from the entrance changes none of these, and then nothing is rebuilt.
+  const key = JSON.stringify([st.location, st.surface, st.interval_m, cave.units, cave.adjusted, engine.geoEntranceXyz(cave.adjusted), surface.version]);
+  if (key === layersKey) return;
+  layersKey = key;
   const u = cave.units;
   const feet = u === 'imperial';
   const intervalM = st.interval_m ?? (feet ? 10 * FOOT : 5);
@@ -296,6 +325,7 @@ export async function pickEntrance(cx: number, cy: number, r: number): Promise<s
   if ('error' in hit) return 'No ground data inside that circle.';
   const before = geoKey();
   const opened = cave.opened;
+  const serial = engine.docSerial();
   // On the Map's history, so the Map's own Undo takes the pick back (the download first, then the move).
   const res = engine.geoSetLocation({ station: st.location.station, lat: hit.lat, lon: hit.lon, ground_m: hit.ground_m, source: 'surface-pick' }, 'map');
   if (res !== 'ok') return res.replace(/^error: /, '');
@@ -305,7 +335,7 @@ export async function pickEntrance(cx: number, cy: number, r: number): Promise<s
   if (moved === before) return `The entrance is already at ${where}.`;
   const had = st.surface;
   const again = await fetchSurface({ photo: !!had?.photo, elevation: true }, 'map');
-  if (cave.opened !== opened) return CAVE_CHANGED;
+  if (cave.opened !== opened || engine.docSerial() !== serial) return CAVE_CHANGED;
   const after = geoKey();
   // the move is one edit; a download that was recorded is a second one, undone with it
   lastPick = { steps: after === moved ? 1 : 2, after, opened, revision: engine.revision() };
@@ -338,7 +368,14 @@ export function undoEntrancePick(): string {
 export async function currentSurfaceParts(): Promise<SurfaceParts | null> {
   const s = storedRecord();
   if (!s) return null;
-  return { record: JSON.stringify(s), photo: s.photo ? photoBytes : null, elevation: s.elevation ? surface.tiff : null };
+  // Loaded by the record's own keys, so a save never packs bytes that do not match the record; the bytes
+  // on screen stand in only when they are the ones under that key (the store may not have kept them).
+  const plan = planOf(s);
+  const part = async (p: Part, shown: Uint8Array | null) => {
+    const key = requestKey(plan, p);
+    return (await load(key)) ?? (shown && shownKey[p] === key ? shown : null);
+  };
+  return { record: JSON.stringify(s), photo: s.photo ? await part('photo', photoBytes) : null, elevation: s.elevation ? await part('elevation', surface.tiff) : null };
 }
 
 /**
@@ -357,8 +394,8 @@ export async function adoptSurfaceParts(parts: SurfaceParts): Promise<void> {
   const p = photo ?? (s.photo ? await load(requestKey(plan, 'photo')) : null);
   const e = elevation ?? (s.elevation ? await load(requestKey(plan, 'elevation')) : null);
   if (gen !== generation) return; // a newer reload or download overtook this one
-  setPhoto(p);
-  surface.tiff = e;
+  setPhoto(p, requestKey(plan, 'photo'));
+  setTiff(e, requestKey(plan, 'elevation'));
   surface.version++;
 }
 

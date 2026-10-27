@@ -8,7 +8,7 @@
   import Ribbon from './components/Ribbon.svelte';
   import NewCave from './components/NewCave.svelte';
   import SurfaceData from './components/SurfaceData.svelte';
-  import { recomputeLayers, surface, surfaceKey, syncSurface } from './lib/surface.svelte';
+  import { recomputeLayers, resetEntrancePick, surface, surfaceKey, syncSurface } from './lib/surface.svelte';
   import { initWorkspace } from './lib/workspace.svelte';
   import { engine, loadEngine, loadBuildInfo, type BuildInfo } from './lib/engine';
   import { cave, unsaved } from './lib/cave.svelte';
@@ -43,6 +43,7 @@
   // The surface files follow the cave's surface record: a cave opened or switched, or an undo/redo that
   // changes the record, loads them again (and downloads any this device does not have).
   let lastSurface = '';
+  let lastPickCave = cave.opened;
   $effect(() => {
     void cave.version;
     void cave.opened;
@@ -54,6 +55,16 @@
       // Recording the key here is safe even while a download runs: syncSurface then waits and runs
       // again when that download ends (its pending flag), so this cave's files are still fetched.
       void syncSurface();
+    });
+  });
+
+  // Pick mode belongs to one cave's ground: another cave opened, or the elevation gone, ends it.
+  $effect(() => {
+    void cave.opened;
+    void surface.tiff;
+    untrack(() => {
+      if (!surface.tiff || lastPickCave !== cave.opened) resetEntrancePick();
+      lastPickCave = cave.opened;
     });
   });
 

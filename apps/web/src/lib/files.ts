@@ -249,8 +249,8 @@ export async function openCave(): Promise<{ ok: boolean; message: string } | nul
     scans.folder = scans.folder === 'from the host' || !scans.folder ? 'inside the file' : scans.folder;
     engine.log('info', 'file', `${bundled.length} scan page${bundled.length === 1 ? '' : 's'} came inside the file`);
   }
-  if (bundledSurface) await adoptSurface(bundledSurface);
   cave.opened += 1; // the canvas re-reads and re-frames
+  if (bundledSurface) await adoptSurface(bundledSurface);
   changed();
   markSaved();
   void storeOpenCave(picked.name); // a file opened is kept on the shelf (the same file again updates its record)
