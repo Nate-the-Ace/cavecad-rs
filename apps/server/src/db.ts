@@ -114,6 +114,16 @@ CREATE TABLE IF NOT EXISTS cave_gone (
   at INTEGER NOT NULL,
   PRIMARY KEY (cave_id, member_id)
 );
+-- Seats waiting for someone invited by email who is not a member yet: they become room_guests when that person joins
+-- through their invite. Dropped when the invite is cancelled, the room removed, or the owner cancels the seat.
+CREATE TABLE IF NOT EXISTS room_pending (
+  room_id TEXT NOT NULL REFERENCES rooms(id),
+  email TEXT NOT NULL,
+  seat TEXT NOT NULL CHECK (seat IN ('editor','watcher')),
+  invited_by TEXT NOT NULL,
+  added_at INTEGER NOT NULL,
+  PRIMARY KEY (room_id, email)
+);
 CREATE INDEX IF NOT EXISTS room_guests_member ON room_guests(member_id);
 CREATE INDEX IF NOT EXISTS rooms_cave ON rooms(cave_id);
 CREATE INDEX IF NOT EXISTS cave_owners_member ON cave_owners(member_id);

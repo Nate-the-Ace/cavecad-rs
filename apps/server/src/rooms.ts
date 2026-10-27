@@ -30,7 +30,9 @@ export type MyCave = {
 export type Access = 'owner' | Seat;
 export type Seat = 'editor' | 'watcher';
 export type Guest = { memberId: string; name: string; email: string; seat: Seat };
-export type Room = { id: string; name: string; kind: 'private' | 'shared'; guests: Guest[] };
+/** Someone invited by email who has not joined yet, and the seat kept for them (shown to owners only). */
+export type Invited = { email: string; seat: Seat };
+export type Room = { id: string; name: string; kind: 'private' | 'shared'; guests: Guest[]; invited: Invited[] };
 export type Person = { memberId: string; name: string; email: string };
 export type Entry = { number: number; keyVersion: number; locked: string; authorMember: string; authorDevice: string; receivedAt: number };
 
@@ -309,7 +311,7 @@ export function openCave(db: Db, memberId: string, caveId: string, upTo: number,
  * The cave's rooms as the member may see them: owners get every room with its guests; a guest gets only the rooms
  * they are in, with names but no email addresses. Also who owns the cave and what the member is in it.
  */
-export function caveRooms(db: Db, memberId: string, caveId: string): { you: Access; owners: Person[]; rooms: Room[] } {
+export function caveRooms(db: Db, memberId: string, caveId: string, now = Date.now()): { you: Access; owners: Person[]; rooms: Room[] } {
   const you = requireReader(db, memberId, caveId);
   const owners = (
     db.prepare('SELECT m.id, m.display_name, m.email FROM cave_owners o JOIN members m ON m.id = o.member_id WHERE o.cave_id = ? ORDER BY m.created_at').all(caveId) as {
@@ -319,12 +321,18 @@ export function caveRooms(db: Db, memberId: string, caveId: string): { you: Acce
     }[]
   ).map((m) => ({ memberId: m.id, name: m.display_name, email: m.email }));
   const rows = db.prepare("SELECT id, name, kind FROM rooms WHERE cave_id = ? ORDER BY kind = 'shared', created_at, name").all(caveId) as { id: string; name: string; kind: 'private' | 'shared' }[];
+  // Only seats whose invite is still live; one that expired shows no more and never seats anyone.
+  const invitedOf = db.prepare(
+    `SELECT p.email, p.seat FROM room_pending p WHERE p.room_id = ? AND EXISTS
+       (SELECT 1 FROM invites i WHERE i.email = p.email AND i.used_at IS NULL AND i.cancelled_at IS NULL AND i.expires_at > ?) ORDER BY p.email`,
+  );
   const guestsOf = db.prepare('SELECT g.member_id, g.seat, m.display_name, m.email FROM room_guests g JOIN members m ON m.id = g.member_id WHERE g.room_id = ? ORDER BY m.display_name COLLATE NOCASE');
   const rooms: Room[] = [];
   for (const r of rows) {
     const guests = (guestsOf.all(r.id) as { member_id: string; seat: Seat; display_name: string; email: string }[]).map((g) => ({ memberId: g.member_id, name: g.display_name, email: g.email, seat: g.seat }));
     if (you !== 'owner' && !guests.some((g) => g.memberId === memberId)) continue;
-    rooms.push({ id: r.id, name: r.name, kind: r.kind, guests });
+    const invited = you === 'owner' ? (invitedOf.all(r.id, now) as Invited[]).map((p) => ({ email: p.email, seat: p.seat })) : [];
+    rooms.push({ id: r.id, name: r.name, kind: r.kind, guests, invited });
   }
   // Only a cave's owners see email addresses; guests see names.
   if (you !== 'owner') {
@@ -388,6 +396,7 @@ export function removeRoom(db: Db, memberId: string, caveId: string, roomId: str
   db.exec('BEGIN');
   try {
     db.prepare('DELETE FROM room_guests WHERE room_id = ?').run(roomId);
+    db.prepare('DELETE FROM room_pending WHERE room_id = ?').run(roomId);
     db.prepare('DELETE FROM rooms WHERE id = ?').run(roomId);
     settle(db, caveId, guests, now);
     db.exec('COMMIT');
@@ -424,3 +433,34 @@ export function removeGuest(db: Db, memberId: string, caveId: string, roomId: st
 
 /** Whether the member owns any cave (only owners may list members, to pick guests). */
 export const ownsAnyCave = (db: Db, memberId: string): boolean => !!db.prepare('SELECT 1 FROM cave_owners WHERE member_id = ? LIMIT 1').get(memberId);
+
+/**
+ * Puts someone on a room's guest list by email. A current member is seated at once (`{ memberId }`). Anyone else
+ * needs an invite, which only an admin may send (`admin-only`): the seat is kept for that email (`{ invited }`) and
+ * becomes theirs when they join through the invite (members.ts `resolve`). The caller sends the invite itself
+ * (members.ts `createInvite`, then the mailer), in the same request.
+ */
+export function inviteGuest(db: Db, memberId: string, caveId: string, roomId: string, email: unknown, seat: unknown, now: number): { memberId: string } | { invited: string } {
+  sharedRoom(db, memberId, caveId, roomId);
+  const e = typeof email === 'string' ? email.trim().toLowerCase() : '';
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e)) fail('bad-email');
+  if (seat !== 'editor' && seat !== 'watcher') fail('bad-request');
+  const m = db.prepare('SELECT id FROM members WHERE email = ? AND removed_at IS NULL').get(e) as { id: string } | undefined;
+  if (m) {
+    setGuest(db, memberId, caveId, roomId, m.id, seat, now);
+    return { memberId: m.id };
+  }
+  if (!db.prepare("SELECT 1 FROM members WHERE id = ? AND role = 'admin' AND removed_at IS NULL").get(memberId)) fail('admin-only');
+  if (caveStorage(db, memberId, caveId) !== 'open') fail('locked');
+  db.prepare(
+    `INSERT INTO room_pending (room_id, email, seat, invited_by, added_at) VALUES (?, ?, ?, ?, ?)
+     ON CONFLICT(room_id, email) DO UPDATE SET seat = excluded.seat`,
+  ).run(roomId, e, seat, memberId, now);
+  return { invited: e };
+}
+
+/** Drops the seat kept for an invited email in one room (owner only). The invite itself stays (admins manage invites). */
+export function cancelInvited(db: Db, memberId: string, caveId: string, roomId: string, email: string): void {
+  sharedRoom(db, memberId, caveId, roomId);
+  if (db.prepare('DELETE FROM room_pending WHERE room_id = ? AND email = ?').run(roomId, email.trim().toLowerCase()).changes === 0) fail('not-found');
+}

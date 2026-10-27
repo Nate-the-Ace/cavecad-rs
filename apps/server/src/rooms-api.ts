@@ -140,7 +140,7 @@ export async function handleRooms(db: Db, memberId: string, req: IncomingMessage
  * seats changed has their open streams of the cave closed, so their app reads its seat again at once.
  */
 async function rooms(db: Db, memberId: string, req: IncomingMessage, res: ServerResponse, method: string, cave: string, room: string, guest: string, now: number): Promise<void> {
-  if (!room && method === 'GET') return send(res, 200, R.caveRooms(db, memberId, cave));
+  if (!room && method === 'GET') return send(res, 200, R.caveRooms(db, memberId, cave, now));
   if (!room && method === 'POST') return send(res, 200, { id: R.addRoom(db, memberId, cave, (await readJson(req)).name, now) });
   if (room && !guest && method === 'PATCH') {
     R.renameRoom(db, memberId, cave, room, (await readJson(req)).name);

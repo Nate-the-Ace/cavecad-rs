@@ -61,3 +61,17 @@ list, read and stream a shared cave; watchers refused writes; removal closes str
 best seat wins. Client (`roomclient.check.ts`, real server): a guest syncs edits both ways; a watcher posts nothing
 and gets edits; a removed guest stops with the removal message instead of making a new room.
 By hand: Pitfall Cave and Plumbline Pit, owner adds a second member as editor, then watcher, then removes them.
+
+## Inviting by email (Nathan, 2026-10-26)
+
+"Make Add invite people who aren't members yet and seat them in the room when they join. Only admins can invite that
+way; a non-admin owner gets 'ask an admin to invite them'."
+
+- A room's Add takes a member picked from the list, or any email. A member's email seats them at once.
+- Anyone else: an admin owner sends the normal invite (same email; a Copy link when the email fails) and the seat is
+  kept for that email (`room_pending`). It becomes a `room_guests` row when they join through the invite
+  (`members.ts resolve`). A non-admin owner is refused by the server (`admin-only`): "Ask an admin to invite them."
+- Owners see kept seats on the guest list as "invited, not joined yet" with Cancel. A cancelled invite, an expired
+  invite (no longer shown, never seats anyone), or removing the room drops them. Cancel drops the seat, not the
+  invite (admins manage invites).
+- Routes: `POST /api/caves/:id/rooms/:room/invited {email, seat}`, `DELETE .../invited?email=`.
