@@ -66,3 +66,10 @@ fn real_grid() {
         }
     }
 }
+
+#[test]
+fn absurd_level_counts_are_empty() {
+    assert!(levels(0.0, 1e12, 1e-3).is_empty());
+    assert!(levels(0.0, f64::INFINITY, 1.0).is_empty());
+    assert!(levels(-1e300, 1e300, 1.0).is_empty());
+}

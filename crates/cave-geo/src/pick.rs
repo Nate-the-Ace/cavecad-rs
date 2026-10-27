@@ -26,6 +26,9 @@ pub fn lowest_in_circle(
     centre: [f64; 2],
     radius: f64,
 ) -> Option<LowPoint> {
+    if !radius.is_finite() || radius <= 0.0 || !centre[0].is_finite() || !centre[1].is_finite() {
+        return None;
+    }
     let (ce, cn) = place.cave_to_utm(centre[0], centre[1]);
     let (cc, cr) = g.utm_cell(b, ce, cn);
     let span = (radius / (b.width() / g.w as f64).min(b.height() / g.h as f64)).ceil() + 1.0;
@@ -43,7 +46,7 @@ pub fn lowest_in_circle(
             let (e, n) = g.cell_utm(b, c as f64, r as f64);
             let p = place.utm_to_cave(e, n);
             let d = ((p[0] - centre[0]).powi(2) + (p[1] - centre[1]).powi(2)).sqrt();
-            if d > radius {
+            if d.is_nan() || d > radius {
                 continue;
             }
             if best.is_none_or(|(bv, bd, _)| v < bv || (v == bv && d < bd)) {

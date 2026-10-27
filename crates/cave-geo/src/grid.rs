@@ -15,6 +15,9 @@ pub struct Grid {
     pub values: Vec<f32>,
 }
 
+const MAX_CELLS: usize = 8192 * 8192;
+const CUT: &str = "TIFF is cut short";
+
 struct Reader<'a> {
     b: &'a [u8],
     le: bool,
@@ -22,7 +25,7 @@ struct Reader<'a> {
 
 impl Reader<'_> {
     fn u16(&self, o: usize) -> Result<u16, String> {
-        let s = self.b.get(o..o + 2).ok_or("TIFF is cut short")?;
+        let s = self.b.get(o..o.checked_add(2).ok_or(CUT)?).ok_or(CUT)?;
         Ok(if self.le {
             u16::from_le_bytes([s[0], s[1]])
         } else {
@@ -30,7 +33,7 @@ impl Reader<'_> {
         })
     }
     fn u32(&self, o: usize) -> Result<u32, String> {
-        let s = self.b.get(o..o + 4).ok_or("TIFF is cut short")?;
+        let s = self.b.get(o..o.checked_add(4).ok_or(CUT)?).ok_or(CUT)?;
         let a = [s[0], s[1], s[2], s[3]];
         Ok(if self.le {
             u32::from_le_bytes(a)
@@ -73,13 +76,17 @@ impl Grid {
         let count = r.u16(ifd)? as usize;
         let mut tags = std::collections::HashMap::new();
         for i in 0..count {
-            let e = ifd + 2 + i * 12;
+            let e = i
+                .checked_mul(12)
+                .and_then(|v| v.checked_add(ifd))
+                .and_then(|v| v.checked_add(2))
+                .ok_or(CUT)?;
             tags.insert(
                 r.u16(e)?,
                 Tag {
-                    ty: r.u16(e + 2)?,
-                    count: r.u32(e + 4)?,
-                    at: e + 8,
+                    ty: r.u16(e.checked_add(2).ok_or(CUT)?)?,
+                    count: r.u32(e.checked_add(4).ok_or(CUT)?)?,
+                    at: e.checked_add(8).ok_or(CUT)?,
                 },
             );
         }
@@ -95,17 +102,26 @@ impl Grid {
                 return Ok(None);
             };
             let size = if x.ty == 3 { 2 } else { 4 };
-            let base = if x.count as usize * size <= 4 {
+            let n = x.count as usize;
+            let total = n.checked_mul(size).ok_or(CUT)?;
+            if total > r.b.len() {
+                return Err(CUT.into());
+            }
+            let base = if total <= 4 {
                 x.at
             } else {
                 r.u32(x.at)? as usize
             };
-            (0..x.count as usize)
+            (0..n)
                 .map(|k| {
+                    let o = k
+                        .checked_mul(size)
+                        .and_then(|v| v.checked_add(base))
+                        .ok_or(CUT)?;
                     if x.ty == 3 {
-                        r.u16(base + k * 2).map(u32::from)
+                        r.u16(o).map(u32::from)
                     } else {
-                        r.u32(base + k * 4)
+                        r.u32(o)
                     }
                 })
                 .collect::<Result<Vec<_>, _>>()
@@ -135,24 +151,50 @@ impl Grid {
         if scalar(339)? != Some(3) {
             return Err("TIFF sample is not IEEE float".into());
         }
-        let mut values = Vec::with_capacity(w * h);
-        if let (Some(tw), Some(tl), Some(offs)) = (scalar(322)?, scalar(323)?, list(324)?) {
+        let cells = w
+            .checked_mul(h)
+            .filter(|&n| n <= MAX_CELLS)
+            .ok_or("TIFF is too large")?;
+        if cells.checked_mul(4).is_none_or(|n| n > b.len()) {
+            return Err("TIFF is cut short".into());
+        }
+        let cell = |base: usize, i: usize| -> Result<f32, String> {
+            let o = i
+                .checked_mul(4)
+                .and_then(|v| v.checked_add(base))
+                .ok_or(CUT)?;
+            r.f32(o)
+        };
+        let mut values = Vec::with_capacity(cells);
+        if let Some(tw) = scalar(322)? {
+            let (Some(tl), Some(offs)) = (scalar(323)?, list(324)?) else {
+                return Err("TIFF tile layout is incomplete".into());
+            };
             let (tw, tl) = (tw as usize, tl as usize);
+            if tw == 0 || tl == 0 {
+                return Err("TIFF tile size is zero".into());
+            }
             let across = w.div_ceil(tw);
             for row in 0..h {
                 for col in 0..w {
-                    let tile = (row / tl) * across + col / tw;
+                    let tile = (row / tl)
+                        .checked_mul(across)
+                        .and_then(|v| v.checked_add(col / tw))
+                        .ok_or(CUT)?;
                     let base = *offs.get(tile).ok_or("TIFF tile missing")? as usize;
-                    values.push(r.f32(base + 4 * ((row % tl) * tw + col % tw))?);
+                    values.push(cell(base, (row % tl) * tw + col % tw)?);
                 }
             }
         } else if let Some(offs) = list(273)? {
             let rps = scalar(278)?.map_or(h, |v| v as usize);
+            if rps == 0 {
+                return Err("TIFF rows per strip is zero".into());
+            }
+            let rps = rps.min(h);
             for row in 0..h {
-                let base = *offs.get(row / rps).ok_or("TIFF strip missing")? as usize
-                    + 4 * ((row % rps) * w);
+                let base = *offs.get(row / rps).ok_or("TIFF strip missing")? as usize;
                 for col in 0..w {
-                    values.push(r.f32(base + 4 * col)?);
+                    values.push(cell(base, (row % rps) * w + col)?);
                 }
             }
         } else {
@@ -179,12 +221,15 @@ impl Grid {
         if c >= self.w || r >= self.h {
             return None;
         }
-        let v = self.values[r * self.w + c];
+        let v = *self.values.get(r.checked_mul(self.w)?.checked_add(c)?)?;
         (!Self::no_data(v)).then_some(f64::from(v))
     }
 
     /// Bilinear value at fractional cell coordinates (cell centres at integers), or `None` next to a hole.
     pub fn sample_at(&self, x: f64, y: f64) -> Option<f64> {
+        if self.w == 0 || self.h == 0 {
+            return None;
+        }
         if !(x >= 0.0 && y >= 0.0) || x > (self.w - 1) as f64 || y > (self.h - 1) as f64 {
             return None;
         }

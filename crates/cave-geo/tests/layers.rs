@@ -52,11 +52,11 @@ fn majors_every_fifth() {
         xmax: e + 3.0,
         ymax: n + 3.0,
     };
-    let lines = contours(&g, &b, &p, 10.0, false, None);
+    let lines = contours(&g, &b, &p, 10.0, false, None, -42.0);
     let lv: Vec<(f64, bool)> = lines.iter().map(|l| (l.level, l.major)).collect();
     assert!(lv.contains(&(50.0, true)) && lv.contains(&(10.0, false)));
     // feet: 10 ft interval, levels in feet
-    let ft = contours(&g, &b, &p, 10.0, true, None);
+    let ft = contours(&g, &b, &p, 10.0, true, None, -42.0);
     assert!(ft.iter().any(|l| l.level == 190.0)); // 60 m = 196.85 ft, so 190 ft is the top level
 }
 
@@ -79,4 +79,29 @@ fn terrain_needs_a_datum() {
     let t = terrain(&g, &b, &p, Some(-100.0)).unwrap();
     assert_eq!(t.xyz.len(), 12);
     assert_eq!(t.xyz[2], 1.0 - 100.0);
+}
+
+#[test]
+fn contours_lie_flat_at_the_given_z_without_an_offset() {
+    let g = Grid {
+        w: 3,
+        h: 3,
+        values: vec![0., 30., 60., 0., 30., 60., 0., 30., 60.],
+    };
+    let p = Placement::new([0.0, 0.0], BG);
+    let (e, n) = p.cave_to_utm(0.0, 0.0);
+    let b = Bounds {
+        xmin: e,
+        ymin: n,
+        xmax: e + 3.0,
+        ymax: n + 3.0,
+    };
+    let flat = contours(&g, &b, &p, 10.0, false, None, -42.0);
+    assert!(!flat.is_empty());
+    assert!(flat.iter().all(|c| c.xyz.chunks(3).all(|v| v[2] == -42.0)));
+    let up = contours(&g, &b, &p, 10.0, false, Some(100.0), -42.0);
+    assert!(
+        up.iter()
+            .all(|c| c.xyz.chunks(3).all(|v| v[2] == c.level + 100.0))
+    );
 }

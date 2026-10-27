@@ -70,6 +70,12 @@ fn to_ecef(p: LatLon, (a, f): (f64, f64)) -> [f64; 3] {
 fn from_ecef([x, y, z]: [f64; 3], (a, f): (f64, f64)) -> LatLon {
     let e2 = f * (2.0 - f);
     let p = (x * x + y * y).sqrt();
+    if p < 1e-9 {
+        return LatLon {
+            lat: if z >= 0.0 { 90.0 } else { -90.0 },
+            lon: 0.0,
+        };
+    }
     let mut lat = (z / (p * (1.0 - e2))).atan();
     for _ in 0..8 {
         let n = a / (1.0 - e2 * lat.sin().powi(2)).sqrt();

@@ -109,3 +109,96 @@ fn cells_and_utm() {
     let (e, n) = g.cell_utm(&b, c, r);
     assert!((e - 1100.25).abs() < 1e-9 && (n - 2050.75).abs() < 1e-9);
 }
+
+/// A little-endian TIFF with exactly these tags `(tag, type, value)` and `data_len` bytes of data at 8.
+fn raw(tags: &[(u16, u16, u32)], data_len: usize, w: u32, h: u32) -> Vec<u8> {
+    let mut out = b"II".to_vec();
+    out.extend_from_slice(&42u16.to_le_bytes());
+    out.extend_from_slice(&(8 + data_len as u32).to_le_bytes());
+    out.extend(std::iter::repeat_n(0u8, data_len));
+    let base: Vec<(u16, u16, u32)> = vec![
+        (256, 4, w),
+        (257, 4, h),
+        (258, 3, 32),
+        (259, 3, 1),
+        (277, 3, 1),
+        (339, 3, 3),
+    ];
+    let all: Vec<_> = base.iter().chain(tags).collect();
+    out.extend_from_slice(&(all.len() as u16).to_le_bytes());
+    for &&(t, ty, v) in &all {
+        out.extend_from_slice(&t.to_le_bytes());
+        out.extend_from_slice(&ty.to_le_bytes());
+        out.extend_from_slice(&1u32.to_le_bytes());
+        if ty == 3 {
+            out.extend_from_slice(&(v as u16).to_le_bytes());
+            out.extend_from_slice(&[0, 0]);
+        } else {
+            out.extend_from_slice(&v.to_le_bytes());
+        }
+    }
+    out.extend_from_slice(&0u32.to_le_bytes());
+    out
+}
+
+#[test]
+fn zero_tile_width_is_an_error() {
+    let t = raw(&[(322, 3, 0), (323, 3, 2), (324, 4, 8)], 64, 4, 4);
+    assert!(Grid::parse_tiff(&t).is_err());
+    let t = raw(&[(322, 3, 2), (323, 3, 0), (324, 4, 8)], 64, 4, 4);
+    assert!(Grid::parse_tiff(&t).is_err());
+}
+
+#[test]
+fn zero_rows_per_strip_is_an_error() {
+    let t = raw(&[(273, 4, 8), (278, 3, 0)], 64, 4, 4);
+    assert!(Grid::parse_tiff(&t).is_err());
+}
+
+#[test]
+fn huge_claimed_size_with_tiny_file_is_an_error() {
+    let t = raw(&[(273, 4, 8), (278, 3, 100_000)], 16, 100_000, 100_000);
+    assert!(Grid::parse_tiff(&t).is_err());
+}
+
+#[test]
+fn truncated_file_is_an_error() {
+    let v: Vec<f32> = (0..9).map(|i| i as f32).collect();
+    let t = tiff(3, 3, &v, true);
+    // the last 6 bytes are value padding and the unused next-IFD link, so a file cut there is still whole
+    for n in 0..t.len() - 6 {
+        assert!(Grid::parse_tiff(&t[..n]).is_err(), "len {n}");
+    }
+}
+
+#[test]
+fn wild_offsets_are_an_error() {
+    let mut t = tiff(3, 3, &[0.0; 9], true);
+    t[4..8].copy_from_slice(&u32::MAX.to_le_bytes());
+    assert!(Grid::parse_tiff(&t).is_err());
+    let t = raw(&[(273, 4, u32::MAX), (278, 3, 4)], 64, 4, 4);
+    assert!(Grid::parse_tiff(&t).is_err());
+}
+
+#[test]
+fn tile_width_without_tile_length_is_an_error() {
+    let t = raw(&[(322, 3, 2), (273, 4, 8), (278, 3, 4)], 64, 4, 4);
+    let e = Grid::parse_tiff(&t).unwrap_err();
+    assert!(e.contains("tile layout is incomplete"), "{e}");
+}
+
+#[test]
+fn short_values_do_not_panic() {
+    let g = Grid {
+        w: 3,
+        h: 3,
+        values: vec![1.0],
+    };
+    assert_eq!(g.at(2, 2), None);
+    let z = Grid {
+        w: 0,
+        h: 0,
+        values: vec![],
+    };
+    assert_eq!(z.sample_at(0.0, 0.0), None);
+}

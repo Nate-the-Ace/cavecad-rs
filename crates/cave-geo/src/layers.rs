@@ -52,11 +52,13 @@ pub struct Contour {
     pub major: bool,
     /// Closed ring.
     pub closed: bool,
-    /// `[x, y, z, x, y, z, ...]`; z is the level shifted by the datum offset, or 0 without one.
+    /// `[x, y, z, x, y, z, ...]`; z is the level shifted by the datum offset, or the caller's flat z without one.
     pub xyz: Vec<f64>,
 }
 
 /// Contours at `interval` (in the display unit: feet when `feet`), mapped into the cave frame.
+/// With a datum `offset` each line sits at its level plus the offset; without one it lies flat at
+/// `flat_z` (pass the entrance station's survey z), never at 0 (the elevation datum trap).
 pub fn contours(
     g: &Grid,
     b: &Bounds,
@@ -64,6 +66,7 @@ pub fn contours(
     interval: f64,
     feet: bool,
     offset: Option<f64>,
+    flat_z: f64,
 ) -> Vec<Contour> {
     let Some((lo, hi)) = g.range() else {
         return Vec::new();
@@ -78,7 +81,7 @@ pub fn contours(
             for p in &run.points {
                 let (e, n) = g.cell_utm(b, p[0], p[1]);
                 let c = place.utm_to_cave(e, n);
-                xyz.extend_from_slice(&[c[0], c[1], offset.map_or(0.0, |o| level_m + o)]);
+                xyz.extend_from_slice(&[c[0], c[1], offset.map_or(flat_z, |o| level_m + o)]);
             }
             out.push(Contour {
                 level,

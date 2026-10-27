@@ -21,7 +21,15 @@ pub fn levels(min: f64, max: f64, interval: f64) -> Vec<f64> {
     if interval.is_nan() || interval <= 0.0 || !min.is_finite() || !max.is_finite() {
         return out;
     }
-    let mut k = (min / interval).ceil() as i64;
+    let span = (max - min) / interval;
+    if !span.is_finite() || span > 10_000.0 {
+        return out;
+    }
+    let first = (min / interval).ceil();
+    if !first.is_finite() || first.abs() > 1e15 {
+        return out;
+    }
+    let mut k = first as i64;
     while (k as f64) * interval < max {
         let v = k as f64 * interval;
         if v > min {

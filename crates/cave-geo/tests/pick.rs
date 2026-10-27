@@ -83,3 +83,13 @@ fn holes_and_off_grid() {
     let (g, b, p) = setup(|_, _| 10.0);
     assert!(lowest_in_circle(&g, &b, &p, [500.0, 500.0], 5.0).is_none());
 }
+
+#[test]
+fn bad_radius_or_centre_is_none() {
+    let (g, b, p) = setup(|_, _| 10.0);
+    assert!(lowest_in_circle(&g, &b, &p, [0.0, 0.0], f64::NAN).is_none());
+    assert!(lowest_in_circle(&g, &b, &p, [0.0, 0.0], f64::INFINITY).is_none());
+    assert!(lowest_in_circle(&g, &b, &p, [0.0, 0.0], 0.0).is_none());
+    assert!(lowest_in_circle(&g, &b, &p, [0.0, 0.0], -1.0).is_none());
+    assert!(lowest_in_circle(&g, &b, &p, [f64::NAN, 0.0], 3.0).is_none());
+}

@@ -44,3 +44,25 @@ fn fixed_frame() {
     let j = serde_json::to_string(&f).unwrap();
     assert_eq!(serde_json::from_str::<FixedFrame>(&j).unwrap(), f);
 }
+
+#[test]
+fn nad27_shift_goes_north_and_east() {
+    let p = LatLon {
+        lat: 37.0,
+        lon: -86.4,
+    };
+    let w = Datum::Nad27.to_wgs84(p);
+    let dlat = (w.lat - p.lat) * 3600.0;
+    let dlon = (w.lon - p.lon) * 3600.0;
+    assert!(dlat > 0.2 && dlat < 0.35, "dlat {dlat}\"");
+    assert!(dlon > 0.03 && dlon < 0.13, "dlon {dlon}\"");
+}
+
+#[test]
+fn pole_is_not_nan() {
+    for lat in [90.0, -90.0] {
+        let w = Datum::Nad27.to_wgs84(LatLon { lat, lon: 10.0 });
+        assert!(w.lat.is_finite() && w.lon.is_finite(), "{w:?}");
+        assert!((w.lat - lat).abs() < 0.01, "{w:?}");
+    }
+}
