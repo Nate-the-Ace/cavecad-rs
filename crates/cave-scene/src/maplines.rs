@@ -24,6 +24,8 @@ pub fn map_frames(doc: &Document, use_adjustment: bool) -> Vec<Frame> {
                 b: l.to,
                 pa: [a.x, a.y],
                 pb: [b.x, b.y],
+                za: a.z,
+                zb: b.z,
             })
         })
         .collect()
