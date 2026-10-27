@@ -8,7 +8,7 @@ import { decodeSurveyText } from './text-decode';
 import { engine } from './engine';
 import { cave, changed, markSaved, markUnsaved, option, unsaved } from './cave.svelte';
 import { shelf as shelfState, storeOpenCave } from './shelf.svelte';
-import { EXT, pack, unpack } from './cavefile';
+import { EXT, pack, unpack, type SurfaceParts } from './cavefile';
 import { unzip } from './unzip';
 import { zip } from './zip';
 import { addRemoteFile, fileOf, scans } from './scans.svelte';
@@ -155,9 +155,17 @@ async function usedScans(): Promise<{ path: string; data: Uint8Array }[]> {
   return out;
 }
 
+// The seam the surface module plugs into (it sets these when it loads), so this file never imports it.
+let surfaceParts: () => Promise<SurfaceParts | null> = async () => null;
+let adoptSurface: (p: SurfaceParts) => Promise<void> = async () => {};
+/** Where the surface module says what to pack into a saved file. */
+export function setSurfacePartsSource(fn: () => Promise<SurfaceParts | null>): void { surfaceParts = fn; }
+/** Where the surface module takes the surface files that came inside an opened file. */
+export function setSurfaceAdopter(fn: (p: SurfaceParts) => Promise<void>): void { adoptSurface = fn; }
+
 /** The bytes of the open cave as a CaveCAD file, with its scans when asked. */
-export async function caveBytes(withScans: boolean): Promise<Uint8Array> {
-  return pack({ name: cave.name || stem(cave.fileName), app: `cavecad-rs ${engine.version()}`, cave: engine.syncSnapshot(), scans: withScans ? await usedScans() : [] });
+export async function caveBytes(withScans: boolean, withSurface = true): Promise<Uint8Array> {
+  return pack({ name: cave.name || stem(cave.fileName), app: `cavecad-rs ${engine.version()}`, cave: engine.syncSnapshot(), scans: withScans ? await usedScans() : [], surface: withSurface ? await surfaceParts() : null });
 }
 
 /**
@@ -196,6 +204,7 @@ export async function openCave(): Promise<{ ok: boolean; message: string } | nul
   let warnings: string[] = [];
   let native = false;
   let bundled: { path: string; data: Uint8Array }[] = [];
+  let bundledSurface: SurfaceParts | null = null;
   if (picked.bytes[0] === 0x50 && picked.bytes[1] === 0x4b) {
     // a zip: a CaveCAD file, or a whole exported project holding one
     let bundle = await unpack(picked.bytes);
@@ -210,6 +219,7 @@ export async function openCave(): Promise<{ ok: boolean; message: string } | nul
     message = ok ? `${bundle.manifest.name}` : r.replace(/^error: /, '');
     native = true;
     bundled = bundle.scans;
+    bundledSurface = bundle.surface;
   } else if (isSurveyFile(lower)) {
     const r = engine.importSurvey(picked.name, text());
     ok = r.ok;
@@ -239,6 +249,7 @@ export async function openCave(): Promise<{ ok: boolean; message: string } | nul
     scans.folder = scans.folder === 'from the host' || !scans.folder ? 'inside the file' : scans.folder;
     engine.log('info', 'file', `${bundled.length} scan page${bundled.length === 1 ? '' : 's'} came inside the file`);
   }
+  if (bundledSurface) await adoptSurface(bundledSurface);
   cave.opened += 1; // the canvas re-reads and re-frames
   changed();
   markSaved();
@@ -249,7 +260,7 @@ export async function openCave(): Promise<{ ok: boolean; message: string } | nul
 /** Saves the open cave as a CaveCAD file. `saveAs` always asks where. Returns what to tell the person, or `null` if they cancelled. */
 export async function saveCave(saveAs = false): Promise<string | null> {
   if (!cave.hasCave) return 'Nothing to save: no cave is open.';
-  const bytes = await caveBytes(option('saveScans', true));
+  const bytes = await caveBytes(option('saveScans', true), option('saveSurface', true));
   try {
     if (picker.showSaveFilePicker) {
       if (!handle || saveAs) handle = await picker.showSaveFilePicker({ suggestedName: cave.fileName, types: SAVE_TYPES });
