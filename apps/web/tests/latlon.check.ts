@@ -13,3 +13,6 @@ ok(parseLatLon('91, 0') === null, 'range lat');
 ok(parseLatLon('0, 181') === null, 'range lon');
 ok(parseLatLon('36 59 24 N 86 26 24 N') === null, 'two latitudes');
 ok(parseLatLon('36 75 00 N 86 0 0 W') === null, 'minutes out of range');
+ok(near(parseLatLon('36°59’24”N 86°26’24”W')), 'DMS with curly quotes');
+ok(near(parseLatLon('36°59‘24“N 86°26‘24“W')), 'DMS with opening curly quotes');
+ok(near(parseLatLon('36°59′24″N 86°26′24″W')), 'DMS with primes');

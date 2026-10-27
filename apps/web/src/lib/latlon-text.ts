@@ -1,5 +1,6 @@
 // Reading a latitude/longitude a person typed: decimal degrees ("36.99, -86.44") or degrees, minutes and
 // seconds with a hemisphere letter before or after each half (`36°59'24"N 86°26'24"W`, "N 36 59.4 W 86 26.4").
+// Minute and second marks may be straight, curly (’ ” as a phone or word processor types them) or primes (′ ″).
 // Pure, so it can be checked without a browser (tests/latlon.check.ts). Never log what it reads.
 
 type LatLon = { lat: number; lon: number };
@@ -19,7 +20,7 @@ function degrees(nums: number[], letter: string): number {
 
 /** A typed latitude/longitude, or null when it cannot be read or is out of range. */
 export function parseLatLon(text: string): LatLon | null {
-  const t = text.trim().toUpperCase().replace(/[°º'′"″,;:]/g, ' ').replace(/\s+/g, ' ').trim();
+  const t = text.trim().toUpperCase().replace(/[°º'′‘’"″“”,;:]/g, ' ').replace(/\s+/g, ' ').trim();
   if (!t) return null;
   if (!/[NSEW]/.test(t)) {
     const dec = t.match(/^(-?\d+(?:\.\d+)?) (-?\d+(?:\.\d+)?)$/);

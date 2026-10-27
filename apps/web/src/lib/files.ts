@@ -407,7 +407,7 @@ export async function exportProject(): Promise<string | null> {
   if (!cave.hasCave) return 'Nothing to export: no cave is open.';
   const base = safeName(stem(cave.fileName));
   const entries = [
-    { name: `${base}/${base}${EXT}`, data: await caveBytes(false) },
+    { name: `${base}/${base}${EXT}`, data: await caveBytes(false, option('saveSurface', true)) },
     { name: `${base}/${base}.dxf`, data: new TextEncoder().encode(engine.saveDxf(cave.adjusted)) },
   ];
   for (const path of scans.paths) {
