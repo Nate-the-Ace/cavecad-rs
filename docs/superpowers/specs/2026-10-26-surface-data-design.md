@@ -150,11 +150,9 @@ Available once a location and an elevation grid exist.
 
 ## Privacy
 
-- Coordinates never go into logs (`cave-log` redaction covers the new messages; tested), URLs of the
-  app, exports or packages. Requests to USGS necessarily carry the window; that is the same exposure
-  the old app had and is accepted.
-- The surface files and the `location` and `surface` settings are location data: a sanitized export
-  leaves them out (the cave folder spec already lists `surface/` as location data).
+Nathan, 2026-10-27: location is not a sharing concern. He trusts whoever he invites to a cave or hands
+it to, so the location and the surface files travel with the cave, in saves, exports and project zips.
+Nothing is stripped. Logs stay free of coordinates as a matter of tidiness only.
 
 ## Pieces
 
