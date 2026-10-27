@@ -17,7 +17,9 @@ pub use station_survey::{
     set_station_benchmark, set_station_walls, set_walls_at, shot_now, walls_at, walls_source,
 };
 
-use cave_doc::{Action, AnchorError, Document, Field, Frame, Kind, Value, anchor_stroke};
+use cave_doc::{
+    Action, AnchorError, Document, Field, Frame, Kind, Value, anchor_stroke, anchor_stroke_path,
+};
 use cave_geom::{Path, Point};
 use cave_id::{Id, IdSource};
 
@@ -153,8 +155,8 @@ pub fn profile_sketch(
 /// Actions that add a stroke of `kind` drawn in plan on the map.
 ///
 /// `points` are `(x, y)` in metres (east, north); `frames` are the survey's legs with their plan
-/// positions, and the stroke is anchored to the nearest of them so it follows the survey when it
-/// is adjusted. `widths` is optional pen weight per point.
+/// positions, and the stroke is anchored to them as one path, so it follows the survey when it is
+/// adjusted and stays on the passage it was drawn on where levels overlap in plan. `widths` is optional pen weight per point.
 pub fn map_line(
     _doc: &Document,
     ids: &mut impl IdSource,
@@ -167,7 +169,7 @@ pub fn map_line(
         return Err(DrawError::BadStroke);
     }
     let (pts, widths) = distinct(points, widths)?;
-    let anchored = anchor_stroke(&pts, frames, widths)?;
+    let anchored = anchor_stroke_path(&pts, frames, widths, None)?;
     Ok(feature(
         ids,
         kind,
@@ -260,11 +262,40 @@ pub fn edit_stroke(
             Value::Path(Some(spline(&pts, widths, closed)?)),
         )
     } else {
-        let mut anchored = anchor_stroke(&pts, frames, widths)?;
+        let mut anchored = if view == VIEW_MAP {
+            anchor_stroke_path(&pts, frames, widths, None)?
+        } else {
+            anchor_stroke(&pts, frames, widths)?
+        };
         anchored.closed = closed && pts.len() >= 3;
         (Field::FeatureAnchored, Value::Anchored(Some(anchored)))
     };
     Ok(vec![Action::Set { id, field, value }])
+}
+
+/// Actions that re-anchor a map stroke at its current shape (`points`, plan metres) with its
+/// first point held on `frames[pin]`: moves a line drawn where two levels overlap onto the other
+/// level, or re-attaches a line that hopped levels.
+pub fn reanchor_stroke(
+    doc: &Document,
+    id: Id,
+    points: &[[f64; 2]],
+    widths: Option<Vec<f64>>,
+    frames: &[Frame],
+    pin: usize,
+) -> Result<Vec<Action>, DrawError> {
+    let (view, _) = drawn_in(doc, id).ok_or(DrawError::NoStations)?;
+    if view != VIEW_MAP {
+        return Err(DrawError::BadStroke);
+    }
+    let (pts, widths) = distinct(points, widths)?;
+    let mut anchored = anchor_stroke_path(&pts, frames, widths, Some(pin))?;
+    anchored.closed = is_closed(doc, id) && pts.len() >= 3;
+    Ok(vec![Action::Set {
+        id,
+        field: Field::FeatureAnchored,
+        value: Value::Anchored(Some(anchored)),
+    }])
 }
 
 /// True if the stroke's curve loops back to its first point.
@@ -529,6 +560,36 @@ mod tests {
 
     fn stroke() -> Vec<[f64; 2]> {
         vec![[0.0, 0.0], [1.0, 0.5], [2.0, 0.0]]
+    }
+
+    #[test]
+    fn reanchor_pins_the_first_leg() {
+        let (mut doc, frames, _) = cave();
+        let (id, actions) = map_line(
+            &doc,
+            &mut SeqIds::new(900),
+            "wall",
+            &stroke(),
+            None,
+            &frames,
+        )
+        .unwrap();
+        doc.edit(actions).unwrap();
+        let actions = reanchor_stroke(&doc, id, &stroke(), None, &frames, 0).unwrap();
+        assert_eq!(actions.len(), 1);
+        let Action::Set {
+            field,
+            value: Value::Anchored(Some(p)),
+            ..
+        } = &actions[0]
+        else {
+            panic!("expected an anchored set");
+        };
+        assert_eq!(*field, Field::FeatureAnchored);
+        assert_eq!(
+            p.frames[p.points[0].frame as usize],
+            (frames[0].a, frames[0].b)
+        );
     }
 
     #[test]
