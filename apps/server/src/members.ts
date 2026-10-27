@@ -76,6 +76,9 @@ export function resolve(db: Db, who: Identity, opts: { adminEmail: string; now: 
       try {
         row = addMember(db, who, live.role, live.invited_by, now);
         db.prepare('UPDATE invites SET used_at = ? WHERE id = ?').run(now, live.id);
+        // Seats an owner kept for this email in a cave's room (rooms.ts inviteGuest) are theirs now.
+        db.prepare('INSERT OR IGNORE INTO room_guests (room_id, member_id, seat, added_at) SELECT room_id, ?, seat, ? FROM room_pending WHERE email = ?').run(row.id, now, email);
+        db.prepare('DELETE FROM room_pending WHERE email = ?').run(email);
         db.exec('COMMIT');
       } catch (e) {
         db.exec('ROLLBACK');
@@ -199,11 +202,13 @@ export function listInvites(db: Db, now: number): Invite[] {
   return (db.prepare('SELECT * FROM invites WHERE used_at IS NULL AND cancelled_at IS NULL AND expires_at > ? ORDER BY created_at DESC').all(now) as InviteRow[]).map(toInvite);
 }
 
-/** Cancels a waiting invite. */
+/** Cancels a waiting invite (and any room seats kept for that email). */
 export function cancelInvite(db: Db, actorId: string, inviteId: string, now: number): void {
   requireAdmin(db, actorId);
-  const r = db.prepare('UPDATE invites SET cancelled_at = ? WHERE id = ? AND used_at IS NULL AND cancelled_at IS NULL').run(now, inviteId);
-  if (r.changes === 0) fail('not-found');
+  const inv = db.prepare('SELECT email FROM invites WHERE id = ? AND used_at IS NULL AND cancelled_at IS NULL').get(inviteId) as { email: string } | undefined;
+  if (!inv) fail('not-found');
+  db.prepare('UPDATE invites SET cancelled_at = ? WHERE id = ?').run(now, inviteId);
+  db.prepare('DELETE FROM room_pending WHERE email = ?').run(inv!.email); // seats kept for them in caves' rooms go too
 }
 
 /** Replaces a waiting invite with a fresh one (new token, new 7 days) for the same email and role. */

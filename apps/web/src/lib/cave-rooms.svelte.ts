@@ -6,7 +6,9 @@ import { serverAccess } from './room.svelte';
 
 export type Seat = 'editor' | 'watcher';
 export type Guest = { memberId: string; name: string; email: string; seat: Seat };
-export type CaveRoom = { id: string; name: string; kind: 'private' | 'shared'; guests: Guest[] };
+/** Someone invited by email who has not joined yet, with the seat kept for them (owners see these). */
+export type Invited = { email: string; seat: Seat };
+export type CaveRoom = { id: string; name: string; kind: 'private' | 'shared'; guests: Guest[]; invited: Invited[] };
 export type Person = { memberId: string; name: string; email: string };
 /** A CaveCAD member, as the guest picker lists them. */
 export type Member = { id: string; name: string; email: string };
@@ -23,6 +25,8 @@ export const caveRooms = $state({
   /** Why the rooms could not be read or a change was refused ('' when fine). */
   problem: '',
   busy: false,
+  /** After inviting someone new: what happened, and the sign-up link when the email could not be sent. */
+  sent: null as null | { email: string; emailed: boolean; link: string },
 });
 
 /** Server refusals in plain words. */
@@ -33,6 +37,8 @@ const WORDS: Record<string, string> = {
   private: 'The Private room is for owners only: it cannot be renamed, removed or given guests.',
   'is-owner': 'That person owns this cave, so they are already in every room.',
   'no-member': "That person isn't a CaveCAD member. An admin invites new people first.",
+  'admin-only': "That email isn't a CaveCAD member yet. Ask an admin to invite them.",
+  'bad-email': "That doesn't look like an email address.",
   locked: 'Open this cave once on your own computer first: it was locked before caves moved to the server, and opening it unlocks it.',
 };
 
@@ -101,6 +107,17 @@ export const removeRoom = async (room: string): Promise<boolean> => !!(await cha
 /** Puts a member on a room's guest list with a seat, or changes their seat. */
 export const setGuest = async (room: string, member: string, seat: Seat): Promise<boolean> => !!(await change('PUT', `/${room}/guests/${member}`, { seat }));
 export const removeGuest = async (room: string, member: string): Promise<boolean> => !!(await change('DELETE', `/${room}/guests/${member}`));
+/**
+ * Adds by email: a member is seated at once; anyone else is invited (admins only, the server says so otherwise) and
+ * seated when they join. Says what happened in `caveRooms.sent` for an invite.
+ */
+export async function addByEmail(room: string, email: string, seat: Seat): Promise<boolean> {
+  caveRooms.sent = null;
+  const r = await change<{ added?: string; emailed?: boolean; link?: string; invite?: { email: string } }>('POST', `/${room}/invited`, { email, seat });
+  if (r?.invite) caveRooms.sent = { email: r.invite.email, emailed: !!r.emailed, link: r.link ?? '' };
+  return !!r;
+}
+export const cancelInvited = async (room: string, email: string): Promise<boolean> => !!(await change('DELETE', `/${room}/invited?email=${encodeURIComponent(email)}`));
 
 /** Members matching what was typed (name or email), leaving out owners and those already on the room's list. */
 export function matches(typed: string, room: CaveRoom | null): Member[] {

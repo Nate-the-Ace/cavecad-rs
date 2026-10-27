@@ -8,7 +8,7 @@
   import { cave } from '../lib/cave.svelte';
   import { engine, loadEngine } from '../lib/engine';
   import { ROOM_TEXT, room } from '../lib/room.svelte';
-  import { addRoom, caveRooms, matches, readRooms, removeGuest, removeRoom, renameRoom, setGuest, type Member, type Seat } from '../lib/cave-rooms.svelte';
+  import { addByEmail, addRoom, cancelInvited, caveRooms, matches, readRooms, removeGuest, removeRoom, renameRoom, setGuest, type Member, type Seat } from '../lib/cave-rooms.svelte';
 
   const signedIn = $derived((account.phase === 'ready' || account.phase === 'offline') && !!account.member);
 
@@ -66,12 +66,11 @@
     typed = `${m.name} (${m.email})`;
   }
   async function addGuest() {
+    if (!selected) return;
     const m = chosen ?? (matches(typed, selected).length === 1 ? matches(typed, selected)[0] : null);
-    if (!selected || !m) {
-      caveRooms.problem = 'Pick a CaveCAD member from the list as you type.';
-      return;
-    }
-    if (await setGuest(selected.id, m.id, seat)) {
+    // Not a member picked from the list: an email is added (or invited, by an admin) on the server.
+    const ok = m ? await setGuest(selected.id, m.id, seat) : /@/.test(typed) ? await addByEmail(selected.id, typed.trim(), seat) : ((caveRooms.problem = "Pick a member from the list, or type someone's email to invite them."), false);
+    if (ok) {
       typed = '';
       chosen = null;
     }
@@ -166,14 +165,21 @@
                   {/if}
                 </li>
               {:else}
-                <li class="muted">No guests yet.</li>
+                {#if !selected.invited.length}<li class="muted">No guests yet.</li>{/if}
+              {/each}
+              {#each selected.invited as p (p.email)}
+                <li>
+                  <span class="who">{p.email} <span class="muted">invited, not joined yet</span></span>
+                  <span class="seat">{p.seat === 'editor' ? 'Editor' : 'Watcher'}</span>
+                  <button onclick={() => void cancelInvited(selected.id, p.email)} disabled={caveRooms.busy} title="Cancel the seat kept for {p.email}">Cancel</button>
+                </li>
               {/each}
             </ul>
 
             {#if owner}
               <form class="addguest" onsubmit={(e) => (e.preventDefault(), void addGuest())}>
                 <div class="pick">
-                  <input bind:value={typed} oninput={() => (chosen = null)} placeholder="Type a member's name or email" aria-label="Member to add" autocomplete="off" />
+                  <input bind:value={typed} oninput={() => (chosen = null)} placeholder="A member's name, or anyone's email" aria-label="Member to add" autocomplete="off" />
                   {#if found.length}
                     <div class="drop" role="listbox" aria-label="Matching members">
                       {#each found as m (m.id)}
@@ -188,7 +194,14 @@
                 </select>
                 <button type="submit" disabled={caveRooms.busy || !typed.trim()}><UserPlus size={13} /> Add</button>
               </form>
-              <p class="muted">Editors can change the cave; watchers can only look. Only CaveCAD members can be added: an admin invites new people first. Someone taken off keeps the copy already on their computer but gets no new edits.</p>
+              {#if caveRooms.sent}
+                <p class="sentnote">
+                  {caveRooms.sent.emailed ? `Invite emailed to ${caveRooms.sent.email}.` : `Couldn't email ${caveRooms.sent.email}: send them this link yourself.`}
+                  {#if caveRooms.sent.link && !caveRooms.sent.emailed}<button onclick={() => void navigator.clipboard?.writeText(caveRooms.sent!.link)}>Copy link</button>{/if}
+                  They get this seat when they join.
+                </p>
+              {/if}
+              <p class="muted">Editors can change the cave; watchers can only look. Type someone's email to invite them if they aren't a member yet (admins only). Someone taken off keeps the copy already on their computer but gets no new edits.</p>
             {/if}
           {/if}
         {/if}
@@ -240,5 +253,6 @@
   .drop button:hover { background: var(--hover); }
   .muted { color: var(--muted); font-size: 12px; }
   p.muted { margin: 6px 0; }
+  .sentnote { font-size: 12px; margin: 6px 0; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
   .err { color: var(--danger); font-size: 12px; margin: 8px 0 0; }
 </style>

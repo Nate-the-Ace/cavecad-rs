@@ -6,8 +6,8 @@ import { generateKeyPairSync } from 'node:crypto';
 import { openDb } from '../src/db.ts';
 import { handleApi, type ApiDeps } from '../src/api.ts';
 import { listeners } from '../src/streams.ts';
-import { createInvite, resolve, removeMember } from '../src/members.ts';
-import { accessOf, addRoom, appendEntry, caveRooms, createCave, entriesAfter, goneCaves, myCaves, registerDevice, removeGuest, removeRoom, renameRoom, setGuest } from '../src/rooms.ts';
+import { cancelInvite, createInvite, listInvites, resolve, removeMember } from '../src/members.ts';
+import { accessOf, addRoom, cancelInvited, inviteGuest, appendEntry, caveRooms, createCave, entriesAfter, goneCaves, myCaves, registerDevice, removeGuest, removeRoom, renameRoom, setGuest } from '../src/rooms.ts';
 
 const T = 1_800_000_000_000;
 const ADMIN = 'nathan@example.com';
@@ -180,6 +180,80 @@ test('over HTTP: the directory, guest list changes, watcher refusals, and stream
     assert.equal((await call(ADMIN, 'PATCH', `/api/caves/cave-open1/rooms/${team}`, { name: 'Spring' }, dev)).status, 200);
     assert.equal((await call(ADMIN, 'DELETE', `/api/caves/cave-open1/rooms/${team}`, undefined, dev)).status, 200);
     assert.equal((await call(ADMIN, 'GET', '/api/caves/cave-open1/rooms', undefined, dev)).json.rooms.length, 1);
+  } finally {
+    server.close();
+  }
+});
+
+test('inviting by email: admins only; the kept seat becomes theirs when they join; cancel, expiry and room removal drop it', () => {
+  const { db, owner, ana } = people();
+  const team = addRoom(db, owner, 'cave-open1', 'Team', T);
+  // A member's email seats them at once, whoever the owner is.
+  assert.deepEqual(inviteGuest(db, owner, 'cave-open1', team, 'ANA@example.com ', 'editor', T), { memberId: ana });
+  // Someone new: an owner who is not an admin is refused.
+  createCave(db, ana, 'cave-ana01', [], T, 'open');
+  const anaRoom = addRoom(db, ana, 'cave-ana01', 'Hers', T);
+  assert.throws(() => inviteGuest(db, ana, 'cave-ana01', anaRoom, 'dan@example.com', 'editor', T), /admin-only/);
+  assert.throws(() => inviteGuest(db, ana, 'cave-open1', team, 'dan@example.com', 'editor', T), /not-found/); // not her cave
+  assert.throws(() => inviteGuest(db, owner, 'cave-open1', team, 'not an email', 'editor', T), /bad-email/);
+  // The admin owner invites Dan: the seat waits, shown to owners as invited.
+  assert.deepEqual(inviteGuest(db, owner, 'cave-open1', team, 'dan@example.com', 'watcher', T), { invited: 'dan@example.com' });
+  createInvite(db, owner, 'dan@example.com', 'member', T);
+  assert.deepEqual(caveRooms(db, owner, 'cave-open1', T).rooms[1].invited, [{ email: 'dan@example.com', seat: 'watcher' }]);
+  assert.deepEqual(caveRooms(db, ana, 'cave-open1', T).rooms[0].invited, []); // guests never see invited emails
+  // Dan joins through his invite: he is in the room with the kept seat.
+  const dan = resolve(db, { email: 'dan@example.com', name: 'Dan', provider: 'google', subject: 'dan' }, { adminEmail: ADMIN, now: T + 1 });
+  assert.equal(dan.status, 'member');
+  const danId = dan.status === 'member' ? dan.member.id : '';
+  assert.equal(accessOf(db, danId, 'cave-open1'), 'watcher');
+  assert.deepEqual(caveRooms(db, owner, 'cave-open1', T).rooms[1].invited, []);
+  // A cancelled invite drops its kept seats.
+  inviteGuest(db, owner, 'cave-open1', team, 'eve@example.com', 'editor', T);
+  const eveInvite = createInvite(db, owner, 'eve@example.com', 'member', T).invite;
+  cancelInvite(db, owner, eveInvite.id, T);
+  assert.equal((db.prepare("SELECT COUNT(*) AS n FROM room_pending WHERE email = 'eve@example.com'").get() as { n: number }).n, 0);
+  // An expired invite shows no seat and seats no one.
+  inviteGuest(db, owner, 'cave-open1', team, 'fay@example.com', 'editor', T);
+  createInvite(db, owner, 'fay@example.com', 'member', T);
+  const later = T + 30 * 86_400_000;
+  assert.deepEqual(caveRooms(db, owner, 'cave-open1', later).rooms[1].invited, []);
+  assert.equal(listInvites(db, later).length, 0);
+  // The owner cancels a kept seat; removing the room drops the rest.
+  inviteGuest(db, owner, 'cave-open1', team, 'gus@example.com', 'editor', T);
+  createInvite(db, owner, 'gus@example.com', 'member', T);
+  assert.throws(() => cancelInvited(db, ana, 'cave-open1', team, 'gus@example.com'), /not-found/);
+  cancelInvited(db, owner, 'cave-open1', team, 'GUS@example.com');
+  assert.deepEqual(caveRooms(db, owner, 'cave-open1', T).rooms[1].invited.map((p) => p.email), ['fay@example.com']); // Fay's is still live at T
+  inviteGuest(db, owner, 'cave-open1', team, 'hal@example.com', 'editor', T);
+  removeRoom(db, owner, 'cave-open1', team, T);
+  assert.equal((db.prepare('SELECT COUNT(*) AS n FROM room_pending').get() as { n: number }).n, 0);
+});
+
+test('over HTTP: an admin owner invites by email and gets a link; a non-admin owner is refused', async () => {
+  const { server, call, db } = await start();
+  try {
+    const dev = (await call(ADMIN, 'POST', '/api/devices', { publicKey: PUB(1) })).json.device.id;
+    await call(ADMIN, 'POST', '/api/caves', { id: 'cave-open1', storage: 'open' }, dev);
+    const team = (await call(ADMIN, 'POST', '/api/caves/cave-open1/rooms', { name: 'Team' }, dev)).json.id as string;
+    const sent = await call(ADMIN, 'POST', `/api/caves/cave-open1/rooms/${team}/invited`, { email: 'dan@example.com', seat: 'editor' });
+    assert.equal(sent.status, 200);
+    assert.equal(sent.json.emailed, false); // no mailer in tests: the panel offers the link to copy
+    assert.match(sent.json.link, /\?signup=/);
+    const rooms = (await call(ADMIN, 'GET', '/api/caves/cave-open1/rooms', undefined, dev)).json.rooms;
+    assert.deepEqual(rooms[1].invited, [{ email: 'dan@example.com', seat: 'editor' }]);
+    assert.equal((await call(ADMIN, 'DELETE', `/api/caves/cave-open1/rooms/${team}/invited?email=dan%40example.com`)).status, 200);
+    // Rick, a member who is not an admin, owns a cave and tries to invite someone new.
+    const admin = (await call(ADMIN, 'GET', '/api/me')).json.member.id;
+    createInvite(db, admin, 'rick@example.com', 'member', Date.now());
+    const rdev = (await call('rick@example.com', 'POST', '/api/devices', { publicKey: PUB(3) })).json.device.id;
+    await call('rick@example.com', 'POST', '/api/caves', { id: 'cave-rick1', storage: 'open' }, rdev);
+    const rroom = (await call('rick@example.com', 'POST', '/api/caves/cave-rick1/rooms', { name: 'Team' }, rdev)).json.id as string;
+    const refused = await call('rick@example.com', 'POST', `/api/caves/cave-rick1/rooms/${rroom}/invited`, { email: 'zed@example.com', seat: 'editor' });
+    assert.deepEqual([refused.status, refused.json.error], [403, 'admin-only']);
+    // ...but a member's email works for him.
+    const ok = await call('rick@example.com', 'POST', `/api/caves/cave-rick1/rooms/${rroom}/invited`, { email: ADMIN, seat: 'watcher' });
+    assert.equal(ok.status, 200);
+    assert.ok(ok.json.added);
   } finally {
     server.close();
   }

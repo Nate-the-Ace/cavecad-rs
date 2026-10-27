@@ -11,7 +11,7 @@ import type { RequestLike } from './identity.ts';
 import { serveStatic } from './static.ts';
 import { send, sendBadBody, readJson } from './http.ts';
 import { handleRooms } from './rooms-api.ts';
-import { ownsAnyCave } from './rooms.ts';
+import { cancelInvited, inviteGuest, ownsAnyCave } from './rooms.ts';
 
 export type ApiDeps = {
   db: Db;
@@ -32,7 +32,7 @@ export type ApiDeps = {
 };
 
 const DESKTOP_ORIGINS = ['tauri://localhost', 'http://tauri.localhost', 'https://tauri.localhost'];
-const STATUS: Record<string, number> = { 'not-admin': 403, 'not-found': 404, self: 409, 'last-admin': 409, 'already-member': 409, 'bad-email': 400, 'bad-role': 400, 'bad-provider': 400, 'bad-name': 400, 'bad-colour': 400 };
+const STATUS: Record<string, number> = { 'admin-only': 403, locked: 409, private: 409, 'is-owner': 409, 'no-member': 404, 'bad-request': 400, 'not-admin': 403, 'not-found': 404, self: 409, 'last-admin': 409, 'already-member': 409, 'bad-email': 400, 'bad-role': 400, 'bad-provider': 400, 'bad-name': 400, 'bad-colour': 400 };
 
 const SAFE = ['GET', 'HEAD', 'OPTIONS'];
 const originOf = (u: string) => {
@@ -99,7 +99,26 @@ export async function handleApi(d: ApiDeps, req: IncomingMessage, res: ServerRes
   if (r.status !== 'member') return path === '/api/me' && method === 'GET' ? send(res, 200, { ...r, ...via }) : send(res, 403, { error: r.status });
   const me = r.member;
 
+  /** Sends an invite by email (and gives back its link, for a Copy link fallback when the email fails). */
+  const mail = async (made: { invite: M.Invite; token: string }) => {
+    const link = `${d.publicUrl.replace(/\/$/, '')}/?signup=${made.token}`;
+    const emailed = await sendInvite(d.mailer, { to: made.invite.email, inviter: me.displayName, link });
+    return { invite: made.invite, link, emailed };
+  };
+
   try {
+    // A room's Add by email: a member is seated now; anyone else gets an invite (admins only) and a seat kept for them.
+    const byEmail = /^\/api\/caves\/([A-Za-z0-9_-]{8,64})\/rooms\/([0-9a-f-]{36})\/invited$/.exec(path);
+    if (byEmail && method === 'POST') {
+      const b = await readJson(req);
+      const got = inviteGuest(d.db, me.id, byEmail[1], byEmail[2], b.email, b.seat, now);
+      if ('memberId' in got) return send(res, 200, { added: got.memberId });
+      return send(res, 200, await mail(M.createInvite(d.db, me.id, got.invited, 'member', now)));
+    }
+    if (byEmail && method === 'DELETE') {
+      cancelInvited(d.db, me.id, byEmail[1], byEmail[2], url.searchParams.get('email') ?? '');
+      return send(res, 200, { ok: true });
+    }
     if (path === '/api/devices' || path === '/api/caves' || path.startsWith('/api/caves/')) return await handleRooms(d.db, me.id, req, res, now);
     if (path === '/api/me' && method === 'GET') {
       return send(res, 200, { status: 'member', member: me, drives: M.listDrives(d.db, me.id), firstVisit: r.firstVisit, noticeSeen: M.noticeSeen(d.db, me.id), signups: getSetting(d.db, 'signups'), ...via, pass: signPass(d.passKey, { memberId: me.id, email: me.email, role: me.role }, now) });
@@ -138,11 +157,6 @@ export async function handleApi(d: ApiDeps, req: IncomingMessage, res: ServerRes
       return send(res, 200, { ok: true });
     }
     if (path === '/api/admin/invites' && method === 'GET') return send(res, 200, { invites: M.listInvites(d.db, now) });
-    const mail = async (made: { invite: M.Invite; token: string }) => {
-      const link = `${d.publicUrl.replace(/\/$/, '')}/?signup=${made.token}`;
-      const emailed = await sendInvite(d.mailer, { to: made.invite.email, inviter: me.displayName, link });
-      return { invite: made.invite, link, emailed };
-    };
     if (path === '/api/admin/invites' && method === 'POST') {
       const b = await readJson(req);
       return send(res, 200, await mail(M.createInvite(d.db, me.id, String(b.email ?? ''), b.role as M.Role, now)));
