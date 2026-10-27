@@ -3,7 +3,7 @@
 // files themselves live in OPFS (surface-files.ts) and travel inside the .cavecad file.
 // Coordinates and URLs are never logged: they locate the cave.
 
-import { engine, type GeoStatus, type SurfaceLayers, type SurfacePlan, type SurfaceRecord } from './engine';
+import { engine, type GeoStatus, type Scope, type SurfaceLayers, type SurfacePlan, type SurfaceRecord } from './engine';
 import { download, load, requestKey, store, type Part } from './surface-files';
 import type { SurfaceParts } from './cavefile';
 import { cave, changed } from './cave.svelte';
@@ -40,10 +40,14 @@ export const entrancePick = $state({ on: false, message: '', canUndo: false });
 
 let photoBytes: Uint8Array | null = null;
 
+const nextFrame = (f: () => void) => (typeof requestAnimationFrame === 'function' ? requestAnimationFrame(f) : setTimeout(f, 16));
+
 function setPhoto(bytes: Uint8Array | null) {
-  if (surface.photoUrl) URL.revokeObjectURL(surface.photoUrl);
+  const old = surface.photoUrl;
   photoBytes = bytes;
   surface.photoUrl = bytes ? URL.createObjectURL(new Blob([bytes as BlobPart], { type: 'image/jpeg' })) : '';
+  // Revoked a frame later, not now: the view may still be reading the old picture when the new URL lands.
+  if (old) nextFrame(() => URL.revokeObjectURL(old));
 }
 
 const today = () => new Date().toISOString().slice(0, 10);
@@ -94,14 +98,63 @@ export async function reloadSurface(): Promise<Part[]> {
   return missing;
 }
 
-/** Reloads, and downloads again any part the record lists but this device does not have (a cave synced without its files). */
+/** A sync was asked for while a download was running: it runs again when that download ends. */
+let pendingSync = false;
+
+/** Ends a download: clears busy and runs a sync that waited for it. */
+function downloadDone() {
+  surface.busy = false;
+  if (!pendingSync) return;
+  pendingSync = false;
+  void syncSurface();
+}
+
+/**
+ * Reloads, and downloads again any part the record lists but this device does not have (a cave synced
+ * without its files). Asks for exactly what the record lists (its window and sizes) and records nothing:
+ * the cave is not changed by fetching files it already describes. While another download runs it waits
+ * and runs when that one ends, so a cave opened mid-download is never left without its files.
+ */
 export async function syncSurface(): Promise<string | null> {
-  if (surface.busy) return null;
+  if (surface.busy) {
+    pendingSync = true;
+    return null;
+  }
+  const opened = cave.opened;
+  const key = surfaceKey();
   const missing = await reloadSurface();
-  if (!missing.length) return null;
-  const r = await fetchSurface({ photo: missing.includes('photo'), elevation: missing.includes('elevation') });
-  const message = r.ok ? 'The surface for this cave was downloaded again on this device.' : `The surface for this cave could not be downloaded again on this device. ${r.lines.join(' ')}`;
-  engine.log(r.ok ? 'info' : 'warn', 'surface', message); // no coordinates in here
+  if (!missing.length || cave.opened !== opened || surfaceKey() !== key) return null;
+  if (surface.busy) {
+    pendingSync = true; // a download started while the files were read
+    return null;
+  }
+  const plan = engine.surfacePlanForRecord(cave.adjusted);
+  if ('error' in plan) return null;
+  surface.busy = true;
+  const gen = ++generation; // a reload still running must not overwrite what this puts on screen
+  const stale = () => cave.opened !== opened || surfaceKey() !== key || gen !== generation;
+  let failed = false;
+  try {
+    for (const part of missing) {
+      let bytes: Uint8Array;
+      try {
+        bytes = await download(plan, part);
+      } catch {
+        failed = true;
+        continue;
+      }
+      if (stale()) return null;
+      await store(requestKey(plan, part), bytes);
+      if (stale()) return null;
+      if (part === 'photo') setPhoto(bytes);
+      else surface.tiff = bytes;
+      surface.version++;
+    }
+  } finally {
+    downloadDone();
+  }
+  const message = failed ? 'The surface for this cave could not be downloaded again on this device.' : 'The surface for this cave was downloaded again on this device.';
+  engine.log(failed ? 'warn' : 'info', 'surface', message); // a fixed string: no coordinates, no URLs
   return message;
 }
 
@@ -112,15 +165,26 @@ function failure(e: unknown): string {
   return err?.message ?? String(e);
 }
 
-/** Downloads what is asked for, keeps it, records it. Returns the report lines. */
-export async function fetchSurface(want: { photo: boolean; elevation: boolean }): Promise<{ ok: boolean; lines: string[] }> {
+/** What a download says when the cave on screen changed under it (nothing was recorded or shown). */
+const CAVE_CHANGED = 'The cave changed while downloading.';
+
+/**
+ * Downloads what is asked for, keeps it, records it (one edit on `scope`'s history: `settings` from
+ * the Surface Data dialog, `map` for an entrance pick). Returns the report lines. If another cave is
+ * opened while it runs, it stops without recording or showing anything.
+ */
+export async function fetchSurface(want: { photo: boolean; elevation: boolean }, scope: Scope = 'settings'): Promise<{ ok: boolean; lines: string[] }> {
   if (surface.busy) return { ok: false, lines: ['A download is already running.'] };
   if (!want.photo && !want.elevation) return { ok: false, lines: ['Nothing to download: tick the aerial photo, the ground elevation, or both.'] };
   const plan = engine.surfacePlan(want.photo, want.elevation, cave.adjusted);
   if ('error' in plan) return { ok: false, lines: [plan.error] };
   surface.busy = true;
   generation++; // a reload still running must not overwrite what this download puts on screen
+  const opened = cave.opened;
+  const stale = () => cave.opened !== opened;
+  const gone = { ok: false, lines: [CAVE_CHANGED] };
   const lines: string[] = [];
+  const sessionOnly = ' (This browser would not keep it on the device, so it lasts until the page closes; saving the cave keeps it in the file.)';
   let ground = NaN;
   let photo: Uint8Array | null = null;
   let tiff: Uint8Array | null = null;
@@ -128,26 +192,34 @@ export async function fetchSurface(want: { photo: boolean; elevation: boolean })
     if (plan.photo) {
       try {
         photo = await download(plan, 'photo');
-        await store(requestKey(plan, 'photo'), photo);
-        lines.push(`Aerial photo: ${plan.photo.w} x ${plan.photo.h} pixels, about ${Math.round(plan.bounds.xmax - plan.bounds.xmin)} m across.`);
       } catch (e) {
         lines.push(`Aerial photo: ${failure(e)}`);
         delete plan.photo;
+      }
+      if (stale()) return gone;
+      if (photo && plan.photo) {
+        const kept = await store(requestKey(plan, 'photo'), photo);
+        if (stale()) return gone;
+        lines.push(`Aerial photo: ${plan.photo.w} x ${plan.photo.h} pixels, about ${Math.round(plan.bounds.xmax - plan.bounds.xmin)} m across.${kept ? '' : sessionOnly}`);
       }
     }
     if (plan.elevation) {
       try {
         tiff = await download(plan, 'elevation');
-        ground = engine.surfaceGround(plan, tiff);
-        await store(requestKey(plan, 'elevation'), tiff);
-        lines.push(Number.isFinite(ground) ? `Ground elevation: ground at the entrance ${formatLength(ground, cave.units, 1)} (NAVD88).` : 'Ground elevation: the service has no elevation data at the entrance. This place is probably outside 3DEP coverage (the United States).');
       } catch (e) {
         lines.push(`Ground elevation: ${failure(e)}`);
         delete plan.elevation;
       }
+      if (stale()) return gone;
+      if (tiff) {
+        ground = engine.surfaceGround(plan, tiff);
+        const kept = await store(requestKey(plan, 'elevation'), tiff);
+        if (stale()) return gone;
+        lines.push((Number.isFinite(ground) ? `Ground elevation: ground at the entrance ${formatLength(ground, cave.units, 1)} (NAVD88).` : 'Ground elevation: the service has no elevation data at the entrance. This place is probably outside 3DEP coverage (the United States).') + (kept ? '' : sessionOnly));
+      }
     }
     if (!plan.photo && !plan.elevation) return { ok: false, lines };
-    const r = engine.surfaceCommit(plan, ground, today());
+    const r = engine.surfaceCommit(plan, ground, today(), scope);
     if (r !== 'ok') lines.push(r.replace(/^error: /, ''));
     changed();
     // The record decides what is shown: a kept part whose window changed was dropped by the commit.
@@ -167,7 +239,7 @@ export async function fetchSurface(want: { photo: boolean; elevation: boolean })
     surface.version++;
     return { ok: r === 'ok', lines };
   } finally {
-    surface.busy = false;
+    downloadDone();
   }
 }
 
@@ -200,8 +272,14 @@ function geoKey(): string {
   return JSON.stringify([st?.location ?? null, st?.surface ?? null, st?.interval_m ?? null]);
 }
 
-/** What the last entrance pick put in the settings history (its edits, and the state they left). */
-let lastPick: { steps: number; after: string } | null = null;
+/** What the last entrance pick put in the Map's history: its edits, the state they left, and the cave and revision after them. */
+let lastPick: { steps: number; after: string; opened: number; revision: number } | null = null;
+
+/** Whether the message's Undo can still take back the last pick (nothing has been edited, undone or opened since). */
+export function pickUndoable(): boolean {
+  const p = lastPick;
+  return !!p && p.opened === cave.opened && p.revision === engine.revision() && geoKey() === p.after;
+}
 
 /**
  * Moves the entrance to the lowest ground inside the circle (cave metres on the plan), then downloads
@@ -217,17 +295,20 @@ export async function pickEntrance(cx: number, cy: number, r: number): Promise<s
   const hit = engine.surfacePick(surface.tiff, cx, cy, r, cave.adjusted);
   if ('error' in hit) return 'No ground data inside that circle.';
   const before = geoKey();
-  const res = engine.geoSetLocation({ station: st.location.station, lat: hit.lat, lon: hit.lon, ground_m: hit.ground_m, source: 'surface-pick' });
+  const opened = cave.opened;
+  // On the Map's history, so the Map's own Undo takes the pick back (the download first, then the move).
+  const res = engine.geoSetLocation({ station: st.location.station, lat: hit.lat, lon: hit.lon, ground_m: hit.ground_m, source: 'surface-pick' }, 'map');
   if (res !== 'ok') return res.replace(/^error: /, '');
   changed();
   const moved = geoKey();
   const where = `the lowest ground in the circle (${formatLength(hit.ground_m, cave.units, 1)})`;
   if (moved === before) return `The entrance is already at ${where}.`;
   const had = st.surface;
-  const again = await fetchSurface({ photo: !!had?.photo, elevation: true });
+  const again = await fetchSurface({ photo: !!had?.photo, elevation: true }, 'map');
+  if (cave.opened !== opened) return CAVE_CHANGED;
   const after = geoKey();
   // the move is one edit; a download that was recorded is a second one, undone with it
-  lastPick = { steps: after === moved ? 1 : 2, after };
+  lastPick = { steps: after === moved ? 1 : 2, after, opened, revision: engine.revision() };
   entrancePick.canUndo = true;
   if (!again.ok) return `The entrance moved, but the surface could not be downloaded again (${again.lines.join(' ')}). It still shows the old area; Surface Data will offer it again. It now sits at ${where}.`;
   const now = geoStatus()?.surface;
@@ -246,8 +327,9 @@ export function undoEntrancePick(): string {
   entrancePick.canUndo = false;
   if (!p) return '';
   if (geoKey() !== p.after) return 'The location or surface changed again since that pick, so it was not undone.';
+  if (p.opened !== cave.opened || p.revision !== engine.revision()) return 'The cave was edited since that pick, so it was not undone here. Undo on the Map steps back through it one edit at a time.';
   let undone = 0;
-  for (let i = 0; i < p.steps; i++) if (engine.undo('settings')) undone++;
+  for (let i = 0; i < p.steps; i++) if (engine.undo('map')) undone++;
   changed();
   return undone === p.steps ? 'The entrance is back where it was, with its surface.' : 'Only part of that pick could be undone.';
 }
@@ -259,14 +341,25 @@ export async function currentSurfaceParts(): Promise<SurfaceParts | null> {
   return { record: JSON.stringify(s), photo: s.photo ? photoBytes : null, elevation: s.elevation ? surface.tiff : null };
 }
 
-/** Takes the surface files out of an opened .cavecad file. */
+/**
+ * Takes the surface files out of an opened .cavecad file: shown straight from the file's parts, and kept
+ * (memory for the session, OPFS where the browser allows) so a reload or undo finds them again.
+ */
 export async function adoptSurfaceParts(parts: SurfaceParts): Promise<void> {
   const s = storedRecord();
   if (!s) return;
+  const gen = ++generation;
   const plan = planOf(s);
-  if (parts.photo && s.photo) await store(requestKey(plan, 'photo'), parts.photo);
-  if (parts.elevation && s.elevation) await store(requestKey(plan, 'elevation'), parts.elevation);
-  await reloadSurface();
+  const photo = s.photo ? parts.photo : null;
+  const elevation = s.elevation ? parts.elevation : null;
+  if (photo) await store(requestKey(plan, 'photo'), photo);
+  if (elevation) await store(requestKey(plan, 'elevation'), elevation);
+  const p = photo ?? (s.photo ? await load(requestKey(plan, 'photo')) : null);
+  const e = elevation ?? (s.elevation ? await load(requestKey(plan, 'elevation')) : null);
+  if (gen !== generation) return; // a newer reload or download overtook this one
+  setPhoto(p);
+  surface.tiff = e;
+  surface.version++;
 }
 
 setSurfacePartsSource(currentSurfaceParts);

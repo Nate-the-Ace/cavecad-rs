@@ -51,6 +51,8 @@
       const key = `${cave.opened}|${surfaceKey()}`;
       if (key === lastSurface) return;
       lastSurface = key;
+      // Recording the key here is safe even while a download runs: syncSurface then waits and runs
+      // again when that download ends (its pending flag), so this cave's files are still fetched.
       void syncSurface();
     });
   });

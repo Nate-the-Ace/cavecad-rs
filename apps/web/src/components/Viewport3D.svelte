@@ -22,7 +22,7 @@
   import { panelState, showPanel } from '../lib/workspace.svelte';
   import { setActiveView } from '../lib/snapshot';
   import { have, mapUrl, scans } from '../lib/scans.svelte';
-  import { entrancePick, pickEntrance, surface, undoEntrancePick } from '../lib/surface.svelte';
+  import { entrancePick, pickEntrance, pickUndoable, surface, undoEntrancePick } from '../lib/surface.svelte';
   import { terrainSampler } from '../lib/terrain';
   import { formatLength, unitName } from '../lib/units';
 
@@ -184,6 +184,14 @@
   function undoPick() {
     entrancePick.message = undoEntrancePick();
   }
+  // The message's Undo goes once anything else is edited or undone (the Map's Undo may already have taken the pick back).
+  $effect(() => {
+    void cave.version;
+    void cave.opened;
+    untrack(() => {
+      if (entrancePick.canUndo && !pickUndoable()) entrancePick.canUndo = false;
+    });
+  });
 
   // The Stations panel asks the Map to centre on a station.
   let handledFocus = cave.focus.seq;
