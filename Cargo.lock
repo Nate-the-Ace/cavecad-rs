@@ -73,6 +73,7 @@ name = "cave-formats"
 version = "0.0.1"
 dependencies = [
  "cave-doc",
+ "cave-geo",
  "cave-geomag",
  "cave-id",
  "cave-survey",

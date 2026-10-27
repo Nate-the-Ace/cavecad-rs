@@ -292,6 +292,10 @@ pub struct Survey {
     /// Sketch pages a Therion project pulls in (`input cave.th2`), read separately from the data.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub sketches: Vec<SketchInput>,
+    /// The coordinate system `fixed` is written in (UTM zone + datum), when the project names it.
+    /// `None` means unknown: the location is then asked for, never guessed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fixed_frame: Option<cave_geo::datum::FixedFrame>,
 }
 
 /// A sketch page a project pulls in, and where its station names start.
@@ -324,6 +328,7 @@ impl Default for Survey {
             parse_findings: None,
             aliases: JsObj::new(),
             sketches: Vec::new(),
+            fixed_frame: None,
         }
     }
 }
