@@ -22,12 +22,17 @@
   import { panelState, showPanel } from '../lib/workspace.svelte';
   import { setActiveView } from '../lib/snapshot';
   import { have, mapUrl, scans } from '../lib/scans.svelte';
+  import { surface } from '../lib/surface.svelte';
+  import { terrainSampler } from '../lib/terrain';
+  import { unitName } from '../lib/units';
 
   let wrap: HTMLDivElement;
   let gl: HTMLCanvasElement;
   let overlay: HTMLCanvasElement;
   let cubeHost: HTMLDivElement;
   let view: CaveView | null = null;
+  /** Set once the view exists, so the effects that feed it run again then. */
+  let viewReady = $state(false);
 
   let depthColor = $state(false);
   let walls = $state(true);
@@ -95,6 +100,12 @@
     const halo = option('halo', true);
     const haloM = haloReach();
     const haloF = haloFade();
+    // the surface photo rides with the scans, under all of them
+    void viewReady;
+    const layers = surface.layers;
+    const photoUrl = surface.photoUrl;
+    const terrain = surface.terrain;
+    const photoOn = option('surfacePhoto', true);
     untrack(() => {
       if (!view) return;
       view.setHalo(halo, haloM, haloF);
@@ -110,13 +121,34 @@
         const pts = (ids ?? []).map((id) => all.find((st) => st.id === id)?.at).filter((v): v is [number, number, number] => !!v);
         return pts.length >= 3 ? heightSurface(pts, surveyZ) : null;
       };
-      const list = on
+      const list: Parameters<CaveView['setScans']>[0] = on
         ? engine
             .scanPlacements('map', cave.adjusted)
             .filter((p) => !filter.hiddenTrips.includes(p.trip) && have(p.path))
             .map((p) => ({ key: `${p.trip}/${p.path}`, url: mapUrl(p.path)!, matrix: p.matrix, z: surveyZ, plane: planeFor(p.stations), height: heightFor(p.stations), opacity, trim: p.trim, warp: p.warp }))
         : [];
+      if (photoOn && photoUrl && layers?.photo_matrix) {
+        // On the ground when its heights are known, else level at the survey's height like a scan.
+        const ground = terrain ? terrainSampler(terrain) : null;
+        const height = ground ? (x: number, y: number) => ground(x, y) ?? surveyZ : null;
+        list.push({ key: 'surface-photo', url: photoUrl, matrix: layers.photo_matrix, z: surveyZ, plane: null, height, opacity: 0.5, trim: null, warp: null, order: -11 });
+      }
       view.setScans(list);
+    });
+  });
+
+  // The ground above the cave: contours (labelled in the display unit) and the terrain, each with its own switch.
+  const surfaceShown = $derived(surface.layers !== null);
+  $effect(() => {
+    void viewReady;
+    const layers = surface.layers;
+    const terrain = surface.terrain;
+    const contoursOn = option('surfaceContours', true);
+    const terrainOn = option('surfaceTerrain', false);
+    const unit = unitName(cave.units);
+    untrack(() => {
+      view?.setContours(layers?.contours ?? [], unit, contoursOn);
+      view?.setTerrain(terrain, terrainOn);
     });
   });
 
@@ -407,6 +439,7 @@
     };
     v.shadingFor = (dir, persp) => engine.shading(cave.adjusted, dir, persp, wireFilter());
     view = v;
+    viewReady = true;
     if (import.meta.env.DEV) (window as unknown as { __view: CaveView }).__view = v; // for tests
     setActiveView(v);
 
@@ -428,6 +461,7 @@
       cube.dispose();
       v.dispose();
       view = null;
+      viewReady = false;
     };
   });
 </script>
@@ -449,6 +483,12 @@
           <label title="Show the profile sketches along their runs (they fade out from the top or bottom, where they cannot be read)"><input type="checkbox" checked={cave.showSections.profileSketches} onchange={(e) => setShowSections('profileSketches', e.currentTarget.checked)} /> Profile sketches</label>
           <label title="Show the cross sections drawn at stations, next to their stations (drag one to place it)"><input type="checkbox" checked={cave.showSections.map} onchange={(e) => setShowSections('map', e.currentTarget.checked)} /> Sections</label>
           <label title="Draw a paler section through stations with no measurements"><input type="checkbox" bind:checked={fillGaps} onchange={loadPassage} /> Fill gaps</label>
+          {#if surfaceShown}
+            <h4>Surface</h4>
+            <label title="The aerial photo under the cave, at half strength"><input type="checkbox" checked={option('surfacePhoto', true)} onchange={(e) => setOption('surfacePhoto', e.currentTarget.checked)} /> Photo</label>
+            <label title="Contour lines of the ground; the thicker ones are labelled with their height"><input type="checkbox" checked={option('surfaceContours', true)} onchange={(e) => setOption('surfaceContours', e.currentTarget.checked)} /> Contours</label>
+            <label title="The ground as a see-through surface, best seen from the side"><input type="checkbox" checked={option('surfaceTerrain', false)} onchange={(e) => setOption('surfaceTerrain', e.currentTarget.checked)} /> Terrain</label>
+          {/if}
           <h4>Types</h4>
           {#each listed as t}
             <label><input type="checkbox" checked={!filter.hiddenTypes.includes(t.key)} onchange={(e) => (setShown('types', t.key, e.currentTarget.checked), refresh())} /> {t.label}</label>

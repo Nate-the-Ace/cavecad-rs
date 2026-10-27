@@ -30,6 +30,7 @@ import { PICKUP_REACH, joinFit } from '../line-editor';
 import { looks } from '../ink';
 import { elevationColor, inkColor, readTheme, type ViewTheme } from './theme';
 import { metresPer, niceNumber, unitName, type Units } from '../units';
+import { thinTerrain, type Terrain } from '../terrain';
 
 export type Projection = 'perspective' | 'orthographic';
 export type Dir = [number, number, number];
@@ -66,6 +67,11 @@ export class CaveView {
   private camera: THREE.PerspectiveCamera | THREE.OrthographicCamera = this.persp;
   private content = new THREE.Group();
   private materials: LineMaterial[] = [];
+  /** The ground above the cave (contours, terrain): beside `content`, never cleared by `rebuild()`. */
+  private surfaceGroup = new THREE.Group();
+  private surfaceMaterials: LineMaterial[] = [];
+  /** Where each major contour's level is written (its run's middle point) and what it says. */
+  private contourLabels: { at: [number, number, number]; text: string }[] = [];
   private data: Scene | null = null;
   private theme: ViewTheme = readTheme();
   private width = 1;
@@ -202,6 +208,7 @@ export class CaveView {
     this.ortho.up.set(0, 0, 1);
     this.persp.position.copy(viewDirection(HOME_DIR).multiplyScalar(50));
     this.scene.add(this.content);
+    this.scene.add(this.surfaceGroup);
     this.scene.add(new THREE.AmbientLight(0xffffff, 0.9));
     this.scene.add(this.headlamp);
     this.controls = new OrbitControls(this.persp, canvas);
@@ -530,6 +537,7 @@ export class CaveView {
     this.overlay.style.width = `${this.width}px`;
     this.overlay.style.height = `${this.height}px`;
     for (const m of this.materials) m.resolution.set(this.width, this.height);
+    for (const m of this.surfaceMaterials) m.resolution.set(this.width, this.height);
     this.persp.aspect = this.width / this.height;
     this.persp.updateProjectionMatrix();
     this.setOrthoHeight(this.visibleHalfHeight());
@@ -733,7 +741,7 @@ export class CaveView {
    * at height `z`. Drawn before the lines and without depth, so the passage never hides it and the
    * survey is drawn over it.
    */
-  setScans(list: { key: string; url: string; matrix: number[]; z: number; opacity: number; trim?: [number, number][] | null; warp?: Warp | null; plane?: [number, number, number] | null; height?: ((x: number, y: number) => number) | null }[]) {
+  setScans(list: { key: string; url: string; matrix: number[]; z: number; opacity: number; trim?: [number, number][] | null; warp?: Warp | null; plane?: [number, number, number] | null; height?: ((x: number, y: number) => number) | null; order?: number }[]) {
     const keep = new Set(list.map((l) => l.key));
     for (const [key, s] of this.scans) {
       if (!keep.has(key)) this.removeScan(key, s);
@@ -791,7 +799,7 @@ export class CaveView {
         mesh.userData.box = box;
         mesh.userData.flat = geo;
         mesh.matrixAutoUpdate = false;
-        mesh.renderOrder = -10;
+        mesh.renderOrder = item.order ?? -10; // the surface photo asks to be lower still, under every scan
         mesh.frustumCulled = false;
         this.scans.set(item.key, { mesh, url: sig });
         this.placeScan(mesh, item);
@@ -840,6 +848,91 @@ export class CaveView {
     }
     mesh.matrixWorldNeedsUpdate = true;
     (mesh.material as THREE.MeshBasicMaterial).opacity = item.opacity;
+    this.requestRender();
+  }
+
+  /**
+   * Contour lines over the surface photo: minor lines thin and pale, majors thicker and darker, each
+   * major run labelled at its middle point. Points are cave metres (z in the survey frame, or level at
+   * the entrance's height when the ground's datum is unknown). `unit` is the label's unit name.
+   */
+  setContours(list: { xyz: number[]; major: boolean; closed: boolean; level: number }[], unit: string, visible: boolean) {
+    for (const c of [...this.surfaceGroup.children]) {
+      if (c.userData.kind !== 'contour') continue;
+      this.surfaceGroup.remove(c);
+      (c as LineSegments2).geometry.dispose();
+    }
+    for (const m of this.surfaceMaterials) m.dispose();
+    this.surfaceMaterials = [];
+    this.contourLabels = [];
+    if (!visible) return this.requestRender();
+    for (const major of [false, true]) {
+      const segs: number[] = [];
+      for (const c of list) {
+        if (c.major !== major) continue;
+        const p = c.xyz;
+        const n = Math.floor(p.length / 3);
+        const count = c.closed ? n : n - 1;
+        for (let i = 0; i < count; i++) {
+          const a = i * 3;
+          const b = ((i + 1) % n) * 3;
+          segs.push(p[a], p[a + 1], p[a + 2], p[b], p[b + 1], p[b + 2]);
+        }
+      }
+      if (!segs.length) continue;
+      const geo = new LineSegmentsGeometry();
+      geo.setPositions(segs);
+      // Opaque and without depth: drawn first (render order), so the survey's lines always draw over them.
+      const mat = new LineMaterial({ color: major ? 0x8a5a2b : 0xb89a78, linewidth: major ? 1.6 : 0.8, depthTest: false, depthWrite: false });
+      mat.resolution.set(this.width, this.height);
+      const mesh = new LineSegments2(geo, mat);
+      mesh.userData.kind = 'contour';
+      mesh.renderOrder = -1;
+      mesh.frustumCulled = false;
+      this.surfaceGroup.add(mesh);
+      this.surfaceMaterials.push(mat);
+    }
+    for (const c of list) {
+      const n = Math.floor(c.xyz.length / 3);
+      if (!c.major || n === 0) continue;
+      const m = Math.floor(n / 2) * 3;
+      this.contourLabels.push({ at: [c.xyz[m], c.xyz[m + 1], c.xyz[m + 2]], text: `${+c.level.toFixed(3)} ${unit}` });
+    }
+    this.requestRender();
+  }
+
+  /** The ground as a translucent surface (a w x h grid of cave-metre points, NaN z = hole), or none. */
+  setTerrain(t: Terrain | null, visible: boolean) {
+    for (const c of [...this.surfaceGroup.children]) {
+      if (c.userData.kind !== 'terrain') continue;
+      this.surfaceGroup.remove(c);
+      const mesh = c as THREE.Mesh;
+      mesh.geometry.dispose();
+      (mesh.material as THREE.Material).dispose();
+    }
+    if (!t || !visible) return this.requestRender();
+    // A full 512 x 512 grid is a quarter of a million points: every other one draws the same ground.
+    const g = t.w * t.h > 200_000 ? thinTerrain(t, 2) : t;
+    const ok = (i: number) => Number.isFinite(g.xyz[i * 3 + 2]);
+    const idx: number[] = [];
+    for (let r = 0; r + 1 < g.h; r++)
+      for (let c = 0; c + 1 < g.w; c++) {
+        const a = r * g.w + c;
+        const b = a + 1;
+        const d = a + g.w;
+        const e = d + 1;
+        if (ok(a) && ok(b) && ok(d) && ok(e)) idx.push(a, d, b, b, d, e);
+      }
+    const pos = Float32Array.from(g.xyz, (v) => (Number.isFinite(v) ? v : 0));
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    geo.setIndex(idx);
+    geo.computeVertexNormals();
+    const mat = new THREE.MeshLambertMaterial({ color: 0x9c8f73, transparent: true, opacity: 0.35, depthWrite: false, side: THREE.DoubleSide });
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.userData.kind = 'terrain';
+    mesh.renderOrder = -2;
+    this.surfaceGroup.add(mesh);
     this.requestRender();
   }
 
@@ -1720,6 +1813,16 @@ export class CaveView {
     g.font = '11px system-ui, sans-serif';
     g.textAlign = 'left';
     if (this.halo) this.drawHaloPlan(g, s.walls);
+    if (this.contourLabels.length) {
+      // the major contours' levels, under everything else the overlay draws
+      g.fillStyle = '#8a5a2b';
+      g.textAlign = 'center';
+      for (const l of this.contourLabels) {
+        const p = this.project(l.at);
+        if (p && p[0] > -40 && p[1] > -20 && p[0] < this.width + 40 && p[1] < this.height + 20) g.fillText(l.text, p[0], p[1] - 3);
+      }
+      g.textAlign = 'left';
+    }
 
     const zmin = s.bounds?.[2] ?? 0;
     const zspan = Math.max(1e-6, (s.bounds?.[5] ?? 0) - zmin);

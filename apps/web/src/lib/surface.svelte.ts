@@ -8,22 +8,29 @@ import { download, load, requestKey, store, type Part } from './surface-files';
 import type { SurfaceParts } from './cavefile';
 import { cave, changed } from './cave.svelte';
 import { setSurfaceAdopter, setSurfacePartsSource } from './files';
-import { formatLength } from './units';
+import { FOOT, formatLength, inUnits } from './units';
+import { sameTerrain, type Terrain } from './terrain';
 
-export const surface = $state({
+// A class so the big things are held raw: contours and the terrain grid are replaced whole, never
+// edited in place, and deep proxies over thousands of points would make every draw slow.
+class SurfaceState {
   /** Object URL of the photo, or ''. */
-  photoUrl: '',
+  photoUrl = $state('');
   /** The elevation TIFF bytes, or null. */
-  tiff: null as Uint8Array | null,
+  tiff = $state.raw<Uint8Array | null>(null);
   /** What the views draw (recomputed on cave/interval/unit change). */
-  layers: null as SurfaceLayers | null,
+  layers = $state.raw<SurfaceLayers | null>(null);
+  /** The ground as a grid in the cave frame (NaN z = hole), or null with no elevation or no datum. */
+  terrain = $state.raw<Terrain | null>(null);
   /** Bumps when the files change. */
-  version: 0,
+  version = $state(0);
   /** A download is running. */
-  busy: false,
+  busy = $state(false);
   /** The Surface Data dialog is open. */
-  dialog: false,
-});
+  dialog = $state(false);
+}
+
+export const surface = new SurfaceState();
 
 /** "Pick entrance on surface": the Map's pointer mode (wired in Viewport3D). */
 export const entrancePick = $state({ on: false, message: '' });
@@ -159,6 +166,29 @@ export async function fetchSurface(want: { photo: boolean; elevation: boolean })
   } finally {
     surface.busy = false;
   }
+}
+
+/**
+ * Rebuilds what the views draw from the kept files (no network): the photo's place, the contours in
+ * the display unit, and the terrain. A result equal to the last one is kept as it was, so the views
+ * redraw nothing when an edit far from the entrance changed nothing here.
+ */
+export function recomputeLayers() {
+  const st = geoStatus();
+  if (!st?.surface || !st.location) {
+    surface.layers = null;
+    surface.terrain = null;
+    return;
+  }
+  const u = cave.units;
+  const feet = u === 'imperial';
+  const intervalM = st.interval_m ?? (feet ? 10 * FOOT : 5);
+  const interval = Math.round(inUnits(intervalM, u) * 1000) / 1000;
+  const l = engine.surfaceLayers(surface.tiff ?? new Uint8Array(), interval, feet, cave.adjusted);
+  const layers = 'error' in l ? null : l;
+  if (JSON.stringify(layers) !== JSON.stringify(surface.layers)) surface.layers = layers;
+  const terrain = surface.tiff ? engine.surfaceTerrain(surface.tiff, cave.adjusted) : null;
+  if (!sameTerrain(terrain, surface.terrain)) surface.terrain = terrain;
 }
 
 /** The parts for saving into the .cavecad file. */

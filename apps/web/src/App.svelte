@@ -8,7 +8,7 @@
   import Ribbon from './components/Ribbon.svelte';
   import NewCave from './components/NewCave.svelte';
   import SurfaceData from './components/SurfaceData.svelte';
-  import { surfaceKey, syncSurface } from './lib/surface.svelte';
+  import { recomputeLayers, surface, surfaceKey, syncSurface } from './lib/surface.svelte';
   import { initWorkspace } from './lib/workspace.svelte';
   import { engine, loadEngine, loadBuildInfo, type BuildInfo } from './lib/engine';
   import { cave, unsaved } from './lib/cave.svelte';
@@ -52,6 +52,26 @@
       if (key === lastSurface) return;
       lastSurface = key;
       void syncSurface();
+    });
+  });
+
+  // What the views draw of the surface (photo place, contours, terrain) is rebuilt from the kept files when
+  // they change, the cave changes, or the unit or Adjusted setting does: never a download. Edits that come
+  // in a burst are rebuilt once, on the next frame.
+  let layersFrame = 0;
+  $effect(() => {
+    void surface.version;
+    void cave.version;
+    void cave.opened;
+    void cave.units;
+    void cave.adjusted;
+    if (!engineReady) return;
+    untrack(() => {
+      if (layersFrame) return;
+      layersFrame = requestAnimationFrame(() => {
+        layersFrame = 0;
+        recomputeLayers();
+      });
     });
   });
 
