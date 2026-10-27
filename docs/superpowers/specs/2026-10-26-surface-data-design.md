@@ -184,3 +184,15 @@ Nothing is stripped. Logs stay free of coordinates as a matter of tidiness only.
 State elevation sources; the many-caves area view; GPS tracks in `surface/`; showing absolute
 elevations in callouts, profile or reports; Survex/Therion coordinate systems beyond what
 `cave-formats` already converts.
+
+## As built (2026-10-27)
+
+- The download window uses the solved scene's x/y bounds (stations, legs, splays, walls), not traced map linework.
+- The location picker is a modal dialog, not a docked panel; its switches live in the Map's Show menu.
+- Heights: the ground is brought into the survey frame by SUBTRACTING the datum offset (the first build added it; found in the browser check).
+- Only Compass and Walls imports record a fixed frame; a fixed point counts only when it is plausible UTM.
+- Re-downloading one part keeps the stored window while the cave has not moved; otherwise a part not re-downloaded is dropped.
+- A cave synced without its files re-downloads exactly the recorded request and records nothing.
+- The entrance pick and its re-download are on the Map's undo history (two steps); the pick message's Undo does both.
+- Terrain crosses from the engine as a Float32Array (`surface_terrain`), not JSON.
+- Privacy section superseded (Nathan, 2026-10-27): location travels with the cave.
