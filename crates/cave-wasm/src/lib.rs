@@ -558,6 +558,97 @@ pub fn flipped_lines() -> String {
     })
 }
 
+/// Which passage a map line hangs on (legs to glow) and the other level it could be on, as JSON
+/// (`{"legs": [[[e,n,u],[e,n,u]], ...], "other": ["a","b"] | null}`), or `null`.
+#[wasm_bindgen]
+pub fn map_line_level(id: &str, adjusted: bool) -> String {
+    let Ok(line) = id.parse::<cave_id::Id>() else {
+        return "null".into();
+    };
+    DOC.with(|d| {
+        d.borrow()
+            .as_ref()
+            .and_then(|doc| cave_scene::line_level(doc, line, adjusted))
+            .and_then(|l| serde_json::to_string(&l).ok())
+            .unwrap_or_else(|| "null".into())
+    })
+}
+
+/// Moves a map line onto another level: re-anchors it where it is drawn now, its first point on
+/// the leg between stations `a` and `b`. One undoable edit. Returns `ok` or `error: ...`.
+#[wasm_bindgen]
+pub fn reanchor_line(id: &str, a: &str, b: &str, adjusted: bool) -> String {
+    let (Ok(a), Ok(b)) = (a.parse::<cave_id::Id>(), b.parse::<cave_id::Id>()) else {
+        return "error: no such leg".into();
+    };
+    change_line(id, |doc, line| {
+        let frames = cave_scene::map_frames(doc, adjusted);
+        let pin = cave_doc::frame_index(&frames, (a, b)).ok_or(cave_draw::DrawError::NoStations)?;
+        let (pts, widths) =
+            cave_scene::placed_line(doc, line, adjusted).ok_or(cave_draw::DrawError::NoStations)?;
+        cave_draw::reanchor_stroke(doc, line, &pts, widths, &frames, pin)
+    })
+}
+
+/// Map lines that hop between passages on different levels (JSON array of ids).
+#[wasm_bindgen]
+pub fn hopped_lines(adjusted: bool) -> String {
+    DOC.with(|d| {
+        let ids: Vec<String> = d
+            .borrow()
+            .as_ref()
+            .map(|doc| cave_scene::hopped_lines(doc, adjusted))
+            .unwrap_or_default()
+            .into_iter()
+            .map(|id| id.to_string())
+            .collect();
+        serde_json::to_string(&ids).unwrap_or_else(|_| "[]".into())
+    })
+}
+
+/// Re-attaches every map line that hops levels to the level its first point is on. One
+/// undoable edit. Returns `ok <how many>` or `error: ...`.
+#[wasm_bindgen]
+pub fn fix_hopped_lines(adjusted: bool) -> String {
+    let result = DOC.with(|d| {
+        let mut slot = d.borrow_mut();
+        let doc = slot.as_mut().ok_or("no cave is open")?;
+        let frames = cave_scene::map_frames(doc, adjusted);
+        let mut actions = Vec::new();
+        let mut fixed = 0;
+        for line in cave_scene::hopped_lines(doc, adjusted) {
+            let Some((pts, widths)) = cave_scene::placed_line(doc, line, adjusted) else {
+                continue;
+            };
+            let Some(cave_doc::Value::Anchored(Some(path))) = doc
+                .entity(line)
+                .map(|e| e.get(cave_doc::Field::FeatureAnchored))
+            else {
+                continue;
+            };
+            let first = path.frames[path.points[0].frame as usize];
+            let Some(pin) = cave_doc::frame_index(&frames, first) else {
+                continue;
+            };
+            actions.extend(
+                cave_draw::reanchor_stroke(doc, line, &pts, widths, &frames, pin)
+                    .map_err(|e| format!("{e:?}"))?,
+            );
+            fixed += 1;
+        }
+        if actions.is_empty() {
+            return Ok(0);
+        }
+        let edit = doc.edit(actions).map_err(|e| format!("{e:?}"))?;
+        record_edit("map", &edit);
+        Ok::<usize, String>(fixed)
+    });
+    match result {
+        Ok(n) => format!("ok {n}"),
+        Err(e) => format!("error: {e}"),
+    }
+}
+
 /// Changes the words of a line already drawn (a symbol's label, or a text stroke's text). One
 /// undoable edit. Returns `ok` or `error: ...`.
 #[wasm_bindgen]

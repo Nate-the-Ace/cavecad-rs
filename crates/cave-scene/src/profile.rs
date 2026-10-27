@@ -441,6 +441,8 @@ pub fn profile_frames(doc: &Document, key: &str, use_adjustment: bool) -> Option
                 b: w[1].id,
                 pa: [w[0].s, w[0].z],
                 pb: [w[1].s, w[1].z],
+                za: 0.0,
+                zb: 0.0,
             })
             .collect(),
     )

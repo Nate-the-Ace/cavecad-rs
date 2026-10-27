@@ -21,6 +21,10 @@ pub struct Frame {
     pub pa: [f64; 2],
     /// Position of `b`.
     pub pb: [f64; 2],
+    /// Elevation of `a` (metres up). Only plan anchoring reads it; profile frames leave it 0.
+    pub za: f64,
+    /// Elevation of `b`.
+    pub zb: f64,
 }
 
 /// One stroke point relative to its frame.
@@ -60,23 +64,27 @@ pub enum AnchorError {
     NoFrames,
 }
 
-fn basis(pa: [f64; 2], pb: [f64; 2]) -> Option<([f64; 2], f64)> {
+pub(crate) fn basis(pa: [f64; 2], pb: [f64; 2]) -> Option<([f64; 2], f64)> {
     let d = [pb[0] - pa[0], pb[1] - pa[1]];
     let len = d[0].hypot(d[1]);
     (len > 1e-9 && len.is_finite()).then_some((d, len))
 }
 
-fn distance_to_segment(p: [f64; 2], pa: [f64; 2], d: [f64; 2], len: f64) -> f64 {
-    let t = (((p[0] - pa[0]) * d[0] + (p[1] - pa[1]) * d[1]) / (len * len)).clamp(0.0, 1.0);
+/// How far along the leg from `pa` (0..1) the point nearest `p` is.
+pub(crate) fn along(p: [f64; 2], pa: [f64; 2], d: [f64; 2], len: f64) -> f64 {
+    (((p[0] - pa[0]) * d[0] + (p[1] - pa[1]) * d[1]) / (len * len)).clamp(0.0, 1.0)
+}
+
+pub(crate) fn distance_to_segment(p: [f64; 2], pa: [f64; 2], d: [f64; 2], len: f64) -> f64 {
+    let t = along(p, pa, d, len);
     (p[0] - (pa[0] + t * d[0])).hypot(p[1] - (pa[1] + t * d[1]))
 }
 
-/// Anchors a stroke drawn in the drawing's 2D space to the nearest of `frames`.
-pub fn anchor_stroke(
+/// Refuses a stroke too short, with a non-finite point, or with pen weights that do not fit.
+pub(crate) fn check_stroke(
     points: &[[f64; 2]],
-    frames: &[Frame],
-    widths: Option<Vec<f64>>,
-) -> Result<AnchoredPath, AnchorError> {
+    widths: &Option<Vec<f64>>,
+) -> Result<(), AnchorError> {
     if points.len() < 2 {
         return Err(AnchorError::TooShort);
     }
@@ -86,30 +94,34 @@ pub fn anchor_stroke(
     {
         return Err(AnchorError::BadStroke);
     }
-    if let Some(w) = &widths
+    if let Some(w) = widths
         && (w.len() != points.len() || w.iter().any(|x| !x.is_finite() || *x <= 0.0))
     {
         return Err(AnchorError::BadStroke);
     }
-    let usable: Vec<(usize, [f64; 2], f64)> = frames
+    Ok(())
+}
+
+/// The frames a stroke can hang on (not collapsed to a point): index, direction, length.
+pub(crate) fn usable(frames: &[Frame]) -> Vec<(usize, [f64; 2], f64)> {
+    frames
         .iter()
         .enumerate()
         .filter_map(|(i, f)| basis(f.pa, f.pb).map(|(d, l)| (i, d, l)))
-        .collect();
-    if usable.is_empty() {
-        return Err(AnchorError::NoFrames);
-    }
+        .collect()
+}
+
+/// The anchored path for `points`, point `k` hanging on `frames[choice[k]]`.
+pub(crate) fn build_path(
+    points: &[[f64; 2]],
+    frames: &[Frame],
+    choice: &[usize],
+    widths: Option<Vec<f64>>,
+) -> AnchoredPath {
     let mut used: Vec<usize> = Vec::new();
     let mut out = Vec::with_capacity(points.len());
-    for p in points {
-        let &(i, d, len) =
-            usable
-                .iter()
-                .min_by(|x, y| {
-                    distance_to_segment(*p, frames[x.0].pa, x.1, x.2)
-                        .total_cmp(&distance_to_segment(*p, frames[y.0].pa, y.1, y.2))
-                })
-                .expect("usable is not empty");
+    for (p, &i) in points.iter().zip(choice) {
+        let (d, len) = basis(frames[i].pa, frames[i].pb).expect("chosen frames are usable");
         let pa = frames[i].pa;
         let (rx, ry) = (p[0] - pa[0], p[1] - pa[1]);
         let slot = used.iter().position(|&x| x == i).unwrap_or_else(|| {
@@ -122,12 +134,41 @@ pub fn anchor_stroke(
             v: (-rx * d[1] + ry * d[0]) / len,
         });
     }
-    Ok(AnchoredPath {
+    AnchoredPath {
         closed: false,
         frames: used.iter().map(|&i| (frames[i].a, frames[i].b)).collect(),
         points: out,
         widths,
-    })
+    }
+}
+
+/// Anchors a stroke drawn in the drawing's 2D space to the nearest of `frames`, point by point.
+/// Right for the profile band and anywhere passages cannot overlap; plan strokes use
+/// [`anchor_stroke_path`](crate::anchor_stroke_path).
+pub fn anchor_stroke(
+    points: &[[f64; 2]],
+    frames: &[Frame],
+    widths: Option<Vec<f64>>,
+) -> Result<AnchoredPath, AnchorError> {
+    check_stroke(points, &widths)?;
+    let usable = usable(frames);
+    if usable.is_empty() {
+        return Err(AnchorError::NoFrames);
+    }
+    let choice: Vec<usize> = points
+        .iter()
+        .map(|p| {
+            usable
+                .iter()
+                .min_by(|x, y| {
+                    distance_to_segment(*p, frames[x.0].pa, x.1, x.2)
+                        .total_cmp(&distance_to_segment(*p, frames[y.0].pa, y.1, y.2))
+                })
+                .expect("usable is not empty")
+                .0
+        })
+        .collect();
+    Ok(build_path(points, frames, &choice, widths))
 }
 
 impl AnchoredPath {
@@ -201,12 +242,16 @@ mod tests {
                 b,
                 pa: pos[&a],
                 pb: pos[&b],
+                za: 0.0,
+                zb: 0.0,
             },
             Frame {
                 a: b,
                 b: c,
                 pa: pos[&b],
                 pb: pos[&c],
+                za: 0.0,
+                zb: 0.0,
             },
         ];
         (frames, pos)
@@ -271,6 +316,8 @@ mod tests {
             b,
             pa: [0.0, 0.0],
             pb: [0.0, -20.0],
+            za: 0.0,
+            zb: 0.0,
         }];
         let stroke = [[1.0, -5.0], [1.0, -15.0]];
         let path = anchor_stroke(&stroke, &frames, None).unwrap();

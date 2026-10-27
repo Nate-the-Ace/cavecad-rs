@@ -1,0 +1,67 @@
+{
+ "planPath": "docs/superpowers/plans/2026-10-27-overlapping-levels-sketch.md",
+ "tasks": [
+  {
+   "id": 0,
+   "subject": "Task 1: Frames carry elevation; anchoring helpers shared",
+   "status": "pending",
+   "blockedBy": [],
+   "description": "**Goal:** `Frame` has `za`/`zb`, every construction site fills them, and `anchor_stroke` is split into reusable helpers with unchanged behaviour.\n\n**Files:**\n- Modify: `crates/cave-doc/src/anchored.rs` (struct at :15, `basis`/`distance_to_segment` at :63-72, `anchor_stroke` at :75-131, test literals at :199-210 and :269)\n- Modify: `crates/cave-scene/src/maplines.rs:14-30`\n- Modify: `crates/cave-scene/src/profile.rs:433-438`\n- Modify: `crates/cave-draw/src/lib.rs:519-524` (test literal)\n\n**Acceptance Criteria:**\n- [ ] `Frame` has `pub za: f64` and `pub zb: f64`.\n- [ ] `map_frames` sets them from solved station `z`; `profile_frames` sets 0.0.\n- [ ] All existing `cave-doc`, `cave-draw`, `cave-scene` tests pass unchanged.\n\n**Verify:** `cargo test -p cave-doc -p cave-draw -p cave-scene` \u2192 all pass\n\n**Steps:**\n\n```json:metadata\n{\"verifyCommand\": \"`cargo test -p cave-doc -p cave-draw -p cave-scene` \\u2192 all pass\", \"modelTier\": \"standard\"}\n```"
+  },
+  {
+   "id": 1,
+   "subject": "Task 2: Path anchoring that stays on one level",
+   "status": "pending",
+   "blockedBy": [
+    0
+   ],
+   "description": "**Goal:** `anchor_stroke_path` keeps a plan stroke on the passage it was drawn on where another passage overlaps in plan, with an optional pinned first leg; plus `other_level`, `frame_index`, `path_hops_level`.\n\n**Files:**\n- Create: `crates/cave-doc/src/level_anchor.rs`\n- Modify: `crates/cave-doc/src/lib.rs:20` (module + exports)\n\n**Acceptance Criteria:**\n- [ ] Crossing fixture: a stroke along the upper passage over the crossing anchors only to upper legs; `anchor_stroke` (old rule) on the same stroke uses at least one lower leg (proves the fixture reproduces the bug).\n- [ ] Moving the lower passage's stations does not move the placed upper stroke.\n- [ ] With `pin` on a lower leg, a stroke drawn over the crossing anchors only to lower legs.\n- [ ] Single-level stroke: `anchor_stroke_path` == `anchor_stroke`.\n- [ ] `other_level` returns a lower leg for a start at the crossing chosen on the upper level, and `None` on a single-level cave.\n- [ ] `path_hops_level` is true for the old-rule path, false for the new-rule path.\n\n**Verify:** `cargo test -p cave-doc level_anchor` \u2192 6 passed\n\n**Steps:**\n\n```json:metadata\n{\"verifyCommand\": \"`cargo test -p cave-doc level_anchor` \\u2192 6 passed\", \"modelTier\": \"standard\"}\n```"
+  },
+  {
+   "id": 2,
+   "subject": "Task 3: Map strokes use the path rule; re-anchor a stroke",
+   "status": "pending",
+   "blockedBy": [
+    1
+   ],
+   "description": "**Goal:** New and edited map strokes anchor with `anchor_stroke_path`; `reanchor_stroke` re-anchors a map stroke with a pinned first leg.\n\n**Files:**\n- Modify: `crates/cave-draw/src/lib.rs` (imports :20, `map_line` :158-177, `edit_stroke` :247-268; add `reanchor_stroke` after `edit_stroke`; tests module)\n\n**Acceptance Criteria:**\n- [ ] `map_line` and map-view `edit_stroke` call `anchor_stroke_path(.., None)`; profile `edit_stroke` still calls `anchor_stroke`.\n- [ ] `reanchor_stroke` on a map line returns one `Action::Set` of `FeatureAnchored` whose first point hangs on the pinned leg, keeps `closed`; refuses a non-map line with `DrawError::BadStroke`.\n\n**Verify:** `cargo test -p cave-draw` \u2192 all pass incl. `reanchor_pins_the_first_leg`\n\n**Steps:**\n\n```json:metadata\n{\"verifyCommand\": \"`cargo test -p cave-draw` \\u2192 all pass incl. `reanchor_pins_the_first_leg`\", \"modelTier\": \"standard\"}\n```"
+  },
+  {
+   "id": 3,
+   "subject": "Task 4: Scene answers which level a line is on, and which li",
+   "status": "pending",
+   "blockedBy": [
+    2
+   ],
+   "description": "**Goal:** `cave-scene` gives a map line's current plan points, the 3D legs it hangs on plus the other level it could be on, and the list of lines that hopped levels.\n\n**Files:**\n- Modify: `crates/cave-scene/src/maplines.rs` (add after `map_frames`; tests module at end)\n- Modify: `crates/cave-scene/src/lib.rs` (re-export, if `maplines` items are re-exported there \u2014 follow how `map_frames` is exported)\n\n**Acceptance Criteria:**\n- [ ] `placed_line(doc, line, adj)` returns the line's plan points and widths; `None` for a non-map or unplaced line.\n- [ ] `line_level(doc, line, adj)` returns `LineLevel { legs, other }`: `legs` = 3D ends of each leg the line hangs on; `other` = station ids `[a, b]` of the other level's leg when the start is ambiguous, else `None`.\n- [ ] `hopped_lines(doc, adj)` lists map lines for which `path_hops_level` is true.\n- [ ] Test on a two-level document: a line written with the old `anchor_stroke` is in `hopped_lines`; one written with `map_line` is not; `line_level` of a line started at the crossing has `other: Some(..)`.\n\n**Verify:** `cargo test -p cave-scene maplines` \u2192 all pass\n\n**Steps:**\n\n```json:metadata\n{\"verifyCommand\": \"`cargo test -p cave-scene maplines` \\u2192 all pass\", \"modelTier\": \"standard\"}\n```"
+  },
+  {
+   "id": 4,
+   "subject": "Task 5: Wasm entries",
+   "status": "pending",
+   "blockedBy": [
+    3
+   ],
+   "description": "**Goal:** The web app can learn a new line's id, read its level, flip it, list and fix hopped lines.\n\n**Files:**\n- Modify: `crates/cave-wasm/src/lib.rs` (`add_map_line` :291-334; add new functions after `set_line_closed`)\n- Modify: `apps/web/src/lib/engine.ts:2` (import) and near :415 (wrappers)\n- Modify: `apps/web/harness/mock-impl.js` (stubs for the four new exports)\n\n**Acceptance Criteria:**\n- [ ] `add_map_line` returns `ok <id>` on success (was `ok`).\n- [ ] `map_line_level(id, adjusted)` \u2192 JSON `LineLevel` or `null`.\n- [ ] `reanchor_line(id, a, b, adjusted)` \u2192 `ok` / `error: ...`, one undoable edit.\n- [ ] `hopped_lines(adjusted)` \u2192 JSON array of ids; `fix_hopped_lines(adjusted)` \u2192 `ok <n>`, all fixes as one undoable edit, `ok 0` when none.\n- [ ] Wasm builds for the web; `npx svelte-check` clean.\n\n**Verify:** `cargo test -p cave-wasm && cargo clippy -p cave-wasm --all-targets -- -D warnings && (cd apps/web && npx svelte-check)` \u2192 pass\n\n**Steps:**\n\n```json:metadata\n{\"verifyCommand\": \"`cargo test -p cave-wasm && cargo clippy -p cave-wasm --all-targets -- -D warnings && (cd apps/web && npx svelte-check)` \\u2192 pass\", \"modelTier\": \"standard\"}\n```"
+  },
+  {
+   "id": 5,
+   "subject": "Task 6: Map glow, \"Other level\" chip, \"Fix lines\" button",
+   "status": "pending",
+   "blockedBy": [
+    4
+   ],
+   "description": "**Goal:** After a map stroke lands its legs glow for 6 s; an \"Other level\" chip flips it when its start is ambiguous; a toolbar button fixes hopped lines.\n\n**Files:**\n- Modify: `apps/web/src/lib/viewport/cave-view.ts` (field + `setAttachedLegs` near `setSelectedShot` :1054; drawing just before the \"picked leg or splay\" block :1411)\n- Modify: `apps/web/src/components/Viewport3D.svelte` (`onLineDrawn` :289-301, state, toolbar near :381, chip near where `drawHint` renders, styles)\n\n**Acceptance Criteria:**\n- [ ] Drawing a wall over a crossing in the demo/test cave: the upper passage legs glow; \"Other level\" shows; clicking it moves the line onto the lower passage (line visibly re-attaches; 3D view shows it at the lower elevation); clicking again returns it; one Undo reverts the flip.\n- [ ] A stroke on a single-level part of the cave glows but shows no chip.\n- [ ] With a hopped line present, \"Fix 1 line\" shows in the map toolbar; clicking it re-attaches it and the button disappears; Undo brings it back.\n- [ ] No console errors; `npx svelte-check` clean.\n\n**Verify:** `cd apps/web && npx svelte-check` \u2192 0 errors; then the live check in Step 5.\n\n**Steps:**\n\n```json:metadata\n{\"verifyCommand\": \"`cd apps/web && npx svelte-check` \\u2192 0 errors; then the live check in Step 5.\", \"modelTier\": \"standard\"}\n```"
+  },
+  {
+   "id": 6,
+   "subject": "Task 7: Finish",
+   "status": "pending",
+   "blockedBy": [
+    5
+   ],
+   "description": "**Goal:** Repo checks pass, index regenerated, spec marked built, deployed per the standing rule.\n\n**Files:**\n- Modify: `docs/CODE-INDEX.md` (regenerated)\n- Modify: `docs/superpowers/specs/2026-10-27-overlapping-levels-sketch-design.md` (Status line + \"As built\" note listing the three deviations above)\n\n**Acceptance Criteria:**\n- [ ] `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test`, `python3 tools/make_code_index.py --check`, `npx svelte-check` all pass.\n- [ ] Spec status reads \"built\" with the As-built deviations.\n- [ ] Branch merged to main and the hosted copy updated per the republish rule (ask Nathan before the CT 209 step).\n\n**Verify:** the five commands above \u2192 all pass\n\n**Steps:**\n\n```json:metadata\n{\"verifyCommand\": \"the five commands above \\u2192 all pass\", \"modelTier\": \"standard\"}\n```"
+  }
+ ],
+ "lastUpdated": "2026-10-27"
+}
