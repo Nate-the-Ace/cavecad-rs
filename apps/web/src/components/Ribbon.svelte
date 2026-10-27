@@ -21,7 +21,8 @@
 
 <script lang="ts">
   import { engine, loadEngine } from '../lib/engine';
-  import { openCave, saveCave } from '../lib/files';
+  import { caveFolder, openCave, saveCave } from '../lib/files';
+  import { folder } from '../lib/cavefolder.svelte';
   import ProjectFiles from './ProjectFiles.svelte';
   import { shelf } from '../lib/shelf.svelte';
   import { cave, clearPick, selectedIds, selectIds, setCompactRibbon, setPick, setUnits, option, setOption } from '../lib/cave.svelte';
@@ -44,7 +45,7 @@
   import { fillLabel, isFillKind } from '../lib/fills';
   import { onMount, untrack } from 'svelte';
   import { PANELS, panelState, resetLayout, showPanel, surveyLayout, togglePanel, workLayout } from '../lib/workspace.svelte';
-  import { Check, Trash2, Library, FilePlus, FolderOpen, Save, Ruler, Footprints, Scissors, Map as MapIcon, Terminal, LayoutDashboard, Activity, Shapes, Table2, BookOpen, ScanLine, FileText, ChevronDown, PanelTop, Mountain, SlidersHorizontal, Crosshair, Tent, Lock, Cloud } from '@lucide/svelte';
+  import { Check, Trash2, Library, FilePlus, FolderOpen, FolderTree, Save, Ruler, Footprints, Scissors, Map as MapIcon, Terminal, LayoutDashboard, Activity, Shapes, Table2, BookOpen, ScanLine, FileText, ChevronDown, PanelTop, Mountain, SlidersHorizontal, Crosshair, Tent, Lock, Cloud } from '@lucide/svelte';
 
   /**
    * The app shows the ribbon as it is. A host that is only a part of the app (the survey harness) can give its own
@@ -73,7 +74,7 @@
 
   const own: Record<string, Group[]> = {
     Home: [
-      { name: 'File', items: [{ label: 'Caves', icon: Library, run: () => (shelf.open = true) }, { label: 'New', icon: FilePlus, run: () => (cave.newDialog = true) }, { label: 'Open', icon: FolderOpen, run: open }, { label: 'Save', icon: Save, run: save }, { label: 'Save as', icon: Save, run: saveAs }, { label: 'Scans in file', icon: ScanLine, run: () => setOption('saveScans', !option('saveScans', true)), pressed: () => option('saveScans', true) }] },
+      { name: 'File', items: [{ label: 'Caves', icon: Library, run: () => (shelf.open = true) }, { label: 'New', icon: FilePlus, run: () => (cave.newDialog = true) }, { label: 'Open', icon: FolderOpen, run: open }, { label: 'Save', icon: Save, run: save }, { label: 'Save as', icon: Save, run: saveAs }, { label: 'Folder', icon: FolderTree, run: () => run(caveFolder()), pressed: () => folder.label !== '' }, { label: 'Scans in file', icon: ScanLine, run: () => setOption('saveScans', !option('saveScans', true)), pressed: () => option('saveScans', true) }] },
       { name: 'Project files', items: [], custom: ProjectFiles },
       {
         name: 'Rooms',

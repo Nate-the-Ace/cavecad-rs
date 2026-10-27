@@ -1,0 +1,12 @@
+[package]
+name = "cave-folder"
+edition.workspace = true
+version.workspace = true
+publish.workspace = true
+description = "A cave's project folder: its standard subfolders, safe names, and the backup naming and pruning rules."
+
+[lints]
+workspace = true
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }

@@ -4,17 +4,21 @@ import { engine } from './engine';
 import { cave, changed, filter, markSaved } from './cave.svelte';
 import { DEMOS } from './demos';
 import { confirmDiscard, forgetFile } from './files';
-import { dxfOf, flush, isNative, shelf, storeOpenCave } from './shelf.svelte';
-import { EXT } from './cavefile';
+import { dxfOf, flush, homeOf, isNative, shelf, storeOpenCave } from './shelf.svelte';
+import { folder, openScans, readHome, reachable, setHome, type Home } from './cavefolder.svelte';
+import { EXT, unpack } from './cavefile';
+import { addRemoteFile, have } from './scans.svelte';
+import { typeOf } from './desktop';
 import { workLayout } from './workspace.svelte';
 import { noRoomForThisCave, serverAccess } from './room.svelte';
 import { downloadCave } from './room-client';
 import { syncedHash } from './device-key';
 
 /** A different cave is now on screen: everything that belonged to the last one is let go. */
-function landed(name: string) {
+function landed(name: string, home: Home | null = null) {
   forgetFile();
-  cave.fileName = `${name}${EXT}`;
+  setHome(home);
+  cave.fileName = home?.file ?? `${name}${EXT}`;
   cave.name = name;
   cave.hasCave = true;
   cave.trip = '';
@@ -31,6 +35,24 @@ function landed(name: string) {
 export async function openKept(id: string): Promise<string | null> {
   await flush(); // what is open is kept before it is replaced
   if (!confirmDiscard()) return null;
+  const rec = shelf.records.find((x) => x.id === id);
+  const home = rec ? await homeOf(rec) : null;
+  if (home && (await reachable(home, true))) {
+    // the file in the cave's folder is the cave; the shelf copy is only the fallback
+    const got = await openFileAt(home);
+    if (typeof got !== 'string') {
+      shelf.currentId = id;
+      landed(rec?.name ?? engine.shelfSummary()?.name ?? 'Cave', home);
+      markSaved();
+      void storeOpenCave(); // the shelf copy catches up with the file
+      // the Scans panel shows the folder's scans/, plus any page that is only inside the file
+      void openScans(home).then(() => got.forEach((sc) => have(sc.path) || addRemoteFile(sc.path, sc.file)));
+      return null;
+    }
+    engine.log('warn', 'file', `${got} Opened the copy this browser keeps instead.`);
+  } else if (rec?.home) {
+    engine.log('warn', 'file', `This cave's folder was not found (${rec.home.label}). Opened the copy this browser keeps; nothing is written to the folder until it is found again.`);
+  }
   const text = await dxfOf(id);
   if (!text) return 'That cave is not on this shelf any more.';
   if (isNative(text)) {
@@ -40,11 +62,26 @@ export async function openKept(id: string): Promise<string | null> {
     const r = engine.openDxf(text); // a cave kept by an older version
     if (!r.ok) return r.message;
   }
-  const rec = shelf.records.find((x) => x.id === id);
   shelf.currentId = id;
   landed(rec?.name ?? engine.shelfSummary()?.name ?? 'Cave');
+  if (rec?.home) folder.problem = `This cave's folder was not found (${rec.home.label}), so changes are kept in this browser only. Find it from the Cave Shelf.`;
   markSaved();
   return null;
+}
+
+/** Loads the cave file from its folder, and gives back the scan pages inside it. A sentence when it could not. */
+async function openFileAt(home: Home): Promise<string | { path: string; file: File }[]> {
+  let bundle;
+  try {
+    bundle = await unpack(await readHome(home));
+  } catch (e) {
+    return `${home.file} could not be read from ${home.label}: ${e instanceof Error ? e.message : String(e)}.`;
+  }
+  if (!bundle) return `${home.file} in ${home.label} is not a CaveCAD file.`;
+  if ('error' in bundle) return bundle.error;
+  const r = engine.syncLoad(bundle.cave);
+  if (r !== 'ok') return r.replace(/^error: /, '');
+  return bundle.scans.map((sc) => ({ path: sc.path, file: new File([sc.data as BlobPart], sc.path.slice(sc.path.lastIndexOf('/') + 1), { type: typeOf(sc.path) }) }));
 }
 
 const sha256 = async (s: string) =>
