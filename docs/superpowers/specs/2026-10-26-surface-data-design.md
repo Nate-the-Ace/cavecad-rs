@@ -196,3 +196,7 @@ elevations in callouts, profile or reports; Survex/Therion coordinate systems be
 - The entrance pick and its re-download are on the Map's undo history (two steps); the pick message's Undo does both.
 - Terrain crosses from the engine as a Float32Array (`surface_terrain`), not JSON.
 - Privacy section superseded (Nathan, 2026-10-27): location travels with the cave.
+- The cave-folder copy of `surface/` beside the .cavecad is not built (the cave-folder feature is on the unmerged `new-cave-folder` branch).
+- Surface Data dialog edits (location, contour spacing, downloads) land on the `settings` history, which has no undo button yet (like drawing scale).
+- A Map undo of an entrance pick can step back over a later location set in the dialog (accepted).
+- Every door that replaces the open cave bumps a document serial (`doc_serial`); downloads, syncs and picks that outlive their cave see it change and stop.
