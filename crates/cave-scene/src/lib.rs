@@ -16,7 +16,9 @@ mod under;
 
 pub use detail::{NoteField, ShotDetail, StationDetail, WallsOut, shot_detail, station_detail};
 pub use filter::{TripInfo, ViewFilter};
-pub use maplines::{map_frames, map_lines_3d};
+pub use maplines::{
+    LineLevel, PlacedLine, hopped_lines, line_level, map_frames, map_lines_3d, placed_line,
+};
 pub use mesh::{ColorMode, Mesh, passage_mesh};
 pub use profile::{
     BandSection, ProfileScene, RunInfo, Sketch3d, profile_frames, profile_scene,
