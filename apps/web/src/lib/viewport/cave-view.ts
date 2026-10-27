@@ -1050,6 +1050,13 @@ export class CaveView {
   }
 
   private selectedShot = '';
+  private attachedLegs: [[number, number, number], [number, number, number]][] = [];
+
+  /** The legs a just-drawn map line hangs on, glowed so it is plain which passage (level) it took. */
+  setAttachedLegs(list: [[number, number, number], [number, number, number]][]) {
+    this.attachedLegs = list;
+    this.requestRender();
+  }
   /** The leg or splay (shot id) to light up on the map. */
   setSelectedShot(id: string) {
     this.selectedShot = id;
@@ -1407,6 +1414,23 @@ export class CaveView {
         g.fillText(sec.label, shell.below[0], shell.below[1]);
         g.textAlign = 'left';
       }
+    }
+    // the legs a just-drawn line hangs on: a soft glow in the highlight colour
+    if (this.attachedLegs.length) {
+      g.lineCap = 'round';
+      g.strokeStyle = `#${this.theme.accent.getHexString()}`;
+      g.globalAlpha = 0.25;
+      g.lineWidth = 9;
+      for (const [from, to] of this.attachedLegs) {
+        const a = this.project(from);
+        const b = this.project(to);
+        if (!a || !b) continue;
+        g.beginPath();
+        g.moveTo(a[0], a[1]);
+        g.lineTo(b[0], b[1]);
+        g.stroke();
+      }
+      g.globalAlpha = 1;
     }
     // the picked leg or splay: a bright line in the theme's highlight colour along it
     if (this.selectedShot) {

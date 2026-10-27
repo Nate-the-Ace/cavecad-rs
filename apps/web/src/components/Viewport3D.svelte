@@ -252,9 +252,42 @@
         view.setShowLabels(!filter.hiddenTypes.includes('label'));
         view.setScene(scene, false);
         loadPassage();
+        hopped = engine.hoppedLines(cave.adjusted).length;
       });
     });
   });
+
+  let levelChoice = $state<{ id: string; other: [string, string] } | null>(null);
+  let levelTimer = 0;
+  let hopped = $state(0);
+
+  /** Glows the legs a map line took and offers the other level when its start was ambiguous. */
+  function showLevel(id: string) {
+    const info = engine.mapLineLevel(id, cave.adjusted);
+    view?.setAttachedLegs(info?.legs ?? []);
+    levelChoice = info?.other ? { id, other: info.other } : null;
+    clearTimeout(levelTimer);
+    levelTimer = window.setTimeout(() => {
+      view?.setAttachedLegs([]);
+      levelChoice = null;
+    }, 6000);
+  }
+
+  /** Moves the line just drawn onto the other level; offered again, so it can go back. */
+  function flipLevel() {
+    if (!levelChoice) return;
+    const { id, other } = levelChoice;
+    const r = engine.reanchorLine(id, other[0], other[1], cave.adjusted);
+    if (r !== 'ok') engine.log('warn', 'draw', r);
+    changed();
+    showLevel(id);
+  }
+
+  function fixHopped() {
+    const r = engine.fixHoppedLines(cave.adjusted);
+    if (!r.startsWith('ok')) engine.log('warn', 'draw', r);
+    changed();
+  }
 
   function refresh() {
     if (!view) return;
@@ -296,8 +329,9 @@
         return;
       }
       const r = engine.addMapLine(cave.tool, points, widths, closed, cave.adjusted, text);
-      if (r !== 'ok') engine.log('warn', 'draw', r);
+      if (!r.startsWith('ok')) engine.log('warn', 'draw', r);
       changed();
+      if (r.startsWith('ok ')) showLevel(r.slice(3));
     };
     let palmLogged = 0;
     v.onPalm = (why) => {
@@ -379,6 +413,12 @@
     </div>
     <PanelUndo scope="map" label="on the map" />
     <button class:on={depthColor} title="Colour by elevation" onclick={() => ((depthColor = !depthColor), view?.setElevationColors(depthColor), loadPassage())}><Palette size={15} /></button>
+    {#if hopped > 0}
+      <button title="Some lines hop between passages on different levels. Re-attach each to the level it starts on." onclick={fixHopped}>Fix {hopped} line{hopped === 1 ? '' : 's'}</button>
+    {/if}
+    {#if levelChoice}
+      <button class="on" title="This line starts where two passages overlap. Move it to the other level." onclick={flipLevel}>Other level</button>
+    {/if}
     {#if drawHint}<span class="status">{drawHint}</span>{:else if status}<span class="status">{status}</span>{/if}
   </div>
   <div class="cube" class:locked>
