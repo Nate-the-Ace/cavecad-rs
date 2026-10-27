@@ -57,7 +57,8 @@ each one value written whole, so the parts of a location can never be half-updat
     ground is a display-time guess and is never stored. Absent means UNKNOWN; nothing may read it as 0
     (the old suite's elevation datum trap).
   - `source`: `import`, `typed`, `map`, or `surface-pick`, for the report and for trust.
-- **`surface`**: what was downloaded, so every device can get the same thing:
+- **`surface`**: what was downloaded (the same record as `surface/surface.json`, kept as a setting
+  so edits and undo cover it):
   `{zone, bounds:[xmin,ymin,xmax,ymax], photo:{w,h}?, elevation:{w,h}?, for:{lat,lon}}` in UTM
   metres of `zone`. `for` is the location it was cut around; the 3D terrain and contours read
   `bounds`, **never recompute it** (the window grows as the cave is drawn; recomputing slides the
@@ -66,18 +67,32 @@ each one value written whole, so the parts of a location can never be half-updat
 
 No survey `Elevation`, station position or fixed coordinate is rewritten by anything here.
 
-## The downloaded files (derived, cached per device)
+## The surface files (part of the cave)
 
-The photo and the elevation grid are **not** part of the synced cave. They are a cache: any device
-that opens the cave reads the `surface` setting and downloads the same request itself the first time
-it needs it. This needs no file syncing (the app has none) and keeps the server's cave small.
+Nathan, 2026-10-26: the app is 3D from the start, so the surface belongs IN the `.cavecad` file. The
+photo and elevation grid are part of the cave, saved and opened with it, exactly as linked scans
+already are (`scans/<path>` parts, `lib/cavefile.ts`). The downloaded data is what the cave was
+mapped against, so it is kept, not re-fetched: every copy of the file shows the same ground.
 
-- Cached in the cave folder's `surface/` when the cave has one (`photo.png`, `elevation.tif`, each
-  with its request beside it as `.json`), otherwise in the browser's private storage (OPFS) keyed by
-  cave id. A cache entry whose request differs from the `surface` setting is stale and refetched.
+- **In the file:** `surface/photo.jpg`, `surface/elevation.tif`, and `surface/surface.json` (the
+  request: zone, bounds, pixel sizes, service, download date). `manifest.json` lists them. A
+  **"Surface in file"** toggle, on by default, mirrors "Scans in file". Readers that do not know the
+  parts ignore them (the existing rule).
+- **Sizes:** elevation 512x512 float32 is about 1 MB (deflated in the zip); the photo is requested as
+  JPEG (quality 85), a few MB at 4000 px, instead of the old app's PNG (tens of MB).
+- **In a cave folder:** the same files are also written to `surface/` beside the `.cavecad`, so other
+  programs (QGIS) can open them. The file is still the cave; the folder copy is for convenience.
+- **While open:** held in the browser's private storage (OPFS) keyed by cave id, so the Map and 3D
+  view do not unzip on every draw. Files are keyed by their request, so undoing a re-download
+  still finds the earlier files for the rest of the session; a save writes only the files the current
+  `surface` setting names.
+- **Server-synced caves:** the server keeps the cave's edits, not its files. A device that receives
+  the cave from the server without its surface files downloads them from USGS using `surface.json`'s
+  request, and says so. Uploading surface files to the server is for the later file-sync work, not
+  this build.
 - Requests go straight from the app to USGS (both services answer browser requests with
   `Access-Control-Allow-Origin: *`, checked 2026-10-26):
-  - photo: `imagery.nationalmap.gov/.../USGSNAIPImagery/ImageServer/exportImage`, PNG, native
+  - photo: `imagery.nationalmap.gov/.../USGSNAIPImagery/ImageServer/exportImage`, JPEG, native
     0.3 m, at most 4000 px a side;
   - elevation: `elevation.nationalmap.gov/.../3DEPElevation/ImageServer/exportImage`, float32 TIFF,
     native ~1 m, at most 512 px a side.
@@ -87,16 +102,13 @@ it needs it. This needs no file syncing (the app has none) and keeps the server'
   surface itself) plus 25% margin, at least 150 m across.
 - A reply that is not an image or a readable grid (USGS returns errors as JSON with status 200) is an
   error, never a placed surface. A grid with no data means "outside 3DEP coverage".
-- NAIP photographs are re-flown every few years, so two devices can hold different photographs of the
-  same window. Accepted: the photo is context. Everything measured (ground height, the picked entrance)
-  is stored as numbers, so it does not depend on which copy a device has.
 
 ## The Surface Data button
 
 1. Finds the location: stored `location`; else an imported fixed point (converted, above); else the
    map picker. Nothing touches the network before a location exists.
 2. Checkboxes, both on: **Aerial photo**, **Ground elevation** (contours and 3D terrain come from it).
-3. Downloads, caches, writes `surface` and `location.ground_m` in one undoable edit, and reports in
+3. Downloads, stores the files with the cave, writes `surface` and `location.ground_m` in one undoable edit, and reports in
    one message: what was fetched, how far across, ground height at the entrance in the display unit.
 4. Running it again replaces both (a pass left unticked keeps what it had).
 
@@ -109,7 +121,7 @@ decimal or degrees-minutes-seconds. Also lets the person choose which station is
 ## What you see
 
 - **Map:** the photo under everything at half strength, contours over it, survey on top. Every fifth
-  contour is a major line, labelled in the display unit. Contours are **derived** from the cached grid
+  contour is a major line, labelled in the display unit. Contours are **derived** from the stored grid
   (marching squares, ported from `CsContour` with its tests) whenever the grid or interval changes;
   they are never stored.
 - **3D view:** the elevation grid as a ground surface over the cave, placed by the stored ground
@@ -140,7 +152,7 @@ Available once a location and an elevation grid exist.
 - Coordinates never go into logs (`cave-log` redaction covers the new messages; tested), URLs of the
   app, exports or packages. Requests to USGS necessarily carry the window; that is the same exposure
   the old app had and is accepted.
-- The cached files and the `location` and `surface` settings are location data: a sanitized export
+- The surface files and the `location` and `surface` settings are location data: a sanitized export
   leaves them out (the cave folder spec already lists `surface/` as location data).
 
 ## Pieces
@@ -153,7 +165,7 @@ Available once a location and an elevation grid exist.
 - **`cave-formats`**: importers record the fixed points' coordinate system and datum.
 - **`cave-wasm`**: doors for location, surface request, contours from a grid, low-point pick.
 - **Web app:** Surface Data button and report, map picker panel, Map layers (photo, contours, pick
-  circle), 3D terrain, the cache (`lib/surface-cache.ts`, folder or OPFS), fetch with timeout.
+  circle), 3D terrain, the surface parts in `lib/cavefile.ts`, OPFS copy while open, folder copy, fetch with timeout.
 
 ## Testing
 
@@ -162,6 +174,8 @@ Available once a location and an elevation grid exist.
   ported from the old `js_unit` numbers; TIFF reader on a saved 3DEP reply.
 - Golden: old `CsGeoProject` and `CsContour` run under node, Rust matches (same as the survey port).
 - Convergence: two people setting the location at once end with one whole location, never mixed parts.
+- File: `.cavecad` round trip keeps the surface parts byte for byte; "Surface in file" off writes
+  none; a file without them opens and offers the download.
 - Privacy: log redaction of every new message; sanitized export has no `location`/`surface`.
 - Browser: Pitfall Cave given a test location, Surface Data fetched, entrance picked inside a drawn
   circle, cave moved and surface refetched. Plumbline Pit checked too (vertical cave rule).
