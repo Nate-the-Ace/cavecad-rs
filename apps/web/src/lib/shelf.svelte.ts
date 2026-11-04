@@ -42,6 +42,8 @@ export const shelf = $state({
   records: [] as ShelfRecord[],
   /** The record the open cave is saved to ('' for a sample or a cave not yet stored). */
   currentId: '',
+  /** The sample on screen (its id), until its first change makes it the person's own copy; '' otherwise. */
+  sample: '',
   /** Open the shelf when the app starts. */
   startup: startupSetting(),
   /** Why the last save failed, or ''. */
@@ -169,6 +171,9 @@ export async function storeOpenCave(source = ''): Promise<boolean> {
     }
   }
   shelf.problem = '';
+  // a changed sample is now the person's own copy on the shelf; the sample itself stays as it was
+  if (shelf.sample && !existing) engine.log('info', 'file', `Your changes to the sample are kept as your own copy: ${rec.name}`);
+  shelf.sample = '';
   shelf.currentId = rec.id;
   shelf.storedAt = rec.updated;
   shelf.records = sorted([...shelf.records.filter((r) => r.id !== rec.id), rec]);
@@ -298,7 +303,7 @@ let timer: ReturnType<typeof setTimeout> | undefined;
 
 /** After an edit, stores the open cave once things have been quiet for a moment (call when `cave.version` changes). */
 export function autosaveSoon() {
-  if (!cave.hasCave || !shelf.currentId || !unsaved()) return;
+  if (!cave.hasCave || !(shelf.currentId || shelf.sample) || !unsaved()) return;
   clearTimeout(timer);
   timer = setTimeout(() => void storeOpenCave(), 1200);
 }
@@ -306,7 +311,7 @@ export function autosaveSoon() {
 /** Stores the open cave now (before the page closes or another cave opens). */
 export async function flush() {
   clearTimeout(timer);
-  if (cave.hasCave && shelf.currentId && unsaved()) await storeOpenCave();
+  if (cave.hasCave && (shelf.currentId || shelf.sample) && unsaved()) await storeOpenCave();
 }
 
 // Dev-only handle for tests and debugging in the browser console.

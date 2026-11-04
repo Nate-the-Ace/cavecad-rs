@@ -21,6 +21,7 @@ import ScansPanel from '../panels/ScansPanel.svelte';
 import SurveyPanel from '../panels/SurveyPanel.svelte';
 import PatternsPanel from '../panels/PatternsPanel.svelte';
 import RoomsPanel from '../panels/RoomsPanel.svelte';
+import { showInstruments } from './features';
 
 const LAYOUT_KEY = 'cavecad.layout.v1';
 
@@ -41,7 +42,8 @@ export const PANELS: Record<string, PanelDef> = {
   symbols: { title: 'Symbols', component: SymbolsPanel, width: 300 },
   stations: { title: 'Stations', component: StationsPanel, height: 260 },
   notebook: { title: 'Notebook', component: NotebookPanel, height: 320 },
-  survey: { title: 'Survey', component: SurveyPanel, width: 380 },
+  // instrument work is not ready yet: a saved layout that holds the Survey panel is dropped for the default
+  ...(showInstruments ? { survey: { title: 'Survey', component: SurveyPanel, width: 380 } } : {}),
   scans: { title: 'Scans', component: ScansPanel, width: 520 },
   sheet: { title: 'Sheet', component: SheetPanel, width: 520 },
   patterns: { title: 'Patterns', component: PatternsPanel, width: 560 },
@@ -209,7 +211,7 @@ export function workLayout() {
  * Cross Section on the right, so each shot shows in all three views as it is taken.
  */
 export function surveyLayout() {
-  if (!api) return;
+  if (!api || !showInstruments) return;
   const a = api;
   a.clear();
   a.addPanel({ id: 'survey', component: 'survey', title: PANELS.survey.title });

@@ -19,9 +19,15 @@ function saved(): SheetSetup {
   return { ...DEFAULT };
 }
 
-/** The plot scales in the order people want them: metric ones first when the cave is shown in metric, imperial first otherwise. Used by every scale dropdown. */
-export function orderedScales(scales: SheetOptions['scales'], units: Units): SheetOptions['scales'] {
-  return [...scales].sort((a, b) => (units === 'metric' ? Number(b.metric) - Number(a.metric) : Number(a.metric) - Number(b.metric)));
+/** The plot scales of the units the cave is shown in (1:500 in metric, 1" = 40 ft in imperial), plus the one in use (`keep`, feet per inch) when it is of the other kind. Used by every scale dropdown. */
+export function orderedScales(scales: SheetOptions['scales'], units: Units, keep = 0): SheetOptions['scales'] {
+  return scales.filter((s) => s.metric === (units === 'metric') || s.feet_per_inch === keep);
+}
+
+/** How a plot scale (feet per inch) reads in the units the cave is shown in: `1:1000` or `1" = 80 ft`. */
+export function scaleText(feetPerInch: number, units: Units): string {
+  if (units === 'metric') return `1:${Math.round(feetPerInch * 12)}`;
+  return `1" = ${feetPerInch < 10 ? feetPerInch.toFixed(2) : feetPerInch.toFixed(0)} ft`;
 }
 
 /** The sheet's settings (A3 by default, the cave's name in the title block). */

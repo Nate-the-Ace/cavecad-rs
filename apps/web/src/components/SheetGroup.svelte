@@ -16,8 +16,8 @@
       showPanel('sheet');
     });
   });
-  // metric scales first when the cave is shown in metric
-  const scales = $derived(opts ? orderedScales(opts.scales, cave.units) : []);
+  // the scales of the units the cave is shown in (and the one in use, whatever its kind)
+  const scales = $derived(opts ? orderedScales(opts.scales, cave.units, sheet.feetPerInch) : []);
   const tell = (m: string) => engine.log('info', 'sheet', m);
 </script>
 

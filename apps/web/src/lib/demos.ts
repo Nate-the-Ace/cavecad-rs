@@ -5,9 +5,12 @@ import fingerprint from '../../../../crates/cave-survey/tests/golden/Fingerprint
 import plumbline from '../../../../crates/cave-survey/tests/golden/PlumblinePit.json?raw';
 import stairstep from '../../../../crates/cave-survey/tests/golden/StairstepCave.json?raw';
 
+/** The test file with the cave named as people see it ("Pitfall Cave", not the file's "PITFALL CAVE (TEST)"), so a copy made from it carries that name. */
+const named = (json: string, title: string) => JSON.stringify({ ...JSON.parse(json), name: title.replace(/ \(.*\)$/, '') });
+
 export const DEMOS: { id: string; title: string; json: string }[] = [
   { id: 'pitfall', title: 'Pitfall Cave (4 trips, 5 loops)', json: pitfall },
   { id: 'fingerprint', title: 'Fingerprint Cave', json: fingerprint },
   { id: 'plumbline', title: 'Plumbline Pit (vertical)', json: plumbline },
   { id: 'stairstep', title: 'Stairstep Cave', json: stairstep },
-];
+].map((d) => ({ ...d, json: named(d.json, d.title) }));

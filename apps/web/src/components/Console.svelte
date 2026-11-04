@@ -16,6 +16,17 @@
     ),
   );
 
+  // The same line said again and again (each redraw, say) is shown once, with how many times.
+  const rows = $derived.by(() => {
+    const out: { e: ConsoleEvent; times: number }[] = [];
+    for (const e of shown) {
+      const last = out[out.length - 1];
+      if (last && last.e.level === e.level && last.e.source === e.source && last.e.message === e.message) last.times += 1;
+      else out.push({ e, times: 1 });
+    }
+    return out;
+  });
+
   onMount(() => {
     const timer = setInterval(async () => {
       let fresh: ConsoleEvent[] = [];
@@ -35,7 +46,7 @@
     return () => clearInterval(timer);
   });
 
-  const copy = () => navigator.clipboard.writeText(shown.map((e) => `${e.level.toUpperCase()} ${e.source}: ${e.message}`).join('\n'));
+  const copy = () => navigator.clipboard.writeText(rows.map(({ e, times }) => `${e.level.toUpperCase()} ${e.source}: ${e.message}${times > 1 ? ` (×${times})` : ''}`).join('\n'));
   const clear = () => {
     engine.clear();
     events = [];
@@ -58,8 +69,8 @@
     <button onclick={clear}>Clear</button>
   </div>
   <div class="log" bind:this={box} onscroll={onScroll} role="log">
-    {#each shown as e (e.seq)}
-      <div class={e.level}><span class="src">{e.source}</span> {e.message}</div>
+    {#each rows as { e, times } (e.seq)}
+      <div class={e.level}><span class="src">{e.source}</span> {e.message}{#if times > 1} <span class="times" title="Said {times} times in a row">×{times}</span>{/if}</div>
     {/each}
   </div>
 </section>
@@ -74,4 +85,5 @@
   .warn { color: var(--warn); }
   .error { color: var(--danger); }
   .detail, .debug { color: var(--muted); }
+  .times { color: var(--muted); font-size: 11px; }
 </style>

@@ -702,3 +702,17 @@ Port of the QCAD-era Surface Data and Entrance Location tools (spec: `docs/super
 Checked: `cave-geo` unit tests (frames, datum direction, window, TIFF malformed-input cases, contours from the old `js_unit` numbers, pick ties/holes, records convergence, layers), `cave-formats` importer tests, `cave-wasm` door tests on a real 3DEP reply (a Bowling Green town block), web node tests (cavefile round trip, OPFS fallbacks, lat/lon text). Browser check 2026-10-27 on Pitfall Cave and Plumbline Pit: picker, download, photo and contours under the map, cave below the ground in 3D, drag-circle pick with automatic re-download, Undo, `.cavecad` with and without the surface, reopen without any download. It found and fixed two bugs: the ground was drawn above the cave (offset added, not subtracted), and a picture that finished loading late took the place of a newer one.
 
 Not built: state elevation sources, the many-caves area view, Survex/Therion fixed frames, absolute elevations in callouts/profile/reports, server file sync for surface files.
+
+### Workflow pass for normal users (2026-11-03)
+
+A walk through the app as a first-time user (Caves window, New cave, typing shots, drawing, every tab and panel) and the fixes Nathan chose:
+
+- **Instruments hidden until ready.** The Survey tab, the Survey panel and View → Layout → In cave show only in dev builds or with `cavecad.instruments` = `on` in localStorage (`apps/web/src/lib/features.ts`). The instrument code is untouched.
+- **A sample's first change makes it the person's own copy** on the shelf (`shelf.sample`, `autosaveSoon`); the sample stays clean. New trip on a sample always makes a new copy and never writes over an earlier one. Samples are named as shown ("Pitfall Cave"), and `cave-fixture` takes the file's name as the cave's, not trip 0's.
+- **Home tab:** File is Caves, New, Open, Save a copy, Folder (the cave is kept as it is worked on; Ctrl/Cmd+S still saves). One **Export** menu holds DXF, the survey formats, Whole project, and what saved cave files include (scans, surface data).
+- **Opening a cave shows it in its notes' unit** (feet notes, feet on screen); View → Units still changes it.
+- **Notebook:** Enter after the last reading of the last shot, once tape, compass and clino are in, starts the next shot (From and To already filled). Backsight cells are skipped by Tab unless the trip has backsights or its Backsights box is ticked.
+- **New cave:** closing the folder picker says so and offers Keep in this browser.
+- **Plain words:** loop closure labels read "loop 0.37% off", the Caves window explains the worst loop on hover; Symbols shows one standard at a time (US NSS or International UIS; symbols only one standard has always show; search covers both); Sheets lists only the scales of the display unit; repeated Console lines collapse to one with ×N.
+
+Not yet walked through: scans alignment, Surface Data, printing sheets, Rooms, import/export with real files.

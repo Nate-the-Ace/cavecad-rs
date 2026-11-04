@@ -2050,7 +2050,7 @@ export class CaveView {
       g.beginPath();
       g.arc(p[0], p[1], 7, 0, Math.PI * 2);
       g.stroke();
-      if (k.percent !== null && pxPerM > 1.2) g.fillText(`${k.percent.toFixed(2)}%`, p[0] + 10, p[1] + 4);
+      if (k.percent !== null && pxPerM > 1.2) g.fillText(`loop ${k.percent.toFixed(2)}% off`, p[0] + 10, p[1] + 4); // says what the number is: how far the loop misses itself
     }
     if (this.projection === 'orthographic') {
       const per = metresPer(this.units); // metres in one display unit
