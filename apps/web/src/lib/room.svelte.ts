@@ -27,7 +27,7 @@ export const ROOM_TEXT: Record<RoomStatus, string> = {
   connecting: 'Connecting…',
   synced: 'Synced',
   offline: 'Offline: your edits will join when you reconnect',
-  'waiting-key': 'Waiting for your other device to share this cave',
+  'waiting-key': 'Still coming over: it arrives once a device that has this cave opens CaveCAD',
   error: "Sync stopped: something didn't check out",
 };
 

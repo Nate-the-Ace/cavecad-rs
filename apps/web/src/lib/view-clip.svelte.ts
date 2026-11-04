@@ -57,12 +57,16 @@ export function selectionClip(): Clip | null {
   return name ? clipFrom(name, selectedIn(name)) : null;
 }
 
+/** The last copy made here: what Paste from the right-click menu uses when the browser will not read the clipboard. */
+let lastCopy: Clip | null = null;
+
 /** Puts a copy on the system clipboard from a copy/cut event; false when there is nothing to copy. */
 export function copyEvent(e: ClipboardEvent): boolean {
   const clip = selectionClip();
   if (!clip) return false;
   e.preventDefault();
   e.clipboardData?.setData('text/plain', encodeClip(clip));
+  lastCopy = clip;
   return true;
 }
 
@@ -132,6 +136,32 @@ export function pasteEvent(e: ClipboardEvent): boolean {
   if (!clip) return false;
   e.preventDefault();
   return pasteClip(clip);
+}
+
+/** Copies the selection from the right-click menu (and cuts it when `cut`): onto the system clipboard where the browser allows, and kept here either way. */
+export async function copySelection(cut = false): Promise<boolean> {
+  const clip = selectionClip();
+  if (!clip) return false;
+  lastCopy = clip;
+  try {
+    await navigator.clipboard.writeText(encodeClip(clip));
+  } catch {
+    // no clipboard access (an unfocused page, an old browser): the copy kept here still pastes
+  }
+  if (cut) deleteSelection();
+  return true;
+}
+
+/** Pastes from the right-click menu: the system clipboard's copy where the browser allows reading it, else the last copy made here. */
+export async function pasteFromMenu(): Promise<boolean> {
+  let clip: Clip | null = null;
+  try {
+    clip = decodeClip(await navigator.clipboard.readText());
+  } catch {
+    // reading the clipboard was refused
+  }
+  clip ??= lastCopy;
+  return clip ? pasteClip(clip) : false;
 }
 
 /** Starts the Copy command on the selection: pick a base point, then click to drop copies. */

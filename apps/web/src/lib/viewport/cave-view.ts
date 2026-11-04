@@ -118,7 +118,11 @@ export class CaveView {
   onLineEdited: (id: string, points: [number, number][], widths: number[] | null) => void = () => {};
   onSelectLine: (id: string, additive?: boolean) => void = () => {};
   /** Called on a right click on a map line: where, which line, and the ids of the map lines of its kind. */
-  onLineMenu: (x: number, y: number, id: string, similar: string[]) => void = () => {};
+  onLineMenu: (x: number, y: number, id: string, similar: string[], editWords: (() => void) | null) => void = () => {};
+  /** A right click on a station (nothing drawn under the pointer). */
+  onStationMenu: (x: number, y: number, id: string, label: string) => void = () => {};
+  /** A right click on empty space. */
+  onViewMenu: (x: number, y: number) => void = () => {};
   /** Called when a right click (not a right drag, which pans) asks to end the running command. */
   onEndCommand: () => void = () => {};
   private rightDown: { x: number; y: number } | null = null;
@@ -309,28 +313,14 @@ export class CaveView {
       if (e.button !== 2 || !d) return;
       this.rightDown = null;
       if (Math.hypot(e.clientX - d.x, e.clientY - d.y) >= 5) return;
-      // Shift or Ctrl right click while a point is wanted: the one-pick snap menu, not the end of the command.
-      if ((e.shiftKey || e.ctrlKey) && this.wantsPoint()) {
-        this.onSnapMenu(e.clientX, e.clientY);
-        return;
-      }
-      if (this.pasteOn) {
-        this.onEndPaste();
-        return;
-      }
-      if (this.copyOn) {
-        this.onEndCopy();
-        return;
-      }
-      if (this.drawTool) {
-        this.onEndCommand();
-        return;
-      }
-      const rect = canvas.getBoundingClientRect();
-      const k = this.lineAt(e.clientX - rect.left, e.clientY - rect.top);
-      if (k) this.onLineMenu(e.clientX, e.clientY, k.id, this.mapLines.filter((m) => m.kind === k.kind && !isKindHidden(m.kind)).map((m) => m.id));
+      this.rightClick(e);
     });
-    canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+    // A Mac's Control-click is a right click that arrives as a left button: only the context-menu event says so.
+    canvas.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      if (e.button === 0 && e.ctrlKey) this.rightClick(e);
+    });
+
     // A double click on a symbol, a text or a leader edits its words in place.
     canvas.addEventListener('dblclick', (e) => {
       if (this.drawTool || this.copyOn || this.pasteOn || e.button !== 0) return;
@@ -1139,6 +1129,37 @@ export class CaveView {
   }
 
   /** Opens the in-place box on a stamp's words. */
+  /** A right click at the pointer: it ends a running command (or opens the snap menu); otherwise it opens the menu for what is under it. */
+  private rightClick(e: MouseEvent) {
+    // Shift or Ctrl right click while a point is wanted: the one-pick snap menu, not the end of the command.
+    if ((e.shiftKey || e.ctrlKey) && this.wantsPoint()) {
+      this.onSnapMenu(e.clientX, e.clientY);
+      return;
+    }
+    if (this.pasteOn) {
+      this.onEndPaste();
+      return;
+    }
+    if (this.copyOn) {
+      this.onEndCopy();
+      return;
+    }
+    if (this.drawTool) {
+      this.onEndCommand();
+      return;
+    }
+    const rect = this.canvas.getBoundingClientRect();
+    const k = this.lineAt(e.clientX - rect.left, e.clientY - rect.top);
+    if (k) {
+      const similar = this.mapLines.filter((m) => m.kind === k.kind && !isKindHidden(m.kind)).map((m) => m.id);
+      this.onLineMenu(e.clientX, e.clientY, k.id, similar, isStampKind(k.kind) ? () => this.editWordsOf(k) : null);
+      return;
+    }
+    const st = this.pickStation(e.clientX, e.clientY);
+    if (st) this.onStationMenu(e.clientX, e.clientY, st.id, st.label);
+    else this.onViewMenu(e.clientX, e.clientY);
+  }
+
   private editWordsOf(k: ProfileSketch3d) {
     const pts = this.screenPoints(k).filter((p): p is [number, number] => !!p);
     const spot = stampEditSpot(k.kind, pts, leaderLook(k.style, ((this.pixelsPerMetreAt(k.points[0]) ?? 0) * drawing.scale) / 1000));

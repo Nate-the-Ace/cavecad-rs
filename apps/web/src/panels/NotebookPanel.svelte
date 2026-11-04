@@ -9,6 +9,8 @@
   import { tick, untrack } from 'svelte';
   import { Plus, ScanLine, Trash2 } from '@lucide/svelte';
   import { showPanel } from '../lib/workspace.svelte';
+  import { openContextMenu } from '../lib/context-menu.svelte';
+  import { stationItems } from '../lib/context-items';
   import PanelUndo from '../components/PanelUndo.svelte';
   import { cave, changed, setPick } from '../lib/cave.svelte';
   import { engine, loadEngine } from '../lib/engine';
@@ -188,6 +190,36 @@
   let backsightsSet = $state<Record<string, boolean>>({});
   const hasBacksights = $derived(!!page?.rows.some((r) => r.az_bs !== null || r.inc_bs !== null));
   const backsights = $derived(page ? (backsightsSet[page.trip] ?? hasBacksights) : false);
+  /** The right-click menu on a row: a station's (with surveying on from it), or a shot's. */
+  function rowMenu(e: MouseEvent, row: NotebookRow) {
+    const t = e.target as HTMLElement;
+    if (t.tagName === 'INPUT' && (t as HTMLInputElement).value) return; // a field with words keeps the browser's own menu (copy, paste)
+    if (row.kind === 'station' && row.station) {
+      e.preventDefault();
+      pick(row);
+      openContextMenu(e.clientX, e.clientY, [
+        ...stationItems(row.station, row.label),
+        {
+          label: `Next shot from ${row.label}`,
+          run: () => {
+            from = row.label;
+            void tick().then(() => document.querySelector<HTMLInputElement>('input[aria-label="Shot ends at"]')?.focus());
+          },
+        },
+      ]);
+    } else if ((row.kind === 'shot' || row.kind === 'splay') && row.shot) {
+      e.preventDefault();
+      pick(row);
+      const shot = row.shot;
+      openContextMenu(e.clientX, e.clientY, [
+        { heading: row.kind === 'splay' ? 'Splay' : 'Shot' },
+        { label: row.kind === 'splay' ? 'Splay details' : 'Shot details', run: () => setPick(row.kind === 'splay' ? 'splay' : 'leg', shot) },
+        'separator',
+        { label: 'Delete this shot', danger: true, run: () => run(engine.notebookRemoveShot(shot)) },
+      ]);
+    }
+  }
+
   const closureRow = (i: number) => document.getElementById(`nb-row-${i}`)?.scrollIntoView({ block: 'center' });
 </script>
 
@@ -234,7 +266,7 @@
               {#if r.kind === 'gap'}
                 <tr id="nb-row-{i}" class="gap"><td colspan="13"></td></tr>
               {:else if r.kind === 'station'}
-                <tr id="nb-row-{i}" class="station" class:sel={cave.pick.kind === 'station' && cave.pick.id === r.station} onclick={() => pick(r)}>
+                <tr id="nb-row-{i}" class="station" class:sel={cave.pick.kind === 'station' && cave.pick.id === r.station} onclick={() => pick(r)} oncontextmenu={(e) => rowMenu(e, r)}>
                   <td class="st"><input value={r.label} tabindex="-1" title="Click to rename the station (Tab skips it, so entry flows tape, compass, clino, then L R U D)" aria-label="Station name" maxlength="40" onchange={(e) => rename(r, e.currentTarget.value)} onkeydown={enter} />{#if r.anchor}<span class="tag" title="Where a chain starts; nothing on this page arrives here">start</span>{/if}</td>
                   <td colspan="6"></td>
                   {#each SIDES as s}
@@ -250,7 +282,7 @@
                   <td></td>
                 </tr>
               {:else}
-                <tr id="nb-row-{i}" class="shot" class:splay={r.kind === 'splay'} class:out={r.excluded} class:bad={r.warn !== ''} class:sel={(cave.pick.kind === 'leg' || cave.pick.kind === 'splay') && cave.pick.id === r.shot} title={r.warn} onclick={() => pick(r)}>
+                <tr id="nb-row-{i}" class="shot" class:splay={r.kind === 'splay'} class:out={r.excluded} class:bad={r.warn !== ''} class:sel={(cave.pick.kind === 'leg' || cave.pick.kind === 'splay') && cave.pick.id === r.shot} title={r.warn} onclick={() => pick(r)} oncontextmenu={(e) => rowMenu(e, r)}>
                   <td class="st">{#if r.kind === 'splay'}<span class="splay-name">{r.label}</span>{/if}</td>
                   <td><input class="num" value={r.distance === null ? '' : lengthText(r.distance, units)} aria-label="Tape" onchange={(e) => reading(r, 'distance', e.currentTarget.value)} onkeydown={(e) => enterReading(e, i)} /></td>
                   <td><input class="num" value={angleText(r.az_fs)} aria-label="Compass foresight" onchange={(e) => reading(r, 'az_fs', e.currentTarget.value)} onkeydown={(e) => enterReading(e, i)} /></td>
