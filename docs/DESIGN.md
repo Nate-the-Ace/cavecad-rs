@@ -716,3 +716,9 @@ A walk through the app as a first-time user (Caves window, New cave, typing shot
 - **Plain words:** loop closure labels read "loop 0.37% off", the Caves window explains the worst loop on hover; Symbols shows one standard at a time (US NSS or International UIS; symbols only one standard has always show; search covers both); Sheets lists only the scales of the display unit; repeated Console lines collapse to one with ×N.
 
 Not yet walked through: scans alignment, Surface Data, printing sheets, Rooms, import/export with real files.
+
+### Right-click menus (2026-11-03)
+
+One menu for the whole app (`lib/context-menu.svelte.ts`, `components/ContextMenu.svelte`; arrow keys, Enter, Escape), opened with a list of what can be done where the press was. `lib/context-items.ts` builds the drawing views' lists: on a drawn line (Edit text for symbols, texts and leaders; Cut, Copy, Copy and place; Close/Open the curve; Flip side for shaped lines; Select all of its type; Delete), on a station in the Map (Station details, Show on the map, Cross section here, Start a new trip from it), and on empty space (Undo/Redo of that view, Paste, Select all/none, Show the whole cave or Fit). The Notebook's rows (station: the station's list plus Next shot from it; shot: details, delete) and the Stations table's rows have theirs. A running command still ends on a right click, as before. A Mac's Control-click works in the Map (it arrives as a left button with a context-menu event). Copy and Paste from the menu use the system clipboard where the browser allows, else the last copy made in the app.
+
+The Caves window's right-click actions (favourite, download a copy, show or find its folder) are now also buttons beside the cave, and a cave still arriving from another device reads "still coming over", with no mention of keys.

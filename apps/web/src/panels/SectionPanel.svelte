@@ -28,7 +28,8 @@ import { planFrame } from '../lib/snap-types';
   import { paintCopy } from '../lib/copy-ghost';
   import type { Drawn } from '../lib/clip';
   import { openNewText, openTextEdit } from '../lib/text-edit.svelte';
-  import { openLineMenu } from '../lib/line-menu.svelte';
+  import { openContextMenu } from '../lib/context-menu.svelte';
+  import { lineItems, viewItems } from '../lib/context-items';
   import { cave, changed, option, selectedIds, selectIds, toggleSelected, filter, wireFilter, haloFade, haloReach, toolStyle } from '../lib/cave.svelte';
   import { drawScan } from '../lib/scan-draw';
   import { givePoint, have, scanImage, scans, waitingForPoint } from '../lib/scans.svelte';
@@ -743,7 +744,10 @@ import { planFrame } from '../lib/snap-types';
       }
       const r = canvas.getBoundingClientRect();
       const similar = editor.contextAt(e.clientX - r.left, e.clientY - r.top);
-      if (similar) openLineMenu(e.clientX, e.clientY, similar);
+      if (!similar) return openContextMenu(e.clientX, e.clientY, viewItems('section', fit));
+      const w = editor.wordsAt(e.clientX - r.left, e.clientY - r.top);
+      const editWords = w ? () => openTextEdit(w.id, w.text, r.left + w.x, r.top + w.y, w.size, w.kind === 'text' ? 'Type the text' : w.kind === 'callout' ? 'Type the note' : 'Label', w.angle) : null;
+      openContextMenu(e.clientX, e.clientY, lineItems('section', similar, editWords));
     }}
   ></canvas>
   <div class="bar" bind:clientHeight={barH}>

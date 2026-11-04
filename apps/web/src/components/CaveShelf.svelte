@@ -18,6 +18,7 @@
   import { findFolder, reachable, revealHome } from '../lib/cavefolder.svelte';
   import { folderExistsNative, isDesktop } from '../lib/desktop';
   import { formatLength } from '../lib/units';
+  import { openContextMenu } from '../lib/context-menu.svelte';
 
   let search = $state('');
   /** The cave picked on the left: a record id, `sample:<id>`, or ''. */
@@ -26,7 +27,6 @@
   /** The open end the next trip would start from. */
   let from = $state('');
   let message = $state('');
-  let menu = $state<{ id: string; x: number; y: number } | null>(null);
   $effect(() => {
     if (shelf.open) {
       void loadEngine().then(() => loadShelf()).then(() => refreshServerCaves());
@@ -54,6 +54,12 @@
   const remoteMine = $derived(remoteShown.filter((c) => c.role === 'owner'));
   const remoteShared = $derived(remoteShown.filter((c) => c.role !== 'owner'));
   /** "Nathan's" (and "watching") for a cave shared with this member, or '' for their own. */
+  /** Why a cave on the server cannot open here yet, in plain words: it is still on its way from a device that has it. */
+  function comingOver(c: { id: string; role: string; ownerName: string }): string {
+    const from = c.role === 'owner' ? 'your other device. Open CaveCAD there once' : `${c.ownerName || 'the person who shared it'}. It arrives the next time they have CaveCAD open`;
+    return `Still coming over from ${from}${c.role === 'owner' ? ' and it arrives here' : ''}${serverCaves.waitingFor === c.id ? '; it opens by itself.' : '.'}`;
+  }
+
   function whose(c: { role: string; ownerName: string }): string {
     if (c.role === 'owner') return '';
     return `${c.ownerName ? `${c.ownerName}'s` : 'shared with you'}${c.role === 'watcher' ? ' · watching' : ''}`;
@@ -169,14 +175,28 @@
     if (picked === id) picked = '';
   }
 
+  /** The right-click menu on a kept cave: the same things as the buttons beside it. */
   function rightClick(e: MouseEvent, id: string) {
     e.preventDefault();
     picked = id;
-    menu = { id, x: Math.min(e.clientX, window.innerWidth - 220), y: Math.min(e.clientY, window.innerHeight - 200) };
+    const rec = shelf.records.find((r) => r.id === id);
+    if (!rec) return;
+    openContextMenu(e.clientX, e.clientY, [
+      { heading: rec.name },
+      { label: 'Open', run: () => void open() },
+      { label: from ? `New trip from ${from}` : 'New trip', run: () => void newTrip() },
+      'separator',
+      { label: rec.favorite ? 'Remove from favourites' : 'Add to favourites ★', run: () => void setFavorite(id, !rec.favorite) },
+      { label: 'Download a copy…', run: () => void download(id) },
+      ...(rec.home?.path && isDesktop() ? [{ label: 'Show its folder', run: () => void reveal(rec) }] : []),
+      ...(rec.home ? [{ label: 'Find its folder…', run: () => void find(rec) }] : []),
+      'separator',
+      { label: 'Forget…', danger: true, run: () => void forget(id) },
+    ]);
   }
 
   function key(e: KeyboardEvent) {
-    if (e.key === 'Escape') (menu ? (menu = null) : (shelf.open = false));
+    if (e.key === 'Escape') shelf.open = false;
     else if (e.key === 'Enter' && !(e.target as HTMLElement).closest('input,button,textarea')) void open();
   }
 
@@ -211,7 +231,7 @@
             {#each remoteMine as c (c.id)}
               <button class="cave" class:sel={picked === `server:${c.id}`} role="option" aria-selected={picked === `server:${c.id}`} onclick={() => (picked = `server:${c.id}`)} ondblclick={open}>
                 <span class="name">{c.name ?? 'A cave from another device'}</span>
-                <span class="sub">{serverCaves.opening === c.id ? 'fetching…' : !c.hasKey ? 'waiting for a key' : c.summary && !c.summary.empty ? `${c.summary.trips.length} trip${c.summary.trips.length === 1 ? '' : 's'} · ${length(c.summary.length_m)}` : 'on the server'}</span>
+                <span class="sub">{serverCaves.opening === c.id ? 'fetching…' : !c.hasKey ? 'still coming over' : c.summary && !c.summary.empty ? `${c.summary.trips.length} trip${c.summary.trips.length === 1 ? '' : 's'} · ${length(c.summary.length_m)}` : 'on the server'}</span>
               </button>
             {/each}
           {/if}
@@ -234,7 +254,7 @@
           <h2>{remote.name ?? 'A cave from another device'}</h2>
           <p class="stats">Kept on the CaveCAD server by one of your other devices · made {when(remote.createdAt)}</p>
           {#if !remote.hasKey}
-            <p class="wait">Waiting for a key: open CaveCAD once on a device that has this cave{serverCaves.waitingFor === remote.id ? '. It opens here by itself when the key arrives.' : ', then open it here.'}</p>
+            <p class="wait">{comingOver(remote)}</p>
           {:else}
             <p class="stored">Open it to bring it onto this computer. It stays in step with your other devices.</p>
           {/if}
@@ -245,7 +265,7 @@
           </p>
           {#if remote}
             <p class="stored">On the CaveCAD server, from one of your other devices · made {when(remote.createdAt)}. Open it to bring it onto this computer; it stays in step with your other devices.</p>
-            {#if !remote.hasKey}<p class="wait">Waiting for a key: open CaveCAD once on a device that has this cave{serverCaves.waitingFor === remote.id ? '. It opens here by itself when the key arrives.' : ', then open it here.'}</p>{/if}
+            {#if !remote.hasKey}<p class="wait">{comingOver(remote)}</p>{/if}
           {:else if record?.home && lost}
             <div class="lost" role="alert">
               <span>Folder not found: {record.home.label}</span>
@@ -254,6 +274,14 @@
             </div>
           {:else if record?.home}<p class="stored" title={record.home.label}>In its folder, {record.home.label} · last saved {when(record.updated)}</p>
           {:else if record}<p class="stored">Kept in this browser · last saved {when(record.updated)}</p>{:else}<p class="stored">A sample cave. Open it to look around. Your first change makes it your own copy, kept in this browser; the sample stays as it is.</p>{/if}
+          {#if record}
+            <div class="actions">
+              <button onclick={() => void setFavorite(record!.id, !record!.favorite)} title="Favourites stay at the top of the list"><Star size={13} fill={record.favorite ? 'currentColor' : 'none'} /> {record.favorite ? 'Favourite' : 'Add to favourites'}</button>
+              <button onclick={() => void download(record!.id)} title="Save a copy of this cave as a file, to keep or to send to someone">Download a copy…</button>
+              {#if record.home?.path && isDesktop()}<button onclick={() => void reveal(record!)}>Show its folder</button>{/if}
+              {#if record.home && !lost}<button onclick={() => void find(record!)} title="Point CaveCAD at this cave's folder if you moved it">Find its folder…</button>{/if}
+            </div>
+          {/if}
           {#if summary.ends.length}
             <div class="ends">
               <span class="lead">Open ends</span>
@@ -286,28 +314,13 @@
           {#if record}<button onclick={() => void forget(record!.id)} title="Take this cave off the shelf on this device">Forget…</button>{/if}
           <span class="grow"></span>
           <button onclick={newTrip} disabled={(!record && !sample) || !summary} title="Open the cave and start a new trip on it">{from ? `New trip from ${from}` : 'New trip'}</button>
-          <button class="go" onclick={open} disabled={(!record && !sample && !remote) || !!serverCaves.opening}>{remote && serverCaves.opening === remote.id ? 'Fetching…' : remote && serverCaves.waitingFor === remote.id ? 'Waiting for key…' : 'Open'}</button>
+          <button class="go" onclick={open} disabled={(!record && !sample && !remote) || !!serverCaves.opening}>{remote && serverCaves.opening === remote.id ? 'Fetching…' : remote && serverCaves.waitingFor === remote.id ? 'Waiting…' : 'Open'}</button>
           <button onclick={close}>{cave.hasCave ? 'Close' : 'Start empty'}</button>
         </div>
       </div>
     </div>
   </div>
 
-  {#if menu}
-    {@const rec = shelf.records.find((r) => r.id === menu!.id)}
-    <div class="veil2" role="presentation" onclick={() => (menu = null)} oncontextmenu={(e) => { e.preventDefault(); menu = null; }}></div>
-    <div class="menu" role="menu" style="left: {menu.x}px; top: {menu.y}px">
-      <button role="menuitem" onclick={() => { menu = null; void open(); }}>Open</button>
-      <button role="menuitem" onclick={() => { menu = null; void newTrip(); }}>{from ? `New trip from ${from}` : 'New trip'}</button>
-      <hr />
-      <button role="menuitem" onclick={() => { const id = menu!.id; menu = null; void setFavorite(id, !rec?.favorite); }}>{rec?.favorite ? 'Unfavorite' : 'Favorite ★'}</button>
-      <button role="menuitem" onclick={() => { const id = menu!.id; menu = null; void download(id); }}>Download a file…</button>
-      {#if rec?.home?.path && isDesktop()}<button role="menuitem" onclick={() => { menu = null; void reveal(rec!); }}>Reveal folder</button>{/if}
-      {#if rec?.home}<button role="menuitem" onclick={() => { menu = null; void find(rec!); }}>Find folder…</button>{/if}
-      <hr />
-      <button role="menuitem" onclick={() => { const id = menu!.id; menu = null; void forget(id); }}>Forget…</button>
-    </div>
-  {/if}
 {/if}
 
 <style>
@@ -330,6 +343,8 @@
   .lost { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 12px; color: var(--danger); }
   .lost span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .stored { margin: 0; color: var(--muted); font-size: 11px; }
+  .actions { display: flex; flex-wrap: wrap; gap: 6px; }
+  .actions button { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; padding: 3px 8px; }
   .ends { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
   .lead { font-size: 12px; color: var(--muted); }
   .chip { padding: 2px 9px; border-radius: 999px; border: 1px solid var(--line); background: none; color: var(--text); font: inherit; font-size: 12px; cursor: pointer; }
@@ -353,9 +368,4 @@
   button { font: inherit; font-size: 13px; padding: 6px 12px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel-2); color: var(--text); cursor: pointer; }
   button:disabled { opacity: 0.5; cursor: default; }
   button.go { background: var(--accent); border-color: var(--accent); color: #fff; }
-  .veil2 { position: fixed; inset: 0; z-index: 60; }
-  .menu { position: fixed; z-index: 61; min-width: 190px; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 4px; box-shadow: 0 6px 24px rgba(0, 0, 0, 0.35); display: flex; flex-direction: column; }
-  .menu button { border: none; background: none; text-align: left; padding: 6px 8px; border-radius: 4px; }
-  .menu button:hover { background: var(--accent-bg); }
-  .menu hr { border: none; border-top: 1px solid var(--line); margin: 4px 2px; width: 100%; }
 </style>

@@ -12,7 +12,8 @@
   import { markViewUsed, registerSelectAll } from '../lib/select-all';
   import { copyGhost, copyOp, copyPress, endCopy, endPaste, pasteGhost, pasteOp, pastePlace, registerClipView } from '../lib/view-clip.svelte';
   import { openNewText, openTextEdit } from '../lib/text-edit.svelte';
-  import { openLineMenu } from '../lib/line-menu.svelte';
+  import { openContextMenu } from '../lib/context-menu.svelte';
+  import { lineItems, stationItems, viewItems } from '../lib/context-items';
   import { snap, clearPick, cycle, escapePick, pickBuiltUp, toggleSnap } from '../lib/snap.svelte';
   import SnapButton from './SnapButton.svelte';
   import { cave, changed, filter, haloFade, haloReach, option, setOption, selectedIds, selectIds, toggleSelected, setPick, setShowSections, setShown, wireFilter, toolStyle } from '../lib/cave.svelte';
@@ -468,10 +469,12 @@
       if (hint !== drawHint) drawHint = hint;
     };
     v.onSelectLine = (id, additive) => (additive && id ? toggleSelected(id) : selectIds(id ? [id] : []));
-    v.onLineMenu = (x, y, id, similar) => {
+    v.onLineMenu = (x, y, id, similar, editWords) => {
       if (!selectedIds().includes(id)) selectIds([id]);
-      openLineMenu(x, y, () => similar);
+      openContextMenu(x, y, lineItems('map', () => similar, editWords));
     };
+    v.onStationMenu = (x, y, id, label) => openContextMenu(x, y, stationItems(id, label));
+    v.onViewMenu = (x, y) => openContextMenu(x, y, viewItems('map', () => v.home()));
     v.onEditText = (id, text, kind, x, y, size, angle) => openTextEdit(id, text, x, y, size, kind === 'text' ? 'Type the text' : kind === 'callout' ? 'Type the note' : 'Label', angle);
     v.copyLines = (cursor) => copyGhost('map', cursor)?.lines ?? null;
     v.onCopyPress = (p) => copyPress('map', p);

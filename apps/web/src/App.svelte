@@ -2,7 +2,7 @@
   import { selectAllInLastView } from './lib/select-all';
   import SnapMenu from './components/SnapMenu.svelte';
   import { copyEvent, deleteSelection, pasteEvent } from './lib/view-clip.svelte';
-  import LineMenu from './components/LineMenu.svelte';
+  import ContextMenu from './components/ContextMenu.svelte';
   import TextEditor from './components/TextEditor.svelte';
   import { onMount, untrack } from 'svelte';
   import Ribbon from './components/Ribbon.svelte';
@@ -215,7 +215,7 @@
   <SurfaceData />
   <CaveShelf />
   <MovedPage bind:open={moved} />
-  <LineMenu />
+  <ContextMenu />
   <TextEditor />
   {#if info?.error}
     <div class="banner">Rust build failed. The page is showing the last good build.<pre>{info.error}</pre></div>

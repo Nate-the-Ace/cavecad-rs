@@ -9,6 +9,8 @@
   import { cave, changed, focusStation, setPick } from '../lib/cave.svelte';
   import { engine, loadEngine } from '../lib/engine';
   import { showPanel } from '../lib/workspace.svelte';
+  import { openContextMenu } from '../lib/context-menu.svelte';
+  import { stationItems } from '../lib/context-items';
   import { KINDS, STATUSES, checklistCsv, effectiveStatus, filterRows, kindCounts, type StationRow } from '../lib/station-table';
   import { formatLength } from '../lib/units';
 
@@ -102,7 +104,7 @@
       </thead>
       <tbody>
         {#each shown as r (r.id || r.station)}
-          <tr onclick={() => pick(r)} ondblclick={() => go(r)} class:sel={cave.pick.kind === 'station' && cave.pick.id === r.id} title="Double-click to go to this station">
+          <tr onclick={() => pick(r)} ondblclick={() => go(r)} oncontextmenu={(e) => { if (!r.id) return; e.preventDefault(); pick(r); openContextMenu(e.clientX, e.clientY, stationItems(r.id, r.station)); }} class:sel={cave.pick.kind === 'station' && cave.pick.id === r.id} title="Double-click to go to this station">
             <td class="st">{r.station}</td>
             <td class="kinds">
               {#each r.kinds as k}<span class="badge {k}">{KINDS.find((x) => x.key === k)?.label ?? k}</span>{/each}

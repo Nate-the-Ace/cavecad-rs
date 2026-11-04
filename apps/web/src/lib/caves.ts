@@ -13,12 +13,14 @@ import { workLayout } from './workspace.svelte';
 import { noRoomForThisCave, serverAccess } from './room.svelte';
 import { downloadCave } from './room-client';
 import { syncedHash } from './device-key';
+import { closeContextMenu } from './context-menu.svelte';
 
 /** A different cave is now on screen: everything that belonged to the last one is let go. */
 function landed(name: string, home: Home | null = null) {
   forgetFile();
   setHome(home);
   shelf.sample = '';
+  closeContextMenu(); // a menu opened on the last cave (or the Caves window) has nothing left to act on
   cave.fileName = home?.file ?? `${name}${EXT}`;
   cave.name = name;
   cave.hasCave = true;
@@ -148,6 +150,11 @@ export async function newTripOnSample(id: string, station: string): Promise<stri
 }
 
 /** Starts a trip on the cave now open (tied in at `station`), with the scans and notebook laid out. */
+/** Starts a new trip on the open cave picking up at `station` (the right-click menu on a station). A sentence when it could not. */
+export function startTripAt(station: string): string | null {
+  return startTrip(station);
+}
+
 function startTrip(station: string): string | null {
   const trips = engine.notebookTrips();
   const made = engine.notebookNewTrip(`Trip ${trips.length + 1}`);
