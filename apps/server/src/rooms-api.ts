@@ -71,7 +71,7 @@ export async function handleRooms(db: Db, memberId: string, req: IncomingMessage
     if (path === '/api/devices' && method === 'GET') return send(res, 200, { devices: R.myDevices(db, memberId) });
     if (!device) throw new Error('bad-device');
     R.checkDevice(db, memberId, device, now);
-    if (path === '/api/caves' && method === 'GET') return send(res, 200, { caves: R.myCaves(db, memberId, device), gone: R.goneCaves(db, memberId) });
+    if (path === '/api/caves' && method === 'GET') return send(res, 200, { caves: R.myCaves(db, memberId, device), gone: R.goneCaves(db, memberId), deleted: R.deletedCaves(db, memberId) });
     if (path === '/api/caves' && method === 'POST') {
       const b = await readJson(req);
       if (b.storage !== undefined && b.storage !== 'open' && b.storage !== 'locked') throw new Error('bad-request');
@@ -79,6 +79,17 @@ export async function handleRooms(db: Db, memberId: string, req: IncomingMessage
         if (b.wrapped !== undefined) throw new Error('bad-request');
         R.createCave(db, memberId, text(b.id, 64), [], now, 'open');
       } else R.createCave(db, memberId, text(b.id, 64), wrappedList(b.wrapped), now);
+      return send(res, 200, { ok: true });
+    }
+    // An owner deletes a cave for good; a guest leaves one shared with them.
+    const whole = /^\/api\/caves\/([A-Za-z0-9_-]{8,64})(\/leave)?$/.exec(path);
+    if (whole && !whole[2] && method === 'DELETE') {
+      for (const p of R.deleteCave(db, memberId, whole[1], now)) closeMember(whole[1], p);
+      return send(res, 200, { ok: true });
+    }
+    if (whole && whole[2] && method === 'POST') {
+      R.leaveCave(db, memberId, whole[1], now);
+      closeMember(whole[1], memberId);
       return send(res, 200, { ok: true });
     }
     const rm = /^\/api\/caves\/([A-Za-z0-9_-]{8,64})\/rooms(?:\/([0-9a-f-]{36})(?:\/guests\/([0-9a-f-]{36}))?)?$/.exec(path);

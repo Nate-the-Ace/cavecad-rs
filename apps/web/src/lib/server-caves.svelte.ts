@@ -9,9 +9,10 @@
 // and whenever its shelf reads this list (no one has to do anything). While the shelf is open the list is read again
 // every 15 s, and a cave someone asked to open opens by itself once its
 // key has arrived or it has been converted.
-import { handOverKeys, listMyCaves, type Role } from './room-client';
+import { deleteServerCave, handOverKeys, leaveServerCave, listMyCavesAndDeleted, type Role } from './room-client';
 import { serverAccess } from './room.svelte';
-import { shelf, shelfRoomIds } from './shelf.svelte';
+import { forgetCave, shelf, shelfRoomIds } from './shelf.svelte';
+import { engine } from './engine';
 import { openFromServer, openKept } from './caves';
 import type { CaveSummary } from './engine';
 
@@ -70,8 +71,13 @@ export function refreshServerCaves(): Promise<void> {
         return;
       }
       void handOverKeys(access).catch(() => 0); // this device may hold keys another one is waiting for
-      const caves = await listMyCaves(access);
+      const { caves, deleted } = await listMyCavesAndDeleted(access);
       await shelfRoomIds(); // fills in the room id of records kept before rooms
+      // A cave its owner deleted (here, on another device, or someone who shared it) leaves this shelf too.
+      for (const rec of shelf.records.filter((r) => r.roomId && deleted.includes(r.roomId))) {
+        await forgetCave(rec.id);
+        engine.log('info', 'file', `“${rec.name}” was deleted by its owner, so it was taken off this computer too.`);
+      }
       const shelfIdOf = (room: string) => shelf.records.find((r) => r.roomId === room)?.id ?? '';
       serverCaves.all = caves
         .map((c) => ({ id: c.id, createdAt: c.createdAt, hasKey: c.hasKey, ...readLabel(c.label), shelfId: shelfIdOf(c.id), role: c.role, ownerName: c.ownerName }))
@@ -112,4 +118,38 @@ export async function openServerCave(id: string): Promise<string> {
   } finally {
     serverCaves.opening = '';
   }
+}
+
+/**
+ * Deletes one of the member's own caves for good: from the server, and so from every device and everyone it was
+ * shared with, then from this shelf. Refused for the cave open now. A sentence when it could not, or ''.
+ */
+export async function deleteEverywhere(id: string): Promise<string> {
+  if (engine.roomId() === id) return 'Open another cave first: the cave on screen cannot be deleted.';
+  const access = await serverAccess();
+  if (!access) return "Can't reach the CaveCAD server. Check you are online and signed in, then try again.";
+  try {
+    await deleteServerCave(access, id);
+  } catch {
+    return 'The cave could not be deleted. Try again in a moment.';
+  }
+  const kept = shelf.records.find((r) => r.roomId === id);
+  if (kept) await forgetCave(kept.id);
+  await refreshServerCaves();
+  return '';
+}
+
+/** Takes the member off a cave someone shared with them, and off this shelf. A sentence when it could not, or ''. */
+export async function leaveShared(id: string): Promise<string> {
+  const access = await serverAccess();
+  if (!access) return "Can't reach the CaveCAD server. Check you are online and signed in, then try again.";
+  try {
+    await leaveServerCave(access, id);
+  } catch {
+    return 'Could not leave the cave. Try again in a moment.';
+  }
+  const kept = shelf.records.find((r) => r.roomId === id);
+  if (kept && engine.roomId() !== id) await forgetCave(kept.id);
+  await refreshServerCaves();
+  return '';
 }

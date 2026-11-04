@@ -143,6 +143,8 @@ export function openDb(path: string): Db {
   if (!cols.some((c) => c.name === 'storage')) {
     db.exec("ALTER TABLE caves ADD COLUMN storage TEXT NOT NULL DEFAULT 'locked' CHECK (storage IN ('locked','open'))");
   }
+  // When an owner deleted the cave (null: not deleted). The row stays as a tombstone so the id is never made again.
+  if (!cols.some((c) => c.name === 'deleted_at')) db.exec('ALTER TABLE caves ADD COLUMN deleted_at INTEGER');
   // The newest one-time notice each member has seen (0: none; see members.ts CURRENT_NOTICE).
   const memberCols = db.prepare('PRAGMA table_info(members)').all() as { name: string }[];
   if (!memberCols.some((c) => c.name === 'notice_version')) db.exec('ALTER TABLE members ADD COLUMN notice_version INTEGER NOT NULL DEFAULT 0');

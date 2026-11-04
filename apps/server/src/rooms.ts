@@ -179,6 +179,15 @@ export function myCaves(db: Db, memberId: string, deviceId: string): MyCave[] {
   }));
 }
 
+/** Caves the member was in that an owner deleted: their app forgets its copy. */
+export function deletedCaves(db: Db, memberId: string): string[] {
+  return (
+    db.prepare('SELECT g.cave_id FROM cave_gone g JOIN caves c ON c.id = g.cave_id WHERE g.member_id = ? AND c.deleted_at IS NOT NULL ORDER BY g.at').all(memberId) as {
+      cave_id: string;
+    }[]
+  ).map((r) => r.cave_id);
+}
+
 /** Caves the member was taken off (every seat removed) and has not been given back: their app stops syncing them. */
 export function goneCaves(db: Db, memberId: string): string[] {
   return (db.prepare('SELECT cave_id FROM cave_gone WHERE member_id = ? ORDER BY at').all(memberId) as { cave_id: string }[]).map((r) => r.cave_id);
@@ -429,6 +438,46 @@ export function removeGuest(db: Db, memberId: string, caveId: string, roomId: st
   sharedRoom(db, memberId, caveId, roomId);
   if (db.prepare('DELETE FROM room_guests WHERE room_id = ? AND member_id = ?').run(roomId, guestId).changes === 0) fail('not-found');
   settle(db, caveId, [guestId], now);
+}
+
+/**
+ * Deletes a cave for good (owner only): its history, snapshot, name, keys, rooms and guest lists. Only the cave's id
+ * stays, as a tombstone, so no device can make the cave again by syncing an old copy; everyone who was in it finds it
+ * under `deletedCaves` and forgets their copy. Gives back everyone who was in it, so their streams are closed.
+ */
+export function deleteCave(db: Db, memberId: string, caveId: string, now: number): string[] {
+  requireOwner(db, memberId, caveId);
+  const people = (
+    db
+      .prepare(
+        `SELECT member_id FROM cave_owners WHERE cave_id = ?
+         UNION SELECT g.member_id FROM room_guests g JOIN rooms r ON r.id = g.room_id WHERE r.cave_id = ?`,
+      )
+      .all(caveId, caveId) as { member_id: string }[]
+  ).map((r) => r.member_id);
+  db.exec('BEGIN');
+  try {
+    for (const t of ['history', 'snapshots', 'cave_labels', 'wrapped_keys']) db.prepare(`DELETE FROM ${t} WHERE cave_id = ?`).run(caveId);
+    db.prepare('DELETE FROM room_guests WHERE room_id IN (SELECT id FROM rooms WHERE cave_id = ?)').run(caveId);
+    db.prepare('DELETE FROM room_pending WHERE room_id IN (SELECT id FROM rooms WHERE cave_id = ?)').run(caveId);
+    db.prepare('DELETE FROM rooms WHERE cave_id = ?').run(caveId);
+    db.prepare('DELETE FROM cave_owners WHERE cave_id = ?').run(caveId);
+    db.prepare('UPDATE caves SET deleted_at = ? WHERE id = ?').run(now, caveId);
+    settle(db, caveId, people, now);
+    db.exec('COMMIT');
+  } catch (e) {
+    db.exec('ROLLBACK');
+    throw e;
+  }
+  return people;
+}
+
+/** A guest takes themself off every room of a cave shared with them (an owner deletes instead: `is-owner`). */
+export function leaveCave(db: Db, memberId: string, caveId: string, now: number): void {
+  if (isOwner(db, memberId, caveId)) fail('is-owner');
+  const left = db.prepare('DELETE FROM room_guests WHERE member_id = ? AND room_id IN (SELECT id FROM rooms WHERE cave_id = ?)').run(memberId, caveId);
+  if (left.changes === 0) fail('not-found');
+  settle(db, caveId, [memberId], now);
 }
 
 /** Whether the member owns any cave (only owners may list members, to pick guests). */
