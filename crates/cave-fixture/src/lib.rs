@@ -20,6 +20,10 @@ pub fn from_shot_list(text: &str, actor: ActorId) -> Result<Document, String> {
     let mut survey: Survey = serde_json::from_value(json.clone()).map_err(|e| e.to_string())?;
     survey.distance_unit = Some(json["unit"].as_str().unwrap_or("m").to_string());
     let name = json["name"].as_str().unwrap_or("");
+    // the file's name is the cave's, not its first trip's
+    if survey.cave_name.is_empty() {
+        survey.cave_name = name.to_string();
+    }
     match json["trips"].as_array().filter(|t| !t.is_empty()) {
         Some(trips) => {
             // a trip with no name of its own takes the file's, and every trip the file's unit
@@ -72,6 +76,17 @@ mod tests {
         let r = resolve(&ex.legs, &ex.fixed);
         assert_eq!(r.loops().count(), 5);
         assert!(!ex.splays.is_empty());
+    }
+
+    #[test]
+    fn the_cave_is_named_after_the_file_not_its_first_trip() {
+        let text = r#"{"unit":"m","name":"Big Hole","trips":[{"name":"FIRST TRIP"}],"shots":[
+            {"from":"A","to":"B","distance":10,"azimuth":0,"inclination":0,"trip":0}]}"#;
+        let doc = from_shot_list(text, ActorId(1)).unwrap();
+        let trip = doc.ids_of(Kind::Trip)[0];
+        let trip = doc.entity(trip).unwrap();
+        assert_eq!(trip.text(cave_doc::Field::TripCaveName), "Big Hole");
+        assert_eq!(trip.text(cave_doc::Field::TripName), "FIRST TRIP");
     }
 
     #[test]
