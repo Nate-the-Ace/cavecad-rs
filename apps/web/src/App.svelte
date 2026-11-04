@@ -11,7 +11,7 @@
   import { recomputeLayers, resetEntrancePick, surface, surfaceKey, syncSurface } from './lib/surface.svelte';
   import { initWorkspace } from './lib/workspace.svelte';
   import { engine, loadEngine, loadBuildInfo, type BuildInfo } from './lib/engine';
-  import { cave, unsaved } from './lib/cave.svelte';
+  import { cave, setUnits, unsaved } from './lib/cave.svelte';
   import { guardUnload } from './lib/files';
   import { installDiagnostics } from './lib/diagnostics';
   import CaveShelf from './components/CaveShelf.svelte';
@@ -55,6 +55,20 @@
       // Recording the key here is safe even while a download runs: syncSurface then waits and runs
       // again when that download ends (its pending flag), so this cave's files are still fetched.
       void syncSurface();
+    });
+  });
+
+  // A cave opened is shown in the unit its notes are written in, so numbers read as they were written
+  // (a cave surveyed in feet shows feet). View → Units still changes it for this visit.
+  let lastUnitsCave = -1;
+  $effect(() => {
+    void cave.opened;
+    if (!engineReady || !cave.hasCave) return;
+    untrack(() => {
+      if (lastUnitsCave === cave.opened) return;
+      lastUnitsCave = cave.opened;
+      const unit = engine.shelfSummary()?.unit;
+      if (unit) setUnits(unit === 'ft' ? 'imperial' : 'metric');
     });
   });
 

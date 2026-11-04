@@ -19,7 +19,7 @@
   let place = $state.raw<Place | null>(null);
   let busy = $state(false);
   /** What is already where the folder would go, waiting for the person to choose. */
-  let found = $state<{ kind: 'hasCave'; file: string; label: string } | { kind: 'notACave'; label: string } | null>(null);
+  let found = $state<{ kind: 'hasCave'; file: string; label: string } | { kind: 'notACave'; label: string } | { kind: 'noPlace' } | null>(null);
 
   $effect(() => {
     if (!cave.newDialog) return;
@@ -72,7 +72,10 @@
     if (!at) {
       // a browser names no place until one is picked; its picker starts in Documents
       at = await choosePlace(null).catch(() => null);
-      if (!at) return;
+      if (!at) {
+        found = { kind: 'noPlace' }; // the picker was closed: say so, and offer the browser instead
+        return;
+      }
       place = at;
     }
     busy = true;
@@ -142,9 +145,14 @@
           {#if browser}<span class="small">The browser can't use Documents itself: choose a folder inside it, such as Documents/Caves, or make one there with New Folder. A folder you make with the cave's name is used as the cave's folder.</span>{/if}
         </div>
       {:else}
-        <p class="hint">This cave is kept in this browser. Export → Project gives you a folder of it; Chrome, Edge and the desktop app can make the folder for you.</p>
+        <p class="hint">This cave is kept in this browser. Home → Project gives you a folder of it; Chrome, Edge and the desktop app can make the folder for you.</p>
       {/if}
-      {#if found?.kind === 'hasCave'}
+      {#if found?.kind === 'noPlace'}
+        <div class="found" role="alert">
+          <p>No folder was chosen. Choose one, or keep the cave in this browser for now: Home → Folder gives it a folder later.</p>
+          <div class="row"><button onclick={choose}>Choose a folder…</button><button class="go" onclick={() => done(startCave(name, unit), true)}>Keep in this browser</button></div>
+        </div>
+      {:else if found?.kind === 'hasCave'}
         <div class="found" role="alert">
           <p>{found.label} already holds a cave ({found.file}).</p>
           <div class="row"><button onclick={choose}>Choose another place</button><button class="go" onclick={openFound} disabled={busy}>Open that cave</button></div>

@@ -38,6 +38,7 @@
   import { copyOp, endCopy, endPaste, pasteOp, startCopy } from '../lib/view-clip.svelte';
   import LayoutGroup from './LayoutGroup.svelte';
   import { surveyGroups } from './survey-groups';
+  import { showInstruments } from '../lib/features';
   import FillTools from './FillTools.svelte';
   import SheetGroup from './SheetGroup.svelte';
   import { INSPECTORS } from '../lib/inspectors';
@@ -49,7 +50,7 @@
   import { fillLabel, isFillKind } from '../lib/fills';
   import { onMount, untrack } from 'svelte';
   import { PANELS, panelState, resetLayout, showPanel, surveyLayout, togglePanel, workLayout } from '../lib/workspace.svelte';
-  import { Check, Trash2, Library, FilePlus, FolderOpen, FolderTree, Save, Ruler, Footprints, Scissors, Map as MapIcon, Terminal, LayoutDashboard, Activity, Shapes, Table2, BookOpen, ScanLine, FileText, ChevronDown, PanelTop, Mountain, SlidersHorizontal, Crosshair, Tent, Lock, Cloud, MountainSnow } from '@lucide/svelte';
+  import { Check, Trash2, Library, FilePlus, FolderOpen, FolderTree, Save, Ruler, Footprints, Scissors, Map as MapIcon, Terminal, LayoutDashboard, Activity, Shapes, Table2, BookOpen, ScanLine, FileText, ChevronDown, PanelTop, Mountain, SlidersHorizontal, Crosshair, Tent, Lock, Cloud } from '@lucide/svelte';
   import { entrancePick, surface } from '../lib/surface.svelte';
 
   /**
@@ -79,8 +80,8 @@
 
   const own: Record<string, Group[]> = {
     Home: [
-      { name: 'File', items: [{ label: 'Caves', icon: Library, run: () => (shelf.open = true) }, { label: 'New', icon: FilePlus, run: () => (cave.newDialog = true) }, { label: 'Open', icon: FolderOpen, run: open }, { label: 'Save', icon: Save, run: save }, { label: 'Save as', icon: Save, run: saveAs }, { label: 'Folder', icon: FolderTree, run: () => run(caveFolder()), pressed: () => folder.label !== '' }, { label: 'Scans in file', icon: ScanLine, run: () => setOption('saveScans', !option('saveScans', true)), pressed: () => option('saveScans', true) }, { label: 'Surface in file', icon: MountainSnow, run: () => setOption('saveSurface', !option('saveSurface', true)), pressed: () => option('saveSurface', true) }] },
-      { name: 'Project files', items: [], custom: ProjectFiles },
+      { name: 'File', items: [{ label: 'Caves', icon: Library, run: () => (shelf.open = true) }, { label: 'New', icon: FilePlus, run: () => (cave.newDialog = true) }, { label: 'Open', icon: FolderOpen, run: open }, { label: 'Save a copy', icon: Save, title: 'Your cave is kept as you work. This saves a copy of it as a CaveCAD file wherever you choose.', run: saveAs }, { label: 'Folder', icon: FolderTree, title: "Give the cave a folder on this computer (or show the one it has)", run: () => run(caveFolder()), pressed: () => folder.label !== '' }] },
+      { name: 'Import and export', items: [], custom: ProjectFiles },
       {
         name: 'Surface',
         items: [
@@ -102,7 +103,8 @@
       { name: 'Symbols', items: [{ label: 'Symbols', icon: Shapes, run: () => showPanel('symbols'), pressed: () => !!panelState.visible.symbols }] },
       { name: 'Area fill', items: [], custom: FillTools },
     ],
-    Survey: surveyGroups({ inCave: surveyLayout }),
+    // connecting an instrument is future work: its tab shows only where showInstruments says so
+    ...(showInstruments ? { Survey: surveyGroups({ inCave: surveyLayout }) } : {}),
     Annotation: [
       { name: 'Notes and leaders', items: [], custom: DrawTools, props: { group: 'Annotation' } },
     ],
@@ -113,13 +115,13 @@
       { name: 'Save', items: [], custom: SheetGroup, props: { part: 'save' } },
     ],
     View: [
-      { name: 'Panels', items: [panelItem('map', MapIcon), panelItem('profile', Activity), panelItem('section', Scissors), panelItem('symbols', Shapes), panelItem('patterns', Shapes), panelItem('stations', Table2), panelItem('notebook', BookOpen), panelItem('survey', Crosshair), panelItem('scans', ScanLine), panelItem('sheet', FileText), panelItem('console', Terminal), panelItem('rooms', Cloud)] },
+      { name: 'Panels', items: [panelItem('map', MapIcon), panelItem('profile', Activity), panelItem('section', Scissors), panelItem('symbols', Shapes), panelItem('patterns', Shapes), panelItem('stations', Table2), panelItem('notebook', BookOpen), ...(showInstruments ? [panelItem('survey', Crosshair)] : []), panelItem('scans', ScanLine), panelItem('sheet', FileText), panelItem('console', Terminal), panelItem('rooms', Cloud)] },
       { name: 'Units', items: [{ label: 'Metric', icon: Ruler, run: () => setUnits('metric'), pressed: () => cave.units === 'metric' }, { label: 'Imperial', icon: Footprints, run: () => setUnits('imperial'), pressed: () => cave.units === 'imperial' }] },
       { name: 'Theme', items: [], custom: ThemeGroup },
       { name: 'Drawing scale', items: [], custom: DrawingScale },
       { name: 'Rock halo', items: [{ label: 'Rock halo', icon: Mountain, run: () => setOption('halo', !option('halo', true)), pressed: () => option('halo', true) }, { label: 'Settings', icon: SlidersHorizontal, run: () => setPick('halo', 'halo'), pressed: () => cave.pick.kind === 'halo' }] },
       { name: 'Map view', items: [{ label: 'Lock view', icon: Lock, run: () => setOption('mapLock', !option('mapLock', false)), pressed: () => option('mapLock', false) }] },
-      { name: 'Layout', items: [{ label: 'Reset', icon: LayoutDashboard, run: resetLayout }, { label: 'In cave', icon: Tent, run: surveyLayout }, { label: 'Scans', icon: ScanLine, run: workLayout }] },
+      { name: 'Layout', items: [{ label: 'Reset', icon: LayoutDashboard, run: resetLayout }, ...(showInstruments ? [{ label: 'In cave', icon: Tent, run: surveyLayout }] : []), { label: 'Scans', icon: ScanLine, run: workLayout }] },
       { name: 'Saved layouts', items: [], custom: LayoutGroup },
       { name: 'Ribbon settings', items: [{ label: 'Compact layout', icon: PanelTop, run: () => setCompactRibbon(!cave.compactRibbon), pressed: () => cave.compactRibbon }] },
     ],

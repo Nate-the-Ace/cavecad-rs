@@ -18,6 +18,7 @@ import { syncedHash } from './device-key';
 function landed(name: string, home: Home | null = null) {
   forgetFile();
   setHome(home);
+  shelf.sample = '';
   cave.fileName = home?.file ?? `${name}${EXT}`;
   cave.name = name;
   cave.hasCave = true;
@@ -118,7 +119,7 @@ export async function openFromServer(roomId: string): Promise<'waiting' | string
   return null;
 }
 
-/** Opens one of the sample caves (a working copy; nothing is kept unless it is saved). */
+/** Opens one of the sample caves. Nothing is kept until it is changed: the first change makes it the person's own copy on the shelf. */
 export async function openSample(id: string): Promise<string | null> {
   await flush();
   if (!confirmDiscard()) return null;
@@ -128,6 +129,7 @@ export async function openSample(id: string): Promise<string | null> {
   if (r.startsWith('error')) return r.replace(/^error: /, '');
   shelf.currentId = '';
   landed(d.title.replace(/ \(.*\)$/, ''));
+  shelf.sample = id;
   noRoomForThisCave(); // a sample never gets a room
   markSaved();
   return null;
@@ -140,7 +142,8 @@ export async function openSample(id: string): Promise<string | null> {
 export async function newTripOnSample(id: string, station: string): Promise<string | null> {
   const problem = await openSample(id);
   if (problem) return problem;
-  if (!(await storeOpenCave(`sample:${id}`))) return shelf.problem || 'The sample could not be kept.';
+  // always a new copy: an earlier copy of this sample is the person's own work and is never written over
+  if (!(await storeOpenCave())) return shelf.problem || 'The sample could not be kept.';
   return startTrip(station);
 }
 

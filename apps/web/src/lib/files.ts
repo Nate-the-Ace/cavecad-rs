@@ -482,7 +482,7 @@ export async function caveFolder(): Promise<string | null> {
   if (!cave.hasCave) return 'No cave is open.';
   const have = currentHome();
   if (have) return (await revealHome(have)) ? null : `This cave's folder is ${have.label}`;
-  if (!canMakeFolders()) return 'This browser cannot make folders. Use Export → Project for a folder of the cave, or open CaveCAD in Chrome, Edge or the desktop app.';
+  if (!canMakeFolders()) return 'This browser cannot make folders. Use Home → Project for a folder of the cave, or open CaveCAD in Chrome, Edge or the desktop app.';
   const place = await choosePlace(null);
   if (!place) return null;
   const name = cave.name || stem(cave.fileName);

@@ -93,7 +93,9 @@
 
   const length = (m: number) => formatLength(m, cave.units, 0);
   const when = (ms: number) => new Date(ms).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
-  const health = (s: CaveSummary) => (s.empty ? 'nothing surveyed yet' : s.worst_percent === null ? 'no loops closed' : `worst loop ${s.worst_percent.toFixed(1)}%`);
+  const health = (s: CaveSummary) => (s.empty ? 'nothing surveyed yet' : s.worst_percent === null ? 'no survey loops yet' : `worst loop ${s.worst_percent.toFixed(1)}% off`);
+  /** What the loop number means, on hover. */
+  const HEALTH_HINT = 'Where the survey comes back round to a station it already reached, the two ways never meet exactly. This is how far off the worst loop is, as a share of its length: under about 1% is good; much more usually means a misread or mistyped shot.';
 
   async function run(job: Promise<string | null>) {
     const problem = await job;
@@ -237,9 +239,9 @@
             <p class="stored">Open it to bring it onto this computer. It stays in step with your other devices.</p>
           {/if}
         {:else if (record || sample || remote) && summary}
-          <h2>{summary.name}</h2>
+          <h2>{sample ? sample.title.replace(/ \(.*\)$/, '') : summary.name}</h2>
           <p class="stats">
-            {#if summary.empty}Nothing surveyed yet.{:else}{length(summary.length_m)} surveyed · {summary.stations} stations · {summary.trips.length} trip{summary.trips.length === 1 ? '' : 's'}{#if summary.depth_m !== null && summary.depth_m > 0} · {length(summary.depth_m)} deep{/if} · {health(summary)}{/if}
+            {#if summary.empty}Nothing surveyed yet.{:else}{length(summary.length_m)} surveyed · {summary.stations} stations · {summary.trips.length} trip{summary.trips.length === 1 ? '' : 's'}{#if summary.depth_m !== null && summary.depth_m > 0}{' · '}{length(summary.depth_m)} deep{/if} · <span class="health" title={HEALTH_HINT}>{health(summary)}</span>{/if}
           </p>
           {#if remote}
             <p class="stored">On the CaveCAD server, from one of your other devices · made {when(remote.createdAt)}. Open it to bring it onto this computer; it stays in step with your other devices.</p>
@@ -251,7 +253,7 @@
               <button onclick={() => keepHere(record!)}>Keep in this browser</button>
             </div>
           {:else if record?.home}<p class="stored" title={record.home.label}>In its folder, {record.home.label} · last saved {when(record.updated)}</p>
-          {:else if record}<p class="stored">Kept in this browser · last saved {when(record.updated)}</p>{:else}<p class="stored">A sample cave. Open it to look around, or start a trip on it (it is then kept in this browser as your own copy).</p>{/if}
+          {:else if record}<p class="stored">Kept in this browser · last saved {when(record.updated)}</p>{:else}<p class="stored">A sample cave. Open it to look around. Your first change makes it your own copy, kept in this browser; the sample stays as it is.</p>{/if}
           {#if summary.ends.length}
             <div class="ends">
               <span class="lead">Open ends</span>
@@ -324,6 +326,7 @@
   .detail { flex: 1; min-width: 0; padding: 16px 20px; display: flex; flex-direction: column; gap: 8px; }
   h2 { margin: 0; font-size: 22px; }
   .stats { margin: 0; color: var(--text); font-size: 13px; }
+  .health { text-decoration: underline dotted; cursor: help; }
   .lost { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 12px; color: var(--danger); }
   .lost span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .stored { margin: 0; color: var(--muted); font-size: 11px; }
