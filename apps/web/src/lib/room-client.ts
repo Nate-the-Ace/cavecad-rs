@@ -145,6 +145,8 @@ export const QUARANTINE_INFO = 'Some edits made offline were re-sent from this d
 export const NEW_ROOM_INFO = "This cave's room belonged to another account or device; started a new room";
 /** Why sync stops for a member taken off every room of the cave. */
 export const REMOVED = "You're no longer on this cave's guest list. Your copy stays on this computer but gets no new edits.";
+/** Why sync stops for a cave its owner deleted (the Cave Shelf forgets the copy). */
+export const DELETED = 'This cave was deleted by its owner, so it no longer syncs.';
 /** Answers on a post that mean "never", not "not now": the entry is kept, and sync stops with `error`. */
 const REFUSALS = new Set([400, 403, 404, 409, 410, 413, 422]);
 
@@ -209,11 +211,16 @@ async function request<T>(o: ServerAccess, method: string, path: string, body?: 
   return out;
 }
 
-/** The member's caves, and those they were taken off (`gone`). */
+/** The member's caves, those they were taken off (`gone`), and those of them an owner deleted (`deleted`, also gone). */
 const listing = async (o: ServerAccess) => {
-  const r = await request<{ caves: ListedCave[]; gone?: string[] }>(o, 'GET', '/api/caves');
-  return { caves: r.caves, gone: r.gone ?? [] };
+  const r = await request<{ caves: ListedCave[]; gone?: string[]; deleted?: string[] }>(o, 'GET', '/api/caves');
+  return { caves: r.caves, gone: r.gone ?? [], deleted: r.deleted ?? [] };
 };
+
+/** Deletes one of the member's own caves from the server for good, for everyone in it. */
+export const deleteServerCave = (o: ServerAccess, cave: string) => request<{ ok: true }>(o, 'DELETE', `/api/caves/${cave}`);
+/** Takes the member off a cave someone shared with them. */
+export const leaveServerCave = (o: ServerAccess, cave: string) => request<{ ok: true }>(o, 'POST', `/api/caves/${cave}/leave`);
 const listCaves = async (o: ServerAccess) => (await listing(o)).caves;
 
 /** One JSON request to the member's part of the server, with this device's headers (for the Rooms panel). */
@@ -327,8 +334,14 @@ function readOpenEntry(line: StreamLine): { c: string; ops: string } {
  * cannot be opened is still listed (with no label): opening it says why.
  */
 export async function listMyCaves(o: ServerAccess): Promise<ServerCave[]> {
+  return (await listMyCavesAndDeleted(o)).caves;
+}
+
+/** `listMyCaves`, and the ids of caves the member was in that an owner deleted (their copies are to be forgotten). */
+export async function listMyCavesAndDeleted(o: ServerAccess): Promise<{ caves: ServerCave[]; deleted: string[] }> {
   const out: ServerCave[] = [];
-  for (const c of await listCaves(o)) {
+  const got = await listing(o);
+  for (const c of got.caves) {
     if (storageOf(c) === 'open') {
       out.push({ id: c.id, createdAt: c.createdAt, hasKey: true, open: true, label: c.label?.locked ?? null, role: c.role ?? 'owner', ownerName: c.ownerName ?? '' });
       continue;
@@ -344,7 +357,7 @@ export async function listMyCaves(o: ServerAccess): Promise<ServerCave[]> {
     }
     out.push({ id: c.id, createdAt: c.createdAt, hasKey: !!c.wrapped, open: false, label, role: c.role ?? 'owner', ownerName: c.ownerName ?? '' });
   }
-  return out;
+  return { caves: out, deleted: got.deleted };
 }
 
 /**
@@ -659,9 +672,10 @@ export class RoomClient {
    * cave is not this member's, `waiting` when it is locked and has no key here yet.
    */
   private async loadRoom(): Promise<'ok' | 'waiting' | 'unknown'> {
-    const { caves, gone } = await listing(this.o);
+    const { caves, gone, deleted } = await listing(this.o);
     this.alive();
     const mine = caves.find((c) => c.id === this.cave);
+    if (!mine && deleted.includes(this.cave)) throw new Refused(DELETED); // never made again as a new room
     if (!mine && gone.includes(this.cave)) throw new Refused(REMOVED);
     if (!mine) return 'unknown';
     this.setRole(mine.role ?? 'owner');
@@ -714,6 +728,7 @@ export class RoomClient {
     this.alive();
     const mine = got.caves.find((c) => c.id === this.cave);
     if (mine) this.setRole(mine.role ?? 'owner');
+    else if (got.deleted.includes(this.cave)) throw new Refused(DELETED);
     else if (got.gone.includes(this.cave)) throw new Refused(REMOVED);
   }
 

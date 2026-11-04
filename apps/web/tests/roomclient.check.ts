@@ -6,8 +6,8 @@ import { openDb } from '../../server/src/db.ts';
 import { handleApi } from '../../server/src/api.ts';
 import { lock, makeCaveKey, makeDeviceKeys, wrapCaveKey } from '../src/lib/room-crypto.ts';
 import { createInvite } from '../../server/src/members.ts';
-import { addRoom, removeGuest, setGuest } from '../../server/src/rooms.ts';
-import { RoomClient, QUARANTINE_INFO, REMOVED, type Role, downloadCave, handOverKeys, listMyCaves, type ServerAccess, type CaveEngine, type KeySeen, type Pending, type RoomClientOptions, type RoomStatus } from '../src/lib/room-client.ts';
+import { addRoom, deleteCave, removeGuest, setGuest } from '../../server/src/rooms.ts';
+import { RoomClient, DELETED, QUARANTINE_INFO, REMOVED, type Role, downloadCave, handOverKeys, listMyCaves, type ServerAccess, type CaveEngine, type KeySeen, type Pending, type RoomClientOptions, type RoomStatus } from '../src/lib/room-client.ts';
 
 let bad = 0;
 const ok = (c: boolean, m: string) => { if (!c) { bad++; console.log('FAIL', m); } };
@@ -781,6 +781,17 @@ const storageOf = (id: string) => (db.prepare('SELECT storage FROM caves WHERE i
   ok(again.at(-1) === REMOVED, `G5: reopening a cave one was taken off stops with the note (${again.join(';')})`);
   ac2.stop();
   oc.stop();
+
+  // The owner deletes the cave: a device opening its old copy stops with the deleted note and never makes it again.
+  deleteCave(db, nathan, shared, Date.now());
+  const gone: string[] = [];
+  const old = fakeEngine();
+  old.setRoomId(shared);
+  const oc4 = client(old, ownerDev, [], { reasons: gone });
+  await oc4.open();
+  ok(gone.at(-1) === DELETED, `G6: an old copy of a deleted cave stops with the note (${gone.join(';')})`);
+  ok(old.roomId() === shared && !(await listMyCaves({ base, fetch, device: ownerDev, loadKeySeen: async () => null, saveKeySeen: async () => {} })).some((c) => c.id === shared), 'G6: and no new room is made of it');
+  oc4.stop();
 }
 
 server.close();

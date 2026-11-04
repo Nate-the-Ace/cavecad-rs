@@ -12,7 +12,7 @@
   import { engine, loadEngine, type CaveSummary } from '../lib/engine';
   import { openCave } from '../lib/files';
   import { openAtTrip, newTripOn, newTripOnSample, openKept, openSample } from '../lib/caves';
-  import { openServerCave, refreshServerCaves, serverCaves } from '../lib/server-caves.svelte';
+  import { deleteEverywhere, leaveShared, openServerCave, refreshServerCaves, serverCaves, type OtherCave } from '../lib/server-caves.svelte';
   import { account } from '../lib/account.svelte';
   import { dxfOf, forgetCave, homeOf, loadShelf, setFavorite, setRecordHome, setStartup, shelf, summaryOf, type ShelfRecord } from '../lib/shelf.svelte';
   import { findFolder, reachable, revealHome } from '../lib/cavefolder.svelte';
@@ -168,11 +168,52 @@
     URL.revokeObjectURL(url);
   }
 
-  async function forget(id: string) {
-    const rec = shelf.records.find((r) => r.id === id);
-    if (!rec || !window.confirm(`Take “${rec.name}” off this shelf? The copy this browser keeps is deleted. A file you saved is not touched.`)) return;
-    await forgetCave(id);
-    if (picked === id) picked = '';
+  /**
+   * Removing a cave, one at a time and on purpose: a kept cave can come off this computer only; a cave of the member's
+   * own on the server can be deleted everywhere (after typing its name); a cave shared with them can be left.
+   */
+  let removing = $state<{ rec: ShelfRecord | null; server: OtherCave | null; step: 'choose' | 'delete' } | null>(null);
+  let typed = $state('');
+  let removeBusy = $state(false);
+  let removeProblem = $state('');
+  /** The cave on the server for a kept record, when it has one. */
+  const onServer = (rec: ShelfRecord | null) => (rec?.roomId ? (serverCaves.all.find((c) => c.id === rec.roomId) ?? null) : null);
+  /** What the person types to delete: the cave's name, or DELETE when the server has no readable name. */
+  const removingName = $derived(removing ? (removing.rec?.name ?? removing.server?.name ?? '') : '');
+  const typedOk = $derived(typed.trim().toLowerCase() === (removingName || 'delete').trim().toLowerCase());
+
+  function remove(rec: ShelfRecord | null, server: OtherCave | null = onServer(rec)) {
+    typed = '';
+    removeProblem = '';
+    removing = { rec, server, step: 'choose' };
+  }
+  async function removeHere() {
+    const rec = removing?.rec;
+    if (!rec) return;
+    await forgetCave(rec.id);
+    if (picked === rec.id) picked = '';
+    removing = null;
+  }
+  async function deleteIt() {
+    const c = removing?.server;
+    if (!c || !typedOk) return;
+    removeBusy = true;
+    removeProblem = await deleteEverywhere(c.id);
+    removeBusy = false;
+    if (removeProblem) return;
+    if (removing?.rec && picked === removing.rec.id) picked = '';
+    if (picked === `server:${c.id}`) picked = '';
+    removing = null;
+  }
+  async function leaveIt() {
+    const c = removing?.server;
+    if (!c) return;
+    removeBusy = true;
+    removeProblem = await leaveShared(c.id);
+    removeBusy = false;
+    if (removeProblem) return;
+    if (picked === `server:${c.id}` || (removing?.rec && picked === removing.rec.id)) picked = '';
+    removing = null;
   }
 
   /** The right-click menu on a kept cave: the same things as the buttons beside it. */
@@ -191,12 +232,12 @@
       ...(rec.home?.path && isDesktop() ? [{ label: 'Show its folder', run: () => void reveal(rec) }] : []),
       ...(rec.home ? [{ label: 'Find its folder…', run: () => void find(rec) }] : []),
       'separator',
-      { label: 'Forget…', danger: true, run: () => void forget(id) },
+      { label: 'Remove…', danger: true, run: () => remove(rec) },
     ]);
   }
 
   function key(e: KeyboardEvent) {
-    if (e.key === 'Escape') shelf.open = false;
+    if (e.key === 'Escape') removing ? (removing = null) : (shelf.open = false);
     else if (e.key === 'Enter' && !(e.target as HTMLElement).closest('input,button,textarea')) void open();
   }
 
@@ -206,6 +247,45 @@
 {#if shelf.open}
   <div class="veil" role="presentation" onclick={close}>
     <div class="box" role="dialog" aria-modal="true" aria-label="Caves" tabindex="-1" onclick={(e) => e.stopPropagation()} onkeydown={key}>
+      {#if removing}
+        {@const c = removing.server}
+        {@const name = removingName || 'this cave'}
+        <div class="remove-veil" role="presentation" onclick={() => (removing = null)}></div>
+        <div class="remove" role="alertdialog" aria-modal="true" aria-label="Remove {name}">
+          {#if removing.step === 'choose'}
+            <h3>Remove “{name}”</h3>
+            {#if removing.rec}
+              <div class="choice">
+                <button onclick={() => void removeHere()}>Remove from this computer</button>
+                <p>{c ? 'It stays on the CaveCAD server and your other devices, and shows here again under “On your other devices”.' : 'The copy this browser keeps is deleted. A file you saved is not touched.'}</p>
+              </div>
+            {/if}
+            {#if c?.role === 'owner'}
+              <div class="choice">
+                <button class="danger" disabled={c.id === engine.roomId()} onclick={() => ((removing!.step = 'delete'), (typed = ''))}>Delete everywhere…</button>
+                <p>{c.id === engine.roomId() ? 'It is open now: open another cave first, then delete this one.' : 'Deletes it for good, from the server, all your devices and anyone you shared it with.'}</p>
+              </div>
+            {:else if c}
+              <div class="choice">
+                <button class="danger" onclick={() => void leaveIt()} disabled={removeBusy}>Leave this cave</button>
+                <p>{c.ownerName || 'Its owner'} shared it with you. Leaving takes it off your devices; it carries on for them. They can share it with you again.</p>
+              </div>
+            {/if}
+          {:else}
+            <h3>Delete “{name}” everywhere?</h3>
+            <p>This deletes the cave for good: from the CaveCAD server, from all your devices, and from everyone you shared it with. It cannot be undone. Files you saved or exported are not touched.</p>
+            <label class="confirm">Type {removingName ? 'the cave’s name' : 'DELETE'} to confirm
+              <!-- svelte-ignore a11y_autofocus: the one thing to do here is type -->
+              <input bind:value={typed} placeholder={removingName || 'DELETE'} autofocus onkeydown={(e) => e.key === 'Enter' && typedOk && void deleteIt()} />
+            </label>
+          {/if}
+          {#if removeProblem}<p class="err" role="alert">{removeProblem}</p>{/if}
+          <div class="row">
+            <button onclick={() => (removing = null)}>Cancel</button>
+            {#if removing.step === 'delete'}<button class="danger solid" onclick={() => void deleteIt()} disabled={!typedOk || removeBusy}>{removeBusy ? 'Deleting…' : 'Delete for good'}</button>{/if}
+          </div>
+        </div>
+      {/if}
       <div class="rail">
         <input type="search" placeholder="Search caves" bind:value={search} aria-label="Search caves" />
         <div class="list" role="listbox" aria-label="Caves">
@@ -311,7 +391,8 @@
         <div class="spacer"></div>
         <div class="foot">
           <label><input type="checkbox" checked={shelf.startup} onchange={(e) => setStartup(e.currentTarget.checked)} /> Open this window at startup</label>
-          {#if record}<button onclick={() => void forget(record!.id)} title="Take this cave off the shelf on this device">Forget…</button>{/if}
+          {#if record}<button onclick={() => remove(record)} title="Take this cave off this computer, or delete it everywhere">Remove…</button>
+          {:else if remote}<button onclick={() => remove(null, remote)} title={remote.role === 'owner' ? 'Delete this cave everywhere' : 'Leave this shared cave'}>{remote.role === 'owner' ? 'Delete…' : 'Leave…'}</button>{/if}
           <span class="grow"></span>
           <button onclick={newTrip} disabled={(!record && !sample) || !summary} title="Open the cave and start a new trip on it">{from ? `New trip from ${from}` : 'New trip'}</button>
           <button class="go" onclick={open} disabled={(!record && !sample && !remote) || !!serverCaves.opening}>{remote && serverCaves.opening === remote.id ? 'Fetching…' : remote && serverCaves.waitingFor === remote.id ? 'Waiting…' : 'Open'}</button>
@@ -368,4 +449,15 @@
   button { font: inherit; font-size: 13px; padding: 6px 12px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel-2); color: var(--text); cursor: pointer; }
   button:disabled { opacity: 0.5; cursor: default; }
   button.go { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .box { position: relative; }
+  .remove-veil { position: absolute; inset: 0; background: rgba(0, 0, 0, 0.45); z-index: 2; }
+  .remove { position: absolute; z-index: 3; left: 50%; top: 50%; transform: translate(-50%, -50%); width: min(440px, 90%); background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px; display: flex; flex-direction: column; gap: 10px; box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4); }
+  .remove h3 { margin: 0; font-size: 15px; }
+  .remove p { margin: 0; font-size: 12px; color: var(--muted); }
+  .choice { display: flex; flex-direction: column; gap: 4px; align-items: flex-start; }
+  .confirm { display: flex; flex-direction: column; gap: 4px; font-size: 12px; }
+  .confirm input { font: inherit; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel-2); color: var(--text); }
+  .remove .row { display: flex; justify-content: flex-end; gap: 8px; }
+  button.danger { color: var(--danger); border-color: var(--danger); }
+  button.danger.solid { background: var(--danger); color: #fff; }
 </style>
