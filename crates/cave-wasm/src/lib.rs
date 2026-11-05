@@ -606,6 +606,53 @@ pub fn hopped_lines(adjusted: bool) -> String {
     })
 }
 
+/// Drawings nothing can show because a station they hang on is gone (JSON array of ids).
+#[wasm_bindgen]
+pub fn hidden_drawings(adjusted: bool) -> String {
+    DOC.with(|d| {
+        let ids: Vec<String> = d
+            .borrow()
+            .as_ref()
+            .map(|doc| cave_scene::hidden_drawings(doc, adjusted))
+            .unwrap_or_default()
+            .into_iter()
+            .map(|id| id.to_string())
+            .collect();
+        serde_json::to_string(&ids).unwrap_or_else(|_| "[]".into())
+    })
+}
+
+/// Deletes the drawings that are hidden because their stations are gone: one undoable edit per view
+/// they were drawn in, kept in that view's history. Returns `ok <how many>` or `error: ...`.
+#[wasm_bindgen]
+pub fn delete_hidden_drawings(adjusted: bool) -> String {
+    let result = DOC.with(|d| {
+        let mut slot = d.borrow_mut();
+        let doc = slot.as_mut().ok_or("no cave is open")?;
+        let mut by_view: std::collections::BTreeMap<String, Vec<cave_doc::Action>> =
+            Default::default();
+        let mut n = 0;
+        for line in cave_scene::hidden_drawings(doc, adjusted) {
+            let view = doc
+                .entity(line)
+                .map(|e| e.text(cave_doc::Field::FeatureView))
+                .unwrap_or_default();
+            let actions = cave_draw::remove_stroke(doc, line).map_err(|e| format!("{e:?}"))?;
+            by_view.entry(view).or_default().extend(actions);
+            n += 1;
+        }
+        for (view, actions) in by_view {
+            let edit = doc.edit(actions).map_err(|e| format!("{e:?}"))?;
+            record_edit(&view, &edit);
+        }
+        Ok::<usize, String>(n)
+    });
+    match result {
+        Ok(n) => format!("ok {n}"),
+        Err(e) => format!("error: {e}"),
+    }
+}
+
 /// Re-attaches every map line that hops levels to the level its first point is on. One
 /// undoable edit. Returns `ok <how many>` or `error: ...`.
 #[wasm_bindgen]
@@ -2212,7 +2259,7 @@ pub fn scan_view_stations(view: &str, adjusted: bool) -> String {
     })
 }
 
-/// A scan's matches on a trip in a view: JSON `{mode, anchors: [{px, py, station, label, x, y}]}`,
+/// A scan's matches on a trip in a view: JSON `{mode, drift, anchors: [{px, py, station, label, x, y}]}`,
 /// or `null`. A match to a station has its `station` id and `label`; a match to a point has `x`, `y`.
 #[wasm_bindgen]
 pub fn scan_alignment(trip: &str, view: &str, path: &str) -> String {
@@ -2229,11 +2276,14 @@ pub fn scan_alignment(trip: &str, view: &str, path: &str) -> String {
     struct Out {
         mode: cave_scans::FitMode,
         anchors: Vec<A>,
+        /// How far the survey has bent under the scan since its matches were made or kept (metres), if known.
+        drift: Option<f64>,
     }
     DOC.with(|d| {
         let slot = d.borrow();
         let out = parse_id(trip).zip(slot.as_ref()).and_then(|(t, doc)| {
             cave_scans::alignment(doc, t, view, path).map(|al| Out {
+                drift: al.drift(&raw_positions(doc, view)),
                 mode: al.mode,
                 anchors: al
                     .anchors
@@ -2291,7 +2341,33 @@ pub fn scan_add_anchor(
         },
     };
     scoped_edit("scans", |doc| {
-        cave_scans::add_anchor(doc, trip, view, path, px, py, target)
+        // a station match remembers where the station is now, as measured, so a later survey change shows
+        let seen = match target {
+            cave_scans::Target::Station { id } => raw_positions(doc, view).get(&id).copied(),
+            cave_scans::Target::Point { .. } => None,
+        };
+        cave_scans::add_anchor(doc, trip, view, path, px, py, target, seen)
+    })
+}
+
+/// Where each station is in `view` as measured (not adjusted): what a match remembers, and what its drift is
+/// measured against, so adjusting the survey is not drift and editing a shot is.
+fn raw_positions(doc: &cave_doc::Document, view: &str) -> cave_scans::Positions {
+    view_positions(doc, view, false)
+        .into_iter()
+        .map(|(id, _, at)| (id, at))
+        .collect()
+}
+
+/// Keeps a scan's matches as right against the survey as it is now (its drift starts again from zero).
+#[wasm_bindgen]
+pub fn scan_keep_matches(trip: &str, view: &str, path: &str) -> String {
+    let Some(trip) = parse_id(trip) else {
+        return "error: no such trip".into();
+    };
+    scoped_edit("scans", |doc| {
+        let positions = raw_positions(doc, view);
+        cave_scans::keep_matches(doc, trip, view, path, &positions)
     })
 }
 

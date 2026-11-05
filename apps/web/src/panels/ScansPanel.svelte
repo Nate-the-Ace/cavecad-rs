@@ -1,11 +1,11 @@
 <script lang="ts">
-  // The Scans panel: the person's scanned field-book pages and sketches, browsed from a folder on this
-  // machine and shown large with zoom and pan. A scan can be linked to a trip: the link is just its path
-  // (kept in the cave, undoable here), and the Notebook and this panel share the current trip, so turning
-  // to a trip's page brings up its scan and picking a linked scan turns the notebook to its trip. The
-  // pictures are never uploaded and never go into the cave.
+  // The Scans panel: the cave's scanned field-book pages and sketches, shown large with zoom and pan. Pages added
+  // here (Add scans…, or dropped) are uploaded and kept with the cave on the CaveCAD server, so every device and
+  // everyone the cave is shared with sees them (`cave-pages.svelte.ts`). A scan can be linked to a trip: the link
+  // is just its path (kept in the cave, undoable here), and the Notebook and this panel share the current trip, so
+  // turning to a trip's page brings up its scan and picking a linked scan turns the notebook to its trip.
   import { untrack } from 'svelte';
-  import { ChevronDown, ChevronRight, FolderOpen, Folder, Link2, Unlink2, BookOpen, Check, Crosshair, Scissors, X } from '@lucide/svelte';
+  import { ChevronDown, ChevronRight, ImagePlus, Folder, Link2, Unlink2, BookOpen, Check, Crosshair, Scissors, X } from '@lucide/svelte';
   import PanelUndo from '../components/PanelUndo.svelte';
   import ScanViewer from '../components/ScanViewer.svelte';
   import { cave, changed, clearPick, option, setOption, setPick } from '../lib/cave.svelte';
@@ -13,7 +13,9 @@
   import { formatLength } from '../lib/units';
   import type { TripChoice } from '../lib/notebook';
   import { countDone, filesUnder, foldersOf, treeRows, withoutComplete, type TreeRow } from '../lib/scan-tree';
-  import { addFiles, align, dropItems, trimming, checkRemembered, have, forgetCopy, pickFolder, revealReal, realRoot, setRealRoot, reopenRemembered, scans, select, setFolders, toggleFolder } from '../lib/scans.svelte';
+  import { addFiles, addScans, align, dropItems, trimming, checkRemembered, have, forgetPage, notUploaded, refreshCavePages, revealReal, realRoot, setRealRoot, reopenRemembered, scans, select, setFolders, toggleFolder, uploadLocal } from '../lib/scans.svelte';
+  import { pages, removePage } from '../lib/cave-pages.svelte';
+  import { room } from '../lib/room.svelte';
   import { showPanel } from '../lib/workspace.svelte';
   import { isDesktop } from '../lib/desktop';
   import { cleanRoot, copyPathHint, fullPath, osOf, revealHint, revealLabel } from '../lib/scan-location';
@@ -84,6 +86,11 @@
   let stations = $state<{ id: string; station: string }[]>([]);
   let chosen = $state('');
   let placed = $state<{ used: number; rms: number } | null>(null);
+  /** How far the survey has bent under each of this trip's pages since it was matched (metres), by path. */
+  let drifts = $state<Record<string, number>>({});
+  /** Drift worth telling: about a foot. Less is the slack of a hand-drawn sketch. */
+  const DRIFT_M = 0.3;
+  const drifted = (path: string) => (drifts[path] ?? 0) >= DRIFT_M;
   let savedTrim = $state<[number, number][] | null>(null);
   loadEngine().then(() => (ready = true));
   checkRemembered();
@@ -105,6 +112,12 @@
       al = scans.selected && cave.trip ? engine.scanAlignment(cave.trip, align.view, scans.selected) : null;
       const p = engine.scanPlacements(align.view, cave.adjusted).find((x) => x.trip === cave.trip && x.path === scans.selected);
       placed = p ? { used: p.used, rms: p.rms } : null;
+      const trip = cave.trip;
+      drifts = Object.fromEntries(
+        links
+          .filter((l) => l.trip === trip)
+          .map((l) => [l.path, engine.scanAlignment(trip, align.view, l.path)?.drift ?? 0] as const),
+      );
       savedTrim = scans.selected && cave.trip ? engine.scanTrim(cave.trip, align.view, scans.selected) : null;
     });
   });
@@ -317,8 +330,42 @@
     changed();
   }
 
+  /** The selected page's matches are still right: they remember the survey as it is now. */
+  function keepMatches() {
+    if (!scans.selected || !cave.trip) return;
+    const r = engine.scanKeepMatches(cave.trip, align.view, scans.selected);
+    scans.message = r.startsWith('error') ? r.replace(/^error: /, '') : '';
+    changed();
+  }
+
   async function open() {
-    await pickFolder();
+    await addScans();
+  }
+
+  // The cave's pages on the server: read when a cave opens or its room comes up, and every half minute while the
+  // panel is open, so pages added on another device or by someone the cave is shared with show up.
+  $effect(() => {
+    void cave.opened;
+    void room.status;
+    untrack(() => void refreshCavePages());
+    const t = setInterval(() => void refreshCavePages(), 30_000);
+    return () => clearInterval(t);
+  });
+  /** Pages shown here that the cave does not keep yet (read from a folder on this computer). */
+  const localOnly = $derived.by(() => {
+    void scans.paths.length;
+    void pages.list;
+    return notUploaded();
+  });
+  const onServer = (path: string) => pages.list.some((p) => p.path === path);
+
+  async function removeFromCave(path: string) {
+    menu = null;
+    const name = path.slice(path.lastIndexOf('/') + 1);
+    if (!window.confirm(`Remove “${name}” from the cave? It goes for everyone the cave is shared with and from your other devices. A trip linked to it keeps the link but shows nothing.`)) return;
+    scans.message = await removePage(path);
+    if (!scans.message) forgetPage(path);
+    await refreshCavePages();
   }
 
   function drop(e: DragEvent) {
@@ -391,8 +438,14 @@
     {:else}
       <button role="menuitem" onclick={() => menu && mark(menu.row as TreeRow, true)}>Mark complete</button>
     {/if}
-    <hr />
-    <button role="menuitem" title="Shows the real location on your computer, not the copy this browser keeps" onclick={() => menu && reveal(menu.row.path)}>{revealLabel(os)}</button>
+    {#if menu.row.kind === 'file' && onServer(menu.row.path) && room.role !== 'watcher'}
+      <hr />
+      <button role="menuitem" class="danger" onclick={() => menu && void removeFromCave(menu.row.path)}>Remove from cave…</button>
+    {/if}
+    {#if isDesktop() || !onServer(menu.row.path)}
+      <hr />
+      <button role="menuitem" title="Shows the real location on your computer, not the copy this browser keeps" onclick={() => menu && reveal(menu.row.path)}>{revealLabel(os)}</button>
+    {/if}
     <hr />
     <button role="menuitem" onclick={() => fold('', false)}>Expand all folders</button>
     <button role="menuitem" onclick={() => fold('', true)}>Collapse all folders</button>
@@ -405,7 +458,7 @@
 <div class="panel" class:over role="region" aria-label="Scans" tabindex="-1" onkeydown={onKey} ondragover={(e) => { e.preventDefault(); over = true; }} ondragleave={() => (over = false)} ondrop={drop}>
   <div class="bar">
     <PanelUndo scope="scans" label="in the scans" />
-    <button onclick={open} title="Pick the folder your scans are in. They are read here and never uploaded."><FolderOpen size={14} /> Open folder</button>
+    <button onclick={open} disabled={room.role === 'watcher'} title="Add scan pages (pictures or PDFs, or a whole folder of them) to this cave. They are kept with the cave on the CaveCAD server, so your other devices and anyone you share it with see them too. You can also drop them here."><ImagePlus size={14} /> Add scans…</button>
     {#if scans.remembered}<button onclick={reopenRemembered} title="Read the folder you used last time again">Reopen “{scans.remembered}”</button>{/if}
     <label>Trip
       <select value={cave.trip} aria-label="Trip" onchange={(e) => (cave.trip = e.currentTarget.value)}>
@@ -462,6 +515,13 @@
       <button onclick={clearTrim}>Use the whole scan</button>
     </div>
   {/if}
+  {#if linkedHere && drifted(scans.selected)}
+    <div class="alignbar drift" role="alert">
+      <span class="hint">The survey has changed under this page since it was matched: its stations have moved up to {formatLength(drifts[scans.selected], cave.units, 1)} against each other, so the scan may no longer line up with what was drawn over it.</span>
+      <button onclick={() => { align.on = true; stopTrim(); }} title="Turn on matching to move or add matches">Check the matches</button>
+      <button onclick={keepMatches} title="The matches are still right: stop flagging this page until the survey changes again">It still lines up</button>
+    </div>
+  {/if}
   {#if align.on && linkedHere}
     <div class="alignbar" role="group" aria-label="Align under the map">
       <span class="hint">
@@ -495,7 +555,7 @@
         </label>
       {/if}
       <button class="done" onclick={endAlign} title="Stop matching and put the tool down (Esc)">Done</button>
-      {#if placed}<span class="rms" title="How far, on average, the matched spots land from their stations">off by {formatLength(placed.rms, cave.units, 2)} on average</span>{/if}
+      {#if placed && placed.rms >= 0.01}<span class="rms" title="How far, on average, the matched spots land from their stations">off by {formatLength(placed.rms, cave.units, 2)} on average</span>{/if}
     </div>
   {/if}
   <div class="body" bind:this={body}>
@@ -503,15 +563,17 @@
       {#if mine.length}
         <div class="head">This trip's scans</div>
         {#each mine as p}
-          <button class="file" class:sel={scans.selected === p} class:gone={!have(p)} title={have(p) ? p : `${p} is not in the open folder`} onclick={() => select(p)}>{p.slice(p.lastIndexOf('/') + 1)}</button>
+          <button class="file" class:sel={scans.selected === p} class:gone={!have(p)} class:drifted={drifted(p)} title={have(p) ? p : onServer(p) ? `${p}: fetching it from the cave…` : `${p} is not in this cave’s scans`} onclick={() => select(p)}>{p.slice(p.lastIndexOf('/') + 1)}{#if drifted(p)} <span class="chip warnchip" title="The survey changed under this page since it was matched: check its matches">changed</span>{/if}</button>
         {/each}
       {/if}
       {#if scans.loading}<div class="kept" role="status">{scans.loading}</div>{/if}
-      <div class="head">{scans.folder || 'Scans'} {#if scans.paths.length}<span class="n">{scans.paths.length}</span>{/if}</div>
-      {#if scans.keptBytes}
-        <div class="kept" title="This browser keeps a copy of your scans so a refresh does not lose them. It stays on this machine.">
-          {scans.restored ? 'Kept from last time' : 'Copy kept in this browser'} · {(scans.keptBytes / 1048576).toFixed(0)} MB
-          <button class="link" onclick={forgetCopy}>Forget it</button>
+      <div class="head">This cave’s scans {#if scans.paths.length}<span class="n">{scans.paths.length}</span>{/if}</div>
+      {#if pages.total}<div class="kept" role="status">Uploading scans: {pages.sent} of {pages.total}</div>{/if}
+      {#if pages.problem}<div class="kept err" role="alert">{pages.problem}</div>{/if}
+      {#if localOnly.length && room.role !== 'watcher'}
+        <div class="kept" title="These pages were read from a folder on this computer and are not kept with the cave yet, so your other devices and people you share the cave with do not see them.">
+          {localOnly.length} page{localOnly.length === 1 ? ' is' : 's are'} only on this computer.
+          <button class="link" onclick={() => void uploadLocal()} disabled={!!pages.total}>Keep {localOnly.length === 1 ? 'it' : 'them'} with the cave</button>
         </div>
       {/if}
       {#if scans.paths.length}
@@ -531,7 +593,7 @@
             </button>
           {/if}
         {:else}
-          <p class="none">{scans.paths.length ? 'No scan matches.' : 'Open the folder your scans are in, or drop the folder (or scan files) here. They stay on this machine.'}</p>
+          <p class="none">{scans.paths.length ? 'No scan matches.' : room.role === 'watcher' ? 'This cave has no scans yet.' : 'Add your scan pages with Add scans…, or drop them (or a folder of them) here. They are kept with the cave, so your other devices and anyone you share it with see them too.'}</p>
         {/each}
       </div>
     </div>
@@ -560,6 +622,8 @@
   .match { display: inline-flex; align-items: center; gap: 2px; padding: 0 3px 0 8px; border: 1px solid var(--line); border-radius: 999px; background: var(--panel); }
   .match .x { border: none; background: none; padding: 2px; }
   .rms { color: var(--muted); }
+  .alignbar.drift { border-color: var(--warn); }
+  .warnchip { color: var(--warn); border-color: var(--warn); }
   .done { margin-left: auto; background: var(--accent-bg); border: 1px solid var(--accent); color: var(--text); }
   button.on { background: var(--accent-bg); border-color: var(--accent); }
   .body { flex: 1; min-height: 0; display: flex; }
@@ -584,6 +648,8 @@
   .menu button { border: none; background: none; text-align: left; padding: 6px 8px; border-radius: 4px; }
   .menu button:hover { background: var(--accent-bg); }
   .kept { font-size: 11px; color: var(--muted); padding: 0 4px 4px; }
+  .kept.err { color: var(--danger); }
+  .menu button.danger { color: var(--danger); }
   .kept .link { border: none; background: none; color: var(--accent); padding: 0 2px; font-size: 11px; cursor: pointer; text-decoration: underline; }
   .rootbox { flex: 1; min-width: 240px; font-family: var(--mono, monospace); }
   code { font-family: var(--mono, monospace); user-select: all; word-break: break-all; }

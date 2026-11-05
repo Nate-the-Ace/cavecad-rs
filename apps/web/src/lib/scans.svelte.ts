@@ -1,10 +1,11 @@
-// The person's scanned pages. They stay on this machine: a folder is picked (or files dropped), read
-// in the browser and shown from a local object URL; nothing is uploaded and nothing but the paths goes
-// into the cave (a trip's list of scans, see `cave-scans`). Where the browser can remember a folder
-// (Chromium), it is offered again next time with one click (the browser insists on a click to
-// let a page read it again).
+// The open cave's scanned pages. Pages added in the Scans panel (picked, or dropped as files or a folder) are
+// uploaded and kept with the cave on the CaveCAD server (`cave-pages.svelte.ts`), so every device and everyone
+// the cave is shared with sees them; a page from the server is fetched the first time something shows it. Pages
+// read from a folder on this machine some other way (a cave's own `scans/` folder, the copy kept from before
+// pages lived on the server) show too, with a way to keep them with the cave. A trip links a page by its path.
 import { baseName, isDesktop, listScansNative, pickFolderNative, readScanNative, revealNative, typeOf } from './desktop';
 import { isDerived, scanKind, type ScanKind } from './scan-tree';
+import { MAX_PAGE_BYTES, cannotAdd, fetchPage, pages, refreshPages, uploadPages } from './cave-pages.svelte';
 
 interface DirHandle {
   name: string;
@@ -38,7 +39,106 @@ export const scans = $state({
   root: '',
   /** Pages read so far while a folder is being read from disk, as `n of m`, or ''. */
   loading: '',
+  /** Bumped when a page arrives from the server, so the views draw it. */
+  fetched: 0,
 });
+
+/** Lists the cave's own pages and this machine's together (each path once). */
+function syncPaths() {
+  const all = new Set([...files.keys()].filter((p) => !isDerived(p)));
+  for (const pg of pages.list) all.add(pg.path);
+  scans.paths = [...all].sort();
+}
+
+/** Reads the open cave's pages from the server again and lists them. */
+export async function refreshCavePages(): Promise<void> {
+  const before = pages.cave;
+  await refreshPages();
+  if (pages.cave !== before) {
+    // another cave: the pages fetched for the last one are not this one's
+    for (const p of fromServer) files.delete(p);
+    fromServer.clear();
+    images.clear();
+  } else {
+    // a page taken off the cave elsewhere goes from here too
+    const kept = new Set(pages.list.map((pg) => pg.path));
+    for (const p of [...fromServer]) if (!kept.has(p)) forgetPage(p);
+  }
+  syncPaths();
+}
+
+/** Pages on this machine that are not kept with the cave yet (none while not signed in). */
+export function notUploaded(): string[] {
+  if (!pages.cave) return [];
+  const kept = new Set(pages.list.map((p) => p.path));
+  return [...files.keys()].filter((p) => !isDerived(p) && !kept.has(p) && !fromServer.has(p));
+}
+
+/** Uploads this machine's pages that the cave does not keep yet, at the paths trips link them by. */
+export async function uploadLocal(): Promise<void> {
+  const todo = new Map(notUploaded().map((p) => [p, files.get(p)!] as const));
+  if (todo.size) for (const p of await uploadPages(todo)) fromServer.add(p);
+  syncPaths();
+}
+
+/** Pages fetched from the server for the open cave (dropped when another cave opens). */
+const fromServer = new Set<string>();
+const fetching = new Set<string>();
+/** Starts fetching a page of the cave that this browser does not hold yet. */
+function ensure(path: string) {
+  if (files.has(path) || fetching.has(path)) return;
+  const page = pages.list.find((p) => p.path === path);
+  if (!page) return;
+  fetching.add(path);
+  const cave = pages.cave;
+  void fetchPage(page).then((f) => {
+    fetching.delete(path);
+    if (!f || pages.cave !== cave) return; // another cave opened while it came
+    files.set(path, f);
+    fromServer.add(path);
+    scans.fetched += 1;
+    if (scans.selected === path && !scans.url) scans.url = URL.createObjectURL(f);
+  });
+}
+
+/**
+ * Adds pages to the cave: uploaded to the server (a folder keeps its name as the pages' first folder), shown here at
+ * once. Refused, with the reason in the panel, when pages cannot be added (not signed in, a watcher).
+ */
+async function addToCave(folder: string, found: Map<string, File>) {
+  const no = cannotAdd();
+  if (no) {
+    scans.message = no;
+    return;
+  }
+  const named = new Map<string, File>();
+  for (const [p, f] of found) if (scanKind(p) && !isDerived(p)) named.set(folder ? `${folder}/${p}` : p, f);
+  if (!named.size) {
+    scans.message = 'No scans (pictures or PDFs) were found there.';
+    return;
+  }
+  scans.message = '';
+  // shown here at once (a page that will not fit is never listed: the upload names it)
+  for (const [p, f] of named) if (f.size <= MAX_PAGE_BYTES) files.set(p, f);
+  syncPaths();
+  for (const p of await uploadPages(named)) fromServer.add(p); // the cave's now: gone from here when another cave opens
+  syncPaths();
+}
+
+/** Lets go of a page taken off the cave (this computer's copy too). */
+export function forgetPage(path: string) {
+  files.delete(path);
+  fromServer.delete(path);
+  images.delete(path);
+  const u = mapUrls.get(path);
+  if (u) URL.revokeObjectURL(u);
+  mapUrls.delete(path);
+  if (scans.selected === path) forgetSelection();
+  syncPaths();
+}
+
+/** While true, a folder read by the pickers is added to the cave instead of being shown from this machine. */
+let adding = false;
 
 const files = new Map<string, File>();
 /** Object URLs of scans the map draws, kept so they are made once. */
@@ -207,6 +307,10 @@ async function walk(dir: DirHandle, prefix: string, out: Map<string, File>, budg
 }
 
 function load(name: string, found: Map<string, File>, saveCopy = true) {
+  if (adding) {
+    void addToCave(name, found);
+    return;
+  }
   forgetSelection();
   for (const u of mapUrls.values()) URL.revokeObjectURL(u);
   mapUrls.clear();
@@ -215,10 +319,10 @@ function load(name: string, found: Map<string, File>, saveCopy = true) {
   for (const [p, f] of found) files.set(p, f);
   scans.folder = name;
   // Trimmed pages stay loaded (the views draw them) but are not the person's own scans: not listed here.
-  scans.paths = [...files.keys()].filter((p) => !isDerived(p));
+  syncPaths();
   scans.collapsed = [];
   scans.restored = false;
-  scans.message = scans.paths.length ? '' : 'No scans (pictures or PDFs) were found there.';
+  scans.message = '';
   if (saveCopy && found.size) void keepCopy(name, found);
 }
 
@@ -275,6 +379,21 @@ export async function revealReal(rel: string): Promise<boolean> {
   }
 }
 
+/** Add scans: picks a folder and uploads its pages to the cave (they keep the folder's name). False if cancelled. */
+export async function addScans(): Promise<boolean> {
+  const no = cannotAdd();
+  if (no) {
+    scans.message = no;
+    return false;
+  }
+  adding = true;
+  try {
+    return await pickFolder();
+  } finally {
+    adding = false;
+  }
+}
+
 /** Picks a scans folder and reads its picture and PDF files. Returns false if the person cancelled. */
 export async function pickFolder(): Promise<boolean> {
   if (isDesktop()) {
@@ -306,6 +425,7 @@ export async function pickFolder(): Promise<boolean> {
  * remembered for next time, but it works where the directory picker is blocked.
  */
 function pickFolderWithInput(): Promise<boolean> {
+  const add = adding; // the input answers after the click handler has returned
   return new Promise((resolve) => {
     const input = document.createElement('input');
     input.type = 'file';
@@ -323,7 +443,8 @@ function pickFolderWithInput(): Promise<boolean> {
         const inside = parts.length > 1 ? parts.slice(1).join('/') : rel; // paths are relative to the folder itself
         if (scanKind(inside)) found.set(inside, f);
       }
-      load(folder || 'scans', found);
+      if (add) void addToCave(folder || 'scans', found);
+      else load(folder || 'scans', found);
       resolve(true);
     };
     input.oncancel = () => resolve(false);
@@ -350,8 +471,8 @@ async function walkEntry(entry: FileSystemEntry, prefix: string, out: Map<string
 }
 
 /**
- * Adds what was dropped on the panel: files, or a whole folder (its scans, at any depth, keeping
- * their folder paths). A dropped folder becomes the scans folder.
+ * Adds what was dropped on the panel to the cave: files, or a whole folder (its scans, at any depth, keeping
+ * their folder paths under the folder's own name).
  */
 export async function dropItems(items: DataTransferItemList): Promise<void> {
   const entries = [...items].map((i) => i.webkitGetAsEntry?.()).filter((e): e is FileSystemEntry => !!e);
@@ -366,12 +487,11 @@ export async function dropItems(items: DataTransferItemList): Promise<void> {
       if (!batch.length) break;
       for (const child of batch) await walkEntry(child, '', found, { n: 5000 });
     }
-    load(root.name, found);
+    await addToCave(root.name, found);
     return;
   }
   for (const e of entries) await walkEntry(e, '', found, { n: 5000 });
-  for (const [path, f] of files) if (!found.has(path)) found.set(path, f);
-  load(scans.folder || 'dropped files', found);
+  await addToCave('', found);
 }
 
 async function readFolder(handle: DirHandle) {
@@ -410,26 +530,27 @@ export async function reopenRemembered(): Promise<boolean> {
 }
 
 /**
- * Adds files dropped on the panel, or picked one by one (a browser that cannot open a folder). A
+ * Adds files dropped on the panel, or picked one by one (a browser that cannot open a folder), to the cave. A
  * file that arrived inside a folder keeps its folder path.
  */
 export function addFiles(list: File[]) {
-  const found = new Map<string, File>(files);
+  const found = new Map<string, File>();
   for (const f of list) {
     const rel = (f as File & { webkitRelativePath?: string }).webkitRelativePath || f.name;
     if (scanKind(rel)) found.set(rel, f);
   }
-  load(scans.folder || 'dropped files', found);
+  void addToCave('', found);
 }
 
 /** Puts a scan on show. */
 export function select(path: string) {
   const f = files.get(path);
-  if (!f) return;
+  if (!f && !pages.list.some((p) => p.path === path)) return;
   forgetSelection();
   scans.selected = path;
   scans.kind = scanKind(path) ?? 'image';
-  scans.url = URL.createObjectURL(f);
+  if (f) scans.url = URL.createObjectURL(f);
+  else ensure(path); // a page of the cave not fetched yet: shown when it arrives
 }
 
 function forgetSelection() {
@@ -441,7 +562,10 @@ function forgetSelection() {
 /** A URL the map can load a scan from (made once per scan), or `null` when the scan is not in the open folder. */
 export function mapUrl(path: string): string | null {
   const f = files.get(path);
-  if (!f) return null;
+  if (!f) {
+    ensure(path); // a page of the cave not fetched yet
+    return null;
+  }
   let u = mapUrls.get(path);
   if (!u) {
     u = URL.createObjectURL(f);
@@ -496,8 +620,12 @@ export function scanImage(path: string, redraw: () => void): HTMLImageElement | 
 /** Trimming: the outline being traced, point by point. */
 export const trimming = $state({ on: false, draft: [] as [number, number][] });
 
-/** True when the scan is in the folder now open. */
-export const have = (path: string) => files.has(path);
+/** True when the page is here to draw; a page of the cave not fetched yet starts coming (and `scans.fetched` says when). */
+export const have = (path: string) => {
+  if (files.has(path)) return true;
+  ensure(path);
+  return false;
+};
 
 /** Folds (`closed`) or unfolds several tree folders at once. */
 export function setFolders(folders: string[], closed: boolean) {

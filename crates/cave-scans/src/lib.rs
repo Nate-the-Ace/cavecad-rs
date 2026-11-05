@@ -9,8 +9,8 @@ mod marks;
 mod trim;
 
 pub use align::{
-    Alignment, Anchor, Fit, FitMode, Pair, Placed, Positions, Target, add_anchor, alignment, fit,
-    Tps, placements, remove_anchor, rubber, set_alignment, set_mode,
+    Alignment, Anchor, Fit, FitMode, Pair, Placed, Positions, Target, Tps, add_anchor, alignment,
+    fit, keep_matches, placements, remove_anchor, rubber, set_alignment, set_mode,
 };
 pub use marks::{MAX_MARKS, completed, scan_id, set_complete};
 pub use trim::{Outline, set_trim, simplify, trim};
@@ -281,7 +281,8 @@ mod tests {
                 "p1.png",
                 0.0,
                 0.0,
-                Station { id: st[0] }
+                Station { id: st[0] },
+                None
             )
             .unwrap()
         );
@@ -294,7 +295,8 @@ mod tests {
                 "p1.png",
                 100.0,
                 0.0,
-                Station { id: st[1] }
+                Station { id: st[1] },
+                None
             )
             .unwrap()
         );
@@ -346,7 +348,8 @@ mod tests {
                 "p1.png",
                 1.0,
                 1.0,
-                Station { id: trips[1] }
+                Station { id: trips[1] },
+                None
             ),
             Err(ScanError::NoSuchStation)
         );
@@ -368,6 +371,7 @@ mod tests {
                     0.0,
                     0.0,
                     Point { x: 0.0, y: 0.0 },
+                    None,
                 )
                 .unwrap(),
             )
@@ -384,6 +388,7 @@ mod tests {
                         x: 100.0 * scale,
                         y: 0.0,
                     },
+                    None,
                 )
                 .unwrap(),
             )
@@ -446,7 +451,8 @@ mod tests {
                 "p.png",
                 1.0,
                 1.0,
-                Point { x: 0.0, y: 0.0 }
+                Point { x: 0.0, y: 0.0 },
+                None
             ),
             Err(ScanError::BadView)
         );
@@ -466,6 +472,7 @@ mod tests {
                 12.5,
                 30.25,
                 Station { id: st[3] },
+                None,
             )
             .unwrap(),
         )
@@ -479,6 +486,7 @@ mod tests {
                 1.5,
                 3.25,
                 Point { x: -0.5, y: 2.25 },
+                None,
             )
             .unwrap(),
         )
