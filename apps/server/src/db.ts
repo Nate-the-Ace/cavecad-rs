@@ -116,6 +116,17 @@ CREATE TABLE IF NOT EXISTS cave_gone (
 );
 -- Seats waiting for someone invited by email who is not a member yet: they become room_guests when that person joins
 -- through their invite. Dropped when the invite is cancelled, the room removed, or the owner cancels the seat.
+CREATE TABLE IF NOT EXISTS cave_scans (
+  cave_id TEXT NOT NULL REFERENCES caves(id),
+  path TEXT NOT NULL,
+  sha TEXT NOT NULL,
+  size INTEGER NOT NULL,
+  type TEXT NOT NULL,
+  added_by TEXT NOT NULL,
+  added_at INTEGER NOT NULL,
+  PRIMARY KEY (cave_id, path)
+);
+CREATE INDEX IF NOT EXISTS cave_scans_sha ON cave_scans (sha);
 CREATE TABLE IF NOT EXISTS room_pending (
   room_id TEXT NOT NULL REFERENCES rooms(id),
   email TEXT NOT NULL,

@@ -158,7 +158,8 @@ import { planFrame } from '../lib/snap-types';
     void cave.adjusted;
     void cave.run;
     void cave.pick;
-    void scans.paths.length; // scans appear when their folder is opened
+    void scans.paths.length; // scans appear when they are added or their folder is opened
+    void scans.fetched; // a page of the cave arrived from the server
     void filter.hiddenTrips.length;
     void option('showScans', true);
     void option('halo', true);

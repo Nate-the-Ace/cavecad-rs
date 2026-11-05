@@ -96,6 +96,7 @@
     void cave.adjusted;
     void filter.hiddenTrips.length;
     void scans.paths.length;
+    void scans.fetched; // a page of the cave arrived from the server
     const on = option('showScans', true);
     const opacity = option('scanOpacity', 0.5);
     const halo = option('halo', true);
@@ -408,6 +409,7 @@
         view.setScene(scene, false);
         loadPassage();
         hopped = engine.hoppedLines(cave.adjusted).length;
+        hidden = engine.hiddenDrawings(cave.adjusted).length;
       });
     });
   });
@@ -415,6 +417,16 @@
   let levelChoice = $state<{ id: string; other: [string, string] } | null>(null);
   let levelTimer = 0;
   let hopped = $state(0);
+  /** Drawings nothing can show because the shot they hang on was deleted. */
+  let hidden = $state(0);
+
+  function deleteHidden() {
+    const n = hidden;
+    if (!window.confirm(`${n} drawing${n === 1 ? '' : 's'} hang${n === 1 ? 's' : ''} on survey shots that were deleted, so ${n === 1 ? 'it' : 'they'} cannot be shown anywhere. Putting the shot back (Undo, or typing it again) brings ${n === 1 ? 'it' : 'them'} back.\n\nDelete ${n === 1 ? 'it' : 'them'}?`)) return;
+    const r = engine.deleteHiddenDrawings(cave.adjusted);
+    if (!r.startsWith('ok')) engine.log('warn', 'draw', r);
+    changed();
+  }
 
   /** Glows the legs a map line took and offers the other level when its start was ambiguous. */
   function showLevel(id: string) {
@@ -622,6 +634,9 @@
     {#if hopped > 0}
       <button title="Some lines hop between passages on different levels. Re-attach each to the level it starts on." onclick={fixHopped}>Fix {hopped} line{hopped === 1 ? '' : 's'}</button>
     {/if}
+    {#if hidden > 0}
+      <button class="warn" title="Drawings that hang on survey shots that were deleted, so nothing can show them. Putting the shot back brings them back; or delete them." onclick={deleteHidden}>{hidden} hidden drawing{hidden === 1 ? '' : 's'}</button>
+    {/if}
     {#if levelChoice}
       <button class="on" title="This line starts where two passages overlap. Move it to the other level." onclick={flipLevel}>Other level</button>
     {/if}
@@ -654,6 +669,7 @@
   button.caves { display: inline-flex; gap: 5px; align-items: center; font-weight: 600; }
   button:disabled { opacity: 0.4; cursor: default; }
   button.on { background: var(--accent-bg); }
+  button.warn { color: var(--warn); border-color: var(--warn); }
   label { display: flex; gap: 4px; align-items: center; color: var(--muted); white-space: nowrap; }
   .status { color: var(--muted); }
   .status.pick { display: inline-flex; flex-wrap: wrap; gap: 6px; align-items: center; color: var(--text); max-width: 46em; }

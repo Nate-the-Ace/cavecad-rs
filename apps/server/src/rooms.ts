@@ -457,7 +457,7 @@ export function deleteCave(db: Db, memberId: string, caveId: string, now: number
   ).map((r) => r.member_id);
   db.exec('BEGIN');
   try {
-    for (const t of ['history', 'snapshots', 'cave_labels', 'wrapped_keys']) db.prepare(`DELETE FROM ${t} WHERE cave_id = ?`).run(caveId);
+    for (const t of ['history', 'snapshots', 'cave_labels', 'wrapped_keys', 'cave_scans']) db.prepare(`DELETE FROM ${t} WHERE cave_id = ?`).run(caveId);
     db.prepare('DELETE FROM room_guests WHERE room_id IN (SELECT id FROM rooms WHERE cave_id = ?)').run(caveId);
     db.prepare('DELETE FROM room_pending WHERE room_id IN (SELECT id FROM rooms WHERE cave_id = ?)').run(caveId);
     db.prepare('DELETE FROM rooms WHERE cave_id = ?').run(caveId);

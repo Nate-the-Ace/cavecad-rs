@@ -11,6 +11,7 @@ import type { RequestLike } from './identity.ts';
 import { serveStatic } from './static.ts';
 import { send, sendBadBody, readJson } from './http.ts';
 import { handleRooms } from './rooms-api.ts';
+import { handleScans, sweepScans } from './scans.ts';
 import { cancelInvited, inviteGuest, ownsAnyCave } from './rooms.ts';
 
 export type ApiDeps = {
@@ -22,6 +23,8 @@ export type ApiDeps = {
   mailer: MailerConfig;
   /** TinyAuth's sign-out page, offered on the not-invited page to try another account; empty for none. */
   signoutUrl?: string;
+  /** Where scanned pages are kept (a folder); absent, the server keeps none. */
+  scansDir?: string;
   /** Reached through `tailscale serve` only: /api/me says so, and the page hides sign-out and switching account. */
   tailnet?: boolean;
   /** Exchanges a desktop sign-in code with TinyAuth (Task 11); absent until configured. */
@@ -47,7 +50,10 @@ const originOf = (u: string) => {
 function refusedCrossSite(d: ApiDeps, req: IncomingMessage, res: ServerResponse, method: string, origin: string, path: string): boolean {
   if (SAFE.includes(method)) return false;
   const type = String(req.headers['content-type'] ?? '').toLowerCase();
-  if (!type.startsWith('application/json')) return send(res, 415, { error: 'bad-request' }), true;
+  // JSON only (a type a plain form cannot send, so the browser always asks first); a scan page's bytes are
+  // application/octet-stream, which a form cannot send either, and only to a cave's scans.
+  const pageUpload = type.startsWith('application/octet-stream') && /^\/api\/caves\/[A-Za-z0-9_-]{8,64}\/scans$/.test(path);
+  if (!type.startsWith('application/json') && !pageUpload) return send(res, 415, { error: 'bad-request' }), true;
   const desktop = DESKTOP_ORIGINS.includes(origin);
   const bearer = /^Bearer \S/.test(String(req.headers.authorization ?? ''));
   const site = req.headers['sec-fetch-site'];
@@ -119,7 +125,15 @@ export async function handleApi(d: ApiDeps, req: IncomingMessage, res: ServerRes
       cancelInvited(d.db, me.id, byEmail[1], byEmail[2], url.searchParams.get('email') ?? '');
       return send(res, 200, { ok: true });
     }
-    if (path === '/api/devices' || path === '/api/caves' || path.startsWith('/api/caves/')) return await handleRooms(d.db, me.id, req, res, now);
+    // A cave's scanned pages: kept in the scans folder (none set: the server keeps no pages).
+    const sc = /^\/api\/caves\/([A-Za-z0-9_-]{8,64})\/scans(?:\/([0-9a-f]{64}))?$/.exec(path);
+    if (sc) return d.scansDir ? await handleScans(d.db, d.scansDir, me.id, req, res, sc[1], sc[2] ?? '', now) : send(res, 404, { error: 'not-found' });
+    if (path === '/api/devices' || path === '/api/caves' || path.startsWith('/api/caves/')) {
+      await handleRooms(d.db, me.id, req, res, now);
+      // a deleted cave's pages go with it (a file another cave still uses stays)
+      if (d.scansDir && method === 'DELETE' && /^\/api\/caves\/[A-Za-z0-9_-]{8,64}$/.test(path) && res.statusCode === 200) sweepScans(d.db, d.scansDir);
+      return;
+    }
     if (path === '/api/me' && method === 'GET') {
       return send(res, 200, { status: 'member', member: me, drives: M.listDrives(d.db, me.id), firstVisit: r.firstVisit, noticeSeen: M.noticeSeen(d.db, me.id), signups: getSetting(d.db, 'signups'), ...via, pass: signPass(d.passKey, { memberId: me.id, email: me.email, role: me.role }, now) });
     }

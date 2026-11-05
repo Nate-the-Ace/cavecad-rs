@@ -3,7 +3,7 @@
 import { createServer } from 'node:http';
 import { readFileSync } from 'node:fs';
 import { createPrivateKey } from 'node:crypto';
-import { resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { openDb } from './db.ts';
 import { handleApi, serveApp } from './api.ts';
 import { makeWhoIs, discoveredKeys } from './identity.ts';
@@ -39,6 +39,7 @@ const deps = {
   publicUrl: need('PUBLIC_URL'),
   mailer: { url: env.MAILER_URL ?? '', key: env.MAILER_KEY ?? '' },
   signoutUrl: env.SIGNOUT_URL ?? '',
+  scansDir: resolve(env.SCANS_DIR ?? join(dirname(resolve(env.DB_PATH ?? 'cavecad.sqlite')), 'scans')),
   tailnet,
   whoIs: makeWhoIs({ edgeAddress, gateSecret, oidc, tailnet, devIdentity }),
   desktopToken: oidc ? makeDesktopToken({ issuer: oidc.issuer, clientId: oidc.audience, clientSecret: env.OIDC_CLIENT_SECRET ?? '' }) : undefined,

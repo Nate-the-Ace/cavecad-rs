@@ -6,6 +6,7 @@
 
 mod detail;
 mod filter;
+mod hidden;
 mod maplines;
 mod mesh;
 mod profile;
@@ -16,6 +17,7 @@ mod under;
 
 pub use detail::{NoteField, ShotDetail, StationDetail, WallsOut, shot_detail, station_detail};
 pub use filter::{TripInfo, ViewFilter};
+pub use hidden::hidden_drawings;
 pub use maplines::{
     LineLevel, PlacedLine, hopped_lines, line_level, map_frames, map_lines_3d, placed_line,
 };

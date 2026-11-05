@@ -67,6 +67,10 @@ export const WRITES: readonly string[] = [
   'addSketch',
   'undo',
   'redo',
+  'fixHoppedLines',
+  'reanchorLine',
+  'deleteHiddenDrawings',
+  'scanKeepMatches',
 ];
 
 /** Engine calls that only look. (`syncLoad` and `syncApply` are here on purpose: they are how a cave's edits
@@ -171,6 +175,9 @@ export const READS: readonly string[] = [
   'profileBand',
   'passageMesh',
   'editState',
+  'hoppedLines',
+  'mapLineLevel',
+  'hiddenDrawings',
 ];
 
 /** Whether the engine refuses writes, and what it says. The account locks it (`setAccountLock`) while the
