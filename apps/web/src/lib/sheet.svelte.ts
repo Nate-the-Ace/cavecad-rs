@@ -30,7 +30,35 @@ export function scaleText(feetPerInch: number, units: Units): string {
   return `1" = ${feetPerInch < 10 ? feetPerInch.toFixed(2) : feetPerInch.toFixed(0)} ft`;
 }
 
-/** The sheet's settings (A3 by default, the cave's name in the title block). */
+// The paper follows the units the cave is shown in (ANSI B, 17 x 11 in, for feet; ISO A3 for metres) until the
+// person picks one. Indexes into the engine's paper list.
+const CHOSEN_KEY = 'cavecad.sheet.paperChosen';
+const PAPER_FOR: Record<Units, number> = { imperial: 1, metric: 8 };
+let paperChosen = (() => {
+  try {
+    return localStorage.getItem(CHOSEN_KEY) === '1';
+  } catch {
+    return false;
+  }
+})();
+
+/** Puts the paper of the units on the sheet, unless the person has picked a paper themself. */
+export function followUnits(units: Units) {
+  if (!paperChosen && sheet.paper !== PAPER_FOR[units]) sheet.paper = PAPER_FOR[units];
+}
+
+/** The person picked a paper: it stays, whatever the units. */
+export function choosePaper(index: number) {
+  paperChosen = true;
+  try {
+    localStorage.setItem(CHOSEN_KEY, '1');
+  } catch {
+    // remembered for this visit
+  }
+  setSheet({ paper: index });
+}
+
+/** The sheet's settings (the units' paper by default, the cave's name in the title block). */
 export const sheet = $state<SheetSetup>(saved());
 
 /** Changes some of the settings and remembers them. */

@@ -185,11 +185,19 @@
     });
   }
 
-  // Backsight cells are skipped by Tab unless the trip takes backsights: a trip that has any is assumed to,
-  // and the Backsights box changes it for the page on screen.
+  // Backsight columns show only when the trip takes backsights (a trip that has any is assumed to), so the
+  // table fits half a screen; the Backsights box shows them for the page on screen.
   let backsightsSet = $state<Record<string, boolean>>({});
   const hasBacksights = $derived(!!page?.rows.some((r) => r.az_bs !== null || r.inc_bs !== null));
-  const backsights = $derived(page ? (backsightsSet[page.trip] ?? hasBacksights) : false);
+  const backsights = $derived(page ? hasBacksights || (backsightsSet[page.trip] ?? false) : false);
+  /** A chain that restarts at a station already on this page above is a branch from it, not a start. */
+  const branchRow = (i: number): boolean => {
+    const rows = page?.rows ?? [];
+    const label = rows[i]?.label;
+    return !!label && rows.slice(0, i).some((r) => r.kind === 'station' && r.label === label);
+  };
+  /** How many columns the table has (two fewer without backsights). */
+  const columns = $derived(backsights ? 13 : 11);
   /** The right-click menu on a row: a station's (with surveying on from it), or a shot's. */
   function rowMenu(e: MouseEvent, row: NotebookRow) {
     const t = e.target as HTMLElement;
@@ -238,7 +246,7 @@
         <label>Date <input class="date" value={page.date} placeholder="YYYY-MM-DD" onchange={(e) => field('date', e.currentTarget.value)} onkeydown={enter} /></label>
         <label>Team <input class="wide" value={page.team} maxlength="200" onchange={(e) => field('team', e.currentTarget.value)} onkeydown={enter} /></label>
         <label>Instruments <input value={page.instruments} maxlength="200" onchange={(e) => field('instruments', e.currentTarget.value)} onkeydown={enter} /></label>
-        <label title="Readings taken back from the far station. Off: Tab skips the backsight columns (you can still click them)."><input type="checkbox" checked={backsights} onchange={(e) => page && (backsightsSet[page.trip] = e.currentTarget.checked)} /> Backsights</label>
+        <label title="Readings taken back from the far station. Shows the backsight columns; a trip that has any backsights shows them anyway."><input type="checkbox" checked={backsights} disabled={hasBacksights} onchange={(e) => page && (backsightsSet[page.trip] = e.currentTarget.checked)} /> Backsights</label>
         <label title="Magnetic declination, degrees east. Changing it turns every bearing in this trip; the compass cells keep what was read.">Decl. <input class="num" value={page.declination ?? ''} onchange={(e) => declination(e.currentTarget.value)} onkeydown={enter} />°</label>
       {/key}
     {/if}
@@ -249,13 +257,14 @@
     <div class="totals" role="status">
       <b>{formatLength(page.totals.length, units, 1)}</b> surveyed · {page.totals.shots} shots · {page.totals.splays} splays · {page.totals.stations} stations
       {#if page.totals.warnings}<span class="warn">· {page.totals.warnings} to check</span>{/if}
+      {#if !page.date}<span class="warn" title="The trip's date sets its magnetic declination and goes into Compass, Walls and Survex exports (without one, Compass gets 1 1 1900). Type it in Date above.">· no date</span>{/if}
       <span class="note">Notes written in {page.unit === 'ft' ? 'feet' : 'metres'}; shown in {unitName(units) === 'ft' ? 'feet' : 'metres'}. Compass cells are magnetic.</span>
     </div>
     <div class="scroll">
       <table>
         <thead>
           <tr>
-            <th class="st">Station</th><th>Tape ({unitName(units)})</th><th>Az fs</th><th>Az bs</th><th>Inc fs</th><th>Inc bs</th><th>Total</th>
+            <th class="st">Station</th><th>Tape ({unitName(units)})</th><th>Az fs</th>{#if backsights}<th>Az bs</th>{/if}<th>Inc fs</th>{#if backsights}<th>Inc bs</th>{/if}<th>Total</th>
             {#each SIDES as s}<th class="lr" title={s}>{SIDE_LETTER[s]}</th>{/each}
             <th class="notes">Notes</th><th></th>
           </tr>
@@ -264,11 +273,11 @@
           <tbody>
             {#each page.rows as r, i (i)}
               {#if r.kind === 'gap'}
-                <tr id="nb-row-{i}" class="gap"><td colspan="13"></td></tr>
+                <tr id="nb-row-{i}" class="gap"><td colspan={columns}></td></tr>
               {:else if r.kind === 'station'}
                 <tr id="nb-row-{i}" class="station" class:sel={cave.pick.kind === 'station' && cave.pick.id === r.station} onclick={() => pick(r)} oncontextmenu={(e) => rowMenu(e, r)}>
-                  <td class="st"><input value={r.label} tabindex="-1" title="Click to rename the station (Tab skips it, so entry flows tape, compass, clino, then L R U D)" aria-label="Station name" maxlength="40" onchange={(e) => rename(r, e.currentTarget.value)} onkeydown={enter} />{#if r.anchor}<span class="tag" title="Where a chain starts; nothing on this page arrives here">start</span>{/if}</td>
-                  <td colspan="6"></td>
+                  <td class="st"><input value={r.label} tabindex="-1" title="Click to rename the station (Tab skips it, so entry flows tape, compass, clino, then L R U D)" aria-label="Station name" maxlength="40" onchange={(e) => rename(r, e.currentTarget.value)} onkeydown={enter} />{#if r.anchor}{#if branchRow(i)}<span class="tag" title="The survey branches here from {r.label}, earlier on this page">branch</span>{:else}<span class="tag" title="Where a chain starts; nothing on this page arrives here">start</span>{/if}{/if}</td>
+                  <td colspan={backsights ? 6 : 4}></td>
                   {#each SIDES as s}
                     <td class="lr">
                       {#if r.lrud && r.lrud_editable}
@@ -286,9 +295,9 @@
                   <td class="st">{#if r.kind === 'splay'}<span class="splay-name">{r.label}</span>{/if}</td>
                   <td><input class="num" value={r.distance === null ? '' : lengthText(r.distance, units)} aria-label="Tape" onchange={(e) => reading(r, 'distance', e.currentTarget.value)} onkeydown={(e) => enterReading(e, i)} /></td>
                   <td><input class="num" value={angleText(r.az_fs)} aria-label="Compass foresight" onchange={(e) => reading(r, 'az_fs', e.currentTarget.value)} onkeydown={(e) => enterReading(e, i)} /></td>
-                  <td><input class="num" value={angleText(r.az_bs)} aria-label="Compass backsight" tabindex={backsights ? 0 : -1} onchange={(e) => reading(r, 'az_bs', e.currentTarget.value)} onkeydown={(e) => enterReading(e, i)} /></td>
+                  {#if backsights}<td><input class="num" value={angleText(r.az_bs)} aria-label="Compass backsight" onchange={(e) => reading(r, 'az_bs', e.currentTarget.value)} onkeydown={(e) => enterReading(e, i)} /></td>{/if}
                   <td><input class="num" value={angleText(r.inc_fs)} aria-label="Clino foresight" onchange={(e) => reading(r, 'inc_fs', e.currentTarget.value)} onkeydown={(e) => enterReading(e, i)} /></td>
-                  <td><input class="num" value={angleText(r.inc_bs)} aria-label="Clino backsight" tabindex={backsights ? 0 : -1} onchange={(e) => reading(r, 'inc_bs', e.currentTarget.value)} onkeydown={(e) => enterReading(e, i)} /></td>
+                  {#if backsights}<td><input class="num" value={angleText(r.inc_bs)} aria-label="Clino backsight" onchange={(e) => reading(r, 'inc_bs', e.currentTarget.value)} onkeydown={(e) => enterReading(e, i)} /></td>{/if}
                   <td class="num total">{r.total === null ? '' : formatLength(r.total, units, 1)}</td>
                   <td colspan="4"></td>
                   <td class="notes">{#if r.kind === 'splay' && r.note_source}<input value={r.note} maxlength="400" aria-label="Note on {r.label}" onchange={(e) => note(r, e.currentTarget.value)} onkeydown={enter} />{/if}</td>
@@ -296,7 +305,7 @@
                 </tr>
               {/if}
             {:else}
-              <tr><td colspan="13" class="none">This trip has no shots yet. Open your scans, find the first line of the survey, and type its stations below (From and To), then press Enter: the shot appears here with its tape, compass and clino ready to fill in. Tab moves through them in the order the notes are written; Enter after the last reading starts the next shot.</td></tr>
+              <tr><td colspan={columns} class="none">This trip has no shots yet. Open your scans, find the first line of the survey, and type its stations below (From and To), then press Enter: the shot appears here with its tape, compass and clino ready to fill in. Tab moves through them in the order the notes are written; Enter after the last reading starts the next shot.</td></tr>
             {/each}
           </tbody>
         {/key}

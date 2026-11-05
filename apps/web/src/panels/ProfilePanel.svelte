@@ -44,6 +44,8 @@ import { planFrame } from '../lib/snap-types';
   /** Label of the picked station (ringed in the highlight colour). */
   let pickedLabel = '';
   let message = $state('');
+  /** The toolbar's height: no elevation label is drawn under it. */
+  let barH = $state(32);
   /** Scans placed on this band, drawn under the survey. */
   let placed: ScanPlacement[] = [];
 
@@ -262,7 +264,7 @@ import { planFrame } from '../lib/snap-types';
       g.moveTo(0, y);
       g.lineTo(width, y);
       g.stroke();
-      g.fillText(`${+inUnits(z, cave.units).toFixed(2)} ${unitName(cave.units)}`, 6, y - 3);
+      if (y - 14 > 8 + barH) g.fillText(`${+inUnits(z, cave.units).toFixed(2)} ${unitName(cave.units)}`, 6, y - 3); // none under the toolbar
     }
 
     // the rock halo: a soft glow from the passage walls out into the rock, with rock marks fading with it
@@ -842,7 +844,7 @@ import { planFrame } from '../lib/snap-types';
       openContextMenu(e.clientX, e.clientY, lineItems('profile', similar, editWords));
     }}
   ></canvas>
-  <div class="bar">
+  <div class="bar" bind:clientHeight={barH}>
     <select bind:value={cave.run} aria-label="Run">
       {#each runs as r}<option value={r.key}>{r.key} · {r.stations} stations · {formatLength(r.length, cave.units)}{r.tie ? ` · from ${r.tie}` : ''}</option>{/each}
     </select>
