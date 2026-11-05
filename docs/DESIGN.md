@@ -743,3 +743,13 @@ Checked on a test cave: traced walls, symbols, text and profile sketches follow 
 - **A scan the survey moved under.** A station match now remembers where its station was, as measured (not adjusted), when the match was made (`Anchor::seen`, a fourth field older readers skip). `Alignment::drift` is how far the matched stations have moved against each other since (after moving, turning and scaling them together, so editing an early shot that carries the whole survey along is not drift; three matches are needed). The Scans panel flags a page whose drift is a foot or more ("changed" beside it in This trip's scans, and a banner with **Check the matches** and **It still lines up**, which keeps the matches against the survey as it is now: `keep_matches`). Matches made before this have no remembered place and are not flagged until kept or remade. Adjusting the survey is never drift.
 
 Also: the read-only list now names `hoppedLines`, `fixHoppedLines`, `mapLineLevel`, `reanchorLine` (the `test:readonly` check passes again), and the scans panel no longer says "off by 0 ft on average" when the fit is exact.
+
+### Creation-workflow fixes (2026-11-05)
+
+From walking a new cave from scans to export:
+- **The Map frames a new cave as it is typed in.** A view opened on a cave with no survey keeps the survey framed after each edit until the person moves the view themself (`CaveView.autoFit`, cleared on the controls' `start`); opening a cave with a survey behaves as before. The right-click "Show the whole cave" now fits the cave (it had only turned the view to Top).
+- **A trimmed scan opens on its sketch**, not the whole sheet (`ScanViewer.fitSketch`, also when the outline arrives after the picture); the fit button still shows the whole page. Trim corners clicked just off the page land on its edge.
+- **The Notebook drops the backsight columns** unless the trip has backsights or its Backsights box is ticked, so it fits half a screen.
+- **A chain restarting at a station already above on the page is tagged "branch"**, not "start".
+- **Sheets follow the units' paper** (ANSI B for feet, ISO A3 for metres) until a paper is picked (`followUnits`, `choosePaper`). The Notebook flags a trip with **no date** (it sets declination, and Compass writes 1 1 1900 without one).
+- **Profile elevation labels** are not drawn under its toolbar.

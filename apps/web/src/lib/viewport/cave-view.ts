@@ -234,6 +234,7 @@ export class CaveView {
       lastMiddle = { time: quick ? 0 : e.timeStamp, x: e.clientX, y: e.clientY };
       if (quick) this.fit();
     });
+    this.controls.addEventListener('start', () => (this.autoFit = false)); // the person moved the view: it is theirs now
     this.controls.addEventListener('change', () => {
       this.requestRender();
       // Which lines run under another passage depends on where the camera is: ask again once it settles.
@@ -1776,13 +1777,20 @@ export class CaveView {
   }
 
   setScene(scene: Scene | null, refit = true) {
+    // A cave that starts with no survey keeps its survey framed while it is typed in, until the person moves
+    // the view themself; otherwise a new cave grows off-screen.
+    if (refit) this.autoFit = (scene?.stations.length ?? 0) < 2; // a cave opened: only an empty one is framed as it grows
+    else if ((this.data?.stations.length ?? 0) < 2 && (scene?.stations.length ?? 0) < 2) this.autoFit = true;
     this.data = scene;
     this.shadedFrom.set(0, 0, 1); // a fresh scene is shaded for the view from above
     this.shadedPersp = false;
     if (!refit || this.camera === this.persp) this.reshade();
     this.rebuild();
     if (refit) this.resetView();
+    else if (this.autoFit && (scene?.stations.length ?? 0) >= 2) this.fit();
   }
+  /** Keep framing the survey as it grows (a cave begun from nothing, until the view is moved by hand). */
+  private autoFit = false;
 
   applyTheme() {
     this.theme = readTheme();

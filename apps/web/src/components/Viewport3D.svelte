@@ -486,7 +486,7 @@
       openContextMenu(x, y, lineItems('map', () => similar, editWords));
     };
     v.onStationMenu = (x, y, id, label) => openContextMenu(x, y, stationItems(id, label));
-    v.onViewMenu = (x, y) => openContextMenu(x, y, viewItems('map', () => v.home()));
+    v.onViewMenu = (x, y) => openContextMenu(x, y, viewItems('map', () => v.fit()));
     v.onEditText = (id, text, kind, x, y, size, angle) => openTextEdit(id, text, x, y, size, kind === 'text' ? 'Type the text' : kind === 'callout' ? 'Type the note' : 'Label', angle);
     v.copyLines = (cursor) => copyGhost('map', cursor)?.lines ?? null;
     v.onCopyPress = (p) => copyPress('map', p);

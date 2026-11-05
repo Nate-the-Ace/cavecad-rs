@@ -4,6 +4,7 @@
   // This is only how it looks here; nothing about the view is stored. A PDF is handed to the browser's
   // own viewer.
   import { RotateCw, Maximize } from '@lucide/svelte';
+  import { untrack } from 'svelte';
 
   type Dir = 'left' | 'right' | 'up' | 'down';
 
@@ -60,6 +61,8 @@
   let pinch = 0;
   /** True until the person zooms or pans: then a resized panel keeps the scan fitted. */
   let fitted = true;
+  /** What a resize keeps fitted: the whole page, or its sketch. */
+  let fitting: 'whole' | 'sketch' = 'sketch';
 
   /** Fits the whole scan in the box (the turned scan's size when it is on its side). */
   function fit() {
@@ -71,13 +74,36 @@
     x = 0;
     y = 0;
     fitted = true;
+    fitting = 'whole';
   }
+
+  /** Fits the trimmed part (the sketch) in the box, so a page opens readable rather than as a whole small sheet; the whole page when it has no outline. */
+  function fitSketch() {
+    if (!box || !trim || trim.length < 3) return fit();
+    const xs = trim.map((p) => p[0]);
+    const ys = trim.map((p) => p[1]);
+    const [x0, x1, y0, y1] = [Math.min(...xs), Math.max(...xs), Math.min(...ys), Math.max(...ys)];
+    const k = Math.min(box.clientWidth / Math.max(1, x1 - x0), box.clientHeight / Math.max(1, y1 - y0), 3) * 0.95;
+    scale = k;
+    x = -((x0 + x1) / 2 - natural.w / 2) * k;
+    y = -((y0 + y1) / 2 - natural.h / 2) * k;
+    fitted = true;
+    fitting = 'sketch';
+  }
+
+  // The outline often arrives a moment after the picture: a page nobody has zoomed yet then shows its sketch.
+  let hadTrim = false;
+  $effect(() => {
+    const has = !!trim && trim.length >= 3;
+    if (has && !hadTrim && fitted && natural.w > 1 && turn === 0) untrack(fitSketch);
+    hadTrim = has;
+  });
 
   function loaded(e: Event) {
     const img = e.currentTarget as HTMLImageElement;
     natural = { w: img.naturalWidth || 1, h: img.naturalHeight || 1 };
     turn = 0;
-    fit();
+    fitSketch();
   }
 
   /** Zooms by `k`, keeping the point under (cx, cy) (box coordinates from its centre) where it is. */
@@ -159,7 +185,7 @@
 
   $effect(() => {
     if (!box) return;
-    const ro = new ResizeObserver(() => fitted && fit());
+    const ro = new ResizeObserver(() => fitted && (fitting === 'sketch' ? fitSketch() : fit()));
     ro.observe(box);
     return () => ro.disconnect();
   });
@@ -191,6 +217,9 @@
       if (snapFrom) {
         const s = snap(snapFrom, p);
         if (s.px >= 0 && s.py >= 0 && s.px <= natural.w && s.py <= natural.h) onpick?.(s.px, s.py, s.dir);
+      } else if (tracing) {
+        // an outline corner just off the page goes on its edge, not nowhere
+        onpick?.(Math.min(Math.max(p.px, 0), natural.w), Math.min(Math.max(p.py, 0), natural.h));
       } else if (p.px >= 0 && p.py >= 0 && p.px <= natural.w && p.py <= natural.h) onpick?.(p.px, p.py);
     }
     downAt = null;
