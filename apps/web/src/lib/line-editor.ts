@@ -26,9 +26,18 @@ export type OrnamentOf = (l: { points: Pt[]; closed?: boolean; kind?: string; id
  * fill still gets the wall or symbol. Returns the index, or -1.
  */
 export function topLineAt<T extends { points: Pt[]; closed?: boolean; kind?: string; text?: string; style?: string }>(lines: T[], toScreen: (p: Pt) => Pt, x: number, y: number, reachPx: number, paperPx?: number, ornament?: OrnamentOf): number {
-  for (let i = lines.length - 1; i >= 0; i--) if (reach(lines[i], toScreen, x, y, paperPx, ornament) <= reachPx) return i;
-  for (let i = lines.length - 1; i >= 0; i--) if (isFillKind(lines[i].kind) && lines[i].points.length >= 3 && insideCurve(lines[i].points.map(toScreen), x, y)) return i;
-  return -1;
+  return linesAt(lines, toScreen, x, y, reachPx, paperPx, ornament)[0] ?? -1;
+}
+
+/**
+ * Every line at a point, topmost first (the stack selection cycling lists): lines, symbols and area edges within reach in
+ * drawing order from the top, then the areas the point is inside. The first is what `topLineAt` picks. Indices into `lines`.
+ */
+export function linesAt<T extends { points: Pt[]; closed?: boolean; kind?: string; text?: string; style?: string }>(lines: T[], toScreen: (p: Pt) => Pt, x: number, y: number, reachPx: number, paperPx?: number, ornament?: OrnamentOf): number[] {
+  const out: number[] = [];
+  for (let i = lines.length - 1; i >= 0; i--) if (reach(lines[i], toScreen, x, y, paperPx, ornament) <= reachPx) out.push(i);
+  for (let i = lines.length - 1; i >= 0; i--) if (!out.includes(i) && isFillKind(lines[i].kind) && lines[i].points.length >= 3 && insideCurve(lines[i].points.map(toScreen), x, y)) out.push(i);
+  return out;
 }
 
 export interface EditableLine {
@@ -89,6 +98,8 @@ export class LineEditor<T extends EditableLine = EditableLine> {
   private drag: { id: string; index: number; points: Pt[]; widths: number[] | null; stamp: boolean; leader: boolean } | null = null;
 
   private readonly h: Hooks<T>;
+  /** The lines under the last plain press that selected, topmost first (what selection cycling offers). */
+  private pressed: string[] = [];
 
   constructor(hooks: Hooks<T>) {
     this.h = hooks;
@@ -134,6 +145,7 @@ export class LineEditor<T extends EditableLine = EditableLine> {
 
   /** A press at screen (`x`, `y`). Picks up a fit point of the selected line, or selects the line there. Returns true when a fit point was picked up. */
   press(x: number, y: number, additive = false): boolean {
+    this.pressed = [];
     const sel = additive ? undefined : this.selectedLine();
     const op = sel?.kind === 'callout' ? this.h.arrowOp?.(sel.id) : '';
     if (sel && op) {
@@ -161,15 +173,23 @@ export class LineEditor<T extends EditableLine = EditableLine> {
       return true;
     }
     const lines = this.shown();
-    const hit = topLineAt(lines, this.h.toScreen, x, y, LINE_REACH, this.h.paperPx?.(), this.h.ornament);
-    if (hit >= 0) {
-      this.h.select(lines[hit].id, additive);
+    const stack = linesAt(lines, this.h.toScreen, x, y, LINE_REACH, this.h.paperPx?.(), this.h.ornament);
+    this.pressed = additive ? [] : stack.map((i) => lines[i].id);
+    if (stack.length) {
+      this.h.select(lines[stack[0]].id, additive);
       this.h.redraw();
       return false;
     }
     if (!additive && (this.h.ids ? this.h.ids().length : this.h.selected())) this.h.select('');
     this.h.redraw();
     return false;
+  }
+
+  /** The lines that were under the last press, topmost first (empty after a press that picked up a point, added to the selection, or hit nothing); reading empties it. */
+  takeStack(): string[] {
+    const out = this.pressed;
+    this.pressed = [];
+    return out;
   }
 
   /** The eraser passing screen (`x`, `y`): deletes the topmost line there (one undoable edit). Returns true if it did. */

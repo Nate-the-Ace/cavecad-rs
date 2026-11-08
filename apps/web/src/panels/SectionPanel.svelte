@@ -29,7 +29,7 @@ import { planFrame } from '../lib/snap-types';
   import type { Drawn } from '../lib/clip';
   import { openNewText, openTextEdit } from '../lib/text-edit.svelte';
   import { openContextMenu } from '../lib/context-menu.svelte';
-  import { lineItems, viewItems } from '../lib/context-items';
+  import { lineItems, offerLineStack, viewItems } from '../lib/context-items';
   import { cave, changed, option, selectedIds, selectIds, toggleSelected, filter, wireFilter, haloFade, haloReach, toolStyle } from '../lib/cave.svelte';
   import { drawScan } from '../lib/scan-draw';
   import { givePoint, have, scanImage, scans, waitingForPoint } from '../lib/scans.svelte';
@@ -55,6 +55,8 @@ import { planFrame } from '../lib/snap-types';
   let live: { pts: [number, number][]; widths: number[]; pressure: boolean } | null = null;
 
   // Drawn lines can be selected and their fit points moved, added and deleted.
+  /** Where the last press began (a click that moved further is a drag, not a click). */
+  let clickFrom: [number, number] = [0, 0];
   const editor = new LineEditor({
     lines: () => section?.sketches ?? [],
     toScreen: (p) => toScreen(p[0], p[1]),
@@ -714,11 +716,17 @@ import { planFrame } from '../lib/snap-types';
     bind:this={canvas}
     tabindex="0"
     style="width:{width}px;height:{height}px;cursor:{cave.tool ? 'crosshair' : 'grab'}"
+    onpointerdowncapture={(e) => (clickFrom = [e.clientX, e.clientY])}
     onpointerdown={onDown}
     onpointermove={onMove}
     onpointerup={onUp}
     onpointercancel={onUp}
     onwheel={onWheel}
+    onclick={(e) => {
+      // a click (not a drag) on stacked lines lists them (selection cycling); the topmost is already selected
+      const lines = editor.takeStack();
+      if (!cave.tool && Math.hypot(e.clientX - clickFrom[0], e.clientY - clickFrom[1]) <= 4) offerLineStack(e.clientX, e.clientY, lines, editor.display());
+    }}
     ondblclick={(e) => {
       const r = canvas.getBoundingClientRect();
       if (cave.tool) return;

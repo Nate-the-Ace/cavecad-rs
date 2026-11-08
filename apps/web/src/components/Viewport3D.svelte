@@ -13,7 +13,8 @@
   import { copyGhost, copyOp, copyPress, endCopy, endPaste, pasteGhost, pasteOp, pastePlace, registerClipView } from '../lib/view-clip.svelte';
   import { openNewText, openTextEdit } from '../lib/text-edit.svelte';
   import { openContextMenu } from '../lib/context-menu.svelte';
-  import { lineItems, stationItems, viewItems } from '../lib/context-items';
+  import { lineCandidate, lineItems, stationItems, viewItems } from '../lib/context-items';
+  import { closeCycle, offerStack, type Candidate } from '../lib/cycle.svelte';
   import { snap, clearPick, cycle, escapePick, pickBuiltUp, toggleSnap } from '../lib/snap.svelte';
   import SnapButton from './SnapButton.svelte';
   import { cave, changed, filter, haloFade, haloReach, option, setOption, selectedIds, selectIds, toggleSelected, setPick, setShowSections, setShown, wireFilter, toolStyle } from '../lib/cave.svelte';
@@ -359,18 +360,40 @@
   function onUp(e: PointerEvent) {
     const d = down;
     down = null;
+    const lines = view?.takePressStack() ?? [];
     if (!d || !view || cave.tool || Math.hypot(e.clientX - d.x, e.clientY - d.y) > 4) return;
-    const hit = view.pickStation(e.clientX, e.clientY);
-    if (!hit) {
-      // not a station: a leg or a splay under the click gets its own tab; empty space lets go
-      const shot = view.pickShot(e.clientX, e.clientY);
-      setPick(shot?.kind ?? '', shot?.id ?? '');
+    // Everything under the click, topmost first: drawn lines (drawn over the survey), then stations, then legs and splays.
+    // The first is selected; when there is more than one, the selection cycling list offers the rest.
+    // the nearest station within the usual reach, and others only when they truly sit on the same spot (two levels in plan)
+    const stations = view.stationsAt(e.clientX, e.clientY).filter((st, i) => i === 0 || st.d <= 7);
+    const same = (a: number[], b: number[]) => a[0] === b[0] && a[1] === b[1] && a[2] === b[2];
+    // a leg or splay running out of a station under the click is that station's own, not something stacked on it
+    const shots = view.shotsAt(e.clientX, e.clientY).filter((sh) => !stations.some((st) => same(st.at, sh.from) || same(st.at, sh.to)));
+    const labelAt = (p: number[]) => scene?.stations.find((st) => same(st.at, p))?.label ?? '?';
+    const pickStationNow = (id: string, label: string, final: boolean) => {
+      cave.station = id;
+      setPick('station', id);
+      if (!final) return;
+      showPanel('section');
+      engine.log('info', 'section', `cross section at ${label}`);
+    };
+    const items: (Candidate & { z: number })[] = [
+      ...lines.map((k) => ({ ...lineCandidate(k.id, k.kind ?? '', k.text, () => (setPick('', ''), selectIds([k.id]))), z: k.points[0]?.[2] ?? 0 })),
+      ...stations.map((st) => ({ key: `station:${st.id}`, label: `Station ${st.label}`, choose: (final: boolean) => pickStationNow(st.id, st.label, final), z: st.at[2] })),
+      ...shots.map((sh) => ({ key: `${sh.kind}:${sh.id}`, label: sh.kind === 'leg' ? `Leg ${labelAt(sh.from)} – ${labelAt(sh.to)}` : `Splay from ${labelAt(sh.from)}`, choose: () => setPick(sh.kind, sh.id), z: (sh.from[2] + sh.to[2]) / 2 })),
+    ];
+    const top = items[0];
+    if (!top) {
+      setPick('', ''); // empty space lets go
+      closeCycle();
       return;
     }
-    cave.station = hit.id;
-    setPick('station', hit.id);
-    showPanel('section');
-    engine.log('info', 'section', `cross section at ${hit.label}`);
+    if (!lines.length) top.choose(true); // a drawn line was already selected by the press
+    else setPick('', '');
+    // when the things under the click are on different levels, each row says how high it is
+    const zs = items.map((it) => it.z);
+    if (Math.max(...zs) - Math.min(...zs) > 0.5) for (const it of items) it.detail = [it.detail, formatLength(it.z, cave.units, 1)].filter(Boolean).join(' · ');
+    offerStack(e.clientX, e.clientY, items);
   }
 
   // A cave opened from a file replaces the one on screen.
