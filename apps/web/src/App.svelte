@@ -3,6 +3,7 @@
   import SnapMenu from './components/SnapMenu.svelte';
   import { copyEvent, deleteSelection, pasteEvent } from './lib/view-clip.svelte';
   import ContextMenu from './components/ContextMenu.svelte';
+  import SelectionCycle from './components/SelectionCycle.svelte';
   import TextEditor from './components/TextEditor.svelte';
   import { onMount, untrack } from 'svelte';
   import Ribbon from './components/Ribbon.svelte';
@@ -216,6 +217,7 @@
   <CaveShelf />
   <MovedPage bind:open={moved} />
   <ContextMenu />
+  <SelectionCycle />
   <TextEditor />
   {#if info?.error}
     <div class="banner">Rust build failed. The page is showing the last good build.<pre>{info.error}</pre></div>

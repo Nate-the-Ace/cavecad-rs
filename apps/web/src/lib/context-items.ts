@@ -2,6 +2,7 @@
 // station, and on empty space. Each view finds what was pressed on and opens the menu with one of these lists;
 // the actions are the ones the ribbon and the keyboard already have, so the menu is a shortcut, not a second way of working.
 
+import { cyclingOn, offerStack, setCycling, type Candidate } from './cycle.svelte';
 import { cave, changed, focusStation, selectIds, selectedIds, setPick } from './cave.svelte';
 import { engine, type Scope } from './engine';
 import { type MenuEntry, shortcut } from './context-menu.svelte';
@@ -19,7 +20,7 @@ type View = 'map' | 'profile' | 'section';
 
 let labels: Record<string, string> | null = null;
 /** What a type is called, as the ribbon names it. */
-function kindName(kind: string): string {
+export function kindName(kind: string): string {
   labels ??= Object.fromEntries(engine.drawTools().map((t) => [t.key, t.label]));
   return labels[kind] ?? symbolDef(kind)?.name ?? fillLabel(kind) ?? kind;
 }
@@ -96,5 +97,26 @@ export function viewItems(view: View, fit: () => void): MenuEntry[] {
     ...(selectedIds().length ? [{ label: 'Select none', run: () => selectIds([]) }] : []),
     'separator',
     { label: view === 'map' ? 'Show the whole cave' : 'Fit to the panel', run: fit },
+    'separator',
+    { label: `${cyclingOn() ? '✓ ' : ''}List stacked things on a click`, run: () => setCycling(!cyclingOn()) },
   ];
+}
+
+/** A drawn line as a row of the selection cycling list: its type, and its words if it has any. */
+export function lineCandidate(id: string, kind: string, text: string | undefined, choose: (final: boolean) => void): Candidate {
+  const words = (text ?? '').replace(/\s+/g, ' ').trim();
+  return { key: `line:${id}`, label: kindName(kind), detail: words ? `“${words.length > 40 ? words.slice(0, 39) + '…' : words}”` : undefined, choose };
+}
+
+/**
+ * After a click in a canvas view (Profile, Cross Section, the sketchpad): the drawn lines that were under it (`ids`, topmost
+ * first, the first already selected by the press) and anything else there (`extra`, e.g. a station) go to the selection
+ * cycling list. `lines` is what the view draws, to name each one.
+ */
+export function offerLineStack(x: number, y: number, ids: string[], lines: { id: string; kind?: string; text?: string }[], extra: Candidate[] = []) {
+  const rows = ids.map((id) => {
+    const k = lines.find((l) => l.id === id);
+    return lineCandidate(id, k?.kind ?? '', k?.text, () => (setPick('', ''), selectIds([id])));
+  });
+  offerStack(x, y, [...rows, ...extra]);
 }

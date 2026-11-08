@@ -117,6 +117,8 @@ export class CaveView {
   onLeaderEdited: (id: string, points: [number, number][], style: string) => void = () => {};
   onLineEdited: (id: string, points: [number, number][], widths: number[] | null) => void = () => {};
   onSelectLine: (id: string, additive?: boolean) => void = () => {};
+  /** The lines under the last press that selected, topmost first (see `takePressStack`). */
+  private pressStack: ProfileSketch3d[] = [];
   /** Called on a right click on a map line: where, which line, and the ids of the map lines of its kind. */
   onLineMenu: (x: number, y: number, id: string, similar: string[], editWords: (() => void) | null) => void = () => {};
   /** A right click on a station (nothing drawn under the pointer). */
@@ -1235,28 +1237,55 @@ export class CaveView {
    * hatch of a fill can be clicked as well as its outline while a wall or symbol over a fill still gets the click. Null if none.
    */
   private lineAt(x: number, y: number): ProfileSketch3d | null {
+    return this.linesAt(x, y, true)[0] ?? null;
+  }
+
+  /**
+   * Every map line at a screen point, in the order `lineAt` ranks them (its first is `lineAt`'s answer): edges and symbols
+   * within reach topmost first, then shaped lines by their marks, then areas the point is inside. What selection cycling lists.
+   */
+  private linesAt(x: number, y: number, firstOnly = false): ProfileSketch3d[] {
+    const out: ProfileSketch3d[] = [];
     const lines = [...resolveLeaders(this.mapLines)].reverse().filter((k) => !isKindHidden(k.kind));
     const pts = (k: ProfileSketch3d) => this.screenPoints(k).filter((p): p is [number, number] => !!p);
     for (const k of lines) {
       const p = pts(k);
-      if (p.length === k.points.length && (isStampKind(k.kind) ? hitsStamp(k.kind, k.text, p[0], p[1], x, y, 4, leaderLook(k.style, ((this.pixelsPerMetreAt(k.points[0]) ?? 0) * drawing.scale) / 1000), p.slice(2) as [number, number][]) : distanceToCurve(p, x, y, k.closed) <= 7)) return k;
+      if (p.length === k.points.length && (isStampKind(k.kind) ? hitsStamp(k.kind, k.text, p[0], p[1], x, y, 4, leaderLook(k.style, ((this.pixelsPerMetreAt(k.points[0]) ?? 0) * drawing.scale) / 1000), p.slice(2) as [number, number][]) : distanceToCurve(p, x, y, k.closed) <= 7)) {
+        out.push(k);
+        if (firstOnly) return out;
+      }
     }
     // a shaped line (ledge ticks, pit hachures, flowstone, slope, ...) is also picked by any part of its marks
     const stationsXY = (this.data?.stations ?? []).map((s) => [s.at[0], s.at[1]] as [number, number]);
     for (const k of lines) {
-      if (isStampKind(k.kind) || isFillKind(k.kind) || k.points.length < 2) continue;
+      if (out.includes(k) || isStampKind(k.kind) || isFillKind(k.kind) || k.points.length < 2) continue;
       const plan = smooth(k.points.map((q) => [q[0], q[1]] as [number, number]), null, 10, k.closed).pts;
       const z = k.points[0][2];
       for (const line of ornamentFor(k.kind, k.id, plan, k.closed, stationsXY).lines) {
         const screen = line.map((q) => this.project([q[0], q[1], z])).filter((q): q is [number, number] => !!q);
-        if (screen.length === line.length && distanceToPolyline(screen, x, y) <= 7) return k;
+        if (screen.length === line.length && distanceToPolyline(screen, x, y) <= 7) {
+          out.push(k);
+          if (firstOnly) return out;
+          break;
+        }
       }
     }
     for (const k of lines) {
+      if (out.includes(k)) continue;
       const p = pts(k);
-      if (isFillKind(k.kind) && p.length === k.points.length && insideCurve(p, x, y)) return k;
+      if (isFillKind(k.kind) && p.length === k.points.length && insideCurve(p, x, y)) {
+        out.push(k);
+        if (firstOnly) return out;
+      }
     }
-    return null;
+    return out;
+  }
+
+  /** The map lines under the last plain press that selected one, topmost first (what selection cycling offers); reading empties it. */
+  takePressStack(): ProfileSketch3d[] {
+    const out = this.pressStack;
+    this.pressStack = [];
+    return out;
   }
 
   /** A press in the Top or Bottom view with no tool: pick up a fit point of the selected map line, or select the line there. */
@@ -1273,6 +1302,7 @@ export class CaveView {
   }
 
   private pressLine(e: PointerEvent) {
+    this.pressStack = [];
     // Selecting a line works from any angle (its settings are edited in the ribbon); only moving its fit points needs the top view.
     if (this.drawTool || e.button !== 0 || this.fingers.size > 1) return;
     const rect = this.canvas.getBoundingClientRect();
@@ -1345,8 +1375,10 @@ export class CaveView {
         return;
       }
     }
-    const k = this.lineAt(x, y);
+    const stack = this.linesAt(x, y);
+    const k = stack[0];
     if (k) {
+      this.pressStack = additive ? [] : stack;
       this.onSelectLine(k.id, additive);
       return;
     }
@@ -1647,6 +1679,57 @@ export class CaveView {
       }
     });
     return best;
+  }
+
+  /**
+   * Every leg and splay within `radius` pixels of a screen point, nearest first (a splay counts 1.5 px farther, as in
+   * `pickShot`), with the ends it runs between. What selection cycling lists for the survey under a click.
+   */
+  shotsAt(clientX: number, clientY: number, radius = 7): { kind: 'leg' | 'splay'; id: string; from: [number, number, number]; to: [number, number, number]; d: number }[] {
+    const s = this.data;
+    if (!s) return [];
+    const rect = this.canvas.getBoundingClientRect();
+    const x = clientX - rect.left;
+    const y = clientY - rect.top;
+    const out: { kind: 'leg' | 'splay'; id: string; from: [number, number, number]; to: [number, number, number]; d: number }[] = [];
+    const near = (a: [number, number, number], b: [number, number, number]) => {
+      const p = this.project(a);
+      const q = this.project(b);
+      if (!p || !q) return Infinity;
+      const dx = q[0] - p[0];
+      const dy = q[1] - p[1];
+      const len2 = dx * dx + dy * dy;
+      const t = len2 < 1e-9 ? 0 : Math.max(0, Math.min(1, ((x - p[0]) * dx + (y - p[1]) * dy) / len2));
+      return Math.hypot(x - (p[0] + t * dx), y - (p[1] + t * dy));
+    };
+    for (const l of s.legs) {
+      const d = near(l.from, l.to);
+      if (d <= radius) out.push({ kind: 'leg', id: l.shot, from: l.from, to: l.to, d });
+    }
+    s.splays.forEach((sp, i) => {
+      const from: [number, number, number] = [sp[0], sp[1], sp[2]];
+      const to: [number, number, number] = [sp[3], sp[4], sp[5]];
+      const d = near(from, to) + 1.5;
+      if (d <= radius && s.splay_shots[i]) out.push({ kind: 'splay', id: s.splay_shots[i], from, to, d });
+    });
+    return out.sort((a, b) => a.d - b.d);
+  }
+
+  /** Every station within `radius` pixels of a screen point, nearest first (stations of two levels can sit on one spot in plan). */
+  stationsAt(clientX: number, clientY: number, radius = 14): { id: string; label: string; at: [number, number, number]; d: number }[] {
+    const s = this.data;
+    if (!s) return [];
+    const rect = this.canvas.getBoundingClientRect();
+    const x = clientX - rect.left;
+    const y = clientY - rect.top;
+    const out: { id: string; label: string; at: [number, number, number]; d: number }[] = [];
+    for (const st of s.stations) {
+      const p = this.project(st.at);
+      if (!p) continue;
+      const d = Math.hypot(p[0] - x, p[1] - y);
+      if (d <= radius) out.push({ id: st.id, label: st.label, at: st.at, d });
+    }
+    return out.sort((a, b) => a.d - b.d);
   }
 
   /** The station (id) to ring on the map, e.g. the one the Cross Section panel shows. */

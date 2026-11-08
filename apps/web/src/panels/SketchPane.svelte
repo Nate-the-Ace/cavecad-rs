@@ -20,6 +20,7 @@ import { planFrame } from '../lib/snap-types';
   import { FIT_SPACING, fitStroke } from '../lib/spline';
   import { tolerancePx } from '../lib/commands';
   import { isStampKind } from '../lib/symbols';
+  import { offerLineStack } from '../lib/context-items';
   import { cave, changed, filter, option, setOption } from '../lib/cave.svelte';
   import { orderedScales } from '../lib/sheet.svelte';
   import { engine, loadEngine, type SheetOptions } from '../lib/engine';
@@ -546,6 +547,12 @@ import { planFrame } from '../lib/snap-types';
     const wasPanning = !!panning;
     panning = null;
     if (editor.release()) return;
+    // a tap (not a drag) on stacked lines lists them (selection cycling); the topmost is already selected
+    const stack = editor.takeStack();
+    if (!cave.tool && moved < 4 && e && e.type !== 'pointercancel') {
+      offerLineStack(e.clientX, e.clientY, stack, editor.display());
+      if (stack.length > 1) return;
+    }
     if (wasPanning && !cave.tool && moved < 4 && pressedAt) pickStation(pressedAt); // a tap on a station, with no tool: the cross section goes there
     if (!live) return;
     const stroked = live;

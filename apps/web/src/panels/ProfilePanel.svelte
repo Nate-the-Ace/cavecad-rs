@@ -11,7 +11,8 @@
   import type { Drawn } from '../lib/clip';
   import { openNewText, openTextEdit } from '../lib/text-edit.svelte';
   import { openContextMenu } from '../lib/context-menu.svelte';
-  import { lineItems, viewItems } from '../lib/context-items';
+  import { lineItems, offerLineStack, viewItems } from '../lib/context-items';
+  import { closeCycle, type Candidate } from '../lib/cycle.svelte';
   import { cave, changed, filter, option, selectedIds, selectIds, toggleSelected, setPick, setShowSections, haloFade, haloReach, toolStyle } from '../lib/cave.svelte';
   import { defaultBandOffset, drawHandles, drawStrokes, glyphCurves, hits, leaderEnd, ornamentFor } from '../lib/section-glyph';
   import { LineEditor, endpointNear, joinFit } from '../lib/line-editor';
@@ -604,6 +605,7 @@ import { planFrame } from '../lib/snap-types';
   // A plain click on a station's triangle picks it (the ribbon then shows its station tab).
   let pressedAt: [number, number] = [0, 0];
   function pickStation(e: MouseEvent) {
+    const lines = editor.takeStack();
     if (cave.tool || !band || Math.hypot(e.clientX - pressedAt[0], e.clientY - pressedAt[1]) > 4) return;
     const r = canvas.getBoundingClientRect();
     let best: { label: string } | null = null;
@@ -617,6 +619,14 @@ import { planFrame } from '../lib/snap-types';
       }
     }
     const hit = best && engine.scene(cave.adjusted).stations.find((x) => x.label === best!.label);
+    if (lines.length) {
+      // a drawn line under the click wins (it is drawn over the survey); the station, if any, is offered in the stacked list
+      setPick('', '');
+      const station: Candidate[] = hit ? [{ key: `station:${hit.id}`, label: `Station ${hit.label}`, choose: () => ((cave.station = hit.id), setPick('station', hit.id)) }] : [];
+      offerLineStack(e.clientX, e.clientY, lines, editor.display(), station);
+      return;
+    }
+    closeCycle();
     if (hit) {
       setPick('station', hit.id);
       cave.station = hit.id;
