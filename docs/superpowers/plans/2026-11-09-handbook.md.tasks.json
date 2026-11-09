@@ -1,0 +1,75 @@
+{
+  "planPath": "docs/superpowers/plans/2026-11-09-handbook.md",
+  "tasks": [
+    {
+      "id": 0,
+      "subject": "Task 1: Markdown renderer",
+      "status": "pending",
+      "description": "**Goal:** `renderMarkdown(text, resolve)` turns the spec's Markdown subset into HTML with every piece of text escaped.\n\n**Files:**\n- Create: `apps/web/src/handbook/markdown.ts`\n- Test: `apps/web/tests/markdown.check.ts`\n- Modify: `apps/web/package.json` (add `test:markdown`, add it to `test`)\n\n**Acceptance Criteria:**\n- [ ] Headings `#`\u2013`###`, paragraphs, `-` and `1.` lists, `**bold**`, `` `code` ``, `[text](page-id)`, `![alt](file.png)`, pipe tables render.\n- [ ] `<script>` in page text comes out as `&lt;script&gt;`.\n- [ ] Links call `resolve('link', target)` and images `resolve('image', target)`; an unresolvable target renders as plain text, not a broken link.\n- [ ] `npm run test:markdown` prints `markdown ok`.\n\n**Verify:** `cd apps/web && npm run test:markdown` \u2192 `markdown ok`\n\n```json:metadata\n{\"files\": [\"apps/web/src/handbook/markdown.ts\", \"apps/web/tests/markdown.check.ts\", \"apps/web/package.json\"], \"verifyCommand\": \"`cd apps/web && npm run test:markdown` \\u2192 `markdown ok`\", \"modelTier\": \"standard\"}\n```"
+    },
+    {
+      "id": 1,
+      "subject": "Task 2: Catalog (pages, groups, search, panel lookup)",
+      "status": "pending",
+      "description": "**Goal:** A pure `Catalog` built from `index.json` and raw page texts that answers: page by id, pages by group, the page for a panel, and search.\n\n**Files:**\n- Create: `apps/web/src/handbook/catalog.ts`, `apps/web/src/handbook/index.json`\n- Test: `apps/web/tests/handbook.check.ts` (first part; Task 5 extends it)\n- Modify: `apps/web/package.json` (`test:handbook`, added to `test`)\n\n**Acceptance Criteria:**\n- [ ] `makeCatalog(index, texts)` keeps `index.json` order; `forPanel('map')` returns the Map page; `search('splay')` ranks title hits before body hits and returns `[]` for an empty query.\n- [ ] `npm run test:handbook` prints `handbook ok`.\n\n**Verify:** `cd apps/web && npm run test:handbook` \u2192 `handbook ok`\n\n```json:metadata\n{\"files\": [\"apps/web/src/handbook/catalog.ts\", \"apps/web/src/handbook/index.json\", \"apps/web/tests/handbook.check.ts\", \"apps/web/package.json\"], \"verifyCommand\": \"`cd apps/web && npm run test:handbook` \\u2192 `handbook ok`\", \"modelTier\": \"standard\"}\n```",
+      "blockedBy": [
+        0
+      ]
+    },
+    {
+      "id": 2,
+      "subject": "Task 3: Navigation state and the panel",
+      "status": "pending",
+      "description": "**Goal:** A `Handbook` panel in the workspace that reads like a wiki: contents beside the page at 640 px or wider, one pane at a time when narrower, back/forward, breadcrumb, search, links between pages.\n\n**Files:**\n- Create: `apps/web/src/handbook/bundle.ts`, `apps/web/src/lib/handbook.svelte.ts`, `apps/web/src/panels/HandbookPanel.svelte`\n- Modify: `apps/web/src/lib/workspace.svelte.ts` (PANELS entry)\n\n**Acceptance Criteria:**\n- [ ] View tab lists **Handbook**; opening it shows the first page (`bringing-survey-data-in`).\n- [ ] Clicking a link in a page goes to that page; Back and Forward walk the history.\n- [ ] Panel 640 px or wider: Contents + search column on the left; narrower: a Contents button swaps the page for the list.\n- [ ] Search narrows the list as you type; a result opens its page.\n- [ ] `svelte-check` 0 errors.\n\n**Verify:** `cd apps/web && npx svelte-check --tsconfig ./tsconfig.json` \u2192 `0 ERRORS`; dev server: open View \u203a Handbook, click through.\n\n```json:metadata\n{\"files\": [\"apps/web/src/handbook/bundle.ts\", \"apps/web/src/lib/handbook.svelte.ts\", \"apps/web/src/panels/HandbookPanel.svelte\", \"apps/web/src/lib/workspace.svelte.ts\"], \"verifyCommand\": \"`cd apps/web && npx svelte-check --tsconfig ./tsconfig.json` \\u2192 `0 ERRORS`; dev server: open View \\u203a Handbook, click through.\", \"modelTier\": \"standard\"}\n```",
+      "blockedBy": [
+        1
+      ]
+    },
+    {
+      "id": 3,
+      "subject": "Task 4: `?` on every panel and \"Learn more\" in dialogs",
+      "status": "pending",
+      "description": "**Goal:** A `?` button in every panel group's header opens the Handbook at the front panel's page; New cave, Surface Data and the Import menu link to their pages.\n\n**Files:**\n- Modify: `apps/web/src/lib/dock-parts.ts` (GroupActions), `apps/web/src/components/NewCave.svelte`, `apps/web/src/components/SurfaceData.svelte`, `apps/web/src/components/ProjectFiles.svelte`\n\n**Acceptance Criteria:**\n- [ ] Every group header shows `?` left of Minimize; clicking it with Map in front opens the Handbook at Map. With the Handbook itself in front, `?` is hidden.\n- [ ] New cave and Surface Data dialogs, and the Import menu, show \"Learn more\" opening `bringing-survey-data-in` (New cave, Import) or `map` (Surface Data, until its own page exists in a later slice).\n\n**Verify:** dev server: click `?` on Map, Profile and Notebook groups \u2192 Handbook shows the matching page.\n\n```json:metadata\n{\"files\": [\"apps/web/src/lib/dock-parts.ts\", \"apps/web/src/components/NewCave.svelte\", \"apps/web/src/components/SurfaceData.svelte\", \"apps/web/src/components/ProjectFiles.svelte\"], \"verifyCommand\": \"dev server: click `?` on Map, Profile and Notebook groups \\u2192 Handbook shows the matching page.\", \"modelTier\": \"standard\"}\n```",
+      "blockedBy": [
+        2
+      ]
+    },
+    {
+      "id": 4,
+      "subject": "Task 5: Handbook checks (coverage, links, images, sections, stale shots)",
+      "status": "pending",
+      "description": "**Goal:** `tests/handbook.check.ts` fails the build on a panel without a page, a page for a panel that is gone, a dead link or image, a tool page missing a section, and (strict mode) a stale screenshot.\n\n**Files:**\n- Modify: `apps/web/tests/handbook.check.ts`\n\n**Acceptance Criteria:**\n- [ ] Reads `PANELS` keys from `src/lib/workspace.svelte.ts` source text (it imports Svelte, so it cannot be imported in node), `index.json`, every `pages/*.md`.\n- [ ] Fails, naming the page, when: a `PANELS` key has no `panel:` page; an `index.json` panel is not in `PANELS`; a page file has no index entry or vice versa; `[x](id)` names no page; `![x](f.png)` names no file in `shots/`; a panel page lacks any of the six headings (`When you reach for it`, `How to use it`, `What can go wrong`, `Related` as `##` headings, plus one-sentence lead paragraph and an image).\n- [ ] With `HANDBOOK_STRICT=1`: fails when a `shots.json` entry's `hash` differs from the sha256 of its `source` file.\n\n**Verify:** `cd apps/web && npm run test:handbook` \u2192 `handbook ok` once Task 7's pages exist; deleting a page's `## Related` heading \u2192 FAIL naming it.\n\n```json:metadata\n{\"files\": [\"apps/web/tests/handbook.check.ts\"], \"verifyCommand\": \"`cd apps/web && npm run test:handbook` \\u2192 `handbook ok` once Task 7's pages exist; deleting a page's `## Related` heading \\u2192 FAIL naming it.\", \"modelTier\": \"standard\"}\n```",
+      "blockedBy": [
+        3
+      ]
+    },
+    {
+      "id": 5,
+      "subject": "Task 6: Screenshot capture",
+      "status": "pending",
+      "description": "**Goal:** `node tools/handbook-shots.mjs <dev-url>` writes `shots/<panel>.png` for every panel page and records `shots.json` hashes.\n\n**Files:**\n- Create: `apps/web/src/lib/handbook-shot.ts`, `tools/handbook-shots.mjs`\n- Modify: `apps/web/src/App.svelte` (dev-only hook), `apps/web/src/components/account/AccountGate.svelte` or wherever the gate decides (skip gate in capture mode, DEV only)\n\n**Acceptance Criteria:**\n- [ ] In DEV only, `/?handbook-shot=map` opens the Pitfall sample, shows only the Map panel at 1100\u00d7700, no sign-in gate, no Caves window; production builds ignore the parameter (`import.meta.env.DEV` guard).\n- [ ] The script writes 12 PNGs (survey only when the panel exists) and `shots.json` `{ \"<panel>.png\": { \"source\": \"apps/web/src/panels/MapPanel.svelte\", \"hash\": \"<sha256>\" } }`.\n\n**Verify:** `node tools/handbook-shots.mjs http://localhost:5196` \u2192 `12 shots` (or 11 without Survey); open two PNGs to look.\n\n```json:metadata\n{\"files\": [\"apps/web/src/lib/handbook-shot.ts\", \"tools/handbook-shots.mjs\", \"apps/web/src/App.svelte\", \"apps/web/src/components/account/AccountGate.svelte\"], \"verifyCommand\": \"`node tools/handbook-shots.mjs http://localhost:5196` \\u2192 `12 shots` (or 11 without Survey); open two PNGs to look.\", \"modelTier\": \"standard\"}\n```",
+      "blockedBy": [
+        4
+      ]
+    },
+    {
+      "id": 6,
+      "subject": "Task 7: The pages",
+      "status": "pending",
+      "description": "**Goal:** 13 pages written: the import task page (from the SOP doc) and one page per panel, each in the six-part shape, every statement checked against the panel's code.\n\n**Files:**\n- Create: `apps/web/src/handbook/pages/{bringing-survey-data-in,map,profile,section,notebook,stations,symbols,scans,sheet,patterns,console,rooms,survey}.md`\n\n**Acceptance Criteria:**\n- [ ] `npm run test:handbook` \u2192 `handbook ok` (coverage, links, images, sections all pass).\n- [ ] Every button name, menu path and message quoted on a page appears verbatim in that panel's source (grep it).\n- [ ] Each panel page links at least one other page under `## Related`.\n\n**Verify:** `cd apps/web && npm run test:handbook` \u2192 `handbook ok`\n\n```json:metadata\n{\"files\": [\"apps/web/src/handbook/pages/{bringing-survey-data-in,map,profile,section,notebook,stations,symbols,scans,sheet,patterns,console,rooms,survey}.md\"], \"verifyCommand\": \"`cd apps/web && npm run test:handbook` \\u2192 `handbook ok`\", \"modelTier\": \"standard\"}\n```",
+      "blockedBy": [
+        5
+      ]
+    },
+    {
+      "id": 7,
+      "subject": "Task 8: Ship",
+      "status": "pending",
+      "description": "**Goal:** Everything checked in the app, merged and deployed.\n\n**Files:** none new.\n\n**Acceptance Criteria:**\n- [ ] `npm test` (all web checks) passes; `svelte-check` 0 errors; `HANDBOOK_STRICT=1 npm run test:handbook` passes right after Task 6.\n- [ ] In the dev app: `?` on 3 panels opens the right page; wide and narrow layouts both work; a screenshot shows on each panel page.\n- [ ] PR opened; merged and deployed only on Nathan's yes.\n\n**Verify:** `cd apps/web && npm test && HANDBOOK_STRICT=1 npm run test:handbook`\n\n```json:metadata\n{\"files\": [], \"verifyCommand\": \"`cd apps/web && npm test && HANDBOOK_STRICT=1 npm run test:handbook`\", \"modelTier\": \"standard\"}\n```",
+      "blockedBy": [
+        6
+      ]
+    }
+  ],
+  "lastUpdated": "2026-11-09T15:36:42.754576"
+}
