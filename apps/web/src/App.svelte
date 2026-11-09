@@ -11,6 +11,8 @@
   import SurfaceData from './components/SurfaceData.svelte';
   import { recomputeLayers, resetEntrancePick, surface, surfaceKey, syncSurface } from './lib/surface.svelte';
   import { initWorkspace } from './lib/workspace.svelte';
+  import { catalog } from './handbook/bundle';
+  import { openHandbook } from './lib/handbook-open';
   import { engine, loadEngine, loadBuildInfo, type BuildInfo } from './lib/engine';
   import { cave, setUnits, unsaved } from './lib/cave.svelte';
   import { guardUnload } from './lib/files';
@@ -27,6 +29,7 @@
   import AccountGate from './components/account/AccountGate.svelte';
   import { account, handleAuthLink, startAccount } from './lib/account.svelte';
   import { startRooms } from './lib/room.svelte';
+  import { runShot, shotPanel } from './lib/handbook-shot';
 
   let version = $state('loading engine…');
   let info = $state<BuildInfo | null>(null);
@@ -137,7 +140,7 @@
     window.addEventListener('copy', onCopy);
     window.addEventListener('cut', onCut);
     window.addEventListener('paste', onPaste);
-    const teardown = initWorkspace(host);
+    const teardown = initWorkspace(host, { pageFor: (id) => { const p = catalog.forPanel(id); return p?.text ? p.id : null; }, open: openHandbook });
     installDiagnostics();
     listenForLinks((url) => {
       void handleAuthLink(url).then((signIn) => { if (!signIn && isOldJoinUrl(url)) moved = true; });
@@ -155,6 +158,8 @@
         await loadShelf();
         // A clean slate: the shelf opens first (an old live link opens it from the moved page instead).
         if (!cave.hasCave && shelf.startup && !moved) shelf.open = true;
+        const shot = shotPanel(); // Handbook screenshot capture (development builds only)
+        if (shot) await runShot(shot);
       } catch (e) {
         failed = String(e);
       }

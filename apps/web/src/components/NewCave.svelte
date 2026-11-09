@@ -8,6 +8,7 @@
   import { workLayout } from '../lib/workspace.svelte';
   import { shelf } from '../lib/shelf.svelte';
   import { canMakeFolders, choosePlace, folderNameOf, look, make, startPlace, type Place } from '../lib/cavefolder.svelte';
+  import { openHandbook } from '../lib/handbook-open';
   import { isDesktop } from '../lib/desktop';
   import { isCaveFolder } from '../lib/folder-handle';
 
@@ -166,6 +167,7 @@
       <p class="hint">You will get your scans on the left and the notebook beside them. Pick the first page and type its shots as you read them.</p>
       {#if message}<p class="err" role="alert">{message}</p>{/if}
       <div class="row">
+        <button class="link" onclick={() => { close(); openHandbook('bringing-survey-data-in'); }}>Learn more</button>
         <button onclick={close}>Cancel</button>
         <button class="go" onclick={() => create()} disabled={busy || found !== null}>Start the cave</button>
       </div>
@@ -195,5 +197,6 @@
   .row { display: flex; justify-content: flex-end; gap: 8px; }
   button { font: inherit; font-size: 13px; padding: 6px 14px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel-2); color: var(--text); cursor: pointer; }
   button:disabled { opacity: 0.5; cursor: default; }
+  button.link { margin-right: auto; padding: 2px 0; border: 0; background: none; color: var(--accent); }
   button.go { background: var(--accent); border-color: var(--accent); color: #fff; }
 </style>

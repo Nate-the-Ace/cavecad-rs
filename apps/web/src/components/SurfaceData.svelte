@@ -4,6 +4,7 @@
   // downloads what is ticked, records it in the cave, and says what came back. The coordinate is shown here
   // to the person and nowhere else: never logged.
   import { untrack } from 'svelte';
+  import { openHandbook } from '../lib/handbook-open';
   import { cave, changed } from '../lib/cave.svelte';
   import { engine, type GeoStatus } from '../lib/engine';
   import { fetchSurface, surface } from '../lib/surface.svelte';
@@ -156,6 +157,7 @@
         </ul>
       {/if}
       <div class="row">
+        <button class="link" style="margin-right:auto" onclick={() => { close(); openHandbook('map'); }}>Learn more</button>
         <button onclick={close}>Close</button>
         <button class="go" disabled={!status || surface.busy || !anything} onclick={ok}>{surface.busy ? 'Downloading…' : status?.surface ? 'Download again' : 'Download'}</button>
       </div>
