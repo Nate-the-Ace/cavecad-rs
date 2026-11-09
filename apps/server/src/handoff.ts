@@ -20,6 +20,7 @@ export function redeemHandoff(db: Db, code: string, verifier: string, now: numbe
     | undefined;
   if (!row || row.used_at !== null || row.expires_at <= now) return null;
   if (createHash('sha256').update(String(verifier)).digest('base64url') !== row.challenge) return null;
-  db.prepare('UPDATE handoffs SET used_at = ? WHERE code_hash = ?').run(now, hash(String(code)));
+  const upd = db.prepare('UPDATE handoffs SET used_at = ? WHERE code_hash = ? AND used_at IS NULL').run(now, hash(String(code)));
+  if (Number(upd.changes) !== 1) return null;
   return { email: row.email, name: row.name, provider: row.provider, subject: 'session' };
 }

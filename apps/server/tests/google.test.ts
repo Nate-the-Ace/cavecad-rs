@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { generateKeyPairSync, sign } from 'node:crypto';
-import { googleStart, googleFinish, safeReturn, type GoogleConfig } from '../src/google.ts';
+import { googleStart, googleFinish, safeReturn, validDesktop, type GoogleConfig } from '../src/google.ts';
 
 const { privateKey, publicKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
 const jwk = { ...(publicKey.export({ format: 'jwk' }) as object), kid: 'g1', alg: 'RS256', use: 'sig' };
@@ -54,4 +54,41 @@ test('safeReturn', () => {
   assert.equal(safeReturn('https://evil.com'), '/');
   assert.equal(safeReturn('/\\evil.com'), '/');
   assert.equal(safeReturn(undefined), '/');
+  assert.equal(safeReturn('/\t/evil.com'), '/');
+  assert.equal(safeReturn('/\n/evil.com'), '/');
+  assert.equal(safeReturn('/%09/evil.com'), '/%09/evil.com');
+});
+
+const CH = 'A'.repeat(43);
+test('validDesktop', () => {
+  assert.deepEqual(validDesktop({ desktop: '1', challenge: CH, state: 'st_1-x' }), { challenge: CH, state: 'st_1-x' });
+  assert.equal(validDesktop({ desktop: '0', challenge: CH, state: 's' }), null);
+  assert.equal(validDesktop({ desktop: '1', challenge: 'short', state: 's' }), null);
+  assert.equal(validDesktop({ desktop: '1', challenge: CH, state: '' }), null);
+  assert.equal(validDesktop({ desktop: '1', challenge: CH, state: 'a b' }), null);
+  assert.equal(validDesktop({ desktop: '1', challenge: CH, state: 'a'.repeat(129) }), null);
+  assert.equal(validDesktop({ desktop: '1' }), null);
+});
+
+test('googleStart drops invalid desktop params, keeps valid', async () => {
+  const c = cfg(idToken({}));
+  for (const [d, want] of [[{ challenge: 'bad', state: 's' }, null], [{ challenge: CH, state: 's' }, { challenge: CH, state: 's' }]] as const) {
+    const s = googleStart(c, { returnTo: '/', desktop: d }, now);
+    const out = await googleFinish(c, new URLSearchParams({ code: 'c', state: new URL(s.location).searchParams.get('state')! }), cookieOf(s.cookie), now);
+    assert.ok(out.ok);
+    assert.deepEqual(out.ok && out.desktop, want);
+  }
+});
+
+test('missing sub, token endpoint refusal, missing code all fail', async () => {
+  const noSub = cfg(idToken({ sub: undefined }));
+  const s = googleStart(noSub, { returnTo: '/', desktop: null }, now);
+  const st = new URL(s.location).searchParams.get('state')!;
+  assert.deepEqual(await googleFinish(noSub, new URLSearchParams({ code: 'c', state: st }), cookieOf(s.cookie), now), { ok: false, error: 'failed' });
+  const refused = { ...cfg(idToken({})), fetch: (async () => ({ ok: false, json: async () => ({ id_token: idToken({}) }) })) as unknown as typeof fetch };
+  const s2 = googleStart(refused, { returnTo: '/', desktop: null }, now);
+  assert.deepEqual(await googleFinish(refused, new URLSearchParams({ code: 'c', state: new URL(s2.location).searchParams.get('state')! }), cookieOf(s2.cookie), now), { ok: false, error: 'failed' });
+  const c = cfg(idToken({}));
+  const s3 = googleStart(c, { returnTo: '/', desktop: null }, now);
+  assert.deepEqual(await googleFinish(c, new URLSearchParams({ state: new URL(s3.location).searchParams.get('state')! }), cookieOf(s3.cookie), now), { ok: false, error: 'failed' });
 });

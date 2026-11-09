@@ -23,14 +23,27 @@ const macOf = (secret: string, body: string) => b64(createHmac('sha256', secret)
 /** A path on this site to go back to; anything else becomes '/'. */
 export function safeReturn(v: unknown): string {
   const s = typeof v === 'string' ? v : '';
-  return s.startsWith('/') && !s.startsWith('//') && !s.startsWith('/\\') ? s : '/';
+  if (!s.startsWith('/') || s.includes('\\') || [...s].some((ch) => ch.charCodeAt(0) <= 0x20)) return '/';
+  try {
+    return new URL(s, 'https://x.invalid').origin === 'https://x.invalid' ? s : '/';
+  } catch {
+    return '/';
+  }
+}
+
+/** The desktop hand-off parameters, only when they have exactly the shape the app sends. */
+export function validDesktop(v: { desktop?: unknown; challenge?: unknown; state?: unknown }): Desktop {
+  if (String(v.desktop) !== '1') return null;
+  if (typeof v.challenge !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(v.challenge)) return null;
+  if (typeof v.state !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/.test(v.state)) return null;
+  return { challenge: v.challenge, state: v.state };
 }
 
 let defaultKeys: ((kid?: string) => Promise<JsonWebKey[]>) | null = null;
 
 export function googleStart(c: GoogleConfig, p: { returnTo: string; desktop: Desktop }, now: number): { location: string; cookie: string } {
   const verifier = b64(randomBytes(32));
-  const kept: Kept = { state: b64(randomBytes(16)), verifier, returnTo: safeReturn(p.returnTo), desktop: p.desktop, exp: now + LIFE_MS };
+  const kept: Kept = { state: b64(randomBytes(16)), verifier, returnTo: safeReturn(p.returnTo), desktop: p.desktop && validDesktop({ desktop: '1', ...p.desktop }), exp: now + LIFE_MS };
   const body = b64(Buffer.from(JSON.stringify(kept)));
   const u = new URL(AUTH);
   for (const [k, v] of Object.entries({ response_type: 'code', client_id: c.clientId, redirect_uri: c.redirectUri, scope: 'openid email profile', state: kept.state, code_challenge: b64(createHash('sha256').update(verifier).digest()), code_challenge_method: 'S256', prompt: 'select_account' })) u.searchParams.set(k, v);
@@ -68,10 +81,10 @@ export async function googleFinish(c: GoogleConfig, q: URLSearchParams, cookieHe
     if (!res.ok || !out.id_token) return { ok: false, error: 'failed' };
     const keys = c.keys ?? (defaultKeys ??= jwksKeys(JWKS));
     const claims = await verifyJwt(out.id_token, { keys, issuers: ISSUERS, audience: c.clientId, now: Math.floor(now / 1000) });
-    if (!claims || typeof claims.email !== 'string') return { ok: false, error: 'failed' };
+    if (!claims || typeof claims.email !== 'string' || typeof claims.sub !== 'string' || !claims.sub) return { ok: false, error: 'failed' };
     if (claims.email_verified !== true) return { ok: false, error: 'unverified' };
     const email = claims.email.toLowerCase();
-    return { ok: true, who: { email, name: typeof claims.name === 'string' ? claims.name : email.split('@')[0], provider: 'google', subject: String(claims.sub ?? '') }, returnTo: kept.returnTo, desktop: kept.desktop };
+    return { ok: true, who: { email, name: typeof claims.name === 'string' ? claims.name : email.split('@')[0], provider: 'google', subject: claims.sub }, returnTo: kept.returnTo, desktop: kept.desktop };
   } catch {
     return { ok: false, error: 'failed' };
   }
