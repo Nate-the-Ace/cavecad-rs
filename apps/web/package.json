@@ -47,7 +47,8 @@
     "test:newcave": "node --experimental-strip-types tests/newcave.check.ts",
     "test:downloads": "node --experimental-strip-types tests/downloads.check.ts",
     "test:markdown": "node --experimental-strip-types tests/markdown.check.ts",
-    "test:handbook": "node --experimental-strip-types tests/handbook.check.ts"
+    "test:handbook": "node --experimental-strip-types tests/handbook.check.ts",
+    "test:handbook:strict": "HANDBOOK_STRICT=1 node --experimental-strip-types tests/handbook.check.ts"
   },
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "^7.3.1",
