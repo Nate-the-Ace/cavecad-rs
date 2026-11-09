@@ -25,7 +25,8 @@ export function safeReturn(v: unknown): string {
   const s = typeof v === 'string' ? v : '';
   if (!s.startsWith('/') || s.includes('\\') || [...s].some((ch) => ch.charCodeAt(0) <= 0x20)) return '/';
   try {
-    return new URL(s, 'https://x.invalid').origin === 'https://x.invalid' ? s : '/';
+    const u = new URL(s, 'https://x.invalid');
+    return u.origin === 'https://x.invalid' ? u.pathname + u.search + u.hash : '/';
   } catch {
     return '/';
   }

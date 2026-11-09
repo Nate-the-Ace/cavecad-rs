@@ -5,7 +5,8 @@ import type { Db } from './db.ts';
 import type { Identity } from './members.ts';
 
 export const SESSION_MS = 30 * 86_400_000;
-export const SESSION_COOKIE = 'cavecad_session';
+/** The cookie's name: __Host- (pinned to this exact host, Secure, Path=/) when served over https; plain on http://localhost dev. */
+export const sessionCookieName = (secure: boolean) => (secure ? '__Host-cavecad_session' : 'cavecad_session');
 const hash = (t: string) => createHash('sha256').update(t).digest('hex');
 const norm = (e: string) => e.trim().toLowerCase();
 
@@ -37,8 +38,8 @@ export function revokeAllFor(db: Db, email: string, now: number): void {
 }
 
 export const sessionCookie = (token: string, secure: boolean) =>
-  `${SESSION_COOKIE}=${token}; HttpOnly;${secure ? ' Secure;' : ''} SameSite=Lax; Path=/; Max-Age=${SESSION_MS / 1000}`;
-export const clearSessionCookie = (secure: boolean) => `${SESSION_COOKIE}=; HttpOnly;${secure ? ' Secure;' : ''} SameSite=Lax; Path=/; Max-Age=0`;
+  `${sessionCookieName(secure)}=${token}; HttpOnly;${secure ? ' Secure;' : ''} SameSite=Lax; Path=/; Max-Age=${SESSION_MS / 1000}`;
+export const clearSessionCookie = (secure: boolean) => `${sessionCookieName(secure)}=; HttpOnly;${secure ? ' Secure;' : ''} SameSite=Lax; Path=/; Max-Age=0`;
 
 /** One cookie's value from a Cookie header; '' when absent. */
 export function readCookie(header: string | undefined, name: string): string {

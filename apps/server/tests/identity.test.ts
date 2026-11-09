@@ -13,10 +13,19 @@ test('a session cookie or bearer token says who it is', async () => {
   const whoIs = makeWhoIs({ db, now: () => now });
   const web = createSession(db, who, 'web', now);
   const desk = createSession(db, who, 'desktop', now);
-  assert.equal((await whoIs(req('1.2.3.4', { cookie: `x=1; cavecad_session=${web}` })))?.email, 'rick@example.com');
+  assert.equal((await whoIs(req('1.2.3.4', { cookie: `x=1; __Host-cavecad_session=${web}` })))?.email, 'rick@example.com');
   assert.equal((await whoIs(req('1.2.3.4', { authorization: `Bearer ${desk}` })))?.email, 'rick@example.com');
   revokeSession(db, web, now);
-  assert.equal(await whoIs(req('1.2.3.4', { cookie: `cavecad_session=${web}` })), null);
+  assert.equal(await whoIs(req('1.2.3.4', { cookie: `__Host-cavecad_session=${web}` })), null);
+});
+test('on https only the __Host- cookie counts; on http dev the plain one does', async () => {
+  const db = openDb(':memory:');
+  const web = createSession(db, who, 'web', now);
+  assert.equal(await makeWhoIs({ db, now: () => now })(req('1.2.3.4', { cookie: `cavecad_session=${web}` })), null);
+  assert.equal(await makeWhoIs({ db, secure: true, now: () => now })(req('1.2.3.4', { cookie: `cavecad_session=${web}` })), null);
+  const plainDev = makeWhoIs({ db, secure: false, now: () => now });
+  assert.equal((await plainDev(req('1.2.3.4', { cookie: `cavecad_session=${web}` })))?.email, 'rick@example.com');
+  assert.equal(await plainDev(req('1.2.3.4', { cookie: `__Host-cavecad_session=${web}` })), null);
 });
 test('edge headers are no longer believed', async () => {
   const db = openDb(':memory:');
@@ -38,5 +47,5 @@ test('a web cookie is not a bearer token, nor a desktop token a cookie', async (
   const web = createSession(db, who, 'web', now);
   const desk = createSession(db, who, 'desktop', now);
   assert.equal(await whoIs(req('1.2.3.4', { authorization: `Bearer ${web}` })), null);
-  assert.equal(await whoIs(req('1.2.3.4', { cookie: `cavecad_session=${desk}` })), null);
+  assert.equal(await whoIs(req('1.2.3.4', { cookie: `__Host-cavecad_session=${desk}` })), null);
 });

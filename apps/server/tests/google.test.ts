@@ -49,6 +49,7 @@ test('failures', async () => {
 });
 
 test('safeReturn', () => {
+  assert.equal(safeReturn('/€'), '/%E2%82%AC');
   assert.equal(safeReturn('/cave/1?x=2'), '/cave/1?x=2');
   assert.equal(safeReturn('//evil.com'), '/');
   assert.equal(safeReturn('https://evil.com'), '/');

@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { openDb } from '../src/db.ts';
-import { createSession, findSession, revokeSession, revokeAllFor, sessionCookie, clearSessionCookie, readCookie, SESSION_MS } from '../src/sessions.ts';
+import { createSession, findSession, revokeSession, revokeAllFor, sessionCookie, sessionCookieName, clearSessionCookie, readCookie, SESSION_MS } from '../src/sessions.ts';
 
 const who = { email: 'Rick@Example.com', name: 'Rick', provider: 'email' as const, subject: '' };
 const now = 1_800_000_000_000;
@@ -29,8 +29,12 @@ test('revoking ends sessions', () => {
   assert.equal(findSession(db, b, now), null);
 });
 test('cookies', () => {
-  assert.match(sessionCookie('tok', true), /^cavecad_session=tok; HttpOnly; Secure; SameSite=Lax; Path=\/; Max-Age=2592000$/);
+  assert.match(sessionCookie('tok', true), /^__Host-cavecad_session=tok; HttpOnly; Secure; SameSite=Lax; Path=\/; Max-Age=2592000$/);
   assert.ok(!sessionCookie('tok', false).includes('Secure'));
+  assert.match(sessionCookie('tok', false), /^cavecad_session=tok;/);
+  assert.equal(sessionCookieName(true), '__Host-cavecad_session');
+  assert.equal(sessionCookieName(false), 'cavecad_session');
+  assert.match(clearSessionCookie(true), /^__Host-cavecad_session=;/);
   assert.match(clearSessionCookie(true), /Max-Age=0/);
   assert.equal(readCookie('a=1; cavecad_session=xyz; b=2', 'cavecad_session'), 'xyz');
   assert.equal(readCookie(undefined, 'cavecad_session'), '');

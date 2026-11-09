@@ -4,7 +4,7 @@ import { createServer, type IncomingMessage } from 'node:http';
 import { createHash } from 'node:crypto';
 import { openDb } from '../src/db.ts';
 import { handleSignin, clientIp, type SigninDeps } from '../src/signin.ts';
-import { findSession } from '../src/sessions.ts';
+import { findSession, createSession } from '../src/sessions.ts';
 import { redeemHandoff } from '../src/handoff.ts';
 
 async function start() {
@@ -40,11 +40,11 @@ test('page, code, verify, sign out', async () => {
     const good = await post('/signin/verify', { email: 'rick@example.com', code: sent[0].code, return: '/x' });
     assert.deepEqual(await good.json(), { next: '/x' });
     const cookie = good.headers.get('set-cookie') ?? '';
-    const token = /cavecad_session=([^;]+)/.exec(cookie)![1];
+    const token = /__Host-cavecad_session=([^;]+)/.exec(cookie)![1];
     const who = findSession(db, token, Date.now());
     assert.equal(who?.email, 'rick@example.com');
     assert.equal(who?.name, 'rick');
-    const out = await post('/signout', {}, { Cookie: `cavecad_session=${token}` });
+    const out = await post('/signout', {}, { Cookie: `__Host-cavecad_session=${token}` });
     assert.match(out.headers.get('set-cookie') ?? '', /Max-Age=0/);
     assert.equal(findSession(db, token, Date.now()), null);
   } finally {
@@ -113,4 +113,68 @@ test('the client address is the last X-Forwarded-For entry (the one the edge app
   assert.equal(clientIp(req(' 3.3.3.3 ')), '3.3.3.3');
   assert.equal(clientIp(req(undefined)), '10.0.0.5');
   assert.equal(clientIp(req('')), '10.0.0.5');
+});
+
+test('an odd ?error= value shows no error text and does not hang', async () => {
+  const { server, base } = await start();
+  try {
+    for (const k of ['toString', 'constructor', '__proto__', 'hasOwnProperty']) {
+      const r = await fetch(base + '/signin?error=' + k, { signal: AbortSignal.timeout(3000) });
+      assert.equal(r.status, 200);
+      assert.ok(!(await r.text()).includes('role="alert">function'));
+    }
+    const ok = await (await fetch(base + '/signin?error=google')).text();
+    assert.ok(ok.includes('Google sign-in didn&#39;t finish'));
+  } finally {
+    server.close();
+  }
+});
+
+test('the sign-in page refuses framing and sends no referrer; sign-out is not cached', async () => {
+  const { server, base, post } = await start();
+  try {
+    const r = await fetch(base + '/signin');
+    assert.equal(r.headers.get('x-frame-options'), 'DENY');
+    assert.equal(r.headers.get('content-security-policy'), "frame-ancestors 'none'");
+    assert.equal(r.headers.get('referrer-policy'), 'no-referrer');
+    assert.equal((await post('/signout', {})).headers.get('cache-control'), 'no-store');
+    assert.equal((await fetch(base + '/signout', { redirect: 'manual' })).headers.get('cache-control'), 'no-store');
+  } finally {
+    server.close();
+  }
+});
+
+test('a post whose Origin is not this site is refused', async () => {
+  const { server, post } = await start();
+  try {
+    assert.equal((await post('/signin/code', { email: 'rick@example.com' }, { Origin: 'https://evil.test' })).status, 403);
+    assert.equal((await post('/signin/code', { email: 'rick@example.com' }, { Origin: 'https://cavecad.test' })).status, 200);
+  } finally {
+    server.close();
+  }
+});
+
+test('signing in revokes the session the browser was already carrying', async () => {
+  const { db, sent, server, post } = await start();
+  try {
+    const old = createSession(db, { email: 'rick@example.com', name: 'rick', provider: 'email', subject: 'session' }, 'web', Date.now());
+    await post('/signin/code', { email: 'rick@example.com' });
+    await new Promise((r) => setImmediate(r));
+    const r = await post('/signin/verify', { email: 'rick@example.com', code: sent[0].code }, { Cookie: `__Host-cavecad_session=${old}` });
+    assert.equal(r.status, 200);
+    assert.equal(findSession(db, old, Date.now()), null);
+  } finally {
+    server.close();
+  }
+});
+
+test('IPv6 visitors share a rate-limit key per /64; IPv4 and mapped IPv4 stay as IPv4', () => {
+  const req = (xff: string) => ({ headers: { 'x-forwarded-for': xff }, socket: { remoteAddress: '10.0.0.5' } }) as unknown as IncomingMessage;
+  const a = clientIp(req('2001:db8:1:2:aaaa:bbbb:cccc:dddd'));
+  assert.equal(a, '2001:db8:1:2::/64');
+  assert.equal(clientIp(req('2001:db8:1:2:1::9')), a);
+  assert.equal(clientIp(req('2001:db8::1')), '2001:db8:0:0::/64');
+  assert.equal(clientIp(req('::1')), '0:0:0:0::/64');
+  assert.equal(clientIp(req('::ffff:1.2.3.4')), '1.2.3.4');
+  assert.equal(clientIp(req('1.2.3.4')), '1.2.3.4');
 });

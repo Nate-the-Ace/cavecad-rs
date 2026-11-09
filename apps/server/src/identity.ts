@@ -3,7 +3,7 @@
 // copy reached through `tailscale serve`, and local development, have their own identities.
 import type { Db } from './db.ts';
 import type { Identity } from './members.ts';
-import { findSession, readCookie, SESSION_COOKIE } from './sessions.ts';
+import { findSession, readCookie, sessionCookieName } from './sessions.ts';
 
 export type RequestLike = { socket: { remoteAddress?: string }; headers: Record<string, string | string[] | undefined> };
 export type WhoIsOptions = {
@@ -12,6 +12,8 @@ export type WhoIsOptions = {
   tailnet?: boolean;
   /** For local development only: everyone on this machine is this email. */
   devIdentity?: string;
+  /** Whether the session cookie is the https (__Host-) one. Default true; false only for http://localhost development. */
+  secure?: boolean;
   now?: () => number;
 };
 
@@ -36,7 +38,7 @@ export function makeWhoIs(o: WhoIsOptions): (r: RequestLike) => Promise<Identity
     const addr = plain(r.socket.remoteAddress);
     const bearer = /^Bearer (\S+)$/.exec(header(r, 'authorization'))?.[1];
     if (bearer) return findSession(o.db, bearer, now(), 'desktop');
-    const cookie = readCookie(header(r, 'cookie'), SESSION_COOKIE);
+    const cookie = readCookie(header(r, 'cookie'), sessionCookieName(o.secure ?? true));
     if (cookie) {
       const found = findSession(o.db, cookie, now(), 'web');
       if (found) return found;

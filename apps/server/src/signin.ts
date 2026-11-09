@@ -1,27 +1,36 @@
 // CaveCAD's sign-in: a small page (no app in it) with Google and an emailed code, the routes behind it, and
 // sign-out. Signing in ends in a web session cookie, or, for the desktop app, a hand-off code it redeems.
 import type { IncomingMessage, ServerResponse } from 'node:http';
+import { isIPv6 } from 'node:net';
 import type { Db } from './db.ts';
 import type { Identity } from './members.ts';
 import { send, sendBadBody, readJson } from './http.ts';
 import { requestCode, verifyCode, type CodeDeps } from './email-code.ts';
 import { googleStart, googleFinish, clearOauthCookie, safeReturn, validDesktop, type GoogleConfig, type Desktop } from './google.ts';
-import { createSession, revokeSession, sessionCookie, clearSessionCookie, readCookie, SESSION_COOKIE } from './sessions.ts';
+import { createSession, revokeSession, sessionCookie, clearSessionCookie, readCookie, sessionCookieName } from './sessions.ts';
 import { createHandoff } from './handoff.ts';
 
 export type SigninDeps = { db: Db; publicUrl: string; secure: boolean; codes: CodeDeps; google: GoogleConfig | null; now?: () => number };
 
 /** Where to go once signed in, plus the cookie to set (none for the desktop). */
-function finish(d: SigninDeps, who: Identity, returnTo: string, desktop: Desktop, now: number): { next: string; cookie: string | null } {
+function finish(d: SigninDeps, req: IncomingMessage, who: Identity, returnTo: string, desktop: Desktop, now: number): { next: string; cookie: string | null } {
   if (desktop) {
     const code = createHandoff(d.db, who, desktop.challenge, now);
     return { next: `cavecad://auth?code=${encodeURIComponent(code)}&state=${encodeURIComponent(desktop.state)}`, cookie: null };
   }
+  // A fresh sign-in replaces whatever session this browser was carrying, so the old token cannot linger.
+  revokeSession(d.db, readCookie(req.headers.cookie, sessionCookieName(d.secure)), now);
   return { next: safeReturn(returnTo), cookie: sessionCookie(createSession(d.db, who, 'web', now), d.secure) };
 }
 
 /** JSON posts from this site only (a plain form or another site cannot send them). */
-function crossSite(req: IncomingMessage): boolean {
+function crossSite(req: IncomingMessage, publicUrl: string): boolean {
+  const origin = req.headers.origin;
+  if (origin !== undefined) {
+    let mine = '';
+    try { mine = new URL(publicUrl).origin; } catch { /* no own origin known: refuse below */ }
+    if (!mine || origin !== mine) return true;
+  }
   const type = String(req.headers['content-type'] ?? '').toLowerCase();
   const site = req.headers['sec-fetch-site'];
   return !type.startsWith('application/json') || (site !== undefined && site !== 'same-origin' && site !== 'none');
@@ -34,7 +43,22 @@ function crossSite(req: IncomingMessage): boolean {
 export function clientIp(req: IncomingMessage): string {
   const xff = req.headers['x-forwarded-for'];
   const last = String(Array.isArray(xff) ? xff[xff.length - 1] : xff ?? '').split(',').pop()?.trim();
-  return last || (req.socket.remoteAddress ?? '');
+  return keyOf(last || (req.socket.remoteAddress ?? ''));
+}
+
+/** One rate-limit key per visitor: an IPv4 address as is (also when IPv4-mapped), an IPv6 one by its /64 (a host owns a whole /64). */
+function keyOf(addr: string): string {
+  const mapped = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/i.exec(addr);
+  if (mapped) return mapped[1];
+  if (!isIPv6(addr)) return addr;
+  let a = addr.split('%')[0];
+  const v4 = /^(.*:)(\d+)\.(\d+)\.(\d+)\.(\d+)$/.exec(a); // embedded dotted tail -> two hextets
+  if (v4) a = v4[1] + ((+v4[2] << 8) | +v4[3]).toString(16) + ':' + ((+v4[4] << 8) | +v4[5]).toString(16);
+  const [head, tail] = a.split('::');
+  const h = head ? head.split(':') : [];
+  const t = tail === undefined ? [] : tail ? tail.split(':') : [];
+  const groups = tail === undefined ? h : [...h, ...Array(8 - h.length - t.length).fill('0'), ...t];
+  return groups.slice(0, 4).map((g) => parseInt(g, 16).toString(16)).join(':') + '::/64';
 }
 
 /** Handles a sign-in route; false when the path is not one. */
@@ -45,10 +69,11 @@ export async function handleSignin(d: SigninDeps, req: IncomingMessage, res: Ser
   const now = (d.now ?? Date.now)();
   try {
     if (path === '/signin' && method === 'GET') {
-      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' }).end(page(url.searchParams, !!d.google));
+      const html = page(url.searchParams, !!d.google); // built first: if it throws, nothing has been sent yet
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store', 'X-Frame-Options': 'DENY', 'Content-Security-Policy': "frame-ancestors 'none'", 'Referrer-Policy': 'no-referrer' }).end(html);
       return true;
     }
-    if ((path === '/signin/code' || path === '/signin/verify' || path === '/signout') && method === 'POST' && crossSite(req)) return send(res, 403, { error: 'cross-site' }), true;
+    if ((path === '/signin/code' || path === '/signin/verify' || path === '/signout') && method === 'POST' && crossSite(req, d.publicUrl)) return send(res, 403, { error: 'cross-site' }), true;
     if (path === '/signin/code' && method === 'POST') {
       const b = await readJson(req);
       const r = await requestCode(d.codes, b.email, clientIp(req), now);
@@ -58,7 +83,7 @@ export async function handleSignin(d: SigninDeps, req: IncomingMessage, res: Ser
       const b = await readJson(req);
       const r = verifyCode(d.codes, b.email, b.code, now);
       if (!r.ok) return send(res, 400, r.error === 'wrong' ? { error: 'wrong', triesLeft: r.triesLeft } : { error: 'expired' }), true;
-      const f = finish(d, { email: r.email, name: r.email.split('@')[0], provider: 'email', subject: 'session' }, String(b.return ?? '/'), validDesktop(b), now);
+      const f = finish(d, req, { email: r.email, name: r.email.split('@')[0], provider: 'email', subject: 'session' }, String(b.return ?? '/'), validDesktop(b), now);
       if (f.cookie) res.setHeader('Set-Cookie', f.cookie);
       return send(res, 200, { next: f.next }), true;
     }
@@ -76,14 +101,15 @@ export async function handleSignin(d: SigninDeps, req: IncomingMessage, res: Ser
         res.writeHead(302, { Location: `/signin?error=${r.error === 'unverified' ? 'unverified' : 'google'}`, 'Set-Cookie': clearOauthCookie, 'Cache-Control': 'no-store' }).end();
         return true;
       }
-      const f = finish(d, r.who, r.returnTo, r.desktop, now);
+      const f = finish(d, req, r.who, r.returnTo, r.desktop, now);
       res.writeHead(302, { Location: r.desktop ? `/signin?done=desktop&next=${encodeURIComponent(f.next)}` : f.next, 'Set-Cookie': [clearOauthCookie, ...(f.cookie ? [f.cookie] : [])], 'Cache-Control': 'no-store' }).end();
       return true;
     }
     if (path === '/signout') {
       if (method !== 'POST' && method !== 'GET') return false;
-      revokeSession(d.db, readCookie(req.headers.cookie, SESSION_COOKIE), now);
+      revokeSession(d.db, readCookie(req.headers.cookie, sessionCookieName(d.secure)), now);
       if (method === 'POST') {
+        res.setHeader('Cache-Control', 'no-store');
         res.setHeader('Set-Cookie', clearSessionCookie(d.secure));
         return send(res, 200, { ok: true }), true;
       }
@@ -112,7 +138,8 @@ function page(q: URLSearchParams, google: boolean): string {
   // Only a cavecad://auth link may be offered here: anything else in ?next= would be a script-injection hole.
   const nextLink = q.get('next') ?? '';
   const done = q.get('done') === 'desktop' && /^cavecad:\/\/auth\?[A-Za-z0-9_%=&.-]+$/.test(nextLink) ? nextLink : '';
-  const err = ERRORS[q.get('error') ?? ''] ?? '';
+  const k = q.get('error') ?? '';
+  const err = Object.hasOwn(ERRORS, k) ? ERRORS[k] : '';
   return `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Sign in to CaveCAD</title><link rel="icon" href="/favicon.svg"><link rel="apple-touch-icon" href="/apple-touch-icon.png">

@@ -38,7 +38,7 @@ const passKey = createPrivateKey({ key: JSON.parse(readFileSync(need('PASS_KEY_F
 const adminEmail = need('ADMIN_EMAIL');
 const mailer = { url: env.MAILER_URL ?? '', key: env.MAILER_KEY ?? '' };
 const secure = publicUrl.startsWith('https:');
-const whoIs = makeWhoIs({ db, tailnet, devIdentity });
+const whoIs = makeWhoIs({ db, tailnet, devIdentity, secure });
 const deps = {
   db, passKey, adminEmail, publicUrl, mailer, tailnet, whoIs,
   scansDir: resolve(env.SCANS_DIR ?? join(dirname(resolve(env.DB_PATH ?? 'cavecad.sqlite')), 'scans')),
@@ -63,6 +63,7 @@ createServer((req, res) => {
   })();
   p.catch((e) => {
     console.error(e);
-    if (!res.headersSent) res.writeHead(500, { 'Content-Type': 'application/json' }).end('{"error":"server"}');
+    if (res.headersSent) res.destroy();
+    else res.writeHead(500, { 'Content-Type': 'application/json' }).end('{"error":"server"}');
   });
 }).listen(Number(env.PORT ?? 8787), env.HOST ?? '0.0.0.0', () => console.log(`CaveCAD server on ${env.HOST ?? '0.0.0.0'}:${env.PORT ?? 8787}`));
