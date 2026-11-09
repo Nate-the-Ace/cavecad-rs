@@ -5,7 +5,7 @@ write them in the form the existing compose file uses (environment variables or 
 
 - Google sign-in: provider id `google`, `clientId`, `clientSecret` from a Google Cloud OAuth client
   (Web application) under cavecad.app@gmail.com. Authorized redirect URI: the one TinyAuth's docs give
-  for Google on https://auth.schonegg.stream.
+  for Google on https://auth.cavecad.com.
 - Microsoft sign-in: a custom provider `microsoft` with
   `authUrl` https://login.microsoftonline.com/common/oauth2/v2.0/authorize,
   `tokenUrl` https://login.microsoftonline.com/common/oauth2/v2.0/token,
@@ -29,7 +29,7 @@ write them in the form the existing compose file uses (environment variables or 
     TINYAUTH_OAUTH_PROVIDERS_GOOGLE_CLIENTID=<from /opt/edge/tinyauth/google-client-id>
     TINYAUTH_OAUTH_PROVIDERS_GOOGLE_CLIENTSECRETFILE=/data/google-client-secret
     TINYAUTH_OAUTH_PROVIDERS_GOOGLE_WHITELIST=/.*/
-    TINYAUTH_APPS_CAVE_CONFIG_DOMAIN=cave.schonegg.stream
+    TINYAUTH_APPS_CAVE_CONFIG_DOMAIN=cavecad.com
     TINYAUTH_APPS_CAVE_OAUTH_WHITELIST=/.*/
     TINYAUTH_APPS_CAVE_PATH_ALLOW=^/privacy\.html$$
 
@@ -52,3 +52,14 @@ secret is the same value as the server's OIDC_CLIENT_SECRET, made on the contain
 TinyAuth v5.2.0 supports PKCE S256 (it does not advertise it in discovery), client_secret_post, and refresh
 tokens; ID tokens are RS256 and last the session expiry (30 days). Any TinyAuth user may get a token: CaveCAD's
 member list decides, as on the web.
+
+## Moved to cavecad.com (2026-11-08)
+
+CaveCAD left schonegg.stream. A TinyAuth session cookie belongs to one domain, so CaveCAD now has its own
+TinyAuth: container `tinyauth-cave` in /opt/edge/compose.yaml, published on 127.0.0.1:3001, data in
+/opt/edge/tinyauth-cave, `TINYAUTH_APPURL=https://auth.cavecad.com`. Same settings as above (Google client,
+whitelists, path allow, desktop OIDC client and secret) with `TINYAUTH_APPS_CAVE_CONFIG_DOMAIN=cavecad.com`
+and no local users. It made its own OIDC key pair, so the issuer is https://auth.cavecad.com and desktop
+apps built for the old issuer must sign in again after updating. The Google client also lists the redirect
+URI https://auth.cavecad.com/api/oauth/callback/google. The household TinyAuth (port 3000,
+auth.schonegg.stream) keeps the other sites; its CAVE app entry is gone.

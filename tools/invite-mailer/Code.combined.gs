@@ -34,7 +34,7 @@ var InviteLogic = {
 
 
 // Code.gs -- the Apps Script web app that sends CaveCAD invite emails from cavecad.app@gmail.com.
-// Script properties: KEY (shared with the CaveCAD server's MAILER_KEY), SITE (https://cave.schonegg.stream).
+// Script properties: KEY (shared with the CaveCAD server's MAILER_KEY), SITE (https://cavecad.com).
 
 function doPost(e) {
   var props = PropertiesService.getScriptProperties();
@@ -61,7 +61,7 @@ function doPost(e) {
 function setUp() {
   var props = PropertiesService.getScriptProperties();
   if (!props.getProperty("KEY")) props.setProperty("KEY", Utilities.getUuid().replace(/-/g, "") + Utilities.getUuid().replace(/-/g, ""));
-  props.setProperty("SITE", "https://cave.schonegg.stream");
+  props.setProperty("SITE", "https://cavecad.com");
   MailApp.getRemainingDailyQuota(); // asks for the send-email permission now, not on the first invite
   Logger.log("Set up. Copy KEY from Project Settings > Script properties into the server.");
 }

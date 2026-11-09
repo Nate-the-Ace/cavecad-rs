@@ -20,21 +20,21 @@
        storage belongs to this address, so the new site cannot see it: before sending people on, this page offers
        those caves as DXF files, the same files the shelf's "Download a file…" writes and its "Import file…" reads. -->
   <div id="moving">
-    <p>CaveCAD now lives at <a class="go" href="https://cave.schonegg.stream/">cave.schonegg.stream</a>. Sign in there with your Google account.</p>
+    <p>CaveCAD now lives at <a class="go" href="https://cavecad.com/">cavecad.com</a>. Sign in there with your Google account.</p>
   </div>
   <div id="caves" hidden>
     <h1>CaveCAD has moved</h1>
-    <p>CaveCAD now lives at <a class="go" href="https://cave.schonegg.stream/">cave.schonegg.stream</a>, where you sign in with your Google account.</p>
+    <p>CaveCAD now lives at <a class="go" href="https://cavecad.com/">cavecad.com</a>, where you sign in with your Google account.</p>
     <p>This browser still holds <strong id="count"></strong> from the old CaveCAD. The new site can't see them, so save them as files first, then bring them in with <em>Import file…</em> on the new site's Cave Shelf.</p>
     <ul id="list"></ul>
     <div class="row">
       <button class="btn primary" id="all">Download all</button>
-      <a class="btn go" href="https://cave.schonegg.stream/">Go to the new CaveCAD</a>
+      <a class="btn go" href="https://cavecad.com/">Go to the new CaveCAD</a>
     </div>
     <p class="hint">Nothing here is deleted. You can come back to this page and download them again. Scanned pages were never kept here for good: pick their folder again on the new site.</p>
   </div>
   <script>
-    const target = 'https://cave.schonegg.stream/' + location.search + location.hash;
+    const target = 'https://cavecad.com/' + location.search + location.hash;
     for (const a of document.querySelectorAll('a.go')) a.href = target;
 
     // The caves the old Cave Shelf kept in this browser, as { name, dxf }. Never creates the database.

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { sendInvite } from '../src/mailer.ts';
 
 const reply = (body: unknown) => (async () => ({ json: async () => body })) as unknown as typeof fetch;
-const args = { to: 'rick@example.com', inviter: 'Nathan', link: 'https://cave.schonegg.stream/?signup=t' };
+const args = { to: 'rick@example.com', inviter: 'Nathan', link: 'https://cavecad.com/?signup=t' };
 
 test('true only when the script says ok', async () => {
   assert.equal(await sendInvite({ url: 'https://s', key: 'K', fetch: reply({ ok: true }) }, args), true);
