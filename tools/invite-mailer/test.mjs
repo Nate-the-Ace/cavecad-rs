@@ -3,7 +3,7 @@ import { createRequire } from 'node:module';
 const L = createRequire(import.meta.url)('./Logic.gs');
 let bad = 0;
 const ok = (c, m) => { if (!c) { bad++; console.log('FAIL', m); } };
-const site = 'https://cave.schonegg.stream';
+const site = 'https://cavecad.com';
 const good = { key: 'K', expected: 'K', to: 'rick@example.com', link: site + '/?signup=abc', site, countThisHour: 0 };
 ok(L.check(good) === null, 'a good request passes');
 ok(L.check({ ...good, key: 'x' }) === 'key', 'wrong key');

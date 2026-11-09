@@ -1,4 +1,4 @@
-# Builds the web app for the CaveCAD server (cave.schonegg.stream) with every build setting, including the
+# Builds the web app for the CaveCAD server (cavecad.com) with every build setting, including the
 # ones kept in GitHub secrets, and keeps it as an artifact named cavecad-web. Deploying it to the server is
 # done by hand (deploy/README.md): download the artifact, back up /opt/cavecad/web, unpack it there.
 #

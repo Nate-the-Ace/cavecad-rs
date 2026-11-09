@@ -213,7 +213,7 @@ function refusal(d: ApiDeps, res: ServerResponse, status: number, title: string,
 export async function serveApp(d: ApiDeps, dist: string, req: IncomingMessage, res: ServerResponse): Promise<void> {
   if ((req.url ?? '/').split('?')[0] === '/privacy.html') return serveStatic(dist, req, res);
   const who = await d.whoIs(req as unknown as RequestLike);
-  if (!who) return refusal(d, res, 401, 'Sign in to CaveCAD', 'Open <a href="https://cave.schonegg.stream/">cave.schonegg.stream</a> to sign in.');
+  if (!who) return refusal(d, res, 401, 'Sign in to CaveCAD', 'Open <a href="https://cavecad.com/">cavecad.com</a> to sign in.');
   const may = M.mayLoadApp(d.db, who, { adminEmail: d.adminEmail, now: (d.now ?? Date.now)() });
   if (may === 'removed') return refusal(d, res, 403, 'Your CaveCAD account was removed', `You're signed in as ${esc(who.email)}. Ask an admin if this is a mistake.`);
   if (may === 'not-invited') return refusal(d, res, 403, 'CaveCAD is invite only for now', `You're signed in as ${esc(who.email)}, which hasn't been invited. If you were invited at another address, sign in with that one.`);

@@ -19,7 +19,7 @@ media-server-setup, gaming-vm-plan, feedback-inventory-before-changing-server.
    PASS_PUBLIC_KEY; the web build in the next step needs it.
 4. Build the web app on the Mac, from `apps/web`, with the key from step 3:
 
-       VITE_PASS_PUBLIC_KEY=... VITE_SIGNOUT_URL=https://auth.schonegg.stream/logout npx vite build
+       VITE_PASS_PUBLIC_KEY=... VITE_SIGNOUT_URL=https://auth.cavecad.com/logout npx vite build
 
    The build stops if either is missing. Delete `dist/local` (real cave data from `public/local`, never
    shipped) and check it is gone before copying. Copy `apps/server` (without its `*.sqlite*` and
@@ -43,14 +43,14 @@ media-server-setup, gaming-vm-plan, feedback-inventory-before-changing-server.
    route the handler that deletes `Remote-*` must come before the forward_auth `reverse_proxy` to
    127.0.0.1:3000 (each site is one `route`, so the written order holds). Reload Caddy.
 10. Run `bash deploy/check-edge.sh` until it prints `edge: all ok`.
-11. **(Nathan)** Sign in. Then open https://cave.schonegg.stream/api/me in the same browser: it must show
+11. **(Nathan)** Sign in. Then open https://cavecad.com/api/me in the same browser: it must show
     his email and `"role":"admin"`. A `signed-out` answer means the edge dropped TinyAuth's headers (look at
     step 9's order first). Invite a second address of his own, open the email on another device, sign in
     with it. Offline: a browser cannot open CaveCAD from nothing without the network (there is no service
     worker, and the page is never cached). What works underground is a tab that was already open when the
     network went, and the desktop app. Test that: sign in on the tablet, keep the tab open, switch to
     airplane mode, keep editing a cave, close the cave and open it again from the Cave Shelf.
-12. **(Nathan)** Desktop app: build with VITE_ACCOUNT_BASE=https://cave-api.schonegg.stream and the same
+12. **(Nathan)** Desktop app: build with VITE_ACCOUNT_BASE=https://api.cavecad.com and the same
     VITE_PASS_PUBLIC_KEY and VITE_SIGNOUT_URL as the web build (the build stops without them; the GitHub
     desktop workflow needs them in its environment too), sign in through the browser round trip. The app
     learns TinyAuth's sign-in address from the server (`/api/desktop-config`), so it needs no issuer setting.
