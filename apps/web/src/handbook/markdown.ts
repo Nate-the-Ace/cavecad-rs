@@ -59,7 +59,10 @@ export function renderMarkdown(md: string, resolve: Resolve): string {
       out.push(ordered ? `<ol>${items.join('')}</ol>` : `<ul>${items.join('')}</ul>`);
       continue;
     }
-    const para: string[] = [];
+    // a paragraph always takes its first line (a stray `|` line that is not a table is just text), then runs on
+    // until a blank line or the start of another block
+    const para: string[] = [line.trim()];
+    i++;
     while (i < lines.length && lines[i].trim() && !/^(#{1,3}\s|\s*(-|\d+\.)\s|\s*\|)/.test(lines[i])) { para.push(lines[i].trim()); i++; }
     out.push(`<p>${inline(para.join(' '), resolve)}</p>`);
   }

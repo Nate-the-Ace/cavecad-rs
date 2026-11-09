@@ -39,7 +39,11 @@ try {
   await send('Page.enable');
   await send('Emulation.setDeviceMetricsOverride', { width: 1100, height: 700, deviceScaleFactor: 1, mobile: false });
 
-  const record = {};
+  // start from what was recorded before: a panel whose capture fails this run keeps its old record, so the strict
+  // check still knows how old its picture is
+  let record = {};
+  try { record = JSON.parse(readFileSync('apps/web/src/handbook/shots.json', 'utf8')); } catch {}
+  const failed = [];
   for (const e of index.filter((x) => x.panel)) {
     const comp = new RegExp(`\\b${e.panel}: \\{ title: '[^']*', component: (\\w+)`).exec(ws)?.[1];
     const imp = comp && new RegExp(`import ${comp} from '\\.\\./([^']+)'`).exec(ws)?.[1];
@@ -57,7 +61,7 @@ try {
       const r = await send('Runtime.evaluate', { expression: "document.body && document.body.dataset.shotReady === '1'" });
       ready = r.result.value === true;
     }
-    if (!ready) { console.log(`FAILED ${e.panel}: never became ready`); continue; }
+    if (!ready) { console.log(`FAILED ${e.panel}: never became ready`); failed.push(e.panel); continue; }
     const shot = await send('Page.captureScreenshot', { format: 'png' });
     writeFileSync(`${out}/${file}`, Buffer.from(shot.data, 'base64'));
     record[file] = { source, hash: createHash('sha256').update(readFileSync(source)).digest('hex') };
@@ -65,6 +69,7 @@ try {
   }
   writeFileSync('apps/web/src/handbook/shots.json', JSON.stringify(record, null, 2) + '\n');
   console.log(`${Object.keys(record).length} shots`);
+  if (failed.length) { console.log(`not captured: ${failed.join(', ')}`); process.exitCode = 1; }
   sock.close();
 } finally {
   proc.kill();
