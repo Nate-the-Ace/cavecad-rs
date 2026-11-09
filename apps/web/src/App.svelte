@@ -11,6 +11,8 @@
   import SurfaceData from './components/SurfaceData.svelte';
   import { recomputeLayers, resetEntrancePick, surface, surfaceKey, syncSurface } from './lib/surface.svelte';
   import { initWorkspace } from './lib/workspace.svelte';
+  import { catalog } from './handbook/bundle';
+  import { openHandbook } from './lib/handbook-open';
   import { engine, loadEngine, loadBuildInfo, type BuildInfo } from './lib/engine';
   import { cave, setUnits, unsaved } from './lib/cave.svelte';
   import { guardUnload } from './lib/files';
@@ -137,7 +139,7 @@
     window.addEventListener('copy', onCopy);
     window.addEventListener('cut', onCut);
     window.addEventListener('paste', onPaste);
-    const teardown = initWorkspace(host);
+    const teardown = initWorkspace(host, { pageFor: (id) => { const p = catalog.forPanel(id); return p?.text ? p.id : null; }, open: openHandbook });
     installDiagnostics();
     listenForLinks((url) => {
       void handleAuthLink(url).then((signIn) => { if (!signIn && isOldJoinUrl(url)) moved = true; });

@@ -7,6 +7,7 @@
   import { engine, loadEngine, type SurveyFormat } from '../lib/engine';
   import { exportDxf, exportProject, exportSurvey, importSurvey, importSurveyFolder } from '../lib/files';
   import { onMount } from 'svelte';
+  import { openHandbook } from '../lib/handbook-open';
 
   let formats = $state<SurveyFormat[]>([]);
   onMount(() => {
@@ -68,6 +69,9 @@
       <span>Project folder…</span>
       <span class="ext">.mak .wpj thconfig</span>
     </button>
+    <button role="menuitem" class="learn" onclick={() => { menu = null; openHandbook('bringing-survey-data-in'); }}>
+      <span>Learn more</span>
+    </button>
   </div>
 {:else if menu}
   <div class="formats" role="menu" style="left:{menu.x}px; top:{menu.y}px">
@@ -106,6 +110,7 @@
   .tool span { display: inline-flex; align-items: center; gap: 2px; white-space: nowrap; }
   .formats { position: fixed; z-index: 60; min-width: 200px; display: flex; flex-direction: column; padding: 4px; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: 0 6px 18px rgb(0 0 0 / 0.25); }
   .formats button { display: flex; justify-content: space-between; gap: 16px; padding: 6px 10px; background: none; border: 0; border-radius: var(--radius); cursor: pointer; font-size: 13px; color: var(--text); text-align: left; }
+  .formats button.learn { color: var(--accent); border-top: 1px solid var(--line); border-radius: 0 0 var(--radius) var(--radius); margin-top: 2px; }
   .formats button:hover { background: var(--panel-2); }
   .ext { color: var(--text-dim, var(--text)); opacity: 0.7; font-variant-numeric: tabular-nums; }
   .head { padding: 6px 10px 2px; font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }

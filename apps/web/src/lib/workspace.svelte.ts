@@ -33,6 +33,8 @@ interface PanelDef {
   height?: number;
   /** Width in pixels when first opened beside another panel. */
   width?: number;
+  /** When closed and opened, join the group holding this panel as a tab, if it is open. */
+  openWithin?: string;
 }
 
 /** Every panel the workspace can show. Add new panels here. */
@@ -50,7 +52,7 @@ export const PANELS: Record<string, PanelDef> = {
   patterns: { title: 'Patterns', component: PatternsPanel, width: 560 },
   console: { title: 'Console', component: ConsolePanel, height: 260 },
   rooms: { title: 'Rooms', component: RoomsPanel, width: 460, height: 360 },
-  handbook: { title: 'Handbook', component: HandbookPanel, width: 520 },
+  handbook: { title: 'Handbook', component: HandbookPanel, width: 520, openWithin: 'profile' },
 };
 
 /** Which panels are open right now (drives the View tab's toggles). */
@@ -95,11 +97,11 @@ function restore(a: DockviewApi): boolean {
 }
 
 /** Builds the workspace inside `el`. Returns a function that tears it down. */
-export function initWorkspace(el: HTMLElement): () => void {
+export function initWorkspace(el: HTMLElement, help?: ConstructorParameters<typeof GroupActions>[0]): () => void {
   api = createDockview(el, {
     theme: isDark() ? themeDark : themeLight,
     createComponent: ({ name }) => new SveltePanel(PANELS[name].component),
-    createRightHeaderActionComponent: () => new GroupActions(),
+    createRightHeaderActionComponent: () => new GroupActions(help),
   });
   const a = api;
   if (import.meta.env.DEV) (window as unknown as { __dock: DockviewApi }).__dock = a; // for tests and debugging
@@ -160,8 +162,11 @@ export function togglePanel(id: string) {
   if (existing) {
     api.removePanel(existing);
   } else {
+    const within = PANELS[id].openWithin;
     const ref = api.panels[0];
-    api.addPanel({ id, component: id, title: PANELS[id].title, position: ref ? { referencePanel: ref.id, direction: 'below' } : undefined, initialHeight: PANELS[id].height });
+    if (within && api.getPanel(within)) {
+      api.addPanel({ id, component: id, title: PANELS[id].title, position: { referencePanel: within, direction: 'within' } });
+    } else api.addPanel({ id, component: id, title: PANELS[id].title, position: ref ? { referencePanel: ref.id, direction: 'below' } : undefined, initialHeight: PANELS[id].height });
   }
   refreshOpen();
 }
