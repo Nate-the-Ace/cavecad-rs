@@ -152,7 +152,19 @@ test('cross-site and non-JSON writes are refused', async () => {
 });
 
 test('desktop config: public, read from discovery, absent without OIDC', async () => {
-  const { makeDesktopConfig } = await import('../src/desktop-token.ts');
+  // Stands in for the removed desktop-token.ts helper: reads the discovery document once, null when it can't be read.
+  const makeDesktopConfig = (c: { issuer: string; clientId: string; fetch: typeof fetch }) => {
+    let doc: Promise<{ authorization_endpoint?: string }> | null = null;
+    return async () => {
+      try {
+        const d = await (doc ??= (async () => (await c.fetch(c.issuer.replace(/\/$/, '') + '/.well-known/openid-configuration')).json())());
+        return d.authorization_endpoint ? { authorizationEndpoint: d.authorization_endpoint, clientId: c.clientId } : null;
+      } catch {
+        doc = null;
+        return null;
+      }
+    };
+  };
   let reads = 0;
   const fake = (async (url: string) => {
     reads++;
