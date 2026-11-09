@@ -1,0 +1,15 @@
+import { platformOf, choices } from '../src/lib/downloads.ts';
+let bad = 0;
+const ok = (c: boolean, m: string) => { if (!c) { bad++; console.log('FAIL', m); } };
+ok(platformOf('Mozilla/5.0 (Macintosh; Intel Mac OS X 15_0) Safari', '') === 'mac', 'mac');
+ok(platformOf('Mozilla/5.0 (Windows NT 10.0; Win64; x64)', 'Windows') === 'windows', 'windows');
+ok(platformOf('Mozilla/5.0 (X11; Linux x86_64)', 'Linux') === 'linux', 'linux');
+ok(platformOf('Mozilla/5.0 (Linux; Android 14)', 'Android') === null, 'android is not linux');
+ok(platformOf('Mozilla/5.0 (iPhone; CPU iPhone OS 18_0)', 'iOS') === null, 'iphone');
+const m = { version: '1.2.0', builtAt: 'x', files: { mac: 'a.dmg', windows: 'b.exe', windowsMsi: 'b.msi', linuxAppImage: 'c.AppImage', linuxDeb: 'c.deb', linuxRpm: '' } };
+const w = choices(m, 'windows');
+ok(w[0].platform === 'windows' && w.some((c) => c.platform === 'mac'), 'own platform first');
+ok(!w.some((c) => c.file === ''), 'missing files skipped');
+ok(choices(m, null)[0].platform === 'mac', 'no guess: mac first');
+console.log(bad ? `downloads: ${bad} failed` : 'downloads: all ok');
+process.exit(bad ? 1 : 0);
