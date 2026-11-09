@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { openDb } from '../src/db.ts';
 import { handleApi, serveApp, type ApiDeps } from '../src/api.ts';
+import { createSession, findSession } from '../src/sessions.ts';
 
 const ADMIN = 'nathan@example.com';
 
@@ -29,7 +30,7 @@ async function start(mailOk = true, extra: Partial<ApiDeps> = {}) {
   const base = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
   const call = async (user: string | null, method: string, path: string, body?: unknown, extra: Record<string, string> = {}) => {
     const raw = typeof body === 'string' ? body : body ? JSON.stringify(body) : undefined;
-    const res = await fetch(base + path, { method, headers: { ...(user ? { 'x-test-user': user } : {}), 'Content-Type': 'application/json', ...extra }, body: raw });
+    const res = await fetch(base + path, { method, headers: { ...(user ? { 'x-test-user': user } : {}), 'Content-Type': 'application/json', ...extra }, body: raw, redirect: 'manual' });
     return { status: res.status, headers: res.headers, json: res.headers.get('content-type')?.includes('json') ? await res.json() : await res.text() };
   };
   return { server, call, db };
@@ -151,51 +152,24 @@ test('cross-site and non-JSON writes are refused', async () => {
   }
 });
 
-test('desktop config: public, read from discovery, absent without OIDC', async () => {
-  // Stands in for the removed desktop-token.ts helper: reads the discovery document once, null when it can't be read.
-  const makeDesktopConfig = (c: { issuer: string; clientId: string; fetch: typeof fetch }) => {
-    let doc: Promise<{ authorization_endpoint?: string }> | null = null;
-    return async () => {
-      try {
-        const d = await (doc ??= (async () => (await c.fetch(c.issuer.replace(/\/$/, '') + '/.well-known/openid-configuration')).json())());
-        return d.authorization_endpoint ? { authorizationEndpoint: d.authorization_endpoint, clientId: c.clientId } : null;
-      } catch {
-        doc = null;
-        return null;
-      }
-    };
-  };
-  let reads = 0;
-  const fake = (async (url: string) => {
-    reads++;
-    assert.equal(url, 'https://auth.test/.well-known/openid-configuration');
-    return { ok: true, json: async () => ({ authorization_endpoint: 'https://auth.test/authorize', token_endpoint: 'https://auth.test/token' }) };
-  }) as unknown as typeof fetch;
-  const { server, call } = await start(true, { desktopConfig: makeDesktopConfig({ issuer: 'https://auth.test/', clientId: 'cavecad-desktop', fetch: fake }) });
+test('desktop token from a hand-off', async () => {
+  const { server, call, db } = await start();
   try {
-    const desk = { 'Sec-Fetch-Site': 'cross-site', Origin: 'tauri://localhost' };
-    const a = await call(null, 'GET', '/api/desktop-config', undefined, desk);
-    assert.equal(a.status, 200, 'no sign-in and cross-site from the desktop app');
-    assert.deepEqual(a.json, { authorizationEndpoint: 'https://auth.test/authorize', clientId: 'cavecad-desktop' });
-    assert.equal(a.headers.get('access-control-allow-origin'), 'tauri://localhost');
-    assert.equal(a.headers.get('access-control-allow-credentials'), null, 'never credentialed cross-origin');
-    await call(null, 'GET', '/api/desktop-config');
-    assert.equal(reads, 1, 'the discovery document is read once');
-    assert.equal((await call(null, 'POST', '/api/desktop-config', {})).status, 401, 'only GET is the public route');
+    const { createHash } = await import('node:crypto');
+    const { createHandoff } = await import('../src/handoff.ts');
+    const verifier = 'z'.repeat(43);
+    const code = createHandoff(db, { email: 'rick@example.com', name: 'Rick', provider: 'email', subject: 'session' }, createHash('sha256').update(verifier).digest('base64url'), Date.now());
+    const ok = await call(null, 'POST', '/api/desktop-token', { code, verifier });
+    assert.equal(ok.status, 200);
+    assert.equal((ok.json as { expires_in: number }).expires_in, 2592000);
+    assert.equal(findSession(db, (ok.json as { token: string }).token, Date.now(), 'desktop')?.email, 'rick@example.com');
+    const again = await call(null, 'POST', '/api/desktop-token', { code, verifier });
+    assert.equal(again.status, 400);
+    assert.deepEqual(again.json, { error: 'sign-in-failed' });
+    assert.equal((await call(ADMIN, 'GET', '/api/desktop-config')).status, 404, 'the TinyAuth route is gone');
+    assert.equal((await call(null, 'GET', '/api/desktop-config')).status, 401, 'signed out it is just another private route');
   } finally {
     server.close();
-  }
-  const down = await start(true, { desktopConfig: makeDesktopConfig({ issuer: 'https://auth.test', clientId: 'c', fetch: (async () => { throw new Error('down'); }) as unknown as typeof fetch }) });
-  try {
-    assert.equal((await down.call(null, 'GET', '/api/desktop-config')).status, 502, 'TinyAuth unreachable');
-  } finally {
-    down.server.close();
-  }
-  const none = await start();
-  try {
-    assert.equal((await none.call(null, 'GET', '/api/desktop-config')).status, 404, 'no OIDC configured');
-  } finally {
-    none.server.close();
   }
 });
 
@@ -242,7 +216,7 @@ test('on the tailnet /api/me says so, for members and for the not-invited', asyn
 });
 
 test('the app itself is only for members and people with an invite waiting', async () => {
-  const { server, call } = await start();
+  const { server, call, db } = await start();
   try {
     assert.equal((await call(ADMIN, 'GET', '/')).json, '<html>app</html>', 'the first admin');
     const stranger = await call('stranger@example.com', 'GET', '/');
@@ -251,7 +225,11 @@ test('the app itself is only for members and people with an invite waiting', asy
     assert.match(stranger.json, /stranger@example\.com/);
     assert.doesNotMatch(stranger.json, /<html>app<\/html>/);
     assert.equal((await call('stranger@example.com', 'GET', '/assets/a.js')).status, 403, 'no app code either');
-    assert.equal((await call(null, 'GET', '/')).status, 401, 'not signed in');
+    const out = await call(null, 'GET', '/');
+    assert.equal(out.status, 302, 'not signed in');
+    assert.equal(out.headers.get('location'), '/signin?return=%2F');
+    assert.equal((await call(null, 'GET', '/some/deep?x=1')).headers.get('location'), '/signin?return=%2Fsome%2Fdeep%3Fx%3D1');
+    assert.match(stranger.json, /<a href="\/signout">Use another account<\/a>/);
     assert.equal((await call(null, 'GET', '/privacy.html')).json, '<html>privacy</html>', 'the privacy page is for anyone');
     assert.equal((await call(null, 'GET', '/apple-touch-icon.png')).json, 'png', 'icons are for anyone (Safari fetches them signed out)');
     assert.equal((await call(null, 'GET', '/apple-touch-icon.png?x=1')).status, 200);
@@ -263,7 +241,10 @@ test('the app itself is only for members and people with an invite waiting', asy
     assert.equal((await call('rick@example.com', 'GET', '/api/me')).json.status, 'member');
 
     const members = (await call(ADMIN, 'GET', '/api/admin/members')).json.members as { id: string; email: string }[];
-    await call(ADMIN, 'DELETE', `/api/admin/members/${members.find((m) => m.email === 'rick@example.com')!.id}`);
+    const rickSession = createSession(db, { email: 'rick@example.com', name: 'Rick', provider: 'email', subject: 'session' }, 'web', Date.now());
+    assert.ok(findSession(db, rickSession, Date.now()));
+    assert.equal((await call(ADMIN, 'DELETE', `/api/admin/members/${members.find((m) => m.email === 'rick@example.com')!.id}`)).status, 200);
+    assert.equal(findSession(db, rickSession, Date.now()), null, 'removal signs them out everywhere');
     const removed = await call('rick@example.com', 'GET', '/');
     assert.equal(removed.status, 403);
     assert.match(removed.json, /removed/);

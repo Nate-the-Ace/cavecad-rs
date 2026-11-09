@@ -35,10 +35,10 @@ export function makeWhoIs(o: WhoIsOptions): (r: RequestLike) => Promise<Identity
   return async (r) => {
     const addr = plain(r.socket.remoteAddress);
     const bearer = /^Bearer (\S+)$/.exec(header(r, 'authorization'))?.[1];
-    if (bearer) return findSession(o.db, bearer, now());
+    if (bearer) return findSession(o.db, bearer, now(), 'desktop');
     const cookie = readCookie(header(r, 'cookie'), SESSION_COOKIE);
     if (cookie) {
-      const found = findSession(o.db, cookie, now());
+      const found = findSession(o.db, cookie, now(), 'web');
       if (found) return found;
     }
     if (o.tailnet && local(addr)) {

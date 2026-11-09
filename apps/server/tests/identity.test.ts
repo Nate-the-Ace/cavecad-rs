@@ -32,3 +32,11 @@ test('tailnet and dev identities work from this machine only', async () => {
   assert.equal((await d(req('::1', {})))?.email, 'dev@example.com');
   assert.equal(await d(req('10.0.0.2', {})), null);
 });
+test('a web cookie is not a bearer token, nor a desktop token a cookie', async () => {
+  const db = openDb(':memory:');
+  const whoIs = makeWhoIs({ db, now: () => now });
+  const web = createSession(db, who, 'web', now);
+  const desk = createSession(db, who, 'desktop', now);
+  assert.equal(await whoIs(req('1.2.3.4', { authorization: `Bearer ${web}` })), null);
+  assert.equal(await whoIs(req('1.2.3.4', { cookie: `cavecad_session=${desk}` })), null);
+});

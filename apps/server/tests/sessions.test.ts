@@ -44,3 +44,13 @@ test('a long-dead session row is cleaned up when a new one starts', () => {
   createSession(db, who, 'web', now);
   assert.equal((db.prepare('SELECT COUNT(*) AS n FROM sessions').get() as { n: number }).n, 1);
 });
+test('a session can be asked for by kind', () => {
+  const db = openDb(':memory:');
+  const web = createSession(db, who, 'web', now);
+  const desk = createSession(db, who, 'desktop', now);
+  assert.ok(findSession(db, web, now, 'web'));
+  assert.equal(findSession(db, web, now, 'desktop'), null);
+  assert.ok(findSession(db, desk, now, 'desktop'));
+  assert.equal(findSession(db, desk, now, 'web'), null);
+  assert.ok(findSession(db, desk, now), 'no kind: either');
+});

@@ -18,10 +18,10 @@ export function createSession(db: Db, who: Identity, kind: 'web' | 'desktop', no
   return token;
 }
 
-/** Who a live session belongs to, or null. */
-export function findSession(db: Db, token: string, now: number): Identity | null {
+/** Who a live session belongs to, or null. With `kind`, only a session of that kind counts. */
+export function findSession(db: Db, token: string, now: number, kind?: 'web' | 'desktop'): Identity | null {
   if (!token) return null;
-  const r = db.prepare('SELECT email, name, provider FROM sessions WHERE token_hash = ? AND revoked_at IS NULL AND expires_at > ?').get(hash(token), now) as
+  const r = db.prepare('SELECT email, name, provider FROM sessions WHERE token_hash = ? AND revoked_at IS NULL AND expires_at > ? AND (? IS NULL OR kind = ?)').get(hash(token), now, kind ?? null, kind ?? null) as
     | { email: string; name: string; provider: Identity['provider'] }
     | undefined;
   return r ? { email: r.email, name: r.name || r.email.split('@')[0], provider: r.provider, subject: 'session' } : null;
