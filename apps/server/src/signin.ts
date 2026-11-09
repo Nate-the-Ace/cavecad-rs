@@ -98,7 +98,10 @@ export async function handleSignin(d: SigninDeps, req: IncomingMessage, res: Ser
       if (!d.google) return res.writeHead(302, { Location: '/signin' }).end(), true;
       const r = await googleFinish(d.google, url.searchParams, req.headers.cookie, now);
       if (!r.ok) {
-        res.writeHead(302, { Location: `/signin?error=${r.error === 'unverified' ? 'unverified' : 'google'}`, 'Set-Cookie': clearOauthCookie, 'Cache-Control': 'no-store' }).end();
+        const back = new URLSearchParams({ error: r.error === 'unverified' ? 'unverified' : 'google' });
+        if (r.returnTo && r.returnTo !== '/') back.set('return', r.returnTo);
+        if (r.desktop) { back.set('desktop', '1'); back.set('challenge', r.desktop.challenge); back.set('state', r.desktop.state); }
+        res.writeHead(302, { Location: `/signin?${back.toString()}`, 'Set-Cookie': clearOauthCookie, 'Cache-Control': 'no-store' }).end();
         return true;
       }
       const f = finish(d, req, r.who, r.returnTo, r.desktop, now);

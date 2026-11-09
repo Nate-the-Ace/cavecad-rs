@@ -72,6 +72,18 @@ test('the page offers Google only when it is configured', async () => {
     assert.equal(cb.status, 302);
     assert.equal(cb.headers.get('location'), '/signin?error=google');
     assert.match(cb.headers.get('set-cookie') ?? '', /cavecad_oauth=;.*Max-Age=0/);
+    const ch = 'A'.repeat(43);
+    const g2 = await fetch(base + `/auth/google?return=${encodeURIComponent('/?signup=abc')}&desktop=1&challenge=${ch}&state=st-1`, { redirect: 'manual' });
+    const st = new URL(g2.headers.get('location')!).searchParams.get('state')!;
+    const jar = (g2.headers.get('set-cookie') ?? '').split(';')[0];
+    const cb2 = await fetch(base + `/auth/google/callback?error=access_denied&state=${st}`, { redirect: 'manual', headers: { Cookie: jar } });
+    const back = new URL(cb2.headers.get('location')!, 'http://x');
+    assert.equal(back.pathname, '/signin');
+    assert.equal(back.searchParams.get('error'), 'google');
+    assert.equal(back.searchParams.get('return'), '/?signup=abc');
+    assert.equal(back.searchParams.get('desktop'), '1');
+    assert.equal(back.searchParams.get('challenge'), ch);
+    assert.equal(back.searchParams.get('state'), 'st-1');
   } finally {
     server.close();
   }

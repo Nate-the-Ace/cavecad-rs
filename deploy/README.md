@@ -45,12 +45,12 @@ on https (plain `cavecad_session` only on http://localhost in dev).
 
 Environment in /etc/cavecad/server.env (mode 600), template `apps/server/.env.example`:
 
-- Required: `PUBLIC_URL` (https://cavecad.com), `ADMIN_EMAIL`, `PASS_KEY_FILE`, `CODE_SECRET`.
+- Required: `PUBLIC_URL` (https://cavecad.com), `ADMIN_EMAIL`, `PASS_KEY_FILE`, `CODE_SECRET`, `MAILER_URL`, `MAILER_KEY` (without the mailer, emailed sign-in codes are never sent; the server logs a warning at startup).
 - `CODE_SECRET` is at least 32 characters. Make it on the container and never display or paste it:
   `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"` (write the output straight into
   the env file).
-- Optional: `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` (Google client "TinyAuth" in project cavecad;
-  redirect URI `https://cavecad.com/auth/google/callback`), `MAILER_URL` and `MAILER_KEY`, `DOWNLOADS_DIR`
+- Optional: `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` (the existing OAuth client, named "TinyAuth" in Google
+  Cloud project cavecad, needs the redirect URI `https://cavecad.com/auth/google/callback` added), `DOWNLOADS_DIR`
   (/var/lib/cavecad/downloads), `DB_PATH`, `SCANS_DIR`, `DIST_DIR`, `HOST`, `PORT`.
 - Removed: `EDGE_ADDRESS`, `GATE_SECRET`, `SIGNOUT_URL`, `OIDC_ISSUER`, `OIDC_CLIENT_ID`,
   `OIDC_CLIENT_SECRET`. Delete them from the env file.
@@ -74,10 +74,10 @@ play/games on their own login (no Google there), and TinyAuth sessions of 30 day
 ## Updating the web app (2026-10-24)
 
 Build it on GitHub so the settings kept in its secrets go in (the live relay, feedback and class-link
-mailboxes; the account values are repository variables PASS_PUBLIC_KEY, SIGNIN_URL, ACCOUNT_BASE):
+mailboxes; PASS_PUBLIC_KEY is a repository variable):
 `gh workflow run web.yml`, then `gh run download <run> -n cavecad-web -D <empty folder>`. On CT 209: back up
 /opt/cavecad/web (`cp -a web web.bak-before-<what>`), empty it, unpack the build there. No restart needed.
-The desktop workflow (`desktop.yml`) takes the same values.
+Only the desktop workflow (`desktop.yml`) uses SIGNIN_URL and ACCOUNT_BASE; `web.yml` needs neither.
 
 ## Server caves (2026-10-26)
 

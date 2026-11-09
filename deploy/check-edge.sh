@@ -13,5 +13,7 @@ code=$(curl -s -o /dev/null -w '%{http_code}' https://cavecad.com/downloads/x)
 [ "$code" = 302 ] || { echo "FAIL signed-out download: got $code"; bad=1; }
 code=$(curl -s -o /dev/null -w '%{http_code}' https://api.cavecad.com/api/me)
 [ "$code" = 401 ] || { echo "FAIL api. without a token: got $code"; bad=1; }
+csp=$(curl -sI https://cavecad.com/signin | grep -i '^content-security-policy:')
+case "$csp" in *script-src*) case "$csp" in *unsafe-inline*) ;; *) echo "FAIL /signin CSP blocks inline scripts: $csp"; bad=1 ;; esac ;; esac
 [ $bad = 0 ] && echo 'edge: all ok'
 exit $bad

@@ -38,14 +38,14 @@ test('failures', async () => {
   assert.deepEqual(await googleFinish(c, new URLSearchParams({ code: 'c', state: 'other' }), cookieOf(s.cookie), now), { ok: false, error: 'failed' });
   assert.deepEqual(await googleFinish(c, new URLSearchParams({ code: 'c', state }), '', now), { ok: false, error: 'failed' });
   assert.deepEqual(await googleFinish(c, new URLSearchParams({ code: 'c', state }), cookieOf(s.cookie) + 'x', now), { ok: false, error: 'failed' });
-  assert.deepEqual(await googleFinish(c, new URLSearchParams({ error: 'access_denied', state }), cookieOf(s.cookie), now), { ok: false, error: 'cancelled' });
+  assert.deepEqual(await googleFinish(c, new URLSearchParams({ error: 'access_denied', state }), cookieOf(s.cookie), now), { ok: false, error: 'cancelled', returnTo: '/', desktop: null });
   assert.deepEqual(await googleFinish(c, new URLSearchParams({ code: 'c', state }), cookieOf(s.cookie), now + 700_000), { ok: false, error: 'failed' }, 'state cookie expired');
   const unverified = cfg(idToken({ email_verified: false }));
   const s2 = googleStart(unverified, { returnTo: '/', desktop: null }, now);
-  assert.deepEqual(await googleFinish(unverified, new URLSearchParams({ code: 'c', state: new URL(s2.location).searchParams.get('state')! }), cookieOf(s2.cookie), now), { ok: false, error: 'unverified' });
+  assert.deepEqual(await googleFinish(unverified, new URLSearchParams({ code: 'c', state: new URL(s2.location).searchParams.get('state')! }), cookieOf(s2.cookie), now), { ok: false, error: 'unverified', returnTo: '/', desktop: null });
   const bad = cfg(idToken({ aud: 'someone-else' }));
   const s3 = googleStart(bad, { returnTo: '/', desktop: null }, now);
-  assert.deepEqual(await googleFinish(bad, new URLSearchParams({ code: 'c', state: new URL(s3.location).searchParams.get('state')! }), cookieOf(s3.cookie), now), { ok: false, error: 'failed' });
+  assert.deepEqual(await googleFinish(bad, new URLSearchParams({ code: 'c', state: new URL(s3.location).searchParams.get('state')! }), cookieOf(s3.cookie), now), { ok: false, error: 'failed', returnTo: '/', desktop: null });
 });
 
 test('safeReturn', () => {
@@ -85,11 +85,20 @@ test('missing sub, token endpoint refusal, missing code all fail', async () => {
   const noSub = cfg(idToken({ sub: undefined }));
   const s = googleStart(noSub, { returnTo: '/', desktop: null }, now);
   const st = new URL(s.location).searchParams.get('state')!;
-  assert.deepEqual(await googleFinish(noSub, new URLSearchParams({ code: 'c', state: st }), cookieOf(s.cookie), now), { ok: false, error: 'failed' });
+  assert.deepEqual(await googleFinish(noSub, new URLSearchParams({ code: 'c', state: st }), cookieOf(s.cookie), now), { ok: false, error: 'failed', returnTo: '/', desktop: null });
   const refused = { ...cfg(idToken({})), fetch: (async () => ({ ok: false, json: async () => ({ id_token: idToken({}) }) })) as unknown as typeof fetch };
   const s2 = googleStart(refused, { returnTo: '/', desktop: null }, now);
-  assert.deepEqual(await googleFinish(refused, new URLSearchParams({ code: 'c', state: new URL(s2.location).searchParams.get('state')! }), cookieOf(s2.cookie), now), { ok: false, error: 'failed' });
+  assert.deepEqual(await googleFinish(refused, new URLSearchParams({ code: 'c', state: new URL(s2.location).searchParams.get('state')! }), cookieOf(s2.cookie), now), { ok: false, error: 'failed', returnTo: '/', desktop: null });
   const c = cfg(idToken({}));
   const s3 = googleStart(c, { returnTo: '/', desktop: null }, now);
-  assert.deepEqual(await googleFinish(c, new URLSearchParams({ state: new URL(s3.location).searchParams.get('state')! }), cookieOf(s3.cookie), now), { ok: false, error: 'failed' });
+  assert.deepEqual(await googleFinish(c, new URLSearchParams({ state: new URL(s3.location).searchParams.get('state')! }), cookieOf(s3.cookie), now), { ok: false, error: 'failed', returnTo: '/', desktop: null });
+});
+
+test('a cancelled sign-in still carries the return path and desktop hand-off', async () => {
+  const c = cfg(idToken({}));
+  const desktop = { challenge: 'A'.repeat(43), state: 'st-1' };
+  const s = googleStart(c, { returnTo: '/?signup=abc', desktop }, now);
+  const out = await googleFinish(c, new URLSearchParams({ error: 'access_denied', state: new URL(s.location).searchParams.get('state')! }), cookieOf(s.cookie), now);
+  assert.equal(out.ok, false);
+  if (!out.ok) { assert.equal(out.returnTo, '/?signup=abc'); assert.deepEqual(out.desktop, desktop); }
 });

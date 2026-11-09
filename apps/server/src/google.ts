@@ -69,24 +69,25 @@ function readKept(c: GoogleConfig, cookieHeader: string | undefined, now: number
 
 export const clearOauthCookie = `${COOKIE}=; HttpOnly; Secure; SameSite=Lax; Path=/auth/google; Max-Age=0`;
 
-export async function googleFinish(c: GoogleConfig, q: URLSearchParams, cookieHeader: string | undefined, now: number): Promise<{ ok: true; who: Identity; returnTo: string; desktop: Desktop } | { ok: false; error: 'cancelled' | 'failed' | 'unverified' }> {
+export async function googleFinish(c: GoogleConfig, q: URLSearchParams, cookieHeader: string | undefined, now: number): Promise<{ ok: true; who: Identity; returnTo: string; desktop: Desktop } | { ok: false; error: 'cancelled' | 'failed' | 'unverified'; returnTo?: string; desktop?: Desktop }> {
   const kept = readKept(c, cookieHeader, now);
   if (!kept || q.get('state') !== kept.state) return { ok: false, error: 'failed' };
-  if (q.get('error')) return { ok: false, error: 'cancelled' };
+  const ctx = { returnTo: kept.returnTo, desktop: kept.desktop };
+  if (q.get('error')) return { ok: false, error: 'cancelled', ...ctx };
   const code = q.get('code');
-  if (!code) return { ok: false, error: 'failed' };
+  if (!code) return { ok: false, error: 'failed', ...ctx };
   try {
     const form = new URLSearchParams({ grant_type: 'authorization_code', code, redirect_uri: c.redirectUri, client_id: c.clientId, client_secret: c.clientSecret, code_verifier: kept.verifier });
     const res = await (c.fetch ?? fetch)(TOKEN, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: form.toString(), signal: AbortSignal.timeout(10_000) });
     const out = (await res.json()) as { id_token?: string };
-    if (!res.ok || !out.id_token) return { ok: false, error: 'failed' };
+    if (!res.ok || !out.id_token) return { ok: false, error: 'failed', ...ctx };
     const keys = c.keys ?? (defaultKeys ??= jwksKeys(JWKS));
     const claims = await verifyJwt(out.id_token, { keys, issuers: ISSUERS, audience: c.clientId, now: Math.floor(now / 1000) });
-    if (!claims || typeof claims.email !== 'string' || typeof claims.sub !== 'string' || !claims.sub) return { ok: false, error: 'failed' };
-    if (claims.email_verified !== true) return { ok: false, error: 'unverified' };
+    if (!claims || typeof claims.email !== 'string' || typeof claims.sub !== 'string' || !claims.sub) return { ok: false, error: 'failed', ...ctx };
+    if (claims.email_verified !== true) return { ok: false, error: 'unverified', ...ctx };
     const email = claims.email.toLowerCase();
     return { ok: true, who: { email, name: typeof claims.name === 'string' ? claims.name : email.split('@')[0], provider: 'google', subject: claims.sub }, returnTo: kept.returnTo, desktop: kept.desktop };
   } catch {
-    return { ok: false, error: 'failed' };
+    return { ok: false, error: 'failed', ...ctx };
   }
 }

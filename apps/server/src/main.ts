@@ -37,6 +37,7 @@ const db = openDb(env.DB_PATH ?? 'cavecad.sqlite');
 const passKey = createPrivateKey({ key: JSON.parse(readFileSync(need('PASS_KEY_FILE'), 'utf8')), format: 'jwk' });
 const adminEmail = need('ADMIN_EMAIL');
 const mailer = { url: env.MAILER_URL ?? '', key: env.MAILER_KEY ?? '' };
+if (!mailer.url || !mailer.key) console.warn('WARNING: MAILER_URL/MAILER_KEY not set — emailed sign-in codes will never be sent');
 const secure = publicUrl.startsWith('https:');
 const whoIs = makeWhoIs({ db, tailnet, devIdentity, secure });
 const deps = {
