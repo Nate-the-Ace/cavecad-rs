@@ -1,14 +1,17 @@
 #!/usr/bin/env bash
-# Checks the edge after deployment: a forged identity header never reaches CaveCAD, and the desktop API host
-# refuses requests without a token. TinyAuth tells browsers from scripts by User-Agent, so send a browser one.
+# Checks the edge after deployment: signed-out visitors are sent to /signin, forged identity headers mean
+# nothing, icons are public, downloads need a session, the desktop API host refuses requests without a token.
 set -u
-UA='Mozilla/5.0 (Macintosh; Intel Mac OS X 15_0) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15'
 bad=0
-code=$(curl -s -o /dev/null -w '%{http_code} %{redirect_url}' -A "$UA" -H 'Remote-Email: nathan@example.com' -H 'X-Cave-Gate: tinyauth' https://cavecad.com/api/me)
-case "$code" in 302\ https://auth.cavecad.com/*) ;; *) echo "FAIL forged header on cave.: got $code"; bad=1 ;; esac
-code=$(curl -s -o /dev/null -w '%{http_code}' -H 'Remote-Email: nathan@example.com' -H 'X-Cave-Gate: tinyauth' https://api.cavecad.com/api/me)
-[ "$code" = 401 ] || { echo "FAIL cave-api. without a token: got $code"; bad=1; }
-code=$(curl -s -o /dev/null -w '%{http_code}' -A "$UA" https://cavecad.com/)
-[ "$code" = 302 ] || { echo "FAIL the app is reachable without signing in: got $code"; bad=1; }
+code=$(curl -s -o /dev/null -w '%{http_code} %{redirect_url}' https://cavecad.com/)
+case "$code" in 302\ https://cavecad.com/signin*) ;; *) echo "FAIL signed-out app: got $code"; bad=1 ;; esac
+code=$(curl -s -o /dev/null -w '%{http_code}' -H 'Remote-Email: nathan@example.com' -H 'X-Cave-Gate: x' https://cavecad.com/api/me)
+[ "$code" = 401 ] || { echo "FAIL forged header: got $code"; bad=1; }
+code=$(curl -s -o /dev/null -w '%{http_code}' https://cavecad.com/apple-touch-icon.png)
+[ "$code" = 200 ] || { echo "FAIL icon: got $code"; bad=1; }
+code=$(curl -s -o /dev/null -w '%{http_code}' https://cavecad.com/downloads/x)
+[ "$code" = 302 ] || { echo "FAIL signed-out download: got $code"; bad=1; }
+code=$(curl -s -o /dev/null -w '%{http_code}' https://api.cavecad.com/api/me)
+[ "$code" = 401 ] || { echo "FAIL api. without a token: got $code"; bad=1; }
 [ $bad = 0 ] && echo 'edge: all ok'
 exit $bad
