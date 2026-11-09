@@ -26,7 +26,8 @@ PY
 else
   echo 'no latest.json on the release: no update offered (was the build signed?)'
 fi
-pick() { ls $1 2>/dev/null | head -1; }
+# the newest version of each kind: the release keeps older builds' files beside the new ones
+pick() { ls $1 2>/dev/null | sort -V | tail -1; }
 VERSION=$(pick '*.dmg' | sed -E 's/^CaveCAD_([^_]+)_.*/\1/')
 cat > downloads.json <<JSON
 {"version":"$VERSION","builtAt":"$(date -u +%Y-%m-%dT%H:%M:%SZ)","files":{"mac":"$(pick '*.dmg')","windows":"$(pick '*-setup.exe')","windowsMsi":"$(pick '*.msi')","linuxAppImage":"$(pick '*.AppImage')","linuxDeb":"$(pick '*.deb')","linuxRpm":"$(pick '*.rpm')"}}
