@@ -29,6 +29,7 @@
   import AccountGate from './components/account/AccountGate.svelte';
   import { account, handleAuthLink, startAccount } from './lib/account.svelte';
   import { startRooms } from './lib/room.svelte';
+  import { runShot, shotPanel } from './lib/handbook-shot';
 
   let version = $state('loading engine…');
   let info = $state<BuildInfo | null>(null);
@@ -157,6 +158,8 @@
         await loadShelf();
         // A clean slate: the shelf opens first (an old live link opens it from the moved page instead).
         if (!cave.hasCave && shelf.startup && !moved) shelf.open = true;
+        const shot = shotPanel(); // Handbook screenshot capture (development builds only)
+        if (shot) await runShot(shot);
       } catch (e) {
         failed = String(e);
       }
