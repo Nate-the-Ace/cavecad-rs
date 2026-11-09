@@ -11,7 +11,7 @@
   import { DEMOS } from '../lib/demos';
   import { engine, loadEngine, type CaveSummary } from '../lib/engine';
   import { openCave } from '../lib/files';
-  import { openAtTrip, newTripOn, newTripOnSample, openKept, openSample } from '../lib/caves';
+  import { openAtTrip, newTripOn, newTripOnSample, openKept, openSample, startTripAt } from '../lib/caves';
   import { deleteEverywhere, leaveShared, openServerCave, refreshServerCaves, serverCaves, type OtherCave } from '../lib/server-caves.svelte';
   import { account } from '../lib/account.svelte';
   import { dxfOf, forgetCave, homeOf, loadShelf, setFavorite, setRecordHome, setStartup, shelf, summaryOf, type ShelfRecord } from '../lib/shelf.svelte';
@@ -147,7 +147,19 @@
   const openRemote = async (id: string) => (message = await openServerCave(id));
 
   const open = () => (record ? run(openKept(record.id)) : sample ? run(openSample(sample.id)) : remote ? openRemote(remote.id) : undefined);
-  const newTrip = () => (record ? run(newTripOn(record.id, from)) : sample ? run(newTripOnSample(sample.id, from)) : undefined);
+  const newTrip = () => (record ? run(newTripOn(record.id, from)) : sample ? run(newTripOnSample(sample.id, from)) : remote ? newTripOnRemote(remote.id) : undefined);
+
+  /** A cave on the server but not on this computer yet: fetch it, then start the trip on it. One whose key has not
+   * reached this device yet cannot be opened, so it says so rather than starting a trip on the wrong cave. */
+  async function newTripOnRemote(id: string) {
+    message = await openServerCave(id);
+    if (message) return;
+    if (engine.roomId() !== id) {
+      message = 'This cave is not on this computer yet: it opens by itself once its key arrives, then start the trip.';
+      return;
+    }
+    message = startTripAt(from) ?? '';
+  }
   const atTrip = (index: number) => record && run(openAtTrip(record.id, index));
 
   async function importFile() {
@@ -394,7 +406,7 @@
           {#if record}<button onclick={() => remove(record)} title="Take this cave off this computer, or delete it everywhere">Remove…</button>
           {:else if remote}<button onclick={() => remove(null, remote)} title={remote.role === 'owner' ? 'Delete this cave everywhere' : 'Leave this shared cave'}>{remote.role === 'owner' ? 'Delete…' : 'Leave…'}</button>{/if}
           <span class="grow"></span>
-          <button onclick={newTrip} disabled={(!record && !sample) || !summary} title="Open the cave and start a new trip on it">{from ? `New trip from ${from}` : 'New trip'}</button>
+          <button onclick={newTrip} disabled={(!record && !sample && !remote) || !summary || !!serverCaves.opening} title="Open the cave and start a new trip on it">{from ? `New trip from ${from}` : 'New trip'}</button>
           <button class="go" onclick={open} disabled={(!record && !sample && !remote) || !!serverCaves.opening}>{remote && serverCaves.opening === remote.id ? 'Fetching…' : remote && serverCaves.waitingFor === remote.id ? 'Waiting…' : 'Open'}</button>
           <button onclick={close}>{cave.hasCave ? 'Close' : 'Start empty'}</button>
         </div>
