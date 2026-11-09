@@ -139,6 +139,35 @@ CREATE INDEX IF NOT EXISTS room_guests_member ON room_guests(member_id);
 CREATE INDEX IF NOT EXISTS rooms_cave ON rooms(cave_id);
 CREATE INDEX IF NOT EXISTS cave_owners_member ON cave_owners(member_id);
 CREATE INDEX IF NOT EXISTS devices_member ON devices(member_id);
+CREATE TABLE IF NOT EXISTS sessions (
+  token_hash TEXT PRIMARY KEY,
+  email TEXT NOT NULL,
+  name TEXT NOT NULL DEFAULT '',
+  provider TEXT,
+  kind TEXT NOT NULL CHECK (kind IN ('web', 'desktop')),
+  created_at INTEGER NOT NULL,
+  expires_at INTEGER NOT NULL,
+  revoked_at INTEGER
+);
+CREATE INDEX IF NOT EXISTS sessions_email ON sessions(email);
+CREATE TABLE IF NOT EXISTS email_codes (
+  email TEXT PRIMARY KEY,
+  code_hmac TEXT NOT NULL,
+  expires_at INTEGER NOT NULL,
+  tries_left INTEGER NOT NULL,
+  used_at INTEGER
+);
+CREATE TABLE IF NOT EXISTS code_requests (email TEXT NOT NULL, ip TEXT NOT NULL, at INTEGER NOT NULL);
+CREATE INDEX IF NOT EXISTS code_requests_at ON code_requests(at);
+CREATE TABLE IF NOT EXISTS handoffs (
+  code_hash TEXT PRIMARY KEY,
+  challenge TEXT NOT NULL,
+  email TEXT NOT NULL,
+  name TEXT NOT NULL DEFAULT '',
+  provider TEXT,
+  expires_at INTEGER NOT NULL,
+  used_at INTEGER
+);
 INSERT OR IGNORE INTO settings (key, value) VALUES ('signups', 'invite');
 `;
 

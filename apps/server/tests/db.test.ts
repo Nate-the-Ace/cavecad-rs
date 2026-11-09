@@ -8,7 +8,7 @@ import { openDb, getSetting } from '../src/db.ts';
 test('creates the tables', () => {
   const db = openDb(':memory:');
   const names = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name").all().map((r) => r.name);
-  assert.deepEqual(names, ['cave_gone', 'cave_labels', 'cave_owners', 'cave_scans', 'caves', 'devices', 'drives', 'history', 'invites', 'members', 'room_guests', 'room_pending', 'rooms', 'settings', 'snapshots', 'wrapped_keys']);
+  assert.deepEqual(names, ['cave_gone', 'cave_labels', 'cave_owners', 'cave_scans', 'caves', 'code_requests', 'devices', 'drives', 'email_codes', 'handoffs', 'history', 'invites', 'members', 'room_guests', 'room_pending', 'rooms', 'sessions', 'settings', 'snapshots', 'wrapped_keys']);
 });
 
 test('sign-ups start invite only', () => {
@@ -40,4 +40,10 @@ test('an existing database without notice_version on members gains it at 0 on st
   assert.equal(db.prepare("SELECT notice_version FROM members WHERE id = 'm1'").get().notice_version, 0);
   db.close();
   openDb(file).close(); // and a second start leaves it be
+});
+
+test('sign-in tables exist', () => {
+  const db = openDb(':memory:');
+  const names = (db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all() as { name: string }[]).map((r) => r.name);
+  for (const t of ['sessions', 'email_codes', 'code_requests', 'handoffs']) assert.ok(names.includes(t), t);
 });
