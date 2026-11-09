@@ -3,16 +3,17 @@
 //! edited and restyled like anything drawn here, anchored to the survey so they follow it when it
 //! is adjusted.
 //!
-//! Plan scraps are placed by their station markers (see [`place`]). Extended-elevation and
-//! cross-section scraps are read and reported, not yet drawn.
+//! Plan scraps are placed by their station markers (see [`place`]); profile scraps go onto the
+//! runs' profile bands and cross sections onto their station's section (see [`views`]).
 
 pub mod place;
+pub mod views;
 pub mod vocab;
 
 use cave_doc::{Action, Document};
 use cave_formats::th2::{Line, Scrap, Sketch};
 use cave_id::IdSource;
-use place::{Placement, Stations};
+use place::{Place, Placement, Stations};
 use std::collections::{BTreeMap, HashMap};
 use vocab::Ink;
 
@@ -58,8 +59,15 @@ impl Report {
         let mut out = Vec::new();
         let placed: usize = self.placed.values().sum();
         if placed > 0 {
+            let on = if self.placed.contains_key("profile") {
+                "the profile"
+            } else if self.placed.contains_key("section") {
+                "its station's cross section"
+            } else {
+                "the map"
+            };
             out.push(format!(
-            "{file}: {placed} sketch scrap{} placed on the map ({} lines, {} symbols, {} words, {} fills).",
+            "{file}: {placed} sketch scrap{} placed on {on} ({} lines, {} symbols, {} words, {} fills).",
             plural(placed),
             self.lines,
             self.symbols,
@@ -109,7 +117,7 @@ impl Report {
                 _ => "other",
             };
             out.push(format!(
-                "{file}: {n} {what} scrap{} ({view}) not drawn: only plan sketches are brought in so far.",
+                "{file}: {n} {what} scrap{} ({view}) not drawn: only plan and profile scraps of a Therion page are brought in so far.",
                 plural(*n)
             ));
         }
@@ -180,6 +188,8 @@ pub fn import(
     for scrap in &sketch.scraps {
         match scrap.projection.as_deref() {
             Some("plan") => {}
+            // drawn by `import_profile`
+            Some("extended" | "elevation") => continue,
             other => {
                 *report
                     .other_views
@@ -220,13 +230,22 @@ pub fn import(
         {
             report.worst = Some((scrap.name.clone(), placement.residual));
         }
+        let mut add = |kind: &str,
+                       pts: &[[f64; 2]],
+                       closed: bool,
+                       text: &str,
+                       actions: &mut Vec<Action>|
+         -> bool {
+            let Ok((id, a)) = cave_draw::map_line(doc, ids, kind, pts, None, &frames) else {
+                return false;
+            };
+            finish(a, id, closed, text, actions)
+        };
         draw_scrap(
-            doc,
             scrap,
             &placement,
-            &frames,
             paper,
-            ids,
+            &mut add,
             &mut actions,
             &mut report,
         );
@@ -236,8 +255,127 @@ pub fn import(
     (actions, report)
 }
 
+/// Actions that draw a sketch's profile scraps (extended or projected elevation) onto the runs'
+/// profile bands, each stroke on the run it was drawn beside (see [`views`]).
+///
+/// `scope` and `adjusted` as for [`import`].
+pub fn import_profile(
+    doc: &Document,
+    ids: &mut impl IdSource,
+    sketch: &Sketch,
+    scope: &str,
+    adjusted: bool,
+) -> (Vec<Action>, Report) {
+    let label = |id: cave_id::Id| {
+        doc.entity(id)
+            .map(|e| e.text(cave_doc::Field::StationLabel))
+            .unwrap_or_default()
+    };
+    let runs: Vec<(views::Band, Vec<cave_doc::Frame>)> = cave_scene::runs(doc, adjusted)
+        .into_iter()
+        .filter_map(|r| {
+            let frames = cave_scene::profile_frames(doc, &r.key, adjusted)?;
+            let band = views::Band {
+                key: r.key.clone(),
+                legs: frames
+                    .iter()
+                    .map(|f| (label(f.a), label(f.b), f.pa, f.pb))
+                    .collect(),
+            };
+            Some((band, frames))
+        })
+        .collect();
+    let (bands, frames): (Vec<views::Band>, Vec<Vec<cave_doc::Frame>>) = runs.into_iter().unzip();
+    let paper = cave_draw::drawing_scale(doc) / 1000.0;
+    let mut report = Report::default();
+    let mut actions = Vec::new();
+    for scrap in &sketch.scraps {
+        if !matches!(scrap.projection.as_deref(), Some("extended" | "elevation")) {
+            continue;
+        }
+        let Some(place) = views::ProfilePlace::new(scrap, &bands, scope) else {
+            let why = if place::ties(scrap).is_empty() {
+                "it marks no stations, so nothing ties it to the cave."
+            } else {
+                "no two stations it marks are a leg of the survey."
+            };
+            report
+                .not_placed
+                .push((scrap.name.clone(), why.to_string()));
+            continue;
+        };
+        *report.placed.entry("profile").or_default() += 1;
+        let mut add = |kind: &str,
+                       pts: &[[f64; 2]],
+                       closed: bool,
+                       text: &str,
+                       actions: &mut Vec<Action>|
+         -> bool {
+            let run = place.run();
+            let pieces = place.split(pts);
+            let whole = pieces.len() == 1;
+            let mut any = false;
+            for piece in pieces
+                .iter()
+                .filter(|p| p.len() >= 2 || (whole && !p.is_empty()))
+            {
+                let Ok((id, a)) = cave_draw::profile_sketch(
+                    doc,
+                    ids,
+                    kind,
+                    &bands[run].key,
+                    piece,
+                    None,
+                    &frames[run],
+                ) else {
+                    continue;
+                };
+                // a closed outline broken in two is two open lines
+                any |= finish(a, id, closed && whole, text, actions);
+            }
+            any
+        };
+        draw_scrap(scrap, &place, paper, &mut add, &mut actions, &mut report);
+    }
+    (actions, report)
+}
+
+/// Actions that draw a sketch onto the cross section at `station`. `to_plane` takes a sketch
+/// point to the section's `[across, up]` metres from the station (the caller knows how the
+/// sketch's page sits against the passage); `trip` is the trip that surveyed the station.
+pub fn import_section(
+    doc: &Document,
+    ids: &mut impl IdSource,
+    sketch: &Sketch,
+    station: cave_id::Id,
+    trip: Option<cave_id::Id>,
+    to_plane: impl Fn([f64; 2]) -> [f64; 2],
+) -> (Vec<Action>, Report) {
+    let paper = cave_draw::drawing_scale(doc) / 1000.0;
+    let place = views::Mapped(to_plane);
+    let mut report = Report::default();
+    let mut actions = Vec::new();
+    for scrap in &sketch.scraps {
+        *report.placed.entry("section").or_default() += 1;
+        let mut add = |kind: &str,
+                       pts: &[[f64; 2]],
+                       closed: bool,
+                       text: &str,
+                       actions: &mut Vec<Action>|
+         -> bool {
+            let Ok((id, a)) = cave_draw::section_sketch(doc, ids, kind, station, pts, None, trip)
+            else {
+                return false;
+            };
+            finish(a, id, closed, text, actions)
+        };
+        draw_scrap(scrap, &place, paper, &mut add, &mut actions, &mut report);
+    }
+    (actions, report)
+}
+
 /// A line's points on the map, in the direction it was drawn (`-reverse` turned round).
-fn points_of(line: &Line, p: &Placement) -> Vec<[f64; 2]> {
+fn points_of(line: &Line, p: &dyn Place) -> Vec<[f64; 2]> {
     let mut pts = p.flatten(&line.segs, FLATNESS);
     // a closed line drawn back to its start: the closing point is the first one again
     if line.closed && pts.len() > 2 && pts[0] == pts[pts.len() - 1] {
@@ -249,32 +387,34 @@ fn points_of(line: &Line, p: &Placement) -> Vec<[f64; 2]> {
     pts
 }
 
-#[allow(clippy::too_many_arguments)]
+/// What every view does with a drawn stroke's actions: closes it if asked, gives it its words.
+fn finish(
+    a: Vec<Action>,
+    id: cave_id::Id,
+    closed: bool,
+    text: &str,
+    actions: &mut Vec<Action>,
+) -> bool {
+    let Ok(a) = cave_draw::with_closed(a, closed) else {
+        return false;
+    };
+    actions.extend(cave_draw::with_text(a, id, text));
+    true
+}
+
+/// Adds one stroke of a kind, with its points in the view's metres: whether it was added.
+type Add<'a> = dyn FnMut(&str, &[[f64; 2]], bool, &str, &mut Vec<Action>) -> bool + 'a;
+
 fn draw_scrap(
-    doc: &Document,
     scrap: &Scrap,
-    p: &Placement,
-    frames: &[cave_doc::Frame],
+    p: &dyn Place,
     paper: f64,
-    ids: &mut impl IdSource,
+    add: &mut Add,
     actions: &mut Vec<Action>,
     report: &mut Report,
 ) {
-    let mut add = |kind: &str,
-                   pts: &[[f64; 2]],
-                   closed: bool,
-                   text: &str,
-                   actions: &mut Vec<Action>|
-     -> bool {
-        let Ok((id, a)) = cave_draw::map_line(doc, ids, kind, pts, None, frames) else {
-            return false;
-        };
-        let Ok(a) = cave_draw::with_closed(a, closed) else {
-            return false;
-        };
-        actions.extend(cave_draw::with_text(a, id, text));
-        true
-    };
+    let raw =
+        |segs: &[cave_formats::th2::Seg]| -> Vec<[f64; 2]> { segs.iter().map(|s| s.to).collect() };
     // a border an area claims is drawn as that area's outline, not again on its own
     let claimed: Vec<&str> = scrap
         .areas
@@ -292,6 +432,7 @@ fn draw_scrap(
         if base == "border" && line.id.as_deref().is_some_and(|id| claimed.contains(&id)) {
             continue;
         }
+        p.stroke(&raw(&line.segs));
         let kind = match ink {
             Ink::Line(k) => k,
             Ink::Skip(why) => {
@@ -308,7 +449,7 @@ fn draw_scrap(
                     continue;
                 };
                 if !words.is_empty()
-                    && stamp_words(first.to, &words, None, None, p, paper, &mut add, actions)
+                    && stamp_words(first.to, &words, None, None, p, paper, add, actions)
                 {
                     report.words += 1;
                 }
@@ -336,6 +477,7 @@ fn draw_scrap(
             .iter()
             .filter_map(|id| by_id.get(id.as_str()).copied())
             .collect();
+        p.stroke(&lines.iter().flat_map(|l| raw(&l.segs)).collect::<Vec<_>>());
         if area.line_ids.is_empty() {
             // an area with no boundary at all: an editor's leftover, nothing to fill
             *report.skipped.entry("area-empty").or_default() += 1;
@@ -391,6 +533,7 @@ fn draw_scrap(
         }
     }
     for point in &scrap.points {
+        p.stroke(&[[point.x, point.y]]);
         match vocab::point(&point.kind) {
             Ink::Symbol(block) => {
                 let Some(key) = vocab::symbol_key(block) else {
@@ -427,7 +570,7 @@ fn draw_scrap(
                         point.scale.as_deref(),
                         p,
                         paper,
-                        &mut add,
+                        add,
                         actions,
                     )
                 {
@@ -447,9 +590,9 @@ fn stamp_words(
     words: &str,
     orientation: Option<f64>,
     scale: Option<&str>,
-    p: &Placement,
+    p: &dyn Place,
     paper: f64,
-    add: &mut impl FnMut(&str, &[[f64; 2]], bool, &str, &mut Vec<Action>) -> bool,
+    add: &mut Add,
     actions: &mut Vec<Action>,
 ) -> bool {
     let up = match orientation {

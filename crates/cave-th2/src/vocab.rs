@@ -163,6 +163,9 @@ pub fn point(kind: &str) -> Ink {
         "label" | "remark" | "name" | "date" | "altitude" | "height" => return Ink::Text,
         // the drawing letters its own stations
         "station-name" | "station" => return Ink::Skip("station"),
+        // where a cross section is cut (TopoDroid marks it with a point): sections are placed on
+        // their own here
+        "section" => return Ink::Skip("section"),
         // xtherion's own scaffolding, meaning nothing outside the editor
         "dimensions" | "extra" | "no-equipment" | "map-connection" => return Ink::Skip("editor"),
         _ => return Ink::Unknown,

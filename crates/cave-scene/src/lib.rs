@@ -28,7 +28,7 @@ pub use profile::{
 };
 pub use section::{
     MapSection, SectionSketch, SectionStation, StationSection, map_sections, placements,
-    section_at, section_stations, section_trip, sketches_by_station,
+    section_at, section_frame, section_stations, section_trip, sketches_by_station,
 };
 pub use stations::{
     KINDS as STATION_KINDS, LoopMark, Note, StationRow, compare_natural, says_closed, station_rows,

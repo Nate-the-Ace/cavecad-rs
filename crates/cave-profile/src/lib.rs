@@ -21,8 +21,13 @@ mod walls;
 
 pub use band::{Band, BandLeg, BandStation, StopReason, unroll_band};
 pub use hierarchy::{Hierarchy, hierarchy};
-pub use names::{Split, run_key_of, seq_num_of, seq_order, split_name, tie_name_of_run};
-pub use runs::{Chain, Graph, LegInfo, Run, Runs, better_chain, group_runs, longest_chain};
+pub use names::{
+    Split, is_number_name, member_seq, run_key_of, seq_num_of, seq_order, split_name,
+    tie_name_of_run,
+};
+pub use runs::{
+    Chain, Graph, LegInfo, Run, Runs, better_chain, group_runs, group_runs_linked, longest_chain,
+};
 pub use walls::{
     BandWalls, FLAT_SPLAY_DEG, FlatTick, SplaySide, WallInput, band_wall_runs, classify_splay,
 };

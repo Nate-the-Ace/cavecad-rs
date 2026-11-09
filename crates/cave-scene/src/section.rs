@@ -304,6 +304,20 @@ pub fn section_trip(doc: &Document, use_adjustment: bool, station: &str) -> Opti
         .and_then(|l| doc.entity(l.shot)?.reference(Field::ShotTrip))
 }
 
+/// The plane the section at `station` is drawn in: its `right` and `up` directions (east, north,
+/// up), as [`section_at`] flattens onto them. `None` when it is not a station on any leg.
+pub fn section_frame(
+    doc: &Document,
+    use_adjustment: bool,
+    station: Id,
+) -> Option<([f64; 3], [f64; 3])> {
+    let rings = leg_rings(doc, use_adjustment, false, &ViewFilter::default());
+    let (leg, at_end) = pick(&rings, station)?;
+    let frame = frame_at(if at_end { leg.dir_b } else { leg.dir_a })?;
+    let v = |p: Vec3| [p.x, p.y, p.z];
+    Some((v(frame.right), v(frame.up)))
+}
+
 /// The section at `station` (an id as text), or `None` when it is not a station on any leg.
 pub fn section_at(
     doc: &Document,

@@ -78,6 +78,40 @@ pub fn ties(scrap: &Scrap) -> Vec<StationTie> {
     out
 }
 
+/// The survey a sketch page belongs inside when nothing says so (a page picked with the data but
+/// not pulled in by it): of the top and every survey holding stations, the one where most of the
+/// page's markers find their station, the top on a tie.
+pub fn likely_scope(sketch: &cave_formats::th2::Sketch, station_names: &[String]) -> String {
+    let mut scopes: Vec<String> = vec![String::new()];
+    for n in station_names {
+        let mut s = n.as_str();
+        while let Some((head, _)) = s.rsplit_once('.') {
+            if !scopes.iter().any(|x| x.eq_ignore_ascii_case(head)) {
+                scopes.push(head.to_string());
+            }
+            s = head;
+        }
+    }
+    let names: Vec<String> = sketch
+        .scraps
+        .iter()
+        .flat_map(|s| ties(s).into_iter().map(|t| t.name))
+        .collect();
+    let all: Vec<(String, [f64; 2])> = station_names
+        .iter()
+        .map(|n| (n.clone(), [0.0, 0.0]))
+        .collect();
+    let mut best = (0usize, String::new());
+    for scope in scopes {
+        let st = Stations::new(all.iter().cloned(), &scope);
+        let hits = names.iter().filter(|n| st.find(n).is_some()).count();
+        if hits > best.0 {
+            best = (hits, scope);
+        }
+    }
+    best.1
+}
+
 /// Metres in one unit of a scrap's `-scale`.
 fn metres_per(unit: &str) -> f64 {
     match unit.to_ascii_lowercase().as_str() {
@@ -197,19 +231,68 @@ impl Placement {
     /// A line's segments on the map as points lying on the curve, `tol` metres from it at most.
     /// Bezier control points go through the placement too, so a bent curve keeps to its ends.
     pub fn flatten(&self, segs: &[Seg], tol: f64) -> Vec<[f64; 2]> {
-        let mut out: Vec<[f64; 2]> = Vec::new();
-        for (i, s) in segs.iter().enumerate() {
-            let to = self.at(s.to);
-            match (i, s.c1, s.c2, out.last().copied()) {
-                (0, ..) | (_, None, _, _) | (_, _, None, _) | (_, _, _, None) => {}
-                (_, Some(c1), Some(c2), Some(from)) => {
-                    subdivide(from, self.at(c1), self.at(c2), to, tol, 0, &mut out);
-                }
-            }
-            out.push(to);
-        }
-        out
+        flatten_with(&|p| Placement::at(self, p), segs, tol)
     }
+}
+
+/// Where a scrap's points go in some view: the map (a [`Placement`]), a run's profile band, or a
+/// station's cross section. Everything a scrap draws goes through one of these.
+pub trait Place {
+    /// One sketch point in the view's metres.
+    fn at(&self, p: [f64; 2]) -> [f64; 2];
+
+    /// The view's direction (unit vector) of `deg` degrees clockwise from the top of the sketch, at `p`.
+    fn direction(&self, p: [f64; 2], deg: f64) -> [f64; 2] {
+        let r = deg.to_radians();
+        let step = 0.1; // a tenth of a sketch unit
+        let a = self.at(p);
+        let b = self.at([p[0] + step * r.sin(), p[1] + step * r.cos()]);
+        let (dx, dy) = (b[0] - a[0], b[1] - a[1]);
+        let n = dx.hypot(dy);
+        if n > 1e-12 {
+            [dx / n, dy / n]
+        } else {
+            [0.0, 1.0]
+        }
+    }
+
+    /// A line's segments in the view as points on the curve, `tol` metres from it at most.
+    fn flatten(&self, segs: &[Seg], tol: f64) -> Vec<[f64; 2]> {
+        flatten_with(&|p| self.at(p), segs, tol)
+    }
+
+    /// Told the sketch points of the next thing drawn, before any of them is placed (a view that
+    /// places one stroke as a whole, as a profile picks the run a stroke belongs to, decides here).
+    fn stroke(&self, _raw: &[[f64; 2]]) {}
+}
+
+impl Place for Placement {
+    fn at(&self, p: [f64; 2]) -> [f64; 2] {
+        Placement::at(self, p)
+    }
+    fn direction(&self, p: [f64; 2], deg: f64) -> [f64; 2] {
+        Placement::direction(self, p, deg)
+    }
+    fn flatten(&self, segs: &[Seg], tol: f64) -> Vec<[f64; 2]> {
+        Placement::flatten(self, segs, tol)
+    }
+}
+
+/// Segments as points on the curve through `at`: Bezier control points go through it too, so a
+/// bent curve keeps to its ends.
+pub fn flatten_with(at: &dyn Fn([f64; 2]) -> [f64; 2], segs: &[Seg], tol: f64) -> Vec<[f64; 2]> {
+    let mut out: Vec<[f64; 2]> = Vec::new();
+    for (i, s) in segs.iter().enumerate() {
+        let to = at(s.to);
+        match (i, s.c1, s.c2, out.last().copied()) {
+            (0, ..) | (_, None, _, _) | (_, _, None, _) | (_, _, _, None) => {}
+            (_, Some(c1), Some(c2), Some(from)) => {
+                subdivide(from, at(c1), at(c2), to, tol, 0, &mut out);
+            }
+        }
+        out.push(to);
+    }
+    out
 }
 
 /// How deep a cubic is split: a cusp (controls on an anchor) is never flat.
@@ -278,6 +361,12 @@ impl<'a> Stations<'a> {
 
     /// The tie's station position.
     pub fn find(&self, tie: &str) -> Option<[f64; 2]> {
+        self.resolve(tie)
+            .and_then(|n| self.by_name.get(&n).copied())
+    }
+
+    /// The name (lower case) of the station a tie names, found as [`Stations::find`] finds it.
+    pub fn resolve(&self, tie: &str) -> Option<String> {
         let tie = tie.trim().to_lowercase();
         let rel = match tie.split_once('@') {
             Some((st, path)) => {
@@ -295,8 +384,8 @@ impl<'a> Stations<'a> {
             format!("{scope}.{rel}")
         };
         for name in [&full, &rel, &tie] {
-            if let Some(p) = self.by_name.get(name) {
-                return Some(*p);
+            if self.by_name.contains_key(name.as_str()) {
+                return Some(name.clone());
             }
         }
         // a bare name must match exactly: "1" ending some other survey's name is a guess. A
@@ -307,7 +396,7 @@ impl<'a> Stations<'a> {
         let tail = format!(".{rel}");
         let mut hits = self.all.iter().filter(|(n, _)| n.ends_with(&tail));
         match (hits.next(), hits.next()) {
-            (Some((_, p)), None) => Some(*p),
+            (Some((n, _)), None) => Some(n.clone()),
             _ => None,
         }
     }

@@ -1,6 +1,6 @@
 //! Grouping stations into runs, the walkable-leg graph, and the longest chain through a run.
 
-use crate::names::{seq_num_of, seq_order, split_name};
+use crate::names::{is_number_name, member_seq, seq_num_of, seq_order, split_name};
 use cave_id::Id;
 use cave_survey::LegKind;
 use std::collections::HashMap;
@@ -57,6 +57,110 @@ pub fn group_runs(labels: &HashMap<Id, String>, order: &[Id]) -> Runs {
             out.runs.len() - 1
         });
         members[i].push((split.seq, id));
+    }
+    for (run, mut m) in out.runs.iter_mut().zip(members) {
+        m.sort_by(|a, b| seq_order(&a.0, &b.0));
+        run.stations = m.into_iter().map(|(_, id)| id).collect();
+    }
+    out
+}
+
+/// Groups stations into runs by name, as [`group_runs`], except that stations named with a number
+/// only join up along `legs`: a leg between two consecutive numbers (`7`-`8`, either way round,
+/// never a closure) puts both in one run, so `0, 1, 2, ... 61` is one run and a branch numbered
+/// on from elsewhere (`9`-`300`, `300`, `301`, ...) is another, tying in where it leaves. A run
+/// of numbers is keyed by its lowest-numbered station's name. A number station with no
+/// consecutive neighbour is a run of its own, as before.
+pub fn group_runs_linked(labels: &HashMap<Id, String>, order: &[Id], legs: &[LegInfo]) -> Runs {
+    let number = |id: &Id| {
+        labels
+            .get(id)
+            .filter(|l| is_number_name(l))
+            .and_then(|l| l.parse::<u128>().ok())
+    };
+    // union-find over number stations joined by consecutive-number legs
+    let mut parent: HashMap<Id, Id> = HashMap::new();
+    fn root(parent: &mut HashMap<Id, Id>, x: Id) -> Id {
+        let mut r = x;
+        while let Some(&p) = parent.get(&r) {
+            if p == r {
+                break;
+            }
+            r = p;
+        }
+        // flatten the path walked
+        let mut c = x;
+        while let Some(&p) = parent.get(&c) {
+            if p == r {
+                break;
+            }
+            parent.insert(c, r);
+            c = p;
+        }
+        r
+    }
+    for l in legs {
+        if l.kind == LegKind::Closure || l.from == l.to {
+            continue;
+        }
+        let (Some(a), Some(b)) = (number(&l.from), number(&l.to)) else {
+            continue;
+        };
+        if a.abs_diff(b) != 1 {
+            continue;
+        }
+        parent.entry(l.from).or_insert(l.from);
+        parent.entry(l.to).or_insert(l.to);
+        let (ra, rb) = (root(&mut parent, l.from), root(&mut parent, l.to));
+        if ra != rb {
+            parent.insert(ra, rb);
+        }
+    }
+    // each joined-up group's key: its lowest number's name
+    let mut key_of_root: HashMap<Id, (u128, String)> = HashMap::new();
+    let members: Vec<Id> = parent.keys().copied().collect();
+    for id in members {
+        let r = root(&mut parent, id);
+        let (n, name) = (number(&id).unwrap_or(u128::MAX), labels[&id].clone());
+        let e = key_of_root.entry(r).or_insert((n, name.clone()));
+        if n < e.0 {
+            *e = (n, name);
+        }
+    }
+    let key_of = |id: &Id, parent: &mut HashMap<Id, Id>| -> Option<String> {
+        parent.contains_key(id).then(|| {
+            let r = root(parent, *id);
+            key_of_root[&r].1.clone()
+        })
+    };
+
+    let mut out = Runs::default();
+    let mut index: HashMap<String, usize> = HashMap::new();
+    let mut members: Vec<Vec<(String, Id)>> = Vec::new();
+    for &id in order {
+        let Some(label) = labels.get(&id) else {
+            out.ungrouped.push(id);
+            continue;
+        };
+        let (key, seq) = match key_of(&id, &mut parent) {
+            Some(k) => (k, label.clone()),
+            None => match split_name(label) {
+                Some(split) => (split.base, split.seq),
+                None => {
+                    out.ungrouped.push(id);
+                    continue;
+                }
+            },
+        };
+        let i = *index.entry(key.clone()).or_insert_with(|| {
+            out.runs.push(Run {
+                key,
+                stations: Vec::new(),
+            });
+            members.push(Vec::new());
+            out.runs.len() - 1
+        });
+        members[i].push((seq, id));
     }
     for (run, mut m) in out.runs.iter_mut().zip(members) {
         m.sort_by(|a, b| seq_order(&a.0, &b.0));
@@ -228,12 +332,96 @@ pub fn longest_chain(run: &Run, graph: &Graph, labels: &HashMap<Id, String>) -> 
         .filter(|s| !on.contains(s))
         .collect();
     if chain.len() >= 2 {
-        let name = |s: &Id| labels.get(s).and_then(|l| split_name(l));
-        if let (Some(a), Some(b)) = (name(&chain[0]), name(&chain[chain.len() - 1]))
-            && seq_order(&a.seq, &b.seq).is_gt()
+        let seq = |s: &Id| labels.get(s).and_then(|l| member_seq(l));
+        if let (Some(a), Some(b)) = (seq(&chain[0]), seq(&chain[chain.len() - 1]))
+            && seq_order(&a, &b).is_gt()
         {
             chain.reverse();
         }
     }
     Chain { chain, omitted }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use cave_id::{IdSource, SeqIds};
+
+    /// Stations named `names`, and legs between them by name.
+    fn cave(names: &[&str], legs: &[(&str, &str, LegKind)]) -> (Runs, HashMap<String, Id>) {
+        let mut ids = SeqIds::new(7);
+        let by: HashMap<String, Id> = names
+            .iter()
+            .map(|n| (n.to_string(), ids.next_id()))
+            .collect();
+        let labels: HashMap<Id, String> = by.iter().map(|(n, id)| (*id, n.clone())).collect();
+        let order: Vec<Id> = names.iter().map(|n| by[*n]).collect();
+        let legs: Vec<LegInfo> = legs
+            .iter()
+            .map(|(a, b, kind)| LegInfo {
+                shot: ids.next_id(),
+                from: by[*a],
+                to: by[*b],
+                kind: *kind,
+                plan: 1.0,
+            })
+            .collect();
+        (group_runs_linked(&labels, &order, &legs), by)
+    }
+
+    fn keys(r: &Runs) -> Vec<&str> {
+        r.runs.iter().map(|r| r.key.as_str()).collect()
+    }
+
+    #[test]
+    fn numbered_stations_on_one_line_are_one_run() {
+        use LegKind::New;
+        let (r, by) = cave(
+            &["0", "1", "2", "3", "300", "301", "302"],
+            &[
+                ("0", "1", New),
+                ("1", "2", New),
+                ("2", "3", New),
+                ("2", "300", New),
+                ("300", "301", New),
+                ("301", "302", New),
+            ],
+        );
+        assert_eq!(keys(&r), ["0", "300"]);
+        assert_eq!(r.runs[0].stations, ["0", "1", "2", "3"].map(|n| by[n]));
+        assert_eq!(r.runs[1].stations, ["300", "301", "302"].map(|n| by[n]));
+    }
+
+    #[test]
+    fn a_closure_between_consecutive_numbers_does_not_join_runs() {
+        use LegKind::{Closure, New};
+        let (r, _) = cave(
+            &["1", "2", "5", "6"],
+            &[
+                ("1", "2", New),
+                ("5", "6", New),
+                ("2", "5", New),
+                ("6", "5", Closure),
+            ],
+        );
+        assert_eq!(keys(&r), ["1", "5"]);
+    }
+
+    #[test]
+    fn a_survey_taken_backwards_still_runs_in_number_order() {
+        use LegKind::New;
+        let (r, by) = cave(&["12", "11", "10"], &[("12", "11", New), ("11", "10", New)]);
+        assert_eq!(keys(&r), ["10"]);
+        assert_eq!(r.runs[0].stations, ["10", "11", "12"].map(|n| by[n]));
+    }
+
+    #[test]
+    fn lettered_names_are_grouped_as_before() {
+        use LegKind::New;
+        let (r, _) = cave(
+            &["A1", "A2", "A2a1", "7"],
+            &[("A1", "A2", New), ("A2", "A2a1", New), ("A2", "7", New)],
+        );
+        assert_eq!(keys(&r), ["A", "A2a", "7"]);
+    }
 }
