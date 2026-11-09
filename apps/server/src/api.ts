@@ -208,10 +208,12 @@ function refusal(d: ApiDeps, res: ServerResponse, status: number, title: string,
 
 /**
  * Serves the web app, but only to someone who may use it (`M.mayLoadApp`): a stranger who signed in with
- * Google gets a short page saying CaveCAD is invite only, and none of the app. The privacy page is for anyone.
+ * Google gets a short page saying CaveCAD is invite only, and none of the app. The privacy page and the app's
+ * icons are for anyone: a browser fetches icons without signing in (Safari's Add to Dock, bookmarks).
  */
+export const PUBLIC_FILES = ['/privacy.html', '/favicon.svg', '/favicon-32.png', '/apple-touch-icon.png', '/icon-192.png', '/icon-512.png', '/manifest.webmanifest'];
 export async function serveApp(d: ApiDeps, dist: string, req: IncomingMessage, res: ServerResponse): Promise<void> {
-  if ((req.url ?? '/').split('?')[0] === '/privacy.html') return serveStatic(dist, req, res);
+  if (PUBLIC_FILES.includes((req.url ?? '/').split('?')[0])) return serveStatic(dist, req, res);
   const who = await d.whoIs(req as unknown as RequestLike);
   if (!who) return refusal(d, res, 401, 'Sign in to CaveCAD', 'Open <a href="https://cavecad.com/">cavecad.com</a> to sign in.');
   const may = M.mayLoadApp(d.db, who, { adminEmail: d.adminEmail, now: (d.now ?? Date.now)() });

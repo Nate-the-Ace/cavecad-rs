@@ -21,6 +21,7 @@ async function start(mailOk = true, extra: Partial<ApiDeps> = {}) {
   const root = mkdtempSync(join(tmpdir(), 'cave-dist-'));
   writeFileSync(join(root, 'index.html'), '<html>app</html>');
   writeFileSync(join(root, 'privacy.html'), '<html>privacy</html>');
+  writeFileSync(join(root, 'apple-touch-icon.png'), 'png');
   mkdirSync(join(root, 'assets'));
   writeFileSync(join(root, 'assets', 'a.js'), 'x');
   const server: Server = createServer((req, res) => void ((req.url ?? '').startsWith('/api/') ? handleApi(deps, req, res) : serveApp(deps, root, req, res)));
@@ -240,6 +241,8 @@ test('the app itself is only for members and people with an invite waiting', asy
     assert.equal((await call('stranger@example.com', 'GET', '/assets/a.js')).status, 403, 'no app code either');
     assert.equal((await call(null, 'GET', '/')).status, 401, 'not signed in');
     assert.equal((await call(null, 'GET', '/privacy.html')).json, '<html>privacy</html>', 'the privacy page is for anyone');
+    assert.equal((await call(null, 'GET', '/apple-touch-icon.png')).json, 'png', 'icons are for anyone (Safari fetches them signed out)');
+    assert.equal((await call(null, 'GET', '/apple-touch-icon.png?x=1')).status, 200);
     assert.equal((await call('<b>x</b>@example.com', 'GET', '/')).json.includes('<b>x</b>'), false, 'the email is escaped');
 
     await call(ADMIN, 'POST', '/api/admin/invites', { email: 'rick@example.com', role: 'member' });
