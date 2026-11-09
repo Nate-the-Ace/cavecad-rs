@@ -16,9 +16,9 @@ const config: UserConfig = {
   build: { target: 'es2022' },
 };
 
-// A build that people will sign in to needs the offline pass's public key and TinyAuth's sign-out address;
-// without them offline use or Sign out silently break, so the build stops instead.
-const NEEDED_FOR_BUILD = ['VITE_PASS_PUBLIC_KEY', 'VITE_SIGNOUT_URL'];
+// A build that people will sign in to needs the offline pass's public key;
+// without it offline use silently breaks, so the build stops instead.
+const NEEDED_FOR_BUILD = ['VITE_PASS_PUBLIC_KEY'];
 
 export default defineConfig(({ command, mode }) => {
   if (command === 'build') {

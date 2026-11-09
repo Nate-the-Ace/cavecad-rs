@@ -217,8 +217,8 @@ export async function disconnectDrive(id: string): Promise<void> {
   account.drives = account.drives.filter((d) => d.id !== id);
 }
 
-/** Signs out: forgets the pass and sends the browser through TinyAuth's sign-out (set at build time). The
- *  desktop app only forgets its own token: the system browser's TinyAuth session is the browser's. */
+/** Signs out: forgets the pass and ends the browser's CaveCAD session at /signout and goes to the sign-in page.
+ *  The desktop app only forgets its own token. */
 export async function signOut(): Promise<void> {
   await forgetPass();
   signOutDesktop();
@@ -230,5 +230,6 @@ export async function signOut(): Promise<void> {
     account.phase = 'signed-out';
     return;
   }
-  location.href = (import.meta.env.VITE_SIGNOUT_URL as string | undefined) || '/';
+  await fetch('/signout', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }).catch(() => {});
+  location.href = '/signin';
 }

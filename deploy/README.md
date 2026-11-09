@@ -8,7 +8,7 @@ media-server-setup, gaming-vm-plan, feedback-inventory-before-changing-server.
    address for CaveCAD. Do not reuse one. Static addresses stay below .20 (the router's DHCP pool).
 2. **(Nathan)** Create the container (unprivileged Debian 13, small: 2 cores, 2 GB, 8 GB disk), install
    Node 26, add user `cavecad`, folders /opt/cavecad/{server,web} and /etc/cavecad (root), and
-   /var/lib/cavecad owned by `cavecad` (mode 700). Firewall: accept 8787 from the edge VM only.
+   /var/lib/cavecad owned by `cavecad` (mode 700). Firewall: accept 8787 from the edge VM only (step 6).
 3. Make the pass key on the container, as the user the service runs as, so the service can read the
    mode-600 file. `tools/make-pass-key.mjs` is in the repository root, not in `apps/server`: copy it over
    first, then
@@ -16,63 +16,68 @@ media-server-setup, gaming-vm-plan, feedback-inventory-before-changing-server.
        runuser -u cavecad -- node /opt/cavecad/make-pass-key.mjs /var/lib/cavecad/pass-key.json
 
    It prints `VITE_PASS_PUBLIC_KEY=...` (public, not a secret). Put that value in the GitHub secret
-   PASS_PUBLIC_KEY; the web build in the next step needs it.
-4. Build the web app on the Mac, from `apps/web`, with the key from step 3:
+   PASS_PUBLIC_KEY; the web build needs it.
+4. Build the web app on GitHub (`gh workflow run web.yml`, see "Updating the web app"). Delete `dist/local`
+   (real cave data, never shipped) and check it is gone before copying. Copy `apps/server` (without its
+   `*.sqlite*` and `pass-key.json`) to /opt/cavecad/server and `dist` to /opt/cavecad/web.
+5. **(Nathan)** Sign-in settings, then install `cavecad-server.service` and start it (next section).
+6. **(Nathan)** Edge: add `Caddyfile.cave` (with the container address), DDNS names, and the ufw outbound
+   rule to the container INSERTED above the LAN deny (an appended rule gives a silent 502). Reload Caddy.
+   Keep the container firewall rule that accepts 8787 from the edge (192.168.86.13) only, for example
+   `nft add rule inet filter input ip saddr 192.168.86.13 tcp dport 8787 accept` with a drop for the rest of
+   8787. Rate limits trust the LAST X-Forwarded-For entry, which is only honest if nothing but the edge can
+   reach the port.
+7. Run `bash deploy/check-edge.sh` until it prints `edge: all ok`. Icons and /privacy.html are public;
+   everything else signed out answers 302 to /signin.
+8. **(Nathan)** Sign in at https://cavecad.com/signin (email code or Google). Then open
+   https://cavecad.com/api/me in the same browser: it must show his email and `"role":"admin"`. Invite a
+   second address of his own and sign in with it on another device.
+9. **(Nathan)** Desktop app: build with the repository variables SIGNIN_URL=https://cavecad.com/signin and
+   ACCOUNT_BASE=https://api.cavecad.com (SIGNOUT_URL is no longer used), plus PASS_PUBLIC_KEY. Offline: a
+   tab already open keeps working without the network, and so does the desktop app; a new tab cannot open
+   CaveCAD from nothing.
 
-       VITE_PASS_PUBLIC_KEY=... VITE_SIGNOUT_URL=https://auth.cavecad.com/logout npx vite build
+## Sign-in (since 2026-11)
 
-   The build stops if either is missing. Delete `dist/local` (real cave data from `public/local`, never
-   shipped) and check it is gone before copying. Copy `apps/server` (without its `*.sqlite*` and
-   `pass-key.json`) to /opt/cavecad/server and `dist` to /opt/cavecad/web. After step 9, check that
-   VITE_SIGNOUT_URL really ends the TinyAuth session (sign out, reload, you must see TinyAuth's sign-in);
-   if not, rebuild with TinyAuth v5's logout address.
-5. **(Nathan)** Write /etc/cavecad/server.env (mode 600) from `apps/server/.env.example` (ADMIN_EMAIL = his
-   Google address, EDGE_ADDRESS = the edge VM), install `cavecad-server.service`, start it. Generate one
-   long random secret (`openssl rand -base64 48`) and put it in two places with the identical value:
-   `GATE_SECRET` in /etc/cavecad/server.env, and `CAVE_GATE_SECRET` in the edge's environment (the Caddy
-   container's compose environment), so Caddy can set `X-Cave-Gate` from it. Never set `DEV_IDENTITY` on
-   the server: it signs in everyone as one email, and the server refuses to start with it beside
-   `EDGE_ADDRESS` or `OIDC_ISSUER`.
-6. **(Nathan)** Invite mailer: follow tools/invite-mailer/README.md; put MAILER_URL and MAILER_KEY in the env.
-7. **(Nathan)** Google OAuth client under cavecad.app (he accepts the terms). Microsoft stays off at launch
-   (see `tinyauth-additions.md`).
-8. **(Nathan)** TinyAuth additions (`tinyauth-additions.md`), then restart TinyAuth.
-9. **(Nathan)** Edge: add `Caddyfile.cave` (with the container address), DDNS names `cave` and `cave-api`,
-   ufw outbound rule to the container INSERTED above the LAN deny (an appended rule gives a silent 502).
-   Before reloading, check the order with `caddy adapt --pretty` in the Caddy container: in the `cave.`
-   route the handler that deletes `Remote-*` must come before the forward_auth `reverse_proxy` to
-   127.0.0.1:3000 (each site is one `route`, so the written order holds). Reload Caddy.
-10. Run `bash deploy/check-edge.sh` until it prints `edge: all ok`.
-11. **(Nathan)** Sign in. Then open https://cavecad.com/api/me in the same browser: it must show
-    his email and `"role":"admin"`. A `signed-out` answer means the edge dropped TinyAuth's headers (look at
-    step 9's order first). Invite a second address of his own, open the email on another device, sign in
-    with it. Offline: a browser cannot open CaveCAD from nothing without the network (there is no service
-    worker, and the page is never cached). What works underground is a tab that was already open when the
-    network went, and the desktop app. Test that: sign in on the tablet, keep the tab open, switch to
-    airplane mode, keep editing a cave, close the cave and open it again from the Cave Shelf.
-12. **(Nathan)** Desktop app: build with VITE_ACCOUNT_BASE=https://api.cavecad.com and the same
-    VITE_PASS_PUBLIC_KEY and VITE_SIGNOUT_URL as the web build (the build stops without them; the GitHub
-    desktop workflow needs them in its environment too), sign in through the browser round trip. The app
-    learns TinyAuth's sign-in address from the server (`/api/desktop-config`), so it needs no issuer setting.
+CaveCAD signs people in itself: an emailed code or Google. TinyAuth, `forward_auth`, `X-Cave-Gate` and
+`auth.cavecad.com` (now only a redirect to /signin) are gone. The session cookie is `__Host-cavecad_session`
+on https (plain `cavecad_session` only on http://localhost in dev).
+
+Environment in /etc/cavecad/server.env (mode 600), template `apps/server/.env.example`:
+
+- Required: `PUBLIC_URL` (https://cavecad.com), `ADMIN_EMAIL`, `PASS_KEY_FILE`, `CODE_SECRET`, `MAILER_URL`, `MAILER_KEY` (without the mailer, emailed sign-in codes are never sent; the server logs a warning at startup).
+- `CODE_SECRET` is at least 32 characters. Make it on the container and never display or paste it:
+  `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"` (write the output straight into
+  the env file).
+- Optional: `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` (the existing OAuth client, named "TinyAuth" in Google
+  Cloud project cavecad, needs the redirect URI `https://cavecad.com/auth/google/callback` added), `DOWNLOADS_DIR`
+  (/var/lib/cavecad/downloads), `DB_PATH`, `SCANS_DIR`, `DIST_DIR`, `HOST`, `PORT`.
+- Removed: `EDGE_ADDRESS`, `GATE_SECRET`, `SIGNOUT_URL`, `OIDC_ISSUER`, `OIDC_CLIENT_ID`,
+  `OIDC_CLIENT_SECRET`. Delete them from the env file.
+
+Mailer: the sign-in codes go out through the Apps Script. Open the script project, replace its code with
+`tools/invite-mailer/Code.combined.gs`, re-authorise it (it now needs GmailApp and sends from
+support@cavecad.com), and deploy a new version of the SAME deployment so `MAILER_URL` stays valid.
+
+Desktop downloads: after each successful `desktop.yml` build run `deploy/update-downloads.sh` on the Mac.
+It copies the release files into `DOWNLOADS_DIR` on CT 209; the site serves them to signed-in people.
 
 ## For now: on the tailnet only (2026-10-23, Nathan)
 
 Until the public address, CaveCAD runs in CT 209 `cavecad` (192.168.86.14) and is reached only at
 https://cavecad.tailbe4f4a.ts.net through `tailscale serve` (tailscaled in userspace mode, no tun device).
 The server listens on 127.0.0.1 with `TAILNET_IDENTITY=1`: it believes `Tailscale-User-Login`, which serve
-sets and strips from visitors. Steps 6 to 12 wait; the web build has `VITE_SIGNOUT_URL=/` (signing out
-means nothing on the tailnet). Only tailnet members the Tailscale ACL lets reach `cavecad` can use it.
-Going public: rebuild with the TinyAuth sign-out address, set HOST=0.0.0.0, EDGE_ADDRESS, GATE_SECRET and
-drop TAILNET_IDENTITY in /etc/cavecad/server.env, then steps 6 to 12. Nathan chose (2026-10-23): keep
+sets and strips from visitors. (Historical: superseded by the public setup above.) Only tailnet members the Tailscale ACL lets reach `cavecad` can use it.
+Going public: see "Sign-in (since 2026-11)". Nathan chose (2026-10-23): keep
 play/games on their own login (no Google there), and TinyAuth sessions of 30 days.
 
 ## Updating the web app (2026-10-24)
 
 Build it on GitHub so the settings kept in its secrets go in (the live relay, feedback and class-link
-mailboxes; the account values are repository variables PASS_PUBLIC_KEY, SIGNOUT_URL, ACCOUNT_BASE):
+mailboxes; PASS_PUBLIC_KEY is a repository variable):
 `gh workflow run web.yml`, then `gh run download <run> -n cavecad-web -D <empty folder>`. On CT 209: back up
 /opt/cavecad/web (`cp -a web web.bak-before-<what>`), empty it, unpack the build there. No restart needed.
-The desktop workflow (`desktop.yml`) takes the same values.
+Only the desktop workflow (`desktop.yml`) uses SIGNIN_URL and ACCOUNT_BASE; `web.yml` needs neither.
 
 ## Server caves (2026-10-26)
 

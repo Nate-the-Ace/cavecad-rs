@@ -1,56 +1,70 @@
-// Starts the CaveCAD server: the web app and the account API on one port. Settings come from the
-// environment (see .env.example); nothing secret is in the code.
+// Starts the CaveCAD server: sign-in, the web app, downloads and the account API on one port. Settings come
+// from the environment (see .env.example); nothing secret is in the code.
 import { createServer } from 'node:http';
 import { readFileSync } from 'node:fs';
 import { createPrivateKey } from 'node:crypto';
 import { dirname, join, resolve } from 'node:path';
 import { openDb } from './db.ts';
 import { handleApi, serveApp } from './api.ts';
-import { makeWhoIs, discoveredKeys } from './identity.ts';
-import { makeDesktopConfig, makeDesktopToken } from './desktop-token.ts';
+import { makeWhoIs } from './identity.ts';
+import { handleSignin } from './signin.ts';
+import { handleDownloads } from './downloads.ts';
+import { mayGetIn } from './members.ts';
+import { sendCode } from './mailer.ts';
 
 const env = process.env;
 const need = (k: string) => env[k] || (() => { throw new Error(`${k} is not set`); })();
 
+const publicUrl = need('PUBLIC_URL');
+// Signs the emailed codes and Google's sign-in state: a short one could be guessed.
+const codeSecret = need('CODE_SECRET');
+if (codeSecret.length < 32) throw new Error('CODE_SECRET must be at least 32 characters (make one: node -e "console.log(require(\'crypto\').randomBytes(32).toString(\'hex\'))")');
 const devIdentity = env.DEV_IDENTITY || undefined;
 if (devIdentity) {
-  // DEV_IDENTITY signs in everyone on this machine, so it must never run beside the real gates.
-  if (env.EDGE_ADDRESS || env.OIDC_ISSUER) throw new Error('DEV_IDENTITY is for local development only: unset it, or unset EDGE_ADDRESS and OIDC_ISSUER');
-  const host = (() => { try { return new URL(need('PUBLIC_URL')).hostname; } catch { return ''; } })();
-  if (host !== 'localhost' && host !== '127.0.0.1') throw new Error(`DEV_IDENTITY needs a localhost PUBLIC_URL, not ${env.PUBLIC_URL}`);
+  // DEV_IDENTITY signs in everyone on this machine, so it must never run on a public address.
+  const host = (() => { try { return new URL(publicUrl).hostname; } catch { return ''; } })();
+  if (host !== 'localhost' && host !== '127.0.0.1') throw new Error(`DEV_IDENTITY needs a localhost PUBLIC_URL, not ${publicUrl}`);
 }
-// TAILNET_IDENTITY=1: reached only through `tailscale serve` on this machine (until there is a public address).
-// The server must then listen on 127.0.0.1, or anyone who can reach the port could claim any email.
+// TAILNET_IDENTITY=1: reached only through `tailscale serve` on this machine. The server must then listen on
+// 127.0.0.1, or anyone who can reach the port could claim any email.
 const tailnet = env.TAILNET_IDENTITY === '1';
 if (tailnet) {
   if (devIdentity) throw new Error('DEV_IDENTITY and TAILNET_IDENTITY cannot run together');
   if (env.HOST !== '127.0.0.1') throw new Error('TAILNET_IDENTITY needs HOST=127.0.0.1');
 }
-const edgeAddress = devIdentity || tailnet ? env.EDGE_ADDRESS ?? '' : need('EDGE_ADDRESS');
-const gateSecret = devIdentity || tailnet ? env.GATE_SECRET ?? '' : need('GATE_SECRET');
 
 const db = openDb(env.DB_PATH ?? 'cavecad.sqlite');
 const passKey = createPrivateKey({ key: JSON.parse(readFileSync(need('PASS_KEY_FILE'), 'utf8')), format: 'jwk' });
-const oidc = env.OIDC_ISSUER ? { issuer: env.OIDC_ISSUER, audience: need('OIDC_CLIENT_ID'), keys: discoveredKeys(env.OIDC_ISSUER) } : undefined;
+const adminEmail = need('ADMIN_EMAIL');
+const mailer = { url: env.MAILER_URL ?? '', key: env.MAILER_KEY ?? '' };
+if (!mailer.url || !mailer.key) console.warn('WARNING: MAILER_URL/MAILER_KEY not set — emailed sign-in codes will never be sent');
+const secure = publicUrl.startsWith('https:');
+const whoIs = makeWhoIs({ db, tailnet, devIdentity, secure });
 const deps = {
-  db,
-  passKey,
-  adminEmail: need('ADMIN_EMAIL'),
-  publicUrl: need('PUBLIC_URL'),
-  mailer: { url: env.MAILER_URL ?? '', key: env.MAILER_KEY ?? '' },
-  signoutUrl: env.SIGNOUT_URL ?? '',
+  db, passKey, adminEmail, publicUrl, mailer, tailnet, whoIs,
   scansDir: resolve(env.SCANS_DIR ?? join(dirname(resolve(env.DB_PATH ?? 'cavecad.sqlite')), 'scans')),
-  tailnet,
-  whoIs: makeWhoIs({ edgeAddress, gateSecret, oidc, tailnet, devIdentity }),
-  desktopToken: oidc ? makeDesktopToken({ issuer: oidc.issuer, clientId: oidc.audience, clientSecret: env.OIDC_CLIENT_SECRET ?? '' }) : undefined,
-  desktopConfig: oidc ? makeDesktopConfig({ issuer: oidc.issuer, clientId: oidc.audience }) : undefined,
 };
+const signin = {
+  db, publicUrl, secure,
+  codes: { db, secret: codeSecret, send: (to: string, code: string) => sendCode(mailer, { to, code }), mayGetIn: (e: string) => mayGetIn(db, e, { adminEmail, now: Date.now() }) },
+  google: env.GOOGLE_CLIENT_ID ? { clientId: env.GOOGLE_CLIENT_ID, clientSecret: need('GOOGLE_CLIENT_SECRET'), redirectUri: publicUrl.replace(/\/$/, '') + '/auth/google/callback', stateSecret: codeSecret } : null,
+};
+const downloads = { db, whoIs, adminEmail, dir: env.DOWNLOADS_DIR ?? '' };
 const dist = resolve(env.DIST_DIR ?? '../web/dist');
 
 createServer((req, res) => {
-  const p = (req.url ?? '/').startsWith('/api/') ? handleApi(deps, req, res) : serveApp(deps, dist, req, res);
+  const path = (req.url ?? '/').split('?')[0];
+  const p = (async () => {
+    if (path === '/signin' || path.startsWith('/signin/') || path.startsWith('/auth/') || path === '/signout') {
+      if (await handleSignin(signin, req, res)) return;
+    }
+    if (path.startsWith('/downloads/') || path === '/api/downloads') return handleDownloads(downloads, req, res);
+    if (path.startsWith('/api/')) return handleApi(deps, req, res);
+    return serveApp(deps, dist, req, res);
+  })();
   p.catch((e) => {
     console.error(e);
-    if (!res.headersSent) res.writeHead(500, { 'Content-Type': 'application/json' }).end('{"error":"server"}');
+    if (res.headersSent) res.destroy();
+    else res.writeHead(500, { 'Content-Type': 'application/json' }).end('{"error":"server"}');
   });
 }).listen(Number(env.PORT ?? 8787), env.HOST ?? '0.0.0.0', () => console.log(`CaveCAD server on ${env.HOST ?? '0.0.0.0'}:${env.PORT ?? 8787}`));

@@ -1,3 +1,5 @@
+> HISTORICAL (until 2026-11): CaveCAD now signs people in itself; see README "Sign-in".
+
 # TinyAuth additions for CaveCAD
 
 TinyAuth v5 on the edge (/opt/edge). Key names below are from tinyauth.app/docs/reference/configuration;

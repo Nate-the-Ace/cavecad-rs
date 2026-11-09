@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { sendInvite } from '../src/mailer.ts';
+import { sendInvite, sendCode } from '../src/mailer.ts';
 
 const reply = (body: unknown) => (async () => ({ json: async () => body })) as unknown as typeof fetch;
 const args = { to: 'rick@example.com', inviter: 'Nathan', link: 'https://cavecad.com/?signup=t' };
@@ -19,4 +19,12 @@ test('a mailer that never answers is given up on', async () => {
   const t = Date.now();
   assert.equal(await sendInvite({ url: 'https://s', key: 'K', fetch: hang, timeoutMs: 50 }, args), false);
   assert.ok(Date.now() - t < 2000);
+});
+
+test('sendCode posts the code kind', async () => {
+  let body: Record<string, unknown> = {};
+  const f = (async (_u: string, init: { body: string }) => { body = JSON.parse(init.body); return { json: async () => ({ ok: true }) }; }) as unknown as typeof fetch;
+  assert.equal(await sendCode({ url: 'https://m', key: 'K', fetch: f }, { to: 'a@b.com', code: '123456' }), true);
+  assert.deepEqual(body, { key: 'K', kind: 'code', to: 'a@b.com', code: '123456' });
+  assert.equal(await sendCode({ url: '', key: '' }, { to: 'a@b.com', code: '123456' }), false);
 });

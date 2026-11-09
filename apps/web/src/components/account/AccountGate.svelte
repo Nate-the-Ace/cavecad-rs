@@ -50,20 +50,21 @@
       busy = false;
     }
   }
-  // Signing in again, or as someone else, goes through TinyAuth: a reload of the page after its sign-out.
-  // The open cave is stored first, so the reload cannot lose an edit made in the last moment.
+  // Signing in again, or as someone else, goes through CaveCAD's sign-in page. The open cave is stored first,
+  // so leaving the page cannot lose an edit made in the last moment.
   const signInAgain = async () => {
     error = '';
     account.signInError = '';
     if (isDesktop()) void startDesktopSignIn().catch(() => (error = "Couldn't open the sign-in. Check your connection and try again."));
     else {
       await flush().catch(() => {});
-      location.reload();
+      location.href = '/signin?return=' + encodeURIComponent(location.pathname + location.search);
     }
   };
   const otherAccount = async () => {
     await flush().catch(() => {});
-    location.href = (import.meta.env.VITE_SIGNOUT_URL as string | undefined) || '/';
+    await fetch('/signout', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }).catch(() => {});
+    location.href = '/signin';
   };
 </script>
 
@@ -114,7 +115,7 @@
         <div class="row"><button class="btn primary" onclick={signInAgain}>Sign in again</button></div>
       {:else}
         <h2>Sign in to CaveCAD</h2>
-        <p>Sign in with your Google account.</p>
+        <p>Sign in with Google or an emailed code.</p>
         <div class="row"><button class="btn primary" onclick={signInAgain}>Sign in</button></div>
       {/if}
       {#if account.signInError && !error}<p class="hint bad" role="alert">{account.signInError}</p>{/if}

@@ -13,6 +13,8 @@ import { send, sendBadBody, readJson } from './http.ts';
 import { handleRooms } from './rooms-api.ts';
 import { handleScans, sweepScans } from './scans.ts';
 import { cancelInvited, inviteGuest, ownsAnyCave } from './rooms.ts';
+import { createSession, revokeAllFor, SESSION_MS } from './sessions.ts';
+import { redeemHandoff } from './handoff.ts';
 
 export type ApiDeps = {
   db: Db;
@@ -21,16 +23,10 @@ export type ApiDeps = {
   passKey: KeyObject;
   publicUrl: string;
   mailer: MailerConfig;
-  /** TinyAuth's sign-out page, offered on the not-invited page to try another account; empty for none. */
-  signoutUrl?: string;
   /** Where scanned pages are kept (a folder); absent, the server keeps none. */
   scansDir?: string;
   /** Reached through `tailscale serve` only: /api/me says so, and the page hides sign-out and switching account. */
   tailnet?: boolean;
-  /** Exchanges a desktop sign-in code with TinyAuth (Task 11); absent until configured. */
-  desktopToken?: (body: Record<string, string>) => Promise<{ status: number; body: unknown }>;
-  /** Where the desktop app sends the browser to sign in (from TinyAuth's discovery document); absent until configured. */
-  desktopConfig?: () => Promise<{ authorizationEndpoint: string; clientId: string } | null>;
   now?: () => number;
 };
 
@@ -81,16 +77,12 @@ export async function handleApi(d: ApiDeps, req: IncomingMessage, res: ServerRes
   if (refusedCrossSite(d, req, res, method, origin, path)) return;
 
   try {
-    // Read-only and public: the same for everyone, and a GET, so the cross-site checks above let it through.
-    if (path === '/api/desktop-config' && method === 'GET') {
-      if (!d.desktopConfig) return send(res, 404, { error: 'not-found' });
-      const conf = await d.desktopConfig();
-      return conf ? send(res, 200, conf) : send(res, 502, { error: 'unavailable' });
-    }
+    // The desktop app's sign-in hand-off (handoff.ts); public, so before the identity check.
     if (path === '/api/desktop-token' && method === 'POST') {
-      if (!d.desktopToken) return send(res, 404, { error: 'not-found' });
-      const out = await d.desktopToken((await readJson(req)) as Record<string, string>);
-      return send(res, out.status, out.body);
+      const b = await readJson(req);
+      const who = redeemHandoff(d.db, String(b.code ?? ''), String(b.verifier ?? ''), now);
+      if (!who) return send(res, 400, { error: 'sign-in-failed' });
+      return send(res, 200, { token: createSession(d.db, who, 'desktop', now), expires_in: SESSION_MS / 1000 });
     }
   } catch (e) {
     if (e instanceof SyntaxError) return sendBadBody(res, e);
@@ -167,7 +159,9 @@ export async function handleApi(d: ApiDeps, req: IncomingMessage, res: ServerRes
     const member = /^\/api\/admin\/members\/([^/]+)$/.exec(path);
     if (member && method === 'PATCH') return send(res, 200, { member: M.setRole(d.db, me.id, member[1], (await readJson(req)).role as M.Role) });
     if (member && method === 'DELETE') {
+      const goneEmail = (d.db.prepare('SELECT email FROM members WHERE id = ?').get(member[1]) as { email: string } | undefined)?.email;
       M.removeMember(d.db, me.id, member[1], now);
+      if (goneEmail) revokeAllFor(d.db, goneEmail, now);
       return send(res, 200, { ok: true });
     }
     if (path === '/api/admin/invites' && method === 'GET') return send(res, 200, { invites: M.listInvites(d.db, now) });
@@ -198,8 +192,8 @@ export async function handleApi(d: ApiDeps, req: IncomingMessage, res: ServerRes
 
 const esc = (t: string) => t.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 // The page someone gets instead of the app: plain, self-contained, nothing of the app in it.
-function refusal(d: ApiDeps, res: ServerResponse, status: number, title: string, text: string): void {
-  const out = d.signoutUrl ? `<p><a href="${esc(d.signoutUrl)}">Use another account</a></p>` : '';
+function refusal(_d: ApiDeps, res: ServerResponse, status: number, title: string, text: string): void {
+  const out = '<p><a href="/signout">Use another account</a></p>';
   res.writeHead(status, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' }).end(`<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>CaveCAD</title>
 <style>:root{color-scheme:light dark}body{font:16px/1.5 system-ui,sans-serif;max-width:32rem;margin:4rem auto;padding:0 16px}</style></head>
@@ -207,15 +201,19 @@ function refusal(d: ApiDeps, res: ServerResponse, status: number, title: string,
 }
 
 /**
- * Serves the web app, but only to someone who may use it (`M.mayLoadApp`): a stranger who signed in with
- * Google gets a short page saying CaveCAD is invite only, and none of the app. The privacy page and the app's
+ * Serves the web app, but only to someone who may use it (`M.mayLoadApp`): someone signed out is sent to
+ * /signin; a stranger who signed in gets a short page saying CaveCAD is invite only, and none of the app. The privacy page and the app's
  * icons are for anyone: a browser fetches icons without signing in (Safari's Add to Dock, bookmarks).
  */
 export const PUBLIC_FILES = ['/privacy.html', '/favicon.svg', '/favicon-32.png', '/apple-touch-icon.png', '/icon-192.png', '/icon-512.png', '/manifest.webmanifest'];
 export async function serveApp(d: ApiDeps, dist: string, req: IncomingMessage, res: ServerResponse): Promise<void> {
   if (PUBLIC_FILES.includes((req.url ?? '/').split('?')[0])) return serveStatic(dist, req, res);
   const who = await d.whoIs(req as unknown as RequestLike);
-  if (!who) return refusal(d, res, 401, 'Sign in to CaveCAD', 'Open <a href="https://cavecad.com/">cavecad.com</a> to sign in.');
+  if (!who) {
+    const here = (req.url ?? '/').split('#')[0];
+    res.writeHead(302, { Location: '/signin?return=' + encodeURIComponent(here), 'Cache-Control': 'no-store' }).end();
+    return;
+  }
   const may = M.mayLoadApp(d.db, who, { adminEmail: d.adminEmail, now: (d.now ?? Date.now)() });
   if (may === 'removed') return refusal(d, res, 403, 'Your CaveCAD account was removed', `You're signed in as ${esc(who.email)}. Ask an admin if this is a mistake.`);
   if (may === 'not-invited') return refusal(d, res, 403, 'CaveCAD is invite only for now', `You're signed in as ${esc(who.email)}, which hasn't been invited. If you were invited at another address, sign in with that one.`);

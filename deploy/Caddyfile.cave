@@ -1,16 +1,12 @@
-# CaveCAD on the edge VM. The web app and its API sit behind TinyAuth; the desktop app's API host does not
-# (it sends a TinyAuth ID token the server checks itself). Both wipe identity headers a visitor sends, so
-# only TinyAuth's answer can say who someone is.
+# CaveCAD on the edge VM. CaveCAD signs people in itself (apps/server/src/signin.ts); the edge only wipes
+# identity headers a visitor sends (nothing believes them any more, kept as a belt) and passes everything on.
 #
-# Each site is one `route`, so the directives run in the order written. Without it Caddy's own order runs
-# forward_auth before request_header, and the wipe would delete the headers TinyAuth just set (every
-# sign-in would get 401). Check with `caddy adapt --pretty`: the delete handler must come first.
-#
-# CaveCAD has its own TinyAuth (container tinyauth-cave, 127.0.0.1:3001, auth.cavecad.com): a TinyAuth
-# session cookie belongs to one domain, and the household sites keep theirs on schonegg.stream.
+# Each site is one `route`, so the directives run in the order written (the wipe comes first).
+# Port 8787 on the container must accept only the edge (192.168.86.13): rate limits read the LAST
+# X-Forwarded-For entry, which only the edge can be trusted to have written.
 auth.cavecad.com {
 	import hardening
-	reverse_proxy 127.0.0.1:3001
+	redir https://cavecad.com/signin 302
 }
 
 www.cavecad.com {
@@ -38,12 +34,9 @@ cavecad.com {
 		request_header -Remote-Groups
 		request_header -Remote-Sub
 		request_header -X-Cave-Gate
-		forward_auth 127.0.0.1:3001 {
-			uri /api/auth/caddy
-			copy_headers Remote-User Remote-Email Remote-Name Remote-Groups Remote-Sub
+		reverse_proxy CAVECAD_CT:8787 {
+			flush_interval -1
 		}
-		request_header X-Cave-Gate {env.CAVE_GATE_SECRET}
-		reverse_proxy CAVECAD_CT:8787
 	}
 }
 
