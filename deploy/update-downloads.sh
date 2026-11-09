@@ -19,6 +19,11 @@ for key, p in latest.get('platforms', {}).items():
     name = urllib.parse.unquote(p['url'].rsplit('/', 1)[-1])
     if os.path.isfile(name) and p.get('signature'):
         platforms[key] = {'file': name, 'signature': p['signature']}
+# Windows: the setup .exe is the installer most people use (the .msi is for managed PCs), so an update replaces
+# like with like; Linux: only the AppImage can replace itself
+for plain, preferred in (('windows-x86_64', 'windows-x86_64-nsis'), ('linux-x86_64', 'linux-x86_64-appimage')):
+    if preferred in platforms:
+        platforms[plain] = platforms[preferred]
 json.dump({'version': latest['version'], 'notes': latest.get('notes', ''), 'pubDate': latest.get('pub_date', ''), 'platforms': platforms}, open('update.json', 'w'))
 print('update:', latest['version'], sorted(platforms))
 PY
@@ -26,7 +31,8 @@ PY
 else
   echo 'no latest.json on the release: no update offered (was the build signed?)'
 fi
-pick() { ls $1 2>/dev/null | head -1; }
+# the newest version of each kind: the release keeps older builds' files beside the new ones
+pick() { ls $1 2>/dev/null | sort -V | tail -1; }
 VERSION=$(pick '*.dmg' | sed -E 's/^CaveCAD_([^_]+)_.*/\1/')
 cat > downloads.json <<JSON
 {"version":"$VERSION","builtAt":"$(date -u +%Y-%m-%dT%H:%M:%SZ)","files":{"mac":"$(pick '*.dmg')","windows":"$(pick '*-setup.exe')","windowsMsi":"$(pick '*.msi')","linuxAppImage":"$(pick '*.AppImage')","linuxDeb":"$(pick '*.deb')","linuxRpm":"$(pick '*.rpm')"}}
