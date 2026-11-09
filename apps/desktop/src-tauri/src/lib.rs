@@ -5,6 +5,7 @@
 
 mod cavefolder;
 mod files;
+mod update;
 
 use std::path::PathBuf;
 use std::sync::Mutex;
@@ -221,6 +222,8 @@ pub fn run() {
         })
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .manage(update::Pending::default())
         .invoke_handler(tauri::generate_handler![
             pick_folder,
             list_scans,
@@ -235,7 +238,9 @@ pub fn run() {
             folder_exists,
             write_cave,
             read_cave,
-            write_export
+            write_export,
+            update::update_prepare,
+            update::update_install
         ])
         .run(tauri::generate_context!())
         .expect("the CaveCAD desktop app could not start");

@@ -1,13 +1,31 @@
 #!/usr/bin/env bash
-# Copies the newest desktop build (GitHub release desktop-latest) to the CaveCAD server's downloads folder.
+# Copies the newest desktop build (GitHub release desktop-latest) to the CaveCAD server's downloads folder:
+# the installers (downloads.json) and the desktop app's own updates (update.json, from the release's
+# latest.json: per platform the update file and its signature, which the app checks before installing).
 # Run on the Mac after desktop.yml succeeds: deploy/update-downloads.sh
 # Away from home, reach the server through Tailscale: CAVECAD_SSH_JUMP=nathan@media-vm deploy/update-downloads.sh
 set -euo pipefail
 JUMP=(${CAVECAD_SSH_JUMP:+-J "$CAVECAD_SSH_JUMP"})
 REPO=Nate-the-Ace/cavecad-rs
 WORK=$(mktemp -d)
-gh release download desktop-latest -R "$REPO" -D "$WORK" --pattern '*.dmg' --pattern '*-setup.exe' --pattern '*.msi' --pattern '*.AppImage' --pattern '*.deb' --pattern '*.rpm'
+gh release download desktop-latest -R "$REPO" -D "$WORK" --pattern '*.dmg' --pattern '*-setup.exe' --pattern '*.msi' --pattern '*.AppImage' --pattern '*.deb' --pattern '*.rpm' --pattern '*.app.tar.gz' --pattern 'latest.json'
 cd "$WORK"
+if [ -f latest.json ]; then
+  python3 - <<'PY'
+import json, os, urllib.parse
+latest = json.load(open('latest.json'))
+platforms = {}
+for key, p in latest.get('platforms', {}).items():
+    name = urllib.parse.unquote(p['url'].rsplit('/', 1)[-1])
+    if os.path.isfile(name) and p.get('signature'):
+        platforms[key] = {'file': name, 'signature': p['signature']}
+json.dump({'version': latest['version'], 'notes': latest.get('notes', ''), 'pubDate': latest.get('pub_date', ''), 'platforms': platforms}, open('update.json', 'w'))
+print('update:', latest['version'], sorted(platforms))
+PY
+  rm latest.json
+else
+  echo 'no latest.json on the release: no update offered (was the build signed?)'
+fi
 pick() { ls $1 2>/dev/null | head -1; }
 VERSION=$(pick '*.dmg' | sed -E 's/^CaveCAD_([^_]+)_.*/\1/')
 cat > downloads.json <<JSON

@@ -58,7 +58,7 @@ createServer((req, res) => {
     if (path === '/signin' || path.startsWith('/signin/') || path.startsWith('/auth/') || path === '/signout') {
       if (await handleSignin(signin, req, res)) return;
     }
-    if (path.startsWith('/downloads/') || path === '/api/downloads') return handleDownloads(downloads, req, res);
+    if (path.startsWith('/downloads/') || path === '/api/downloads' || path.startsWith('/api/desktop-update/')) return handleDownloads(downloads, req, res);
     if (path.startsWith('/api/')) return handleApi(deps, req, res);
     return serveApp(deps, dist, req, res);
   })();

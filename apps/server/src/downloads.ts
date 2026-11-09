@@ -1,5 +1,7 @@
 // Desktop installers for members: the files listed in DOWNLOADS_DIR/downloads.json (written by
-// deploy/update-downloads.sh), and nothing else in that folder.
+// deploy/update-downloads.sh), and nothing else in that folder. Also the desktop app's own updates: the
+// files listed in DOWNLOADS_DIR/update.json, and the question the app asks for them,
+// /api/desktop-update/<os>/<arch>/<its version> (the Tauri updater's URL shape).
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { createReadStream } from 'node:fs';
 import { readFile, stat } from 'node:fs/promises';
@@ -11,6 +13,41 @@ import { send } from './http.ts';
 
 export type DownloadsDeps = { db: Db; adminEmail: string; dir: string; whoIs: (r: RequestLike) => Promise<M.Identity | null> };
 export type Manifest = { version: string; builtAt: string; files: Record<string, string> };
+/** The newest desktop update: per platform (`darwin-aarch64`, `windows-x86_64`, ...) its file and signature. */
+export type UpdateManifest = { version: string; notes?: string; pubDate?: string; platforms: Record<string, { file: string; signature: string }> };
+
+async function updateManifest(dir: string): Promise<UpdateManifest | null> {
+  if (!dir) return null;
+  try {
+    return JSON.parse(await readFile(join(dir, 'update.json'), 'utf8')) as UpdateManifest;
+  } catch {
+    return null;
+  }
+}
+
+/** Compares dotted versions (`0.1.42` against `0.1.9`) numerically: negative when `a` is older. */
+export function compareVersions(a: string, b: string): number {
+  const parts = (v: string) => v.split(/[.+-]/).slice(0, 3).map((n) => Number.parseInt(n, 10) || 0);
+  const [x, y] = [parts(a), parts(b)];
+  for (let i = 0; i < 3; i++) if ((x[i] ?? 0) !== (y[i] ?? 0)) return (x[i] ?? 0) - (y[i] ?? 0);
+  return 0;
+}
+
+/** The update for `<os>-<arch>`, as the Tauri updater wants it, or null when there is none newer than `current`. */
+export function updateFor(u: UpdateManifest, os: string, arch: string, current: string, origin: string) {
+  if (compareVersions(current, u.version) >= 0) return null;
+  const p = u.platforms[`${os}-${arch}`];
+  if (!p?.file || !p.signature) return null;
+  return { version: u.version, notes: u.notes ?? '', pub_date: u.pubDate ?? undefined, url: `${origin}/downloads/${encodeURIComponent(p.file)}`, signature: p.signature };
+}
+
+/** Where this request came in (behind the edge proxy: the host and scheme it forwarded). */
+function originOf(req: IncomingMessage): string {
+  const h = (k: string) => String(req.headers[k] ?? '').split(',')[0].trim();
+  const host = h('x-forwarded-host') || h('host');
+  const proto = h('x-forwarded-proto') || 'https';
+  return `${proto}://${host}`;
+}
 
 async function manifest(dir: string): Promise<Manifest | null> {
   if (!dir) return null;
@@ -24,13 +61,21 @@ async function manifest(dir: string): Promise<Manifest | null> {
 export async function handleDownloads(d: DownloadsDeps, req: IncomingMessage, res: ServerResponse): Promise<void> {
   const path = (req.url ?? '/').split('?')[0];
   const who = await d.whoIs(req as unknown as RequestLike);
-  const api = path === '/api/downloads';
+  const update = path.startsWith('/api/desktop-update/');
+  const api = path === '/api/downloads' || update;
   if (!who) {
     if (api) return send(res, 401, { error: 'signed-out' });
     res.writeHead(302, { Location: '/signin?return=' + encodeURIComponent(req.url ?? '/'), 'Cache-Control': 'no-store' }).end();
     return;
   }
   if (M.mayLoadApp(d.db, who, { adminEmail: d.adminEmail, now: Date.now() }) !== 'yes') return send(res, 403, { error: 'not-a-member' });
+  if (update) {
+    const [os, arch, current] = path.slice('/api/desktop-update/'.length).split('/').map((x) => decodeURIComponent(x));
+    const u = await updateManifest(d.dir);
+    const answer = u && os && arch && current ? updateFor(u, os, arch, current, originOf(req)) : null;
+    if (!answer) return void res.writeHead(204, { 'Cache-Control': 'no-store' }).end();
+    return send(res, 200, answer);
+  }
   const m = await manifest(d.dir);
   if (!m) return send(res, 404, { error: 'not-found' });
   if (api) return send(res, 200, m);
@@ -41,7 +86,8 @@ export async function handleDownloads(d: DownloadsDeps, req: IncomingMessage, re
     return send(res, 404, { error: 'not-found' });
   }
   // An empty name would be the folder itself (the manifest lists '' for a platform with no build).
-  if (!name || !Object.values(m.files ?? {}).includes(name) || name.includes('/') || name.includes('\\') || name.includes('..')) return send(res, 404, { error: 'not-found' });
+  const updates = Object.values((await updateManifest(d.dir))?.platforms ?? {}).map((p) => p.file);
+  if (!name || !(Object.values(m.files ?? {}).includes(name) || updates.includes(name)) || name.includes('/') || name.includes('\\') || name.includes('..')) return send(res, 404, { error: 'not-found' });
   const file = join(d.dir, name);
   const st = await stat(file).catch(() => null);
   if (!st?.isFile()) return send(res, 404, { error: 'not-found' });

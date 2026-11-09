@@ -16,6 +16,8 @@
   import { guardUnload } from './lib/files';
   import { installDiagnostics } from './lib/diagnostics';
   import CaveShelf from './components/CaveShelf.svelte';
+  import UpdateBar from './components/UpdateBar.svelte';
+  import { checkForUpdate, startUpdateChecks } from './lib/desktop-update.svelte';
   import MovedPage from './components/MovedPage.svelte';
   import { isOldJoinUrl, isOldLiveLink } from './lib/moved-link';
   import { listenForLinks } from './lib/desktop';
@@ -129,6 +131,7 @@
 
   onMount(() => {
     void startAccount();
+    startUpdateChecks(); // the desktop app: a newer version, offered by the bar once it is downloaded
     const stopRooms = startRooms(); // the open cave kept in step through its Private room
     window.addEventListener('keydown', noPageSelectAll);
     window.addEventListener('copy', onCopy);
@@ -206,10 +209,16 @@
     };
   });
 
+  // signing in (or the sign-in coming back from storage) is when the first update check can be asked
+  $effect(() => {
+    if (account.phase === 'ready') untrack(() => void checkForUpdate());
+  });
+
   const built = $derived(info?.builtAt ? new Date(info.builtAt).toLocaleTimeString() : '');
 </script>
 
 <div class="shell" inert={!open}>
+  <UpdateBar />
   <Ribbon />
   <SnapMenu />
   <NewCave />
