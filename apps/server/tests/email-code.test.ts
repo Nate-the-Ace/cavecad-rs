@@ -36,9 +36,50 @@ test('limits', async () => {
   assert.equal(s2.length, 20, 'twenty an hour from one address');
 });
 
-test('mail failure is reported', async () => {
+test('mail failure still answers ok, even a throwing or rejecting send', async () => {
   const { d } = setup(false);
-  assert.deepEqual(await requestCode(d, 'rick@example.com', '1.1.1.1', now), { ok: false, error: 'send-failed' });
+  assert.deepEqual(await requestCode(d, 'rick@example.com', '1.1.1.1', now), { ok: true });
+  const thrower = { ...d, send: (() => { throw new Error('boom'); }) as unknown as typeof d.send };
+  assert.deepEqual(await requestCode(thrower, 'rick@example.com', '1.1.1.1', now + 61_000), { ok: true });
+  const rejecter = { ...d, send: async () => { throw new Error('boom'); } };
+  assert.deepEqual(await requestCode(rejecter, 'rick@example.com', '1.1.1.1', now + 122_000), { ok: true });
+  await new Promise((r) => setImmediate(r));
+});
+
+test('verify cannot tell a member from a stranger', async () => {
+  const { d } = setup();
+  await requestCode(d, 'rick@example.com', '1.1.1.1', now);
+  await requestCode(d, 'stranger@example.com', '1.1.1.1', now);
+  for (const left of [4, 3]) {
+    const a = verifyCode(d, 'rick@example.com', '000000', now);
+    const b = verifyCode(d, 'stranger@example.com', '000000', now);
+    if (a.ok === false && a.error === 'wrong') assert.deepEqual(b, a);
+    else assert.fail('member answered ' + JSON.stringify(a));
+    assert.equal((b as { triesLeft: number }).triesLeft, left);
+  }
+});
+
+test('thirty wrong tries a day lock an email out, member or stranger', async () => {
+  const { d, db, sent } = setup();
+  for (const who of ['rick@example.com', 'stranger@example.com']) {
+    await requestCode(d, who, '1.1.1.1', now);
+    // wrong tries are counted per email across codes: six codes of five tries
+    for (let round = 0; round < 6; round++) {
+      const t = now + round * 15 * 60_000;
+      if (round) await requestCode(d, who, '1.1.1.1', t);
+      for (let i = 0; i < 5; i++) verifyCode(d, who, '000000', t);
+    }
+    const t = now + 6 * 15 * 60_000;
+    await requestCode(d, who, '1.1.1.1', t);
+    const right = who === 'rick@example.com' ? sent.at(-1)!.code : '000000';
+    assert.deepEqual(verifyCode(d, who, right, t), { ok: false, error: 'expired' }, who + ' locked out, even with the right code');
+    assert.equal((db.prepare('SELECT COUNT(*) AS n FROM code_failures WHERE email = ?').get(who) as { n: number }).n, 30);
+    // a day on, the failures age out and the member can sign in again
+    const later = t + 86_400_001;
+    await requestCode(d, who, '1.1.1.1', later);
+    if (who === 'rick@example.com') assert.deepEqual(verifyCode(d, who, sent.at(-1)!.code, later), { ok: true, email: who });
+    else assert.deepEqual(verifyCode(d, who, '000000', later), { ok: false, error: 'wrong', triesLeft: 4 });
+  }
 });
 
 test('verifying', async () => {

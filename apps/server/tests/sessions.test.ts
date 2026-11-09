@@ -35,3 +35,12 @@ test('cookies', () => {
   assert.equal(readCookie('a=1; cavecad_session=xyz; b=2', 'cavecad_session'), 'xyz');
   assert.equal(readCookie(undefined, 'cavecad_session'), '');
 });
+
+test('a long-dead session row is cleaned up when a new one starts', () => {
+  const db = openDb(':memory:');
+  const who = { email: 'a@b.com', name: 'A', provider: 'google' as const, subject: 'x' };
+  createSession(db, who, 'web', now - 3 * SESSION_MS);
+  assert.equal((db.prepare('SELECT COUNT(*) AS n FROM sessions').get() as { n: number }).n, 1);
+  createSession(db, who, 'web', now);
+  assert.equal((db.prepare('SELECT COUNT(*) AS n FROM sessions').get() as { n: number }).n, 1);
+});

@@ -11,6 +11,7 @@ const norm = (e: string) => e.trim().toLowerCase();
 
 /** Starts a session for `who`; gives back the token (never stored). */
 export function createSession(db: Db, who: Identity, kind: 'web' | 'desktop', now: number): string {
+  db.prepare('DELETE FROM sessions WHERE expires_at < ?').run(now - SESSION_MS);
   const token = randomBytes(32).toString('base64url');
   db.prepare('INSERT INTO sessions (token_hash, email, name, provider, kind, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
     .run(hash(token), norm(who.email), who.name.slice(0, 80), who.provider, kind, now, now + SESSION_MS);

@@ -159,6 +159,10 @@ CREATE TABLE IF NOT EXISTS email_codes (
 );
 CREATE TABLE IF NOT EXISTS code_requests (email TEXT NOT NULL, ip TEXT NOT NULL, at INTEGER NOT NULL);
 CREATE INDEX IF NOT EXISTS code_requests_at ON code_requests(at);
+CREATE INDEX IF NOT EXISTS code_requests_email_at ON code_requests(email, at);
+CREATE INDEX IF NOT EXISTS code_requests_ip_at ON code_requests(ip, at);
+CREATE TABLE IF NOT EXISTS code_failures (email TEXT NOT NULL, at INTEGER NOT NULL);
+CREATE INDEX IF NOT EXISTS code_failures_email_at ON code_failures(email, at);
 CREATE TABLE IF NOT EXISTS handoffs (
   code_hash TEXT PRIMARY KEY,
   challenge TEXT NOT NULL,

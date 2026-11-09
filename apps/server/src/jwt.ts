@@ -22,10 +22,12 @@ function checkSignature(jwk: JsonWebKey, alg: string, data: Buffer, sig: Buffer)
   return false;
 }
 
+/** `now` is in SECONDS since the epoch (not milliseconds). */
 export type JwtCheck = { keys: (kid?: string) => Promise<JsonWebKey[]>; issuers: string[]; audience: string; now: number };
 
 /** The token's claims when its signature, issuer, audience and times check out; else null. */
 export async function verifyJwt(token: string, o: JwtCheck): Promise<Record<string, unknown> | null> {
+  if (o.now > 1e11) throw new Error('verifyJwt: now must be in seconds');
   const parts = token.split('.');
   if (parts.length !== 3) return null;
   let head: Record<string, unknown>, claims: Record<string, unknown>;
@@ -41,7 +43,7 @@ export async function verifyJwt(token: string, o: JwtCheck): Promise<Record<stri
   const alg = typeof head.alg === 'string' ? head.alg : '';
   if (alg !== 'RS256' && alg !== 'EdDSA') return null;
   const kid = typeof head.kid === 'string' ? head.kid : undefined;
-  const candidates = (await o.keys(kid)).filter((k) => keyFits(k, alg) && (kid === undefined || (k as { kid?: string }).kid === kid));
+  const candidates = (await o.keys(kid)).filter((k) => isObject(k) && keyFits(k, alg) && (kid === undefined || (k as { kid?: string }).kid === kid));
   const data = Buffer.from(parts[0] + '.' + parts[1]);
   const sig = Buffer.from(parts[2], 'base64url');
   if (!candidates.some((k) => checkSignature(k, alg, data, sig))) return null;

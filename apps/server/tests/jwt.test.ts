@@ -35,3 +35,11 @@ test('jwksKeys caches and refetches for an unknown kid at most once a minute', a
   await get('unknown'); await get('unknown');
   assert.equal(calls, 2);
 });
+
+test('now in milliseconds is a programming error', async () => {
+  await assert.rejects(verifyJwt(make(good), { ...opts, now: now * 1000 }), /seconds/);
+});
+test('a null entry in the key set does not throw', async () => {
+  const keys = async () => [null, 'x', jwk] as unknown as (typeof jwk)[];
+  assert.equal((await verifyJwt(make(good), { ...opts, keys }))?.email, 'a@b.com');
+});
