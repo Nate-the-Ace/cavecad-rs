@@ -15,5 +15,13 @@ const m = L.message({ inviter: 'Nathan', to: 'rick@example.com', link: good.link
 ok(m.subject === 'Nathan invited you to CaveCAD', 'subject');
 ok(m.body.includes('stores caves on its server') && !/in a form it can read/.test(m.body), 'body says where caves live');
 ok(m.body.includes('rick@example.com') && m.body.includes('7 days') && m.body.includes(good.link), 'body');
+const cg = { key: 'K', expected: 'K', kind: 'code', to: 'rick@example.com', code: '123456', site, countThisHour: 0 };
+ok(L.check(cg) === null, 'a code request passes');
+ok(L.check({ ...cg, code: '12345' }) === 'code', 'code must be 6 digits');
+ok(L.check({ ...cg, code: 'abcdef' }) === 'code', 'code must be digits');
+const cm = L.message(cg);
+ok(cm.subject === 'Your CaveCAD sign-in code: 123456', 'code subject');
+ok(cm.body.includes('123456') && cm.body.includes('10 minutes'), 'code body');
+ok(m.body.includes('Google or an emailed code'), 'invite says both ways in');
 console.log(bad ? `invite-mailer: ${bad} failed` : 'invite-mailer: all ok');
 process.exit(bad ? 1 : 0);

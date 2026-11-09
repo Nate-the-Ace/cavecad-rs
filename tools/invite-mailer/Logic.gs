@@ -5,11 +5,13 @@
 var InviteLogic = {
   MAX_PER_HOUR: 40,
 
-  /** null when the request may be sent, else "key" | "address" | "link" | "busy". */
+  /** null when the request may be sent, else "key" | "address" | "link" | "code" | "busy". */
   check: function (p) {
     if (!p.expected || p.key !== p.expected) return "key";
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(p.to || ""))) return "address";
-    if (String(p.link || "").indexOf(p.site + "/?signup=") !== 0) return "link";
+    if (p.kind === "code") {
+      if (!/^\d{6}$/.test(String(p.code || ""))) return "code";
+    } else if (String(p.link || "").indexOf(p.site + "/?signup=") !== 0) return "link";
     if (p.countThisHour >= InviteLogic.MAX_PER_HOUR) return "busy";
     return null;
   },
@@ -18,11 +20,18 @@ var InviteLogic = {
 
   /** The email itself: plain text, no tracking. */
   message: function (p) {
+    if (p.kind === "code") {
+      return {
+        subject: "Your CaveCAD sign-in code: " + p.code,
+        body: "Your CaveCAD sign-in code is " + p.code + ".\n\n" +
+          "It works for 10 minutes. If you didn't ask for it, you can ignore this email.\n"
+      };
+    }
     var inviter = String(p.inviter || "Someone").slice(0, 60);
     return {
       subject: inviter + " invited you to CaveCAD",
       body: inviter + " invited you to CaveCAD, the cave survey and mapping app.\n\n" +
-        "Sign in with " + p.to + " (Google). The link works once, for that address, for 7 days.\n\n" +
+        "Sign in as " + p.to + " with Google or an emailed code. The link works once, for that address, for 7 days.\n\n" +
         p.link + "\n\n" +
         "CaveCAD stores caves on its server and syncs them to your devices.\n"
     };

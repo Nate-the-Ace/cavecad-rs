@@ -13,3 +13,14 @@ export async function sendInvite(c: MailerConfig, p: { to: string; inviter: stri
     return false;
   }
 }
+
+/** Emails a sign-in code. True when the email went. */
+export async function sendCode(c: MailerConfig, p: { to: string; code: string }): Promise<boolean> {
+  if (!c.url || !c.key) return false;
+  try {
+    const res = await (c.fetch ?? fetch)(c.url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ key: c.key, kind: 'code', ...p }), signal: AbortSignal.timeout(c.timeoutMs ?? 10_000) });
+    return ((await res.json()) as { ok?: boolean }).ok === true;
+  } catch {
+    return false;
+  }
+}
