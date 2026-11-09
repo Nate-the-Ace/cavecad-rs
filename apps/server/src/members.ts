@@ -106,6 +106,11 @@ export function mayLoadApp(db: Db, who: Identity, opts: { adminEmail: string; no
   return row ? 'removed' : 'not-invited';
 }
 
+/** Whether an emailed code may be sent to this address: the same people `mayLoadApp` lets in. */
+export function mayGetIn(db: Db, email: string, opts: { adminEmail: string; now: number }): boolean {
+  return mayLoadApp(db, { email, name: '', provider: null, subject: '' }, opts) === 'yes';
+}
+
 function notInvited(db: Db, email: string, token: string | undefined, now: number): Resolved {
   if (!token) return { status: 'not-invited', email, reason: 'none' };
   const inv = db.prepare('SELECT * FROM invites WHERE token_hash = ?').get(hashToken(token)) as InviteRow | undefined;
