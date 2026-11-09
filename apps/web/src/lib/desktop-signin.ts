@@ -6,13 +6,15 @@ import { isDesktop, openUrlNative } from './desktop.ts';
 
 const KEY = 'cavecad-desktop-signin';
 const BASE = (import.meta.env?.VITE_ACCOUNT_BASE as string | undefined) ?? '';
-const SIGNIN = (import.meta.env?.VITE_SIGNIN_URL as string | undefined) ?? 'https://cavecad.com/signin';
+const SIGNIN = (import.meta.env?.VITE_SIGNIN_URL as string | undefined) || 'https://cavecad.com/signin';
 const b64url = (b: ArrayBuffer | Uint8Array) => btoa(String.fromCharCode(...new Uint8Array(b))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 
-type Saved = { idToken: string; until: number };
+type Saved = { token: string; until: number };
 let saved: Saved | null = null;
 try {
   saved = JSON.parse(localStorage.getItem(KEY) ?? 'null');
+  // an older build stored `idToken`: that sign-in is simply gone
+  if (!saved || typeof saved.token !== 'string' || typeof saved.until !== 'number') saved = null;
 } catch {
   saved = null;
 }
@@ -45,12 +47,12 @@ export function readAuthLink(link: string, state: string | null): AuthLink | nul
 /** The desktop app's current sign-in token, or null in a browser or when signed out. */
 export function desktopBearer(): string | null {
   if (!isDesktop() || !saved) return null;
-  return saved.until > Date.now() ? saved.idToken : null;
+  return saved.until > Date.now() ? saved.token : null;
 }
 
 /** Keeps a new session token. */
 export function keep(out: { token: string; expires_in: number }) {
-  saved = { idToken: out.token, until: Date.now() + Math.max(60, out.expires_in - 60) * 1000 };
+  saved = { token: out.token, until: Date.now() + Math.max(60, out.expires_in - 60) * 1000 };
   try {
     localStorage.setItem(KEY, JSON.stringify(saved));
   } catch {
@@ -91,11 +93,19 @@ export async function startDesktopSignIn(): Promise<void> {
 
 /** Handles a cavecad://auth link: 'signed-in', 'failed' (show "Sign-in didn't finish"), or 'not-ours'. */
 export async function finishDesktopSignIn(link: string): Promise<'signed-in' | 'failed' | 'not-ours'> {
-  const read = readAuthLink(link, pending?.state ?? null);
-  if (!read) return 'not-ours';
   const p = pending;
+  if (!p) return 'not-ours';
+  const read = readAuthLink(link, p.state);
+  if (!read) return 'not-ours';
+  let mine = false;
+  try {
+    mine = new URL(link).searchParams.get('state') === p.state;
+  } catch {
+    // unreadable: not ours to act on
+  }
+  if (!mine) return 'failed'; // a forged or stale link must not cancel the real attempt
   pending = null;
-  if (read.kind === 'failed' || !p) return 'failed';
+  if (read.kind === 'failed') return 'failed';
   return (await exchange({ code: read.code, verifier: p.verifier })) ? 'signed-in' : 'failed';
 }
 

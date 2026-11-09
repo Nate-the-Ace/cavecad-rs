@@ -87,9 +87,9 @@ ok(link('cavecad://auth?code=C1&state=ST', null) === '{"kind":"failed"}', 'a lin
 ok(link('cavecad://join?live=abc', 'ST') === 'null', 'a join link is not a sign-in');
 ok(link('cavecad://authx?code=C1&state=ST', 'ST') === 'null' && link('https://auth?code=C1&state=ST', 'ST') === 'null' && link('not a url', 'ST') === 'null', 'only cavecad://auth is a sign-in link');
 keep({ token: 'T1', expires_in: 3600 });
-ok(keptSignIn()?.idToken === 'T1' && (keptSignIn()?.until ?? 0) > Date.now(), 'a kept session token is live');
+ok(keptSignIn()?.token === 'T1' && (keptSignIn()?.until ?? 0) > Date.now(), 'a kept session token is live');
 keep({ token: 'T2', expires_in: 3600 });
-ok(keptSignIn()?.idToken === 'T2' && !('refresh' in (keptSignIn() ?? {})), 'a new token replaces the old one and nothing is refreshed');
+ok(keptSignIn()?.token === 'T2' && !('refresh' in (keptSignIn() ?? {})), 'a new token replaces the old one and nothing is refreshed');
 
 // ---- the API client: credentials, the desktop retry, and answers that are not JSON ----
 const json = (status: number, body: unknown) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });

@@ -6,6 +6,9 @@ ok(platformOf('Mozilla/5.0 (Windows NT 10.0; Win64; x64)', 'Windows') === 'windo
 ok(platformOf('Mozilla/5.0 (X11; Linux x86_64)', 'Linux') === 'linux', 'linux');
 ok(platformOf('Mozilla/5.0 (Linux; Android 14)', 'Android') === null, 'android is not linux');
 ok(platformOf('Mozilla/5.0 (iPhone; CPU iPhone OS 18_0)', 'iOS') === null, 'iphone');
+ok(platformOf('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) Safari', 'MacIntel', 5) === null, 'ipad posing as a mac');
+ok(platformOf('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) Safari', 'MacIntel', 0) === 'mac', 'real mac');
+ok(choices({ version: '1', builtAt: 'x' } as never, null).length === 0, 'no files key is an empty list');
 const m = { version: '1.2.0', builtAt: 'x', files: { mac: 'a.dmg', windows: 'b.exe', windowsMsi: 'b.msi', linuxAppImage: 'c.AppImage', linuxDeb: 'c.deb', linuxRpm: '' } };
 const w = choices(m, 'windows');
 ok(w[0].platform === 'windows' && w.some((c) => c.platform === 'mac'), 'own platform first');

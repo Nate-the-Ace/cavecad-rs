@@ -3,10 +3,10 @@ export type Platform = 'mac' | 'windows' | 'linux';
 export type Manifest = { version: string; builtAt: string; files: Record<string, string> };
 export type Choice = { platform: Platform; label: string; file: string; steps: string };
 
-export function platformOf(ua: string, uaPlatform: string): Platform | null {
+export function platformOf(ua: string, uaPlatform: string, touchPoints = 0): Platform | null {
   const s = `${uaPlatform} ${ua}`;
   if (/Android|iPhone|iPad|iOS/i.test(s)) return null;
-  if (/Mac/i.test(s)) return 'mac';
+  if (/Mac/i.test(s)) return touchPoints > 1 ? null : 'mac'; // an iPad reports itself as a Mac
   if (/Win/i.test(s)) return 'windows';
   if (/Linux|X11/i.test(s)) return 'linux';
   return null;
@@ -22,7 +22,8 @@ const ALL: { platform: Platform; key: string; label: string; steps: string }[] =
 ];
 
 export function choices(m: Manifest, mine: Platform | null): Choice[] {
-  const list = ALL.filter((c) => m.files[c.key]).map((c) => ({ platform: c.platform, label: c.label, file: m.files[c.key], steps: c.steps }));
+  const files = m.files ?? {};
+  const list = ALL.filter((c) => files[c.key]).map((c) => ({ platform: c.platform, label: c.label, file: files[c.key], steps: c.steps }));
   const first = mine ?? 'mac';
   return [...list.filter((c) => c.platform === first), ...list.filter((c) => c.platform !== first)];
 }

@@ -4,18 +4,26 @@
   let { onclose }: { onclose: () => void } = $props();
   let manifest = $state<Manifest | null>(null);
   let error = $state('');
-  const mine = platformOf(navigator.userAgent, (navigator as Navigator & { userAgentData?: { platform?: string } }).userAgentData?.platform ?? '');
-  fetch('/api/downloads').then(async (r) => (r.ok ? (manifest = await r.json()) : (error = 'The desktop app isn\'t available to download right now.'))).catch(() => (error = "Couldn't reach CaveCAD. Check your connection."));
+  const UNAVAILABLE = "The desktop app isn't available to download right now.";
+  const mine = platformOf(navigator.userAgent, (navigator as Navigator & { userAgentData?: { platform?: string } }).userAgentData?.platform ?? '', navigator.maxTouchPoints);
+  fetch('/api/downloads')
+    .then(async (r) => {
+      if (!r.ok || !(r.headers.get('content-type') ?? '').includes('json')) return (error = UNAVAILABLE);
+      manifest = await r.json();
+      if (!choices(manifest!, mine).length) error = UNAVAILABLE;
+    })
+    .catch(() => (error = "Couldn't reach CaveCAD. Check your connection."));
   const list = $derived(manifest ? choices(manifest, mine) : []);
 </script>
 
+<svelte:window onkeydown={(e) => e.key === 'Escape' && onclose()} />
 <div class="back" role="presentation" onclick={onclose}></div>
-<div class="panel" role="dialog" aria-label="Get the desktop app">
+<div class="panel" role="dialog" aria-modal="true" aria-label="Get the desktop app">
   <h2>Get the desktop app</h2>
   {#if manifest}<p class="hint">Version {manifest.version}. Works offline and opens cave folders on your computer.</p>{/if}
   {#if error}<p class="hint bad">{error}</p>{/if}
   {#each list as c, i}
-    <div class="item" class:first={i === 0 && c.platform === (mine ?? 'mac')}>
+    <div class="item">
       <a class="btn" class:primary={i === 0} href={'/downloads/' + encodeURIComponent(c.file)} download>{c.label}</a>
       <p class="hint">{c.steps}</p>
     </div>
