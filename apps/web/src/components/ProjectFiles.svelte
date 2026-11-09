@@ -49,7 +49,7 @@
 
 <svelte:window onpointerdown={outside} onkeydown={keys} />
 <div class="tools">
-  <button class="tool survey-in" class:pressed={menu?.kind === 'import'} title="Open a survey from Compass, Walls, Survex, Therion or a CSV file, or a whole project folder, as the cave" aria-haspopup="menu" aria-expanded={menu?.kind === 'import'} onclick={(e) => toggle(e, 'import')}>
+  <button class="tool survey-in" class:pressed={menu?.kind === 'import'} title="Open a survey from Compass, Walls, Survex, Therion or a CSV file, a TopoDroid survey ZIP (shots and sketches), or a whole project folder, as the cave" aria-haspopup="menu" aria-expanded={menu?.kind === 'import'} onclick={(e) => toggle(e, 'import')}>
     <FileInput size={22} strokeWidth={1.6} />
     <span>Import <ChevronDown size={11} strokeWidth={2} /></span>
   </button>

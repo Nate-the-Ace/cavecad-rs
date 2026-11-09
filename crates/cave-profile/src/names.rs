@@ -45,6 +45,22 @@ pub fn split_name(name: &str) -> Option<Split> {
     })
 }
 
+/// A station named with a number only (`12`, `0`): TopoDroid's and many a hand survey's way. Such
+/// names have no group to split off, so their runs come from the legs between consecutive
+/// numbers instead (see [`crate::group_runs_linked`]).
+pub fn is_number_name(name: &str) -> bool {
+    !name.is_empty() && name.bytes().all(|c| c.is_ascii_digit())
+}
+
+/// Where a station sorts within its run: its trailing group, or for a number name the number
+/// itself (compared as a number by [`seq_order`]).
+pub fn member_seq(name: &str) -> Option<String> {
+    if is_number_name(name) {
+        return Some(name.to_string());
+    }
+    split_name(name).map(|s| s.seq)
+}
+
 /// The run a station belongs to.
 pub fn run_key_of(name: &str) -> Option<String> {
     split_name(name).map(|s| s.base)

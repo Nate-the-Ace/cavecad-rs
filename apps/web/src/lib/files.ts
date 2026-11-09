@@ -33,9 +33,19 @@ const isProjectFile = (name: string) => /\.(mak|wpj|thconfig)$|(^|[\\/])thconfig
 const isSurveyFile = (name: string) => SURVEY_EXTS.some((e) => name.toLowerCase().endsWith(e)) || isProjectFile(name);
 /** Picked with survey data, never read on their own: Therion sketch pages, drawn onto the map of the survey that pulls them in. */
 const SKETCH_EXTS = ['.th2'];
+/** Said when only sketch pages were picked: a sketch is drawn onto survey shots, which it does not hold. */
+const SKETCH_ONLY =
+  'A .th2 file is only the sketch: it has no survey shots to draw onto. Pick it together with the survey data. ' +
+  'From TopoDroid, the easiest is the survey\'s ZIP export (shot list, Export, ZIP): one file with the shots and every sketch. ' +
+  'Or pick the sketch together with the survey\'s Therion export (a .th file).';
 const isSketchFile = (name: string) => SKETCH_EXTS.some((e) => name.toLowerCase().endsWith(e));
-const SURVEY_TYPES = [{ description: 'Survey data (Compass, Walls, Survex, Therion, CSV) and Therion sketches', accept: { 'text/plain': [...SURVEY_EXTS, ...SKETCH_EXTS] } }];
-const OPEN_TYPES = [{ description: 'A CaveCAD cave, a DXF drawing, a survey data file, or a survey imported from an old drawing', accept: { 'application/zip': [EXT], 'application/dxf': ['.dxf'], 'application/json': ['.json'], 'text/plain': SURVEY_EXTS } }];
+/** TopoDroid's archive: the ZIP its survey Export makes, with the shots and every sketch. */
+const ARCHIVE_EXTS = ['.zip'];
+const isArchiveFile = (name: string) => ARCHIVE_EXTS.some((e) => name.toLowerCase().endsWith(e));
+const SURVEY_TYPES = [
+  { description: 'Survey data (Compass, Walls, Survex, Therion, CSV, TopoDroid ZIP) and Therion sketches', accept: { 'text/plain': [...SURVEY_EXTS, ...SKETCH_EXTS], 'application/zip': ARCHIVE_EXTS } },
+];
+const OPEN_TYPES = [{ description: 'A CaveCAD cave, a DXF drawing, a survey data file, a TopoDroid survey ZIP, or a survey imported from an old drawing', accept: { 'application/zip': [EXT, '.zip'], 'application/dxf': ['.dxf'], 'application/json': ['.json'], 'text/plain': SURVEY_EXTS } }];
 const SAVE_TYPES = [{ description: 'CaveCAD cave', accept: { 'application/zip': [EXT] } }];
 const DXF_SAVE_TYPES = [{ description: 'DXF drawing', accept: { 'application/dxf': ['.dxf'] } }];
 
@@ -86,7 +96,7 @@ async function chooseSurveyFiles(): Promise<{ bytes: Uint8Array; name: string }[
     const input = document.createElement('input');
     input.type = 'file';
     input.multiple = true;
-    input.accept = [...SURVEY_EXTS, ...SKETCH_EXTS].join(',');
+    input.accept = [...SURVEY_EXTS, ...SKETCH_EXTS, ...ARCHIVE_EXTS].join(',');
     input.onchange = async () => resolve(input.files?.length ? await Promise.all([...input.files].map(read)) : null);
     input.oncancel = () => resolve(null);
     input.click();
@@ -247,7 +257,14 @@ async function openPicked(picked: { bytes: Uint8Array; name: string; handle: Han
   let native = false;
   let bundled: { path: string; data: Uint8Array }[] = [];
   let bundledSurface: SurfaceParts | null = null;
-  if (picked.bytes[0] === 0x50 && picked.bytes[1] === 0x4b) {
+  const topodroid = picked.bytes[0] === 0x50 && picked.bytes[1] === 0x4b ? topodroidFiles(await unzip(picked.bytes)) : null;
+  if (topodroid) {
+    // TopoDroid's survey ZIP: the shots and every sketch
+    const r = engine.importTopodroid(picked.name, topodroid);
+    ok = r.ok;
+    message = r.message;
+    warnings = r.warnings;
+  } else if (picked.bytes[0] === 0x50 && picked.bytes[1] === 0x4b) {
     // a zip: a CaveCAD file, or a whole exported project holding one
     let bundle = await unpack(picked.bytes);
     if (!bundle) {
@@ -347,10 +364,12 @@ export async function importSurvey(): Promise<{ ok: boolean; message: string } |
   const picked = await chooseSurveyFiles();
   if (!picked?.length) return null;
   if (!confirmDiscard()) return null;
+  const archive = picked.find((f) => isArchiveFile(f.name));
+  if (archive) return importArchive(archive.name, archive.bytes);
   const files = picked.map((f) => ({ name: f.name, text: decodeSurveyText(f.bytes) }));
   // a project file, or a Therion file that pulls the others in, is the one to read; otherwise the first
   const data = files.filter((f) => !isSketchFile(f.name));
-  if (!data.length) return { ok: false, message: 'Sketch pages (.th2) are drawn onto a survey: pick the Therion file that pulls them in, with them.' };
+  if (!data.length) return { ok: false, message: SKETCH_ONLY };
   const main = data.find((f) => isProjectFile(f.name)) ?? data.find((f) => /^\s*input\s/im.test(f.text)) ?? data[0];
   const others = Object.fromEntries(files.filter((f) => f !== main).map((f) => [f.name, f.text]));
   const r = engine.importSurvey(main.name, main.text, others);
@@ -367,6 +386,34 @@ export async function importSurvey(): Promise<{ ok: boolean; message: string } |
   markUnsaved(); // nothing is a CaveCAD file yet
   void storeOpenCave(main.name);
   return { ok: true, message: `Imported ${main.name}: ${r.message}` };
+}
+
+/** The files of a TopoDroid survey ZIP CaveCAD reads (the survey, its version, the sketches), or
+ * `null` when the zip is not one (it has no survey.sql and manifest). Photos and audio stay out. */
+function topodroidFiles(files: { name: string; data: Uint8Array }[] | null): { name: string; data: Uint8Array }[] | null {
+  if (!files) return null;
+  const base = (n: string) => n.split('/').pop() ?? n;
+  if (!files.some((f) => base(f.name) === 'survey.sql') || !files.some((f) => base(f.name) === 'manifest')) return null;
+  return files.filter((f) => base(f.name) === 'survey.sql' || base(f.name) === 'manifest' || /\.tdr$/i.test(f.name));
+}
+
+/** Opens a TopoDroid archive (a ZIP from TopoDroid's survey Export) as the cave. */
+async function importArchive(name: string, bytes: Uint8Array): Promise<{ ok: boolean; message: string }> {
+  const files = topodroidFiles(await unzip(bytes));
+  if (!files) return { ok: false, message: `${name} is not a TopoDroid survey: CaveCAD reads the ZIP that TopoDroid's survey Export makes (it holds a survey.sql).` };
+  const r = engine.importTopodroid(name, files);
+  if (!r.ok) return { ok: false, message: r.message };
+  handle = null;
+  cave.fileName = `${stem(name)}${EXT}`;
+  cave.hasCave = true;
+  cave.name = stem(name);
+  shelf0();
+  for (const w of r.warnings) engine.log('warn', 'import', w);
+  cave.opened += 1; // the canvas re-reads and re-frames
+  changed();
+  markUnsaved(); // nothing is a CaveCAD file yet
+  void storeOpenCave(name);
+  return { ok: true, message: `Imported ${name}: ${r.message}` };
 }
 
 /** The text files of a folder that could be survey data, by path inside it (largest file 20 MB). */

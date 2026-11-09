@@ -1,5 +1,5 @@
 //! Reading and writing the standard cave survey data formats: Compass (.dat), Walls (.srv), Survex
-//! (.svx), Therion (.th) and plain CSV.
+//! (.svx), Therion (.th) and plain CSV; and reading TopoDroid's own survey ZIP ([`topodroid`]).
 //!
 //! A port of the old CaveCAD's format readers, which were checked against real files over years; the
 //! golden tests here hold this port to what they did, call for call. Every reader turns text into one
@@ -22,6 +22,7 @@ pub mod project;
 pub mod survex;
 pub mod th2;
 pub mod therion;
+pub mod topodroid;
 pub mod walls;
 
 pub use document::{from_document, to_document};

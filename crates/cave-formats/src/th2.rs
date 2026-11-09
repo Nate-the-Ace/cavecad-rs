@@ -126,7 +126,7 @@ pub struct Sketch {
 }
 
 impl Sketch {
-    fn add(&mut self, severity: &str, code: &str, message: String) {
+    pub(crate) fn add(&mut self, severity: &str, code: &str, message: String) {
         if self
             .findings
             .iter()

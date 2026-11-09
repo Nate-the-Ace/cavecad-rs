@@ -325,7 +325,7 @@
         </div>
         <div class="row">
           <button onclick={() => { shelf.open = false; cave.newDialog = true; }}>New cave…</button>
-          <button onclick={importFile} title="A cave saved as a DXF by CaveCAD, or a survey from Compass, Walls, Survex, Therion or a CSV file">Import file…</button>
+          <button onclick={importFile} title="A cave saved as a DXF by CaveCAD, a survey from Compass, Walls, Survex, Therion or a CSV file, or a TopoDroid survey ZIP (shots and sketches)">Import file…</button>
         </div>
       </div>
 
