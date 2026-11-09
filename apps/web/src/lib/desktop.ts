@@ -84,3 +84,13 @@ export function listenForLinks(onLink: (url: string) => void): void {
   };
   void call<string[]>('take_links').then((urls) => urls.forEach(onLink)).catch(() => undefined);
 }
+
+/** A newer desktop version the server offered: downloaded and verified when `installable`. */
+export type FoundUpdate = { version: string; installable: boolean };
+
+/** Asks the CaveCAD server (`base`, signed in with `token`) for a newer version of this app, and downloads and
+ * verifies it when this copy can install it. `null`: up to date. */
+export const updatePrepareNative = (base: string, token: string): Promise<FoundUpdate | null> => call('update_prepare', { base, token });
+
+/** Installs the update `updatePrepareNative` kept, and restarts into it. */
+export const updateInstallNative = (): Promise<void> => call('update_install');
