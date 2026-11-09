@@ -49,6 +49,7 @@ export const WRITES: readonly string[] = [
   'openDxf',
   'importSurvey',
   'importFolder',
+  'importTopodroid',
   'openNative',
   'addSectionSketch',
   'placeSection',
@@ -201,7 +202,7 @@ export const watchLock = {
 };
 
 /** The writes a watcher may still make: each replaces the open cave with another one. */
-export const REPLACES: readonly string[] = ['setRoomId', 'openDemo', 'newCave', 'openDxf', 'importSurvey', 'importFolder', 'openNative'];
+export const REPLACES: readonly string[] = ['setRoomId', 'openDemo', 'newCave', 'openDxf', 'importSurvey', 'importFolder', 'importTopodroid', 'openNative'];
 
 /** Turns the watcher's lock on or off. */
 export function setWatchLock(on: boolean): void {
@@ -214,7 +215,7 @@ const replaces = new Set(REPLACES);
 /** What a refused call gives back, in the shape its caller expects. */
 function refusal(name: string, why: string): unknown {
   if (name === 'undo' || name === 'redo') return false;
-  if (name === 'openDxf' || name === 'importSurvey' || name === 'importFolder') return { ok: false, message: why, warnings: [] as string[] };
+  if (name === 'openDxf' || name === 'importSurvey' || name === 'importFolder' || name === 'importTopodroid') return { ok: false, message: why, warnings: [] as string[] };
   return `error: ${why}`;
 }
 
