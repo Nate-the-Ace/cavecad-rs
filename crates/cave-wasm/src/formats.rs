@@ -133,6 +133,18 @@ pub(crate) fn read_survey(
         let stem = base(file_name);
         survey.cave_name = stem.rsplit_once('.').map_or(stem, |(s, _)| s).to_string();
     }
+    let missing = survey
+        .findings()
+        .iter()
+        .filter(|f| f.code == "therion-input-missing")
+        .count();
+    if survey.shots.is_empty() && missing > 0 {
+        // the survey lives in files beside this one, which a browser does not hand over unasked
+        return Err(format!(
+            "{file_name} is a Therion project's top file: its survey is in {missing} other file{} it pulls in with \"input\", and they were not picked with it. Open the whole folder instead: Import, then Project folder…, and pick the folder {file_name} is in.",
+            if missing == 1 { "" } else { "s" }
+        ));
+    }
     if survey.shots.is_empty() {
         let why = survey
             .findings()
@@ -1079,6 +1091,79 @@ INSERT into plots values( 1, 2, \"xx0\", 5, 0, \"0\", \"1\", 0, 0, 18, 90.0, 0, 
         assert!(
             (xs[0] + 1.0).abs() < 1e-3 && (xs[xs.len() - 1] - 1.0).abs() < 1e-3,
             "{xs:?}"
+        );
+    }
+
+    /// A real project folder, as Import > Project folder hands it over.
+    /// `FOLDER=<dir> cargo test -p cave-wasm real_project_folder -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn real_project_folder_opens() {
+        let Ok(dir) = std::env::var("FOLDER") else {
+            return;
+        };
+        let root = std::path::PathBuf::from(&dir);
+        let mut files = serde_json::Map::new();
+        let mut stack = vec![root.clone()];
+        while let Some(d) = stack.pop() {
+            for e in std::fs::read_dir(&d).unwrap().filter_map(|e| e.ok()) {
+                let p = e.path();
+                if p.is_dir() {
+                    stack.push(p);
+                    continue;
+                }
+                let name = p.file_name().unwrap().to_string_lossy().to_lowercase();
+                let wanted = [
+                    ".th", ".th2", ".svx", ".dat", ".mak", ".srv", ".wpj", ".csv",
+                ]
+                .iter()
+                .any(|x| name.ends_with(x))
+                    || name == "thconfig";
+                if !wanted {
+                    continue;
+                }
+                let rel = p.strip_prefix(&root).unwrap().to_string_lossy().to_string();
+                let text = String::from_utf8_lossy(&std::fs::read(&p).unwrap()).to_string();
+                files.insert(rel, serde_json::Value::String(text));
+            }
+        }
+        let r: serde_json::Value = serde_json::from_str(&import_folder(
+            &serde_json::Value::Object(files).to_string(),
+        ))
+        .unwrap();
+        println!("{}", r["message"]);
+        for w in r["warnings"].as_array().unwrap() {
+            println!("- {w}");
+        }
+        assert_eq!(r["ok"], true);
+    }
+
+    #[test]
+    fn a_projects_top_file_alone_says_to_open_its_folder() {
+        let main = "survey cave\n  input surveys/a.th\n  input surveys/b.th\nendsurvey\n";
+        let err = read_survey("main.th", main, "{}").unwrap_err();
+        assert!(
+            err.contains("2 other files") && err.contains("Project folder"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn a_namespace_off_survey_keeps_its_stations_names() {
+        // as Therion's -namespace off: the stations are 0, 1, 2, and A79@inner reaches A79
+        let main = "survey top -namespace off\n  survey inner -namespace off\n    centreline\n      data normal from to length compass clino\n      0 1 10 0 0\n      A78 A79 5 90 0\n    endcentreline\n  endsurvey\n  centreline\n    data normal from to length compass clino\n    1 2 10 0 0\n  endcentreline\n  equate 2 A79@inner\nendsurvey\n";
+        let (_, s) = read_survey("main.th", main, "{}").unwrap();
+        let names: Vec<&str> = s
+            .shots
+            .iter()
+            .flat_map(|x| [x.from.as_str(), x.to.as_str()])
+            .collect();
+        assert!(names.contains(&"0") && names.contains(&"1"), "{names:?}");
+        assert!(!names.iter().any(|n| n.contains('.')), "{names:?}");
+        // the equate joined 2 and A79: one of the names stands for both
+        assert!(
+            !(names.contains(&"2") && names.contains(&"A79")),
+            "{names:?}"
         );
     }
 

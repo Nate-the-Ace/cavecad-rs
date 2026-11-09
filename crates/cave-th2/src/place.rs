@@ -396,9 +396,31 @@ impl<'a> Stations<'a> {
         let tail = format!(".{rel}");
         let mut hits = self.all.iter().filter(|(n, _)| n.ends_with(&tail));
         match (hits.next(), hits.next()) {
-            (Some((n, _)), None) => Some(n.clone()),
-            _ => None,
+            (Some((n, _)), None) => return Some(n.clone()),
+            (Some(_), Some(_)) => return None,
+            _ => {}
         }
+        // nothing by that path: the surveys it names may have their namespace off
+        // (`-namespace off`), so their stations carry the names of the survey around them, as
+        // Therion resolves `A75@rostov1982`. Drop the path from the outside in, the scope too.
+        let mut parts: Vec<&str> = rel.split('.').collect();
+        while parts.len() > 1 {
+            parts.remove(0);
+            let shorter = parts.join(".");
+            for name in [
+                if scope.is_empty() {
+                    shorter.clone()
+                } else {
+                    format!("{scope}.{shorter}")
+                },
+                shorter.clone(),
+            ] {
+                if self.by_name.contains_key(name.as_str()) {
+                    return Some(name);
+                }
+            }
+        }
+        None
     }
 }
 

@@ -168,6 +168,23 @@ pub(crate) fn logical_lines(content: &str) -> Vec<Logical> {
 }
 
 /// How many survey blocks the file opens at its top level.
+/// Whether a `survey` line turns its namespace off (`-namespace off`): its stations then keep the
+/// names they have in the survey around it, and its own name is no part of theirs.
+fn namespace_off(tokens: &[String]) -> bool {
+    tokens
+        .windows(2)
+        .any(|w| w[0].eq_ignore_ascii_case("-namespace") && w[1].eq_ignore_ascii_case("off"))
+}
+
+/// Whether the first top-level survey turns its namespace off.
+fn outermost_namespace_off(lines: &[Logical]) -> bool {
+    lines
+        .iter()
+        .map(|l| tokenize(&l.text))
+        .find(|t| t.first().is_some_and(|c| c.eq_ignore_ascii_case("survey")))
+        .is_some_and(|t| namespace_off(&t))
+}
+
 fn top_level_surveys(lines: &[Logical]) -> usize {
     let (mut depth, mut count, mut skip) = (0usize, 0usize, 0usize);
     for l in lines {
@@ -421,13 +438,28 @@ fn parse_inner(content: &str, input_findings: Vec<InputFinding>) -> Survey {
     let mut reported_input = false;
     let mut reported_style: Vec<String> = Vec::new();
 
-    let drop_outermost = top_level_surveys(&lines) == 1;
+    // the one survey around everything names nothing (unless its namespace is off: then it was
+    // never part of the names)
+    let drop_outermost = top_level_surveys(&lines) == 1 && !outermost_namespace_off(&lines);
+    // for each survey open, whether its name went onto `prefix` (not with `-namespace off`)
+    let mut named: Vec<bool> = Vec::new();
+    // surveys whose namespace is off: a reference through one (`A79@rostov1982`) is to the name
+    // in the survey around it, as Therion resolves it
+    let unnamed: Vec<String> = lines
+        .iter()
+        .map(|l| tokenize(&l.text))
+        .filter(|t| t.first().is_some_and(|c| c.eq_ignore_ascii_case("survey")) && namespace_off(t))
+        .filter_map(|t| t.get(1).cloned())
+        .collect();
     let name_in = |scope: &[String], name: &str| {
         let parts = if drop_outermost && !scope.is_empty() {
             &scope[1..]
         } else {
             scope
         };
+        let kept: Vec<&String> = parts.iter().filter(|p| !unnamed.contains(p)).collect();
+        let parts = kept.iter().map(|p| p.as_str()).collect::<Vec<_>>();
+        let parts = parts.as_slice();
         if parts.is_empty() {
             name.to_string()
         } else {
@@ -470,12 +502,16 @@ fn parse_inner(content: &str, input_findings: Vec<InputFinding>) -> Survey {
                 continue;
             }
             "survey" => {
-                prefix.push(
-                    tokens
-                        .get(1)
-                        .cloned()
-                        .unwrap_or_else(|| format!("anon{li}")),
-                );
+                let off = namespace_off(&tokens);
+                if !off {
+                    prefix.push(
+                        tokens
+                            .get(1)
+                            .cloned()
+                            .unwrap_or_else(|| format!("anon{li}")),
+                    );
+                }
+                named.push(!off);
                 scopes.push(sc.clone());
                 if survey.name.is_empty() && tokens.len() > 1 {
                     survey.name = tokens[1].clone();
@@ -506,7 +542,9 @@ fn parse_inner(content: &str, input_findings: Vec<InputFinding>) -> Survey {
                 continue;
             }
             "endsurvey" => {
-                prefix.pop();
+                if named.pop().unwrap_or(true) {
+                    prefix.pop();
+                }
                 if let Some(s) = scopes.pop() {
                     sc = s;
                 }
