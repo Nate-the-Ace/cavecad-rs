@@ -1,0 +1,37 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
+import { openDb } from '../src/db.ts';
+import { createSession, findSession, revokeSession, revokeAllFor, sessionCookie, clearSessionCookie, readCookie, SESSION_MS } from '../src/sessions.ts';
+
+const who = { email: 'Rick@Example.com', name: 'Rick', provider: 'email' as const, subject: '' };
+const now = 1_800_000_000_000;
+
+test('a session finds its person until it expires', () => {
+  const db = openDb(':memory:');
+  const t = createSession(db, who, 'web', now);
+  assert.equal(t.length, 43);
+  const row = db.prepare('SELECT token_hash FROM sessions').get() as { token_hash: string };
+  assert.equal(row.token_hash, createHash('sha256').update(t).digest('hex'));
+  assert.deepEqual(findSession(db, t, now + 1000), { email: 'rick@example.com', name: 'Rick', provider: 'email', subject: 'session' });
+  assert.equal(findSession(db, t, now + SESSION_MS + 1), null);
+  assert.equal(findSession(db, 'nope', now), null);
+  assert.equal(findSession(db, '', now), null);
+});
+test('revoking ends sessions', () => {
+  const db = openDb(':memory:');
+  const a = createSession(db, who, 'web', now);
+  const b = createSession(db, who, 'desktop', now);
+  revokeSession(db, a, now);
+  assert.equal(findSession(db, a, now), null);
+  assert.ok(findSession(db, b, now));
+  revokeAllFor(db, 'RICK@example.com', now);
+  assert.equal(findSession(db, b, now), null);
+});
+test('cookies', () => {
+  assert.match(sessionCookie('tok', true), /^cavecad_session=tok; HttpOnly; Secure; SameSite=Lax; Path=\/; Max-Age=2592000$/);
+  assert.ok(!sessionCookie('tok', false).includes('Secure'));
+  assert.match(clearSessionCookie(true), /Max-Age=0/);
+  assert.equal(readCookie('a=1; cavecad_session=xyz; b=2', 'cavecad_session'), 'xyz');
+  assert.equal(readCookie(undefined, 'cavecad_session'), '');
+});

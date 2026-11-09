@@ -11,7 +11,7 @@ const PROVIDERS = ['gdrive', 'onedrive', 'dropbox', 'webdav'] as const;
 export type Role = 'admin' | 'member';
 export type DriveProvider = (typeof PROVIDERS)[number];
 /** Who a request is, as the identity adapter found it. */
-export type Identity = { email: string; name: string; provider: 'google' | 'microsoft' | null; subject: string };
+export type Identity = { email: string; name: string; provider: 'google' | 'microsoft' | 'email' | null; subject: string };
 export type Member = { id: string; email: string; displayName: string; colour: string; role: Role; provider: string | null; invitedBy: string | null; createdAt: number; lastSeenAt: number | null; welcomedAt: number | null };
 export type Invite = { id: string; email: string; role: Role; invitedBy: string; createdAt: number; expiresAt: number };
 export type Drive = { id: string; provider: DriveProvider; accountLabel: string; createdAt: number };
