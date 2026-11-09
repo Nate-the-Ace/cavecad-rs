@@ -5,7 +5,7 @@
   import { flush } from '../../lib/shelf.svelte';
 
   const m = $derived(account.member);
-  const by = $derived(m?.provider === 'google' ? 'Google' : m?.provider === 'microsoft' ? 'Microsoft' : '');
+  const by = $derived(m?.provider === 'google' ? 'Google' : m?.provider === 'email' ? 'an emailed code' : m?.provider === 'microsoft' ? 'Microsoft' : '');
   let error = $state('');
   async function save(p: { displayName?: string; colour?: string }) {
     error = '';

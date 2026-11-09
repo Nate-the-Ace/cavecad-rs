@@ -32,7 +32,6 @@ jobs:
           VITE_FEEDBACK_ENDPOINT: ${{ secrets.FEEDBACK_ENDPOINT }}
           VITE_FEEDBACK_KEY: ${{ secrets.FEEDBACK_KEY }}
           VITE_PASS_PUBLIC_KEY: ${{ vars.PASS_PUBLIC_KEY }}
-          VITE_SIGNOUT_URL: ${{ vars.SIGNOUT_URL }}
         run: |
           npm ci --prefix apps/web
           cd apps/web && npx vite build

@@ -75,12 +75,10 @@ await accountApi({ base, fetch: (async (_u: string, init: RequestInit) => { sent
 ok(sent?.get('authorization') === 'Bearer T' && sent?.get('x-cave-signup') === 'S', 'bearer and sign-up headers are sent');
 
 // ---- desktop sign-in helpers ----
-import { authorizeUrl, challengeFor, keep, keptSignIn, pkcePair, readAuthLink } from '../src/lib/desktop-signin.ts';
+import { challengeFor, keep, keptSignIn, pkcePair, readAuthLink } from '../src/lib/desktop-signin.ts';
 ok((await challengeFor('dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk')) === 'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM', 'S256 challenge matches RFC 7636');
 const pair = await pkcePair();
 ok(pair.verifier.length >= 43 && pair.challenge === (await challengeFor(pair.verifier)), 'a fresh PKCE pair');
-const az = new URL(authorizeUrl('https://auth.test/authorize', 'cavecad-desktop', pair.challenge, 'ST'));
-ok(az.searchParams.get('response_type') === 'code' && az.searchParams.get('redirect_uri') === 'cavecad://auth' && az.searchParams.get('code_challenge_method') === 'S256' && az.searchParams.get('state') === 'ST' && az.searchParams.get('scope') === 'openid email profile', 'authorize URL');
 const link = (l: string, st: string | null) => JSON.stringify(readAuthLink(l, st));
 ok(link('cavecad://auth?code=C1&state=ST', 'ST') === '{"kind":"code","code":"C1"}', 'the returning link gives the code');
 ok(link('cavecad://auth?code=C1&state=XX', 'ST') === '{"kind":"failed"}', 'a wrong state did not finish');
@@ -88,11 +86,10 @@ ok(link('cavecad://auth?error=access_denied&state=ST', 'ST') === '{"kind":"faile
 ok(link('cavecad://auth?code=C1&state=ST', null) === '{"kind":"failed"}', 'a link with no sign-in waiting did not finish');
 ok(link('cavecad://join?live=abc', 'ST') === 'null', 'a join link is not a sign-in');
 ok(link('cavecad://authx?code=C1&state=ST', 'ST') === 'null' && link('https://auth?code=C1&state=ST', 'ST') === 'null' && link('not a url', 'ST') === 'null', 'only cavecad://auth is a sign-in link');
-keep({ id_token: 'I1', refresh_token: 'R1', expires_in: 3600 });
-keep({ id_token: 'I2', refresh_token: null, expires_in: 3600 });
-ok(keptSignIn()?.idToken === 'I2' && keptSignIn()?.refresh === 'R1', 'a refresh without a new refresh token keeps the old one');
-keep({ id_token: 'I3', refresh_token: 'R2', expires_in: 3600 });
-ok(keptSignIn()?.refresh === 'R2', 'a new refresh token replaces the old one');
+keep({ token: 'T1', expires_in: 3600 });
+ok(keptSignIn()?.idToken === 'T1' && (keptSignIn()?.until ?? 0) > Date.now(), 'a kept session token is live');
+keep({ token: 'T2', expires_in: 3600 });
+ok(keptSignIn()?.idToken === 'T2' && !('refresh' in (keptSignIn() ?? {})), 'a new token replaces the old one and nothing is refreshed');
 
 // ---- the API client: credentials, the desktop retry, and answers that are not JSON ----
 const json = (status: number, body: unknown) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
