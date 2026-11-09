@@ -21,6 +21,7 @@ import ScansPanel from '../panels/ScansPanel.svelte';
 import SurveyPanel from '../panels/SurveyPanel.svelte';
 import PatternsPanel from '../panels/PatternsPanel.svelte';
 import RoomsPanel from '../panels/RoomsPanel.svelte';
+import HandbookPanel from '../panels/HandbookPanel.svelte';
 import { showInstruments } from './features';
 
 const LAYOUT_KEY = 'cavecad.layout.v1';
@@ -49,6 +50,7 @@ export const PANELS: Record<string, PanelDef> = {
   patterns: { title: 'Patterns', component: PatternsPanel, width: 560 },
   console: { title: 'Console', component: ConsolePanel, height: 260 },
   rooms: { title: 'Rooms', component: RoomsPanel, width: 460, height: 360 },
+  handbook: { title: 'Handbook', component: HandbookPanel, width: 520 },
 };
 
 /** Which panels are open right now (drives the View tab's toggles). */
