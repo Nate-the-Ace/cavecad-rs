@@ -20,9 +20,12 @@ each panel, coverage tests); the Rust app has none.
 
 - A **Handbook** panel, registered in `PANELS` (`apps/web/src/lib/workspace.svelte.ts`) like Map or Notebook,
   so it docks, tabs, floats, and appears in the View tab's toggles.
-- One page at a time: back arrow, a breadcrumb, then the page. Below the page: Contents (pages by group)
-  and a search box (title and body words). Chosen over a tree beside the page because a docked column is
-  narrow and the screenshot needs the width (same reasoning as the old app).
+- Reads like a wiki (Nathan, 2026-11-09: "wiki style"; read-only, pages ship with the app): links between
+  pages, back and forward, a breadcrumb, Contents (pages by group) and a search box (title and body words).
+- Wide panel (640 px or more): Contents and search in a column beside the page. Narrow panel: one pane at a
+  time, the page with Contents and search a click away (the old app's reasoning: a narrow dock column needs
+  its width for the screenshot).
+- People cannot edit pages in the app; a page is changed in the repo and arrives with the next update.
 - A **`?`** in every panel's tab (beside its title) opens that panel's page in the Handbook panel, opening the
   Handbook panel if it is closed. The four big dialogs (New cave, Import, Surface Data, Pick entrance) get a
   "Learn more" link in their footer.
