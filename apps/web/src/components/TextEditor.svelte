@@ -3,6 +3,7 @@
   import { tick } from 'svelte';
   import { changed } from '../lib/cave.svelte';
   import { engine } from '../lib/engine';
+  import { setText } from '../lib/symbol-shape';
   import { closeTextEdit, isNew, takeMakeNew, textEdit } from '../lib/text-edit.svelte';
 
   let box = $state<HTMLInputElement>();
@@ -29,7 +30,7 @@
       if (make && words) make(words);
       return;
     }
-    const r = engine.setLineText(textEdit.id, textEdit.value);
+    const r = setText(textEdit.id, textEdit.value);
     if (r !== 'ok') engine.log('warn', 'text', r.replace(/^error: /, ''));
     closeTextEdit();
     changed();

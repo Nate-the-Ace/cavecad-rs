@@ -6,7 +6,7 @@
   import { cave, changed, option, requestRefit, selectedIds } from '../lib/cave.svelte';
   import { engine, loadEngine, type TypeStyle } from '../lib/engine';
   import { isStampKind, isSymbolKind } from '../lib/symbols';
-  import { placedPoints, setShape, shapeOf } from '../lib/symbol-shape';
+  import { placedPoints, setShape, setText, shapeOf } from '../lib/symbol-shape';
   import { lengthText, parseLength } from '../lib/units';
   import { fillDefs, isFillKind } from '../lib/fills';
   import { copyOp } from '../lib/view-clip.svelte';
@@ -250,7 +250,7 @@
       </label>
     {/if}
     {#if isSymbol && info}
-      <input class="words" title="The words. Drag the dot to move it, the square to turn and resize it." type="text" value={new Set(infos.map((i) => i.text)).size > 1 ? '' : info.text} placeholder={new Set(infos.map((i) => i.text)).size > 1 ? 'VARIOUS' : info.kind === 'text' ? 'The text' : info.kind === 'callout' ? 'The note' : 'Label'} maxlength="200" aria-label={info.kind === 'text' ? 'The text' : info.kind === 'callout' ? 'The note' : 'Label'} onchange={(e) => each((id) => engine.setLineText(id, e.currentTarget.value))} />
+      <input class="words" title="The words. Drag the dot to move it, the square to turn and resize it." type="text" value={new Set(infos.map((i) => i.text)).size > 1 ? '' : info.text} placeholder={new Set(infos.map((i) => i.text)).size > 1 ? 'VARIOUS' : info.kind === 'text' ? 'The text' : info.kind === 'callout' ? 'The note' : 'Label'} maxlength="200" aria-label={info.kind === 'text' ? 'The text' : info.kind === 'callout' ? 'The note' : 'Label'} onchange={(e) => each((id) => setText(id, e.currentTarget.value))} />
       
     {/if}
     {#if symbolShapes}
