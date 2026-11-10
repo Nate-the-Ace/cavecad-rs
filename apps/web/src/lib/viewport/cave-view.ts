@@ -232,6 +232,8 @@ export class CaveView {
     this.scene.add(this.headlamp);
     this.controls = new OrbitControls(this.persp, canvas);
     this.controls.screenSpacePanning = true;
+    // The wheel zooms toward the point under the mouse, not toward the turning point.
+    this.controls.zoomToCursor = true;
     // CAD mouse: middle drag pans, wheel zooms, left drag orbits (right drag pans too).
     this.controls.mouseButtons = { LEFT: THREE.MOUSE.ROTATE, MIDDLE: THREE.MOUSE.PAN, RIGHT: THREE.MOUSE.PAN };
     // Stops the browser's middle-click autoscroll from taking over the drag.
