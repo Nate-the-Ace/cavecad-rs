@@ -1098,6 +1098,13 @@ export class CaveView {
     this.requestRender();
   }
 
+  /** Depth shading is on: the passage floor is washed darker the deeper it lies. */
+  private depthShade = false;
+  setDepthShade(on: boolean) {
+    this.depthShade = on;
+    this.requestRender();
+  }
+
   /** Ink style is on: the survey's walls leave the 3D lines and are drawn by hand in the overlay. */
   private inkWalls = false;
   setHandInk(on: boolean) {
@@ -1883,6 +1890,75 @@ export class CaveView {
     this.requestRender();
   }
 
+  /** Depth shading: the passage seen from above, each piece washed darker the deeper it lies (deepest drawn last, so a
+   *  passage under another shows through where it is deeper), and a small key. Seen only when looking down on the plan. */
+  private drawDepthShade(g: CanvasRenderingContext2D) {
+    const up = Math.abs(this.cameraOffset.clone().normalize().z);
+    const strength = Math.min(1, Math.max(0, (up - 0.8) / 0.15));
+    const pos = this.passage?.geometry.getAttribute('position');
+    if (strength <= 0 || !pos || pos.count < 3) return;
+    const v = new THREE.Vector3();
+    let lo = Infinity;
+    let hi = -Infinity;
+    const tris: { z: number; p: [number, number][] }[] = [];
+    for (let i = 0; i + 2 < pos.count; i += 3) {
+      const p: [number, number][] = [];
+      let z = 0;
+      for (let k = 0; k < 3; k++) {
+        v.fromBufferAttribute(pos, i + k);
+        z += v.z / 3;
+        lo = Math.min(lo, v.z);
+        hi = Math.max(hi, v.z);
+        v.project(this.camera);
+        p.push([(v.x * 0.5 + 0.5) * this.width, (-v.y * 0.5 + 0.5) * this.height]);
+      }
+      tris.push({ z, p });
+    }
+    const span = Math.max(hi - lo, 1e-6);
+    tris.sort((a, b) => b.z - a.z);
+    g.save();
+    g.lineJoin = 'round';
+    g.lineWidth = 0.6; // a hair of stroke closes the seams between triangles
+    for (const t of tris) {
+      const depth = (hi - t.z) / span; // 0 at the highest point, 1 at the deepest
+      // a grey ramp, pale where high and near-black where deep, so it reads on a dark or light theme and prints in black and white
+      const k = Math.round(225 - 190 * depth);
+      const shade = `rgba(${k}, ${k}, ${k}, ${(strength * 0.6).toFixed(3)})`;
+      g.fillStyle = shade;
+      g.strokeStyle = shade;
+      g.beginPath();
+      g.moveTo(t.p[0][0], t.p[0][1]);
+      g.lineTo(t.p[1][0], t.p[1][1]);
+      g.lineTo(t.p[2][0], t.p[2][1]);
+      g.closePath();
+      g.fill();
+      g.stroke();
+    }
+    // the key: highest to deepest, in the view's units, measured down from the highest point
+    const w = 120;
+    const x = this.width - w - 16;
+    const y = this.height - 34;
+    const grad = g.createLinearGradient(x, 0, x + w, 0);
+    grad.addColorStop(0, `rgba(225, 225, 225, ${0.6 * strength})`);
+    grad.addColorStop(1, `rgba(35, 35, 35, ${0.6 * strength})`);
+    g.globalAlpha = 1;
+    g.fillStyle = `#${this.theme.bg.getHexString()}`;
+    g.fillRect(x - 6, y - 18, w + 12, 34);
+    g.fillStyle = grad;
+    g.fillRect(x, y, w, 8);
+    g.strokeStyle = `#${this.theme.accent.getHexString()}`;
+    g.lineWidth = 0.5;
+    g.strokeRect(x, y, w, 8);
+    g.fillStyle = this.theme.css.text ?? '#888';
+    g.font = '10px system-ui, sans-serif';
+    g.textAlign = 'left';
+    g.fillText('Highest', x, y - 5);
+    g.textAlign = 'right';
+    const deep = this.units === 'imperial' ? `${Math.round(span / 0.3048)} ft deeper` : `${Math.round(span)} m deeper`;
+    g.fillText(deep, x + w, y - 5);
+    g.restore();
+  }
+
   /** The rock halo: a soft glow from the walls out into the rock, seen when looking down on the plan. */
   setHalo(on: boolean, reachM = 5, fade = 0.5) {
     this.halo = on;
@@ -2108,6 +2184,7 @@ export class CaveView {
     g.font = '11px system-ui, sans-serif';
     g.textAlign = 'left';
     if (this.halo) this.drawHaloPlan(g, s.walls);
+    if (this.depthShade) this.drawDepthShade(g);
     if (this.inkWalls && this.showWalls && s.walls.length) {
       // Ink style: the survey's walls inked by hand like every drawn line
       this.strokeLines(g, s.walls.map((w, i) => ({ id: `survey-wall-${i}`, closed: false, kind: 'wall', run: '', widths: null, points: w })));

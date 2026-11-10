@@ -104,6 +104,7 @@
     const opacity = option('scanOpacity', 0.5);
     const halo = option('halo', true);
     const ink = option('handInk', false); // Ink style: the lines are redrawn
+    const shade = option('depthShade', false);
     const haloM = haloReach();
     const haloF = haloFade();
     // the surface photo rides with the scans, under all of them
@@ -118,6 +119,7 @@
       if (!view || !engineLoaded) return;
       view.setHalo(halo, haloM, haloF);
       view.setHandInk(ink);
+      view.setDepthShade(shade);
       // A scan lies in the plane of the stations it is matched to, so it touches them (and lies level when it has none, at the survey's average height).
       const all = scene?.stations ?? [];
       const surveyZ = all.length ? all.reduce((t, st) => t + st.at[2], 0) / all.length : (scene?.bounds?.[2] ?? 0);
