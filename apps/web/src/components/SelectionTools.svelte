@@ -5,7 +5,9 @@
   import { Spline, FlipHorizontal2 } from '@lucide/svelte';
   import { cave, changed, option, requestRefit, selectedIds } from '../lib/cave.svelte';
   import { engine, loadEngine, type TypeStyle } from '../lib/engine';
-  import { isStampKind } from '../lib/symbols';
+  import { isStampKind, isSymbolKind } from '../lib/symbols';
+  import { placedPoints, setShape, shapeOf } from '../lib/symbol-shape';
+  import { lengthText, parseLength } from '../lib/units';
   import { fillDefs, isFillKind } from '../lib/fills';
   import { copyOp } from '../lib/view-clip.svelte';
   import { ALIGN_LABELS, ARROW_LABELS, FONT_LABELS, FRAME_LABELS, LINETYPE_LABELS, PATTERN_PREFIX, SHAPE_LABELS, liveStyle, parseStyle, styleText, withFlag, type LineStyle } from '../lib/line-style.svelte';
@@ -38,6 +40,22 @@
   const isFill = $derived(!!info && isFillKind(info.kind));
   const isLeader = $derived(info?.kind === 'callout');
   const isCustomFill = $derived(info?.kind === 'fill-custom');
+  // a placed symbol's size and turn, read from its points (empty when the selection is not all symbols, or they differ)
+  const symbolShapes = $derived.by(() => {
+    void cave.version;
+    if (!infos.length || !infos.every((i) => isSymbolKind(i.kind))) return null;
+    return ids.map((id, k) => shapeOf(placedPoints(id, infos[k]?.view ?? '') ?? []));
+  });
+  const same = (vals: number[], tol: number) => vals.length > 0 && vals.every((v) => Math.abs(v - vals[0]) < tol);
+  const symbolSize = $derived(symbolShapes && symbolShapes.every((s) => s) && same(symbolShapes.map((s) => s!.size), 1e-6) ? symbolShapes[0]!.size : null);
+  const symbolTurn = $derived(symbolShapes && symbolShapes.every((s) => s) && same(symbolShapes.map((s) => s!.rotation), 0.05) ? symbolShapes[0]!.rotation : null);
+  /** Resizes or turns every selected symbol, each keeping where it sits. */
+  function shape(change: { size?: number; rotation?: number }) {
+    let k = 0;
+    each((id) => setShape(id, infos[k++]?.view ?? '', change));
+    changed();
+    cave.version += 1;
+  }
   /** The patterns the caver can pick for a line or an area: the built-in ones and the cave's own. */
   const patterns = $derived.by(() => {
     void cave.version;
@@ -235,6 +253,16 @@
       <input class="words" title="The words. Drag the dot to move it, the square to turn and resize it." type="text" value={new Set(infos.map((i) => i.text)).size > 1 ? '' : info.text} placeholder={new Set(infos.map((i) => i.text)).size > 1 ? 'VARIOUS' : info.kind === 'text' ? 'The text' : info.kind === 'callout' ? 'The note' : 'Label'} maxlength="200" aria-label={info.kind === 'text' ? 'The text' : info.kind === 'callout' ? 'The note' : 'Label'} onchange={(e) => each((id) => engine.setLineText(id, e.currentTarget.value))} />
       
     {/if}
+    {#if symbolShapes}
+      <label class="detail" title="How big the symbol is: the distance from where it sits to its tip. Keeps where it sits.">
+        <span>Size</span>
+        <input class="num" type="text" value={symbolSize === null ? '' : lengthText(symbolSize, cave.units)} placeholder={symbolSize === null ? 'VARIOUS' : ''} aria-label="Symbol size" onchange={(e) => { const m = parseLength(e.currentTarget.value, cave.units); if (m !== null && m > 0) shape({ size: m }); }} />
+      </label>
+      <label class="detail" title="Which way the symbol points, in degrees clockwise from up in this view. Keeps where it sits.">
+        <span>Rotation</span>
+        <input class="num" type="number" min="0" max="360" step="1" value={symbolTurn === null ? '' : Math.round(symbolTurn)} placeholder={symbolTurn === null ? 'VARIOUS' : ''} aria-label="Symbol rotation in degrees" onchange={(e) => { const v = Number(e.currentTarget.value); if (e.currentTarget.value !== '' && Number.isFinite(v)) shape({ rotation: ((v % 360) + 360) % 360 }); }} />
+      </label>
+    {/if}
     {#if info && shaped.includes(info.kind)}
       <button class="tool" class:pressed={infos.every((i) => i.flip)} aria-pressed={infos.every((i) => i.flip)} title="Put the marks on the other side of the line" onclick={() => each((id) => engine.setLineFlip(id, !infos.every((i) => i.flip)))}>
         <FlipHorizontal2 size={22} strokeWidth={1.6} />
@@ -303,6 +331,7 @@
   .tool { display: flex; flex-direction: column; align-items: center; gap: 4px; min-width: 58px; box-sizing: border-box; height: calc(var(--ribbon-body) - 1px); justify-content: center; overflow: hidden; padding: 4px 8px; background: none; border: 0; border-radius: var(--radius); cursor: pointer; font-size: 12px; color: var(--text); }
   .tool:hover { background: var(--panel-2); }
   .tool.pressed { background: var(--accent-bg); outline: 1px solid var(--accent); }
+  .num { width: 76px; height: 24px; box-sizing: border-box; padding: 0 6px; background: var(--panel-2); color: var(--text); border: 1px solid var(--line); border-radius: var(--radius); font: inherit; font-size: 13px; }
   .words { width: 170px; height: 26px; box-sizing: border-box; padding: 0 8px; background: var(--panel-2); color: var(--text); border: 1px solid var(--line); border-radius: var(--radius); font: inherit; font-size: 13px; }
   .kind { font: inherit; font-size: 13px; height: 26px; padding: 0 6px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel-2); color: var(--text); }
   .detail { display: flex; flex-direction: column; gap: 2px; font-size: 11px; color: var(--muted); justify-content: center; height: calc(var(--ribbon-body) - 1px); }
