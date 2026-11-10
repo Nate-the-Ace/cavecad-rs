@@ -1139,11 +1139,20 @@ INSERT into plots values( 1, 2, \"xx0\", 5, 0, \"0\", \"1\", 0, 0, 18, 90.0, 0, 
         crate::DOC.with(|d| {
             let d = d.borrow();
             let scene = cave_scene::build(d.as_ref().unwrap(), true);
-            let mut st: Vec<(&str, [f64; 3])> = scene.stations.iter().map(|s| (s.label.as_str(), s.at)).collect();
+            let mut st: Vec<(&str, [f64; 3])> = scene
+                .stations
+                .iter()
+                .map(|s| (s.label.as_str(), s.at))
+                .collect();
             st.sort_by(|a, b| a.1[2].total_cmp(&b.1[2]));
             println!("lowest {:?}", &st[..3.min(st.len())]);
             println!("highest {:?}", &st[st.len().saturating_sub(3)..]);
-            let anchors: Vec<&str> = scene.stations.iter().filter(|s| s.anchor).map(|s| s.label.as_str()).collect();
+            let anchors: Vec<&str> = scene
+                .stations
+                .iter()
+                .filter(|s| s.anchor)
+                .map(|s| s.label.as_str())
+                .collect();
             println!("anchors {anchors:?}");
         });
     }
