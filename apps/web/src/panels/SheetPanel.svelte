@@ -19,6 +19,98 @@
   /** The stored sheets of this cave (each with its own viewframes), and the one shown ('' = the quick sheet of the Sheets tab). */
   let stored = $state<SheetDef[]>([]);
   let chosen = $state('');
+  /** Pixels per inch and paper height of the stored sheet as last drawn (to turn a pointer into paper inches). */
+  let shown = { k: 1, h: 0 };
+  /** A frame being dragged: moved on the paper, or (Shift) its map slid inside it. */
+  let drag: { id: string; pan: boolean; x: number; y: number; rect: [number, number, number, number]; center: [number, number] } | null = null;
+
+  /** Paper inches (from the lower left) under a pointer. */
+  function paperAt(e: PointerEvent | WheelEvent): [number, number] {
+    const r = canvas.getBoundingClientRect();
+    return [(e.clientX - r.left) / shown.k, shown.h - (e.clientY - r.top) / shown.k];
+  }
+  /** The topmost viewframe under a paper point, from the stored sheet. */
+  function frameAt(p: [number, number]) {
+    const def = stored.find((d) => d.id === chosen);
+    if (!def) return null;
+    for (let i = def.frames.length - 1; i >= 0; i--) {
+      const f = def.frames[i];
+      if (p[0] >= f.rect[0] && p[0] <= f.rect[2] && p[1] >= f.rect[1] && p[1] <= f.rect[3]) return { def, f };
+    }
+    return null;
+  }
+  function onDown(e: PointerEvent) {
+    if (!chosen || e.button !== 0) return;
+    const hit = frameAt(paperAt(e));
+    if (!hit) return;
+    if (hit.f.locked) return engine.log('info', 'sheet', 'That viewframe is locked.');
+    chosenFrame = hit.f.id;
+    drag = { id: hit.f.id, pan: e.shiftKey, x: e.clientX, y: e.clientY, rect: [...hit.f.rect] as [number, number, number, number], center: [...hit.f.center] as [number, number] };
+    canvas.setPointerCapture(e.pointerId);
+  }
+  function onMove(e: PointerEvent) {
+    if (!drag) return;
+    const def = stored.find((d) => d.id === chosen);
+    const f = def?.frames.find((q) => q.id === drag!.id);
+    if (!f) return;
+    const dx = (e.clientX - drag.x) / shown.k;
+    const dy = -(e.clientY - drag.y) / shown.k;
+    if (drag.pan) {
+      // slide the map: paper inches back to metres through the frame's scale and turn
+      const kIn = 1 / (f.feet_per_inch * 0.3048); // inches of paper per metre
+      const t = (f.twist * Math.PI) / 180;
+      const mx = (Math.cos(t) * dx + Math.sin(t) * dy) / kIn;
+      const my = (-Math.sin(t) * dx + Math.cos(t) * dy) / kIn;
+      f.center = [drag.center[0] - mx, drag.center[1] - my];
+    } else f.rect = [drag.rect[0] + dx, drag.rect[1] + dy, drag.rect[2] + dx, drag.rect[3] + dy];
+    if (def) paintLive(def);
+  }
+  function onUp() {
+    if (!drag) return;
+    drag = null;
+    const def = stored.find((d) => d.id === chosen);
+    if (def) {
+      if (def.auto) def.auto.edited = true; // a hand-moved sheet is kept when the grid is made again
+      const r = engine.sheetPut(def);
+      if (r !== 'ok') engine.log('warn', 'sheet', r);
+    }
+    readStored();
+    paint();
+  }
+  /** The wheel over a frame zooms its map: up for more detail, down for less. */
+  function onWheel(e: WheelEvent) {
+    if (!chosen) return;
+    const hit = frameAt(paperAt(e));
+    if (!hit || hit.f.locked) return;
+    e.preventDefault();
+    hit.f.feet_per_inch = Math.max(1, hit.f.feet_per_inch * (e.deltaY > 0 ? 1.15 : 1 / 1.15));
+    chosenFrame = hit.f.id;
+    const r = engine.sheetPut(hit.def);
+    if (r !== 'ok') engine.log('warn', 'sheet', r);
+    readStored();
+    paint();
+  }
+  /** Draws the sheet from a definition being dragged (not stored yet), so a drag is smooth and makes one undo step. */
+  function paintLive(def: SheetDef) {
+    const { scene, lines } = currentSheet();
+    const r = engine.sheetRender(def.id);
+    if (!r) return;
+    // the stored render, with the dragged frame's live place swapped in
+    for (const pf of r.frames) {
+      const f = def.frames.find((q) => q.id === pf.id);
+      if (!f) continue;
+      const shift: [number, number] = [f.rect[0] - pf.rect[0], f.rect[1] - pf.rect[1]];
+      pf.rect = [...f.rect] as [number, number, number, number];
+      pf.clip = pf.clip.map((q) => [q[0] + shift[0], q[1] + shift[1]] as [number, number]);
+      pf.center = [...f.center] as [number, number];
+    }
+    const g = canvas.getContext('2d');
+    if (!g) return;
+    const dpr = window.devicePixelRatio || 1;
+    g.setTransform(dpr, 0, 0, dpr, 0, 0);
+    drawStoredSheet(g, r, scene, lines, shown.k, looks(), chosenFrame);
+  }
+
   /** The viewframe last added or picked, outlined in the highlight colour. */
   let chosenFrame = $state('');
 
@@ -106,6 +198,7 @@
       const sg = canvas.getContext('2d');
       if (!sg) return;
       sg.setTransform(dpr, 0, 0, dpr, 0, 0);
+      shown = { k, h: rendered.h };
       drawStoredSheet(sg, rendered, scene, lines, k, looks(), chosenFrame);
       note = rendered.warnings.join(' ') || `${rendered.frames.length} viewframe${rendered.frames.length === 1 ? '' : 's'}`;
       return;
@@ -170,9 +263,9 @@
       {#each stored as d (d.id)}<option value={d.id}>{d.name}</option>{/each}
     </select>
     <button onclick={newSheet} title="A new sheet of your own, kept in the cave, at the paper and scale set on the Sheets tab">New sheet</button>
-    <button onclick={addViewframe} disabled={!chosen} title="Add a viewframe: a window onto the map at twice the detail, in the sheet's free space beside the title block">Add viewframe</button>
+    <button onclick={addViewframe} disabled={!chosen} title="Add a viewframe: a window onto the map at twice the detail. Drag a frame to move it, Shift+drag to slide its map, scroll over it to zoom its map, in the sheet's free space beside the title block">Add viewframe</button>
   </div>
-  <canvas bind:this={canvas} aria-label="The sheet"></canvas>
+  <canvas bind:this={canvas} aria-label="The sheet" onpointerdown={onDown} onpointermove={onMove} onpointerup={onUp} onwheel={onWheel}></canvas>
   <div class="note">{note}</div>
 </div>
 
