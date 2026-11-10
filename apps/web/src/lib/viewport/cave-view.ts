@@ -236,6 +236,15 @@ export class CaveView {
       lastMiddle = { time: quick ? 0 : e.timeStamp, x: e.clientX, y: e.clientY };
       if (quick) this.fit();
     });
+    // Turning the view turns the cave about what is in the middle of the view, not about the cave's middle: a left
+    // press (the orbit button) first moves the turning point along the line of sight onto the passage there.
+    canvas.addEventListener(
+      'pointerdown',
+      (e) => {
+        if (e.button === 0 && !this.drawTool && this.fingers.size === 0) this.pivotAtViewCenter();
+      },
+      { capture: true },
+    );
     this.controls.addEventListener('start', () => (this.autoFit = false)); // the person moved the view: it is theirs now
     this.controls.addEventListener('change', () => {
       this.requestRender();
@@ -614,6 +623,27 @@ export class CaveView {
     this.onProjection(kind);
     if (this.reshade()) this.rebuild();
     this.requestRender();
+  }
+
+  /** Moves the orbit's turning point along the line of sight to the passage, line or station under the middle of
+   *  the view, so turning keeps that in place. The camera does not move and the picture does not change: the point
+   *  only slides along the ray the camera already looks down. Nothing there: the turning point stays where it is. */
+  private pivotAtViewCenter() {
+    const ray = new THREE.Raycaster();
+    ray.params.Line = { threshold: this.visibleHalfHeight() * 0.02 };
+    ray.params.Points = { threshold: this.visibleHalfHeight() * 0.02 };
+    ray.setFromCamera(new THREE.Vector2(0, 0), this.camera);
+    const targets: THREE.Object3D[] = [this.content];
+    if (this.passage) targets.push(this.passage);
+    const hit = ray.intersectObjects(targets, true).find((h) => h.object.visible);
+    if (!hit) return;
+    const offset = this.camera.position.clone().sub(this.controls.target);
+    const along = hit.point.clone().sub(this.camera.position).dot(offset.clone().normalize().negate());
+    if (!(along > 0)) return;
+    // the new turning point: on the camera's line of sight, at the depth of what was hit
+    const dir = offset.clone().normalize().negate();
+    this.controls.target.copy(this.camera.position).addScaledVector(dir, along);
+    this.controls.update();
   }
 
   // ---- views -------------------------------------------------------------------------------
