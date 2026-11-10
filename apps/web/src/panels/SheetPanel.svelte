@@ -7,7 +7,8 @@
   import { engine, loadEngine } from '../lib/engine';
   import { looks } from '../lib/ink';
   import { followUnits, scaleText, sheet } from '../lib/sheet.svelte';
-  import { drawSheet, overflows } from '../lib/sheet-draw';
+  import { drawSheet, drawStoredSheet, overflows } from '../lib/sheet-draw';
+  import type { SheetDef } from '../lib/engine';
   import { currentSheet } from '../lib/sheet-export';
 
   let canvas: HTMLCanvasElement;
@@ -15,11 +16,75 @@
   let ready = $state(false);
   let note = $state('');
   let size = $state({ w: 600, h: 400 });
+  /** The stored sheets of this cave (each with its own viewframes), and the one shown ('' = the quick sheet of the Sheets tab). */
+  let stored = $state<SheetDef[]>([]);
+  let chosen = $state('');
+  /** The viewframe last added or picked, outlined in the highlight colour. */
+  let chosenFrame = $state('');
+
+  function readStored() {
+    try {
+      stored = engine.sheetsList();
+    } catch {
+      stored = [];
+    }
+    if (chosen && !stored.some((d) => d.id === chosen)) chosen = '';
+  }
+
+  /** A new stored sheet over the middle of the cave, at the quick sheet's paper and scale. */
+  function newSheet() {
+    const { plan, scene } = currentSheet();
+    const b = scene.bounds;
+    const cx = b ? (b[0] + b[3]) / 2 : 0;
+    const cy = b ? (b[1] + b[4]) / 2 : 0;
+    const papers = engine.sheetOptions().papers;
+    const paper = papers.find((p) => Math.abs(p.w - Math.min(plan.w, plan.h)) < 0.01 && Math.abs(p.h - Math.max(plan.w, plan.h)) < 0.01)?.name ?? papers[0]?.name ?? '';
+    const r = engine.sheetNew(`Sheet ${stored.length + 1}`, paper, plan.w > plan.h, cx, cy, plan.feet_per_inch || 50);
+    if (r.startsWith('error')) return engine.log('warn', 'sheet', r);
+    readStored();
+    chosen = r;
+    chosenFrame = '';
+    paint();
+  }
+
+  /** Adds a viewframe to the shown sheet: a window in its upper right corner, looking at the same place at twice the detail. */
+  function addViewframe() {
+    const def = stored.find((d) => d.id === chosen);
+    const r = chosen ? engine.sheetRender(chosen) : null;
+    if (!def || !r) return;
+    const base = def.frames[0];
+    const id = `frame-${def.frames.length + 1}-${Math.random().toString(36).slice(2, 7)}`;
+    const w = r.w;
+    const h = r.h;
+    def.frames.push({ id, rect: [w * 0.62, h * 0.55, w * 0.95, h * 0.92], center: base ? [...base.center] as [number, number] : [0, 0], feet_per_inch: base ? base.feet_per_inch / 2 : 25, twist: 0, locked: false, hidden: [], clip: [], label: `Detail ${def.frames.length}` });
+    const res = engine.sheetPut(def);
+    if (res !== 'ok') return engine.log('warn', 'sheet', res);
+    chosenFrame = id;
+    readStored();
+    paint();
+  }
   loadEngine().then(() => (ready = true));
 
   function paint() {
     if (!ready || !canvas) return;
     const { plan, scene, lines } = currentSheet();
+    const rendered = chosen ? engine.sheetRender(chosen) : null;
+    if (rendered) {
+      // a stored sheet: the map through each of its viewframes
+      const pad = 16;
+      const k = Math.max(5, Math.min((size.w - pad * 2) / rendered.w, (size.h - pad * 2) / rendered.h));
+      const dpr = window.devicePixelRatio || 1;
+      canvas.width = Math.round(rendered.w * k * dpr);
+      canvas.height = Math.round(rendered.h * k * dpr);
+      canvas.style.width = `${rendered.w * k}px`;
+      canvas.style.height = `${rendered.h * k}px`;
+      const sg = canvas.getContext('2d');
+      if (!sg) return;
+      sg.setTransform(dpr, 0, 0, dpr, 0, 0);
+      drawStoredSheet(sg, rendered, scene, lines, k, looks(), chosenFrame);
+      note = rendered.warnings.join(' ') || `${rendered.frames.length} viewframe${rendered.frames.length === 1 ? '' : 's'}`;
+      return;
+    }
     // the whole sheet, as large as the panel allows
     const pad = 16;
     const k = Math.max(5, Math.min((size.w - pad * 2) / plan.w, (size.h - pad * 2) / plan.h));
@@ -52,8 +117,11 @@
     void sheet.bar;
     void sheet.north;
     void option('handInk', false); // Ink style redraws every line
+    void chosen;
+    void chosenFrame;
     untrack(() => {
       followUnits(cave.units); // the paper of the units, until one is picked
+      readStored();
       paint();
     });
   });
@@ -71,6 +139,14 @@
 </script>
 
 <div class="sheetpanel" bind:this={box}>
+  <div class="bar">
+    <select bind:value={chosen} aria-label="Which sheet" title="The quick sheet of the Sheets tab, or a sheet of your own with viewframes">
+      <option value="">Quick sheet</option>
+      {#each stored as d (d.id)}<option value={d.id}>{d.name}</option>{/each}
+    </select>
+    <button onclick={newSheet} title="A new sheet of your own, kept in the cave, at the paper and scale set on the Sheets tab">New sheet</button>
+    <button onclick={addViewframe} disabled={!chosen} title="Add a viewframe: a window onto the map at twice the detail, in the sheet's upper right corner">Add viewframe</button>
+  </div>
   <canvas bind:this={canvas} aria-label="The sheet"></canvas>
   <div class="note">{note}</div>
 </div>
@@ -78,5 +154,7 @@
 <style>
   .sheetpanel { position: relative; width: 100%; height: 100%; display: grid; place-items: center; background: var(--panel-2); overflow: hidden; }
   canvas { box-shadow: 0 2px 14px rgba(0, 0, 0, 0.35); }
+  .bar { position: absolute; top: 8px; left: 8px; display: flex; gap: 6px; z-index: 2; }
+  .bar select, .bar button { font-size: 12px; }
   .note { position: absolute; left: 12px; bottom: 8px; font-size: 12px; color: var(--muted); pointer-events: none; }
 </style>
