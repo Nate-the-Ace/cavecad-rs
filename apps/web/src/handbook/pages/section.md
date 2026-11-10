@@ -42,6 +42,7 @@ A station in the list marked **(no walls)** has no outline. You can still sketch
 
 ## Related
 
+- [Erasing](erasing)
 - [Map](map)
 - [Profile](profile)
 - [Notebook](notebook)

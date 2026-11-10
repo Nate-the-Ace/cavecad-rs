@@ -1,15 +1,84 @@
 [
-  { "id": "bringing-survey-data-in", "group": "Tasks", "title": "Bringing survey data in" },
-  { "id": "map", "group": "Panels", "title": "Map", "panel": "map" },
-  { "id": "profile", "group": "Panels", "title": "Profile", "panel": "profile" },
-  { "id": "section", "group": "Panels", "title": "Cross Section", "panel": "section" },
-  { "id": "notebook", "group": "Panels", "title": "Notebook", "panel": "notebook" },
-  { "id": "stations", "group": "Panels", "title": "Stations", "panel": "stations" },
-  { "id": "symbols", "group": "Panels", "title": "Symbols", "panel": "symbols" },
-  { "id": "scans", "group": "Panels", "title": "Scans", "panel": "scans" },
-  { "id": "sheet", "group": "Panels", "title": "Sheet", "panel": "sheet" },
-  { "id": "patterns", "group": "Panels", "title": "Patterns", "panel": "patterns" },
-  { "id": "console", "group": "Panels", "title": "Console", "panel": "console" },
-  { "id": "rooms", "group": "Panels", "title": "Rooms", "panel": "rooms" },
-  { "id": "survey", "group": "Panels", "title": "Survey", "panel": "survey" }
+  {
+    "id": "bringing-survey-data-in",
+    "group": "Tasks",
+    "title": "Bringing survey data in"
+  },
+  {
+    "id": "erasing",
+    "group": "Tasks",
+    "title": "Erasing"
+  },
+  {
+    "id": "map",
+    "group": "Panels",
+    "title": "Map",
+    "panel": "map"
+  },
+  {
+    "id": "profile",
+    "group": "Panels",
+    "title": "Profile",
+    "panel": "profile"
+  },
+  {
+    "id": "section",
+    "group": "Panels",
+    "title": "Cross Section",
+    "panel": "section"
+  },
+  {
+    "id": "notebook",
+    "group": "Panels",
+    "title": "Notebook",
+    "panel": "notebook"
+  },
+  {
+    "id": "stations",
+    "group": "Panels",
+    "title": "Stations",
+    "panel": "stations"
+  },
+  {
+    "id": "symbols",
+    "group": "Panels",
+    "title": "Symbols",
+    "panel": "symbols"
+  },
+  {
+    "id": "scans",
+    "group": "Panels",
+    "title": "Scans",
+    "panel": "scans"
+  },
+  {
+    "id": "sheet",
+    "group": "Panels",
+    "title": "Sheet",
+    "panel": "sheet"
+  },
+  {
+    "id": "patterns",
+    "group": "Panels",
+    "title": "Patterns",
+    "panel": "patterns"
+  },
+  {
+    "id": "console",
+    "group": "Panels",
+    "title": "Console",
+    "panel": "console"
+  },
+  {
+    "id": "rooms",
+    "group": "Panels",
+    "title": "Rooms",
+    "panel": "rooms"
+  },
+  {
+    "id": "survey",
+    "group": "Panels",
+    "title": "Survey",
+    "panel": "survey"
+  }
 ]
