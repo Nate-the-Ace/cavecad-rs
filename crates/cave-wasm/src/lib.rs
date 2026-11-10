@@ -16,6 +16,7 @@ static CONSOLE: OnceLock<LogBuffer> = OnceLock::new();
 
 mod formats;
 mod geo;
+mod sheets;
 mod snap;
 mod survey;
 
