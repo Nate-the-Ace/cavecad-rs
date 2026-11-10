@@ -162,6 +162,7 @@ import { planFrame } from '../lib/snap-types';
     void scans.fetched; // a page of the cave arrived from the server
     void option('showScans', true);
     void option('halo', true);
+    void option('handInk', false); // Ink style redraws every line
     void haloReach();
     void haloFade();
     void option('scanOpacity', 0.5);
@@ -385,6 +386,11 @@ import { planFrame } from '../lib/snap-types';
   function onDown(e: PointerEvent) {
     markViewUsed('section');
     canvas.setPointerCapture(e.pointerId);
+    if (e.button === 0 && cave.tool.startsWith('brush-')) {
+      // the brushes strew rock in plan: they work on the Map only
+      engine.log('info', 'draw', 'The brushes work on the Map (Top view). Drag through a passage there.');
+      return;
+    }
     canvas.focus();
     if (e.button === 0 && cave.station && waitingForPoint(`section:${cave.station}`)) {
       // Aligning a scan: this place is what the spot picked on the scan is.

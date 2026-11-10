@@ -1076,6 +1076,17 @@ pub fn symbols() -> String {
     serde_json::to_string(cave_symbols::catalogue()).unwrap_or_else(|_| "[]".to_string())
 }
 
+/// The outlines a round brush of `radius` metres swept along `stroke` (JSON `[[x, y], ...]`, plan
+/// metres), stopped at `walls` (JSON array of polylines): JSON array of closed outlines, largest
+/// first. The breakdown brush stores each one as an area fill.
+#[wasm_bindgen]
+pub fn brush_outlines(stroke: &str, radius: f64, walls: &str) -> String {
+    let stroke: Vec<[f64; 2]> = serde_json::from_str(stroke).unwrap_or_default();
+    let walls: Vec<Vec<[f64; 2]>> = serde_json::from_str(walls).unwrap_or_default();
+    serde_json::to_string(&cave_brush::swept_outlines(&stroke, radius, &walls))
+        .unwrap_or_else(|_| "[]".to_string())
+}
+
 /// The kinds of area fill, with what each means (JSON array of `{key, label, help}`).
 #[wasm_bindgen]
 pub fn fills() -> String {

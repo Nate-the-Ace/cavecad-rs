@@ -9,6 +9,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "72f5acc6cb2ba439de613abc23857ec3d78374d8ed5ac84e9d11336e87da8649"
 
 [[package]]
+name = "cave-brush"
+version = "0.0.1"
+
+[[package]]
 name = "cave-doc"
 version = "0.0.1"
 dependencies = [
@@ -340,6 +344,7 @@ dependencies = [
 name = "cave-wasm"
 version = "0.0.1"
 dependencies = [
+ "cave-brush",
  "cave-doc",
  "cave-draw",
  "cave-dxf",

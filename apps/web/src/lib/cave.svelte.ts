@@ -1,6 +1,7 @@
 // State every panel shares about the open cave. The cave itself lives in the Rust engine; this
 // only says "it changed, look again" so panels refresh together.
 
+import { installHandInk } from './hand-ink-option';
 import type { Units } from './units';
 import { engine } from './engine';
 import { setHiddenTest } from './section-glyph';
@@ -264,3 +265,6 @@ export function toggleSelected(id: string) {
   const now = selectedIds();
   selectIds(now.includes(id) ? now.filter((i) => i !== id) : [...now, id]);
 }
+
+// Ink style: the drawing code asks through `hand-ink-option` (it cannot import this module).
+installHandInk(() => option('handInk', false));
