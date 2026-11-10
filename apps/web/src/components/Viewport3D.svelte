@@ -532,11 +532,7 @@
       changed();
     };
     v.onCursor = (x, y) => reportCursor('map', '', x, y, cave.tool);
-    v.onLineErased = (id) => {
-      if (cave.selected === id) cave.selected = '';
-      engine.deleteLine(id);
-      changed();
-    };
+    v.onErased = () => changed(); // the eraser's edit is made; everything that shows the cave reads it again
     v.onLineDrawn = (points, widths, closed, text = '') => {
       if (points.length === 0) {
         engine.log('warn', 'draw', 'A fill needs a loop: draw all the way around the area.');

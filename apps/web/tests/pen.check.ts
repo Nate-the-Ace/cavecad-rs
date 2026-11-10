@@ -16,6 +16,14 @@ eq(isEraser({ pointerType: 'pen', buttons: 32, button: 0 }), true, 'eraser bit')
 eq(isEraser({ pointerType: 'pen', buttons: 1, button: 5 }), true, 'button 5');
 eq(isEraser({ pointerType: 'pen', buttons: 1, button: 0 }), false, 'ordinary pen tip');
 eq(isEraser({ pointerType: 'mouse', buttons: 32, button: 0 }), false, 'a mouse has no eraser');
+// The side button (an S Pen has no eraser end) erases only when the setting is on; it stays a right click otherwise.
+eq(isEraser({ pointerType: 'pen', buttons: 3, button: 0 }), false, 'side button held, setting off');
+eq(isEraser({ pointerType: 'pen', buttons: 2, button: 2 }), false, 'side button press, setting off');
+eq(isEraser({ pointerType: 'pen', buttons: 3, button: 0 }, true), true, 'side button held, setting on');
+eq(isEraser({ pointerType: 'pen', buttons: 2, button: 2 }, true), true, 'side button press, setting on');
+eq(isEraser({ pointerType: 'pen', buttons: 1, button: 0 }, true), false, 'ordinary pen tip, setting on');
+eq(isEraser({ pointerType: 'pen', buttons: 32, button: 0 }, true), true, 'eraser end, setting on');
+eq(isEraser({ pointerType: 'mouse', buttons: 2, button: 2 }, true), false, 'a mouse right button never erases');
 
 // Palm rejection.
 const g = new PenGuard();

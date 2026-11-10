@@ -49,6 +49,7 @@ When you start a stroke on the end of an open line of the same kind, it carries 
 
 ## Related
 
+- [Erasing](erasing)
 - [Map](map)
 - [Cross Section](section)
 - [Stations](stations)

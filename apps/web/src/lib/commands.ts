@@ -90,9 +90,32 @@ export const TEXT_OPTIONS: OptionDef[] = [
 /** The options of an area fill: how closely the outline follows the hand. Always a loop. */
 export const FILL_OPTIONS: OptionDef[] = [DRAW_OPTIONS[0], DRAW_OPTIONS[2]];
 
+/** The Eraser's options: how wide it is, and whether a pen's side button erases too. */
+export const ERASER_OPTIONS: OptionDef[] = [
+  {
+    id: 'eraserSize',
+    label: 'Size',
+    hint: 'How wide the eraser is on the printed page, at the drawing scale. The circle under the pointer shows it on screen.',
+    kind: 'range',
+    min: 1,
+    max: 20,
+    step: 0.5,
+    default: 4,
+    show: (v) => `${v} mm`,
+  },
+  {
+    id: 'penButtonErases',
+    label: 'Pen side button erases',
+    hint: 'For pens with no eraser end (a Samsung S Pen, for one). When on, holding the side button while the pen touches erases instead of opening the right-click menu.',
+    kind: 'toggle',
+    default: false,
+  },
+];
+
 /** The options of a running command (`wall`, `ledge`, ...), or none. */
 export function optionsFor(command: string): OptionDef[] {
   if (!command) return [];
+  if (command === 'eraser') return ERASER_OPTIONS;
   if (command === 'text' || command === 'callout') return TEXT_OPTIONS;
   if (command.startsWith('fill-')) return FILL_OPTIONS;
   return command.startsWith('sym-') ? SYMBOL_OPTIONS : DRAW_OPTIONS;

@@ -25,9 +25,38 @@ export function widthFor(pressure: number): number {
   return 0.4 + 1.2 * p;
 }
 
-/** True for the eraser end of a pen (or the button that stands in for it). */
-export function isEraser(e: Pick<PenEvent, 'pointerType' | 'buttons' | 'button'>): boolean {
-  return e.pointerType === 'pen' && ((e.buttons & 32) !== 0 || e.button === 5);
+/**
+ * True for the eraser end of a pen (or the button that stands in for it). With `sideButton` (the "Pen side button
+ * erases" setting), a pen's side button counts too: some pens (a Samsung S Pen) have no eraser end, and their side
+ * button otherwise arrives as a right click.
+ */
+export function isEraser(e: Pick<PenEvent, 'pointerType' | 'buttons' | 'button'>, sideButton = false): boolean {
+  if (e.pointerType !== 'pen') return false;
+  if ((e.buttons & 32) !== 0 || e.button === 5) return true;
+  return sideButton && ((e.buttons & 2) !== 0 || e.button === 2);
+}
+
+/**
+ * The right click that follows a pen's side-button press used as the eraser must not open the menu. Call `used()` when
+ * such a press starts erasing; `swallow(e)` then answers true for the context-menu event that press brings (some
+ * systems send it on press, some on release), and false for any later, real right click.
+ */
+export class SideButtonMenu {
+  private until = 0;
+  used(): void {
+    this.until = Date.now() + 1500;
+  }
+  /** Lift: the menu event, if the system sends one, comes now or very soon. */
+  lifted(): void {
+    if (this.until) this.until = Date.now() + 400;
+  }
+  swallow(e: { preventDefault(): void; stopImmediatePropagation?(): void }): boolean {
+    if (Date.now() > this.until) return false;
+    this.until = 0;
+    e.preventDefault();
+    e.stopImmediatePropagation?.();
+    return true;
+  }
 }
 
 /**

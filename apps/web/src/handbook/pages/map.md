@@ -59,6 +59,7 @@ Click **Snap** (or press F3) to snap your drawing to the ends, middles and cross
 
 ## Related
 
+- [Erasing](erasing)
 - [Profile](profile)
 - [Cross Section](section)
 - [Stations](stations)

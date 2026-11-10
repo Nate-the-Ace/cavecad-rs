@@ -721,6 +721,30 @@ pub fn set_stroke_style(doc: &Document, id: Id, style: &str) -> Result<Vec<Actio
     }])
 }
 
+/// Actions that copy what a stroke carries besides its shape (style, flip, tags and trip) from `from` onto `to`.
+/// `to` may be a stroke that the same edit is still adding. Only what `from` actually has is copied.
+pub fn copy_stroke_fields(doc: &Document, from: Id, to: Id) -> Result<Vec<Action>, DrawError> {
+    drawn_in(doc, from).ok_or(DrawError::NoStations)?;
+    let e = doc.entity(from).ok_or(DrawError::NoStations)?;
+    let mut out = Vec::new();
+    for field in [
+        Field::FeatureStyle,
+        Field::FeatureFlip,
+        Field::FeatureTags,
+        Field::FeatureTrip,
+    ] {
+        let value = e.get(field);
+        if value != field.default_value() {
+            out.push(Action::Set {
+                id: to,
+                field,
+                value,
+            });
+        }
+    }
+    Ok(out)
+}
+
 /// Actions that put a shaped line's ornament on the other side.
 pub fn set_stroke_flip(doc: &Document, id: Id, flip: bool) -> Result<Vec<Action>, DrawError> {
     drawn_in(doc, id).ok_or(DrawError::NoStations)?;

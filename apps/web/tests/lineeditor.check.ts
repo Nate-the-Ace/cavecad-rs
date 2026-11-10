@@ -37,10 +37,13 @@ ok(ed.refitLine('nothing', 5) === false, 'no such line');
 lines.push({ id: 'sym', kind: 'sym-pit', points: [[0, 0], [0, 10]], widths: null });
 ok(ed.refitLine('sym', 5) === false, 'a symbol has no curve to re-fit');
 lines.pop(); lines.pop();
-// the eraser end of a pen
-removed.length = 0; selected = 'b';
-ok(ed.eraseAt(300, 300) === false && removed.length === 0, 'the eraser over nothing deletes nothing');
-ok(ed.eraseAt(50, 102) === true && removed[0] === 'b' && selected === '', 'the eraser deletes the line under it (and lets go of it)');
+// the eraser cuts the lines the view shows, in the view's own metres; a type switched off in the Show menu is left alone
+{
+  const shownEd = new LineEditor({ lines: () => [...lines, { id: 'h', kind: 'ledge', points: [[0, 0], [1, 1]], widths: null }], toScreen: (p) => p, toWorld: (x, y) => [x, y], selected: () => '', select: () => {}, commit: () => {}, remove: () => {}, redraw: () => {}, hidden: (k) => k === 'ledge' });
+  const ids = shownEd.erasable().map((l) => l.id);
+  ok(ids.includes('a') && ids.includes('b') && !ids.includes('h'), 'the eraser reaches shown lines only');
+  ok(shownEd.erasable().find((l) => l.id === 'b')?.points[1][0] === 100, 'in the view\'s own metres');
+}
 // picking up an unclosed line where it ended
 const open: EditableLine[] = [
   { id: 'w', kind: 'wall', points: [[0, 0], [50, 0], [100, 20]], widths: null },
