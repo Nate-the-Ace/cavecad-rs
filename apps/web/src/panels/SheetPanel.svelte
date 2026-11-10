@@ -41,13 +41,26 @@
     const paper = papers.find((p) => Math.abs(p.w - Math.min(plan.w, plan.h)) < 0.01 && Math.abs(p.h - Math.max(plan.w, plan.h)) < 0.01)?.name ?? papers[0]?.name ?? '';
     const r = engine.sheetNew(`Sheet ${stored.length + 1}`, paper, plan.w > plan.h, cx, cy, plan.feet_per_inch || 50);
     if (r.startsWith('error')) return engine.log('warn', 'sheet', r);
+    // the main frame sits above the title band, so it is smaller than the quick sheet's map: pick the most detailed
+    // standard scale at which the whole cave fits inside it
+    const def = engine.sheetsList().find((d) => d.id === r);
+    const main = def?.frames[0];
+    if (def && main && b) {
+      const ftX = ((b[3] - b[0]) / 0.3048) * 1.08;
+      const ftY = ((b[4] - b[1]) / 0.3048) * 1.08;
+      const need = Math.max(ftX / (main.rect[2] - main.rect[0]), ftY / (main.rect[3] - main.rect[1]));
+      const scales = engine.sheetOptions().scales.map((sc) => sc.feet_per_inch).sort((x, y) => x - y);
+      main.feet_per_inch = scales.find((f) => f >= need) ?? Math.ceil(need);
+      const put = engine.sheetPut(def);
+      if (put !== 'ok') engine.log('warn', 'sheet', put);
+    }
     readStored();
     chosen = r;
     chosenFrame = '';
     paint();
   }
 
-  /** Adds a viewframe to the shown sheet: a window in its upper right corner, looking at the same place at twice the detail. */
+  /** Adds a viewframe to the shown sheet: a window in its free space beside the title block, looking at the same place at twice the detail. */
   function addViewframe() {
     const def = stored.find((d) => d.id === chosen);
     const r = chosen ? engine.sheetRender(chosen) : null;
@@ -56,7 +69,19 @@
     const id = `frame-${def.frames.length + 1}-${Math.random().toString(36).slice(2, 7)}`;
     const w = r.w;
     const h = r.h;
-    def.frames.push({ id, rect: [w * 0.62, h * 0.55, w * 0.95, h * 0.92], center: base ? [...base.center] as [number, number] : [0, 0], feet_per_inch: base ? base.feet_per_inch / 2 : 25, twist: 0, locked: false, hidden: [], clip: [], label: `Detail ${def.frames.length}` });
+    // aim it at the station nearest the main frame's middle, so it shows passage, not rock
+    const { scene } = currentSheet();
+    const from = base ? base.center : [0, 0];
+    let aim: [number, number] = [from[0], from[1]];
+    let best = Infinity;
+    for (const st of scene.stations) {
+      const d = (st.at[0] - from[0]) ** 2 + (st.at[1] - from[1]) ** 2;
+      if (d < best) {
+        best = d;
+        aim = [st.at[0], st.at[1]];
+      }
+    }
+    def.frames.push({ id, rect: [w * 0.55, h * 0.14, w * 0.96, h * 0.56], center: aim, feet_per_inch: base ? base.feet_per_inch / 2 : 25, twist: 0, locked: false, hidden: [], clip: [], label: `Detail ${def.frames.length}` });
     const res = engine.sheetPut(def);
     if (res !== 'ok') return engine.log('warn', 'sheet', res);
     chosenFrame = id;
@@ -145,7 +170,7 @@
       {#each stored as d (d.id)}<option value={d.id}>{d.name}</option>{/each}
     </select>
     <button onclick={newSheet} title="A new sheet of your own, kept in the cave, at the paper and scale set on the Sheets tab">New sheet</button>
-    <button onclick={addViewframe} disabled={!chosen} title="Add a viewframe: a window onto the map at twice the detail, in the sheet's upper right corner">Add viewframe</button>
+    <button onclick={addViewframe} disabled={!chosen} title="Add a viewframe: a window onto the map at twice the detail, in the sheet's free space beside the title block">Add viewframe</button>
   </div>
   <canvas bind:this={canvas} aria-label="The sheet"></canvas>
   <div class="note">{note}</div>

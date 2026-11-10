@@ -118,6 +118,11 @@ export function drawStoredSheet(g: CanvasRenderingContext2D, sheet: RenderedShee
   for (const f of sheet.frames) {
     const to = frameTransform(f);
     const toPx = (x: number, y: number) => P(to(x, y));
+    // white behind the frame, so a frame laid over another (a detail over the main map) shows only its own map
+    g.save();
+    g.fillStyle = '#ffffff';
+    g.fillRect(f.rect[0] * px, H - f.rect[3] * px, (f.rect[2] - f.rect[0]) * px, (f.rect[3] - f.rect[1]) * px);
+    g.restore();
     g.save();
     g.beginPath();
     if (f.clip.length >= 3) f.clip.forEach((q, i) => (i === 0 ? g.moveTo(...P(q)) : g.lineTo(...P(q))));
