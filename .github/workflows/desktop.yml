@@ -69,7 +69,8 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # signs each update file (the app refuses any update not signed with this key; its public half is in
-          # tauri.conf.json). tauri-action then writes latest.json, which deploy/update-downloads.sh publishes.
+          # tauri.conf.json). latest.json is NOT written here: the three builds finish at different times and
+          # each would replace the others' entries; the `updates` job below writes it once, for every platform.
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           VITE_FEEDBACK_ENDPOINT: ${{ secrets.FEEDBACK_ENDPOINT }}
@@ -86,3 +87,28 @@ jobs:
           releaseDraft: true
           prerelease: true
           args: ${{ matrix.args }}
+          uploadUpdaterJson: false
+
+  # The update list (latest.json) for every platform, once all three builds are on the release.
+  updates:
+    needs: build
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+      - name: Write latest.json from the release's signatures
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: 0.1.${{ github.run_number }}
+        run: |
+          mkdir sigs && cd sigs
+          gh release download desktop-latest --repo "$GITHUB_REPOSITORY" \
+            -p 'CaveCAD_universal.app.tar.gz.sig' \
+            -p "CaveCAD_${VERSION}_amd64.AppImage.sig" -p "CaveCAD_${VERSION}_amd64.deb.sig" -p "CaveCAD-${VERSION}-1.x86_64.rpm.sig" \
+            -p "CaveCAD_${VERSION}_x64-setup.exe.sig" -p "CaveCAD_${VERSION}_x64_en-US.msi.sig"
+          python3 ../deploy/make-latest-json.py "$VERSION" \
+            "Unsigned builds of the CaveCAD desktop app. macOS and Windows warn the first time you open one. Built from the commit this release's tag points at on main." \
+            "https://github.com/$GITHUB_REPOSITORY/releases/download/desktop-latest" > latest.json
+          python3 -c "import json; p=json.load(open('latest.json'))['platforms']; assert len(p) == 11, p; print(sorted(p))"
+          gh release upload desktop-latest latest.json --clobber --repo "$GITHUB_REPOSITORY"
