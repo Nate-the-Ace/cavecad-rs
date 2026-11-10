@@ -1,11 +1,13 @@
 <script lang="ts">
   import { onMount, untrack } from 'svelte';
-  import { Home, Maximize, Box, Square, Palette, Eye, Library, Lock, LockOpen } from '@lucide/svelte';
+  import { Home, Maximize, Box, Square, Palette, Eye, Library, Lock, LockOpen, History } from '@lucide/svelte';
   import PanelUndo from './PanelUndo.svelte';
   import { shelf } from '../lib/shelf.svelte';
   import { isSymbolKind, needsWords, symbolDef, withLabelSpot } from '../lib/symbols';
   import { drawing, liveStyle } from '../lib/line-style.svelte';
   import { cursorsFor, presence as room, reportCursor } from '../lib/presence.svelte';
+  import { parseStyle, styleText } from '../lib/line-style-text';
+  import TripTimeline from './TripTimeline.svelte';
   import { engine, loadEngine, type Scene, type TypeStyle } from '../lib/engine';
   import { CaveView, type Projection } from '../lib/viewport/cave-view';
   import { fitPlane, heightSurface } from '../lib/plane';
@@ -101,6 +103,7 @@
     const on = option('showScans', true);
     const opacity = option('scanOpacity', 0.5);
     const halo = option('halo', true);
+    const ink = option('handInk', false); // Ink style: the lines are redrawn
     const haloM = haloReach();
     const haloF = haloFade();
     // the surface photo rides with the scans, under all of them
@@ -114,6 +117,7 @@
     untrack(() => {
       if (!view || !engineLoaded) return;
       view.setHalo(halo, haloM, haloF);
+      view.setHandInk(ink);
       // A scan lies in the plane of the stations it is matched to, so it touches them (and lies level when it has none, at the survey's average height).
       const all = scene?.stations ?? [];
       const surveyZ = all.length ? all.reduce((t, st) => t + st.at[2], 0) / all.length : (scene?.bounds?.[2] ?? 0);
@@ -332,6 +336,7 @@
     const symbolSize = option('symbolSize', 1.5);
     const label = option('label', '');
     view?.setDrawOptions({ tolerancePx: tol, pressure, close, finger, symbolSize, label });
+    view?.setBrushRadius(option('brushSize', 3) / 2);
   });
 
   // The picked drawing tool: drawing on the map goes to its plan, from the Top or Bottom view.
@@ -479,6 +484,9 @@
     changed();
   }
 
+  /** The trips the survey timeline is playing through (in survey order), or null when it is closed. */
+  let timelineTrips = $state<{ id: string; name: string }[] | null>(null);
+
   function refresh() {
     if (!view) return;
     scene = engine.scene(cave.adjusted, wireFilter());
@@ -533,6 +541,26 @@
     };
     v.onCursor = (x, y) => reportCursor('map', '', x, y, cave.tool);
     v.onErased = () => changed(); // the eraser's edit is made; everything that shows the cave reads it again
+    v.onBrushDrawn = (points) => {
+      // the breakdown brush: the ground swept (stopped at every wall) is stored as plain area fill, one area per piece
+      const kind = cave.tool === 'brush-debris' ? 'fill-debris' : 'fill-blocks';
+      const radius = option('brushSize', 3) / 2;
+      const pieces = engine.brushOutlines(points, radius, view?.planWalls() ?? []);
+      if (pieces.length === 0) {
+        engine.log('warn', 'draw', 'The brush covered no open ground: start the stroke inside a passage.');
+        return;
+      }
+      const density = option('brushDensity', 1);
+      const style = styleText({ ...parseStyle(''), density });
+      let made = 0;
+      for (const outline of pieces) {
+        const r = engine.addMapLine(kind, outline, null, true, cave.adjusted, '', style);
+        if (r === 'ok') made++;
+        else engine.log('warn', 'draw', r);
+      }
+      if (pieces.length > 1) engine.log('info', 'draw', `The brush crossed a wall: ${made} separate areas made, one on each side.`);
+      changed();
+    };
     v.onLineDrawn = (points, widths, closed, text = '') => {
       if (points.length === 0) {
         engine.log('warn', 'draw', 'A fill needs a loop: draw all the way around the area.');
@@ -606,8 +634,14 @@
 <div class="vp" role="application" aria-label="Map" bind:this={wrap} tabindex="-1" onkeydown={onKey} onpointerdowncapture={() => markViewUsed('map')}>
   <canvas bind:this={gl} onpointerdown={onDown} onpointerup={onUp}></canvas>
   <canvas bind:this={overlay} class="overlay"></canvas>
+  {#if timelineTrips}
+    <TripTimeline trips={timelineTrips} onChange={refresh} onClose={() => (timelineTrips = null)} />
+  {/if}
   <div class="bar">
     <button class="caves" title="The Cave Shelf: open a cave, start a new one, add a trip" onclick={() => (shelf.open = true)}><Library size={15} /> {cave.hasCave ? cave.name || 'Cave' : 'Caves'}</button>
+    {#if scene && scene.trips.length > 1}
+      <button class:on={!!timelineTrips} title="Survey timeline: watch the cave grow trip by trip, in the order it was surveyed" onclick={() => (timelineTrips = timelineTrips ? null : scene ? scene.trips.slice() : null)}><History size={15} /> Timeline</button>
+    {/if}
     <div class="menu">
       <button class:on={showMenu || filter.hiddenTypes.length + filter.hiddenTrips.length > 0} title="Show or hide: walls, passage, sketches, sections, types and trips" aria-expanded={showMenu} onclick={openMenu}><Eye size={15} /> Show</button>
       {#if showMenu}

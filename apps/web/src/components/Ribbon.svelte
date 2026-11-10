@@ -29,7 +29,7 @@
   import { folder } from '../lib/cavefolder.svelte';
   import ProjectFiles from './ProjectFiles.svelte';
   import { shelf } from '../lib/shelf.svelte';
-  import { cave, clearPick, selectedIds, selectIds, setCompactRibbon, setPick, setUnits, option, setOption } from '../lib/cave.svelte';
+  import { cave, clearPick, selectedIds, selectIds, setCompactRibbon, setPick, setUnits, option, setOption, setTool } from '../lib/cave.svelte';
   import DrawTools from './DrawTools.svelte';
   import ThemeGroup from './ThemeGroup.svelte';
   import ContextOptions from './ContextOptions.svelte';
@@ -51,7 +51,7 @@
   import { fillLabel, isFillKind } from '../lib/fills';
   import { onMount, untrack } from 'svelte';
   import { PANELS, panelState, resetLayout, showPanel, surveyLayout, togglePanel, workLayout } from '../lib/workspace.svelte';
-  import { Check, Trash2, Library, FilePlus, FolderOpen, FolderTree, Save, Ruler, Footprints, Scissors, Map as MapIcon, Terminal, LayoutDashboard, Activity, Shapes, Table2, BookOpen, ScanLine, FileText, ChevronDown, PanelTop, Mountain, SlidersHorizontal, Crosshair, Tent, Lock, Cloud } from '@lucide/svelte';
+  import { Check, Trash2, Library, FilePlus, FolderOpen, FolderTree, Save, Ruler, Footprints, Scissors, Map as MapIcon, Terminal, LayoutDashboard, Activity, Shapes, Table2, BookOpen, ScanLine, FileText, ChevronDown, PanelTop, Mountain, SlidersHorizontal, Crosshair, Tent, Lock, Cloud, PenTool, Brush, SprayCan } from '@lucide/svelte';
   import { entrancePick, surface } from '../lib/surface.svelte';
 
   /**
@@ -103,6 +103,13 @@
       { name: 'Geology and relief', items: [], custom: DrawTools, props: { group: 'Geology and relief' } },
       { name: 'Symbols', items: [{ label: 'Symbols', icon: Shapes, run: () => showPanel('symbols'), pressed: () => !!panelState.visible.symbols }] },
       { name: 'Area fill', items: [], custom: FillTools },
+      {
+        name: 'Brushes',
+        items: [
+          { label: 'Boulder brush', icon: Brush, title: 'Boulder brush: drag through a passage on the Map and boulders are strewn where you swept. They stop at the walls. Width and thickness are in the tab that opens', run: () => setTool('brush-blocks'), pressed: () => cave.tool === 'brush-blocks' },
+          { label: 'Rubble brush', icon: SprayCan, title: 'Rubble brush: drag through a passage on the Map and small rubble is strewn where you swept. It stops at the walls', run: () => setTool('brush-debris'), pressed: () => cave.tool === 'brush-debris' },
+        ],
+      },
       { name: 'Erase', items: [], custom: EraseTools },
     ],
     // connecting an instrument is future work: its tab shows only where showInstruments says so
@@ -121,6 +128,7 @@
       { name: 'Units', items: [{ label: 'Metric', icon: Ruler, run: () => setUnits('metric'), pressed: () => cave.units === 'metric' }, { label: 'Imperial', icon: Footprints, run: () => setUnits('imperial'), pressed: () => cave.units === 'imperial' }] },
       { name: 'Theme', items: [], custom: ThemeGroup },
       { name: 'Drawing scale', items: [], custom: DrawingScale },
+      { name: 'Map style', items: [{ label: 'Ink style', icon: PenTool, title: 'Ink style: every line drawn as if inked by hand (wobble, thick and thin, tapered ends). Changes only the picture, on screen and on printed sheets', run: () => setOption('handInk', !option('handInk', false)), pressed: () => option('handInk', false) }] },
       { name: 'Rock halo', items: [{ label: 'Rock halo', icon: Mountain, run: () => setOption('halo', !option('halo', true)), pressed: () => option('halo', true) }, { label: 'Settings', icon: SlidersHorizontal, run: () => setPick('halo', 'halo'), pressed: () => cave.pick.kind === 'halo' }] },
       { name: 'Map view', items: [{ label: 'Lock view', icon: Lock, run: () => setOption('mapLock', !option('mapLock', false)), pressed: () => option('mapLock', false) }] },
       { name: 'Layout', items: [{ label: 'Reset', icon: LayoutDashboard, run: resetLayout }, ...(showInstruments ? [{ label: 'In cave', icon: Tent, run: surveyLayout }] : []), { label: 'Scans', icon: ScanLine, run: workLayout }] },
@@ -137,7 +145,7 @@
   const CONTEXT = '\u0000command';
   let toolLabels = $state<Record<string, string>>({});
   onMount(() => {
-    loadEngine().then(() => (toolLabels = { ...Object.fromEntries(engine.drawTools().map((t) => [t.key, t.label])), eraser: 'Eraser' })); // the Eraser draws nothing, so the engine's list does not name it
+    loadEngine().then(() => (toolLabels = { ...Object.fromEntries(engine.drawTools().map((t) => [t.key, t.label])), eraser: 'Eraser', 'brush-blocks': 'Boulder brush', 'brush-debris': 'Rubble brush' })); // the Eraser draws nothing, so the engine's list does not name it
   });
   // A selected line gets one too, with what can be done to it, so it is easy to adjust.
   let loaded = $state(false);

@@ -3,7 +3,7 @@
   // and north arrow. What is drawn here is what the Print and PNG buttons in the Sheets tab produce.
   import { onMount, untrack } from 'svelte';
   import { onTheme } from '../lib/theme';
-  import { cave } from '../lib/cave.svelte';
+  import { cave, option } from '../lib/cave.svelte';
   import { engine, loadEngine } from '../lib/engine';
   import { looks } from '../lib/ink';
   import { followUnits, scaleText, sheet } from '../lib/sheet.svelte';
@@ -51,6 +51,7 @@
     void sheet.title;
     void sheet.bar;
     void sheet.north;
+    void option('handInk', false); // Ink style redraws every line
     untrack(() => {
       followUnits(cave.units); // the paper of the units, until one is picked
       paint();

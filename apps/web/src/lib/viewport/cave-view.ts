@@ -19,6 +19,8 @@ import { drawStampHalo, liveWords, stampEditSpot, drawStamp, drawStationMarker, 
 import { paintCopy } from '../copy-ghost';
 import type { ClipLine } from '../clip';
 import { drawMarks, isFillKind, marksFor } from '../fills';
+import { inkCurve } from '../hand-ink';
+import { handInkOn } from '../hand-ink-option';
 import { drawing, fillLength, parseStyle, patternName, styleFor } from '../line-style.svelte';
 import { lineMarksPx, strokeMarksPx } from '../pattern-draw';
 import { dashMetres } from '../dash';
@@ -104,6 +106,10 @@ export class CaveView {
   private mapLines: ProfileSketch3d[] = [];
   /** The drawing tool picked on the Draw tab (a palette type), or empty. */
   private drawTool = '';
+  /** The breakdown brush's reach, in metres (half its width). */
+  private brushRadius = 1.5;
+  /** A brush stroke (a `brush-` tool) has ended: its points in plan metres, as dragged. */
+  onBrushDrawn: (points: [number, number][]) => void = () => {};
   private liveLine: { pts: [number, number][]; widths: number[]; pressure: boolean; z: number } | null = null;
   /** The line selected for editing (a feature id), shown with a halo and, for a map line, handles. */
   private selectedLine = '';
@@ -534,6 +540,12 @@ export class CaveView {
         const end = this.pickPoint(e);
         if (end && line.pts.length >= 2) line.pts[line.pts.length - 1] = end.p;
         clearPick();
+        if (this.drawTool.startsWith('brush-')) {
+          // the breakdown brush: the swept ground (stopped at the walls) becomes area fill
+          this.onBrushDrawn(line.pts.map((p) => [p[0], p[1]] as [number, number]));
+          this.requestRender();
+          return;
+        }
         if (isStampKind(this.drawTool) && line.pts.length === 2) {
           const a = this.project([line.pts[0][0], line.pts[0][1], line.z]);
           const b = this.project([line.pts[1][0], line.pts[1][1], line.z]);
@@ -1086,6 +1098,32 @@ export class CaveView {
     this.requestRender();
   }
 
+  /** Ink style is on: the survey's walls leave the 3D lines and are drawn by hand in the overlay. */
+  private inkWalls = false;
+  setHandInk(on: boolean) {
+    if (on === this.inkWalls) return this.requestRender();
+    this.inkWalls = on;
+    this.rebuild();
+  }
+
+  /** How far the breakdown brush reaches from the pointer, in metres. */
+  setBrushRadius(m: number) {
+    this.brushRadius = m > 0 ? m : 1.5;
+    this.requestRender();
+  }
+
+  /** Every wall in plan (metres): the survey's passage walls and the walls drawn on the map, as polylines. The brush stops at these. */
+  planWalls(): [number, number][][] {
+    const out: [number, number][][] = [];
+    for (const w of this.data?.walls ?? []) out.push(w.map((p) => [p[0], p[1]] as [number, number]));
+    for (const k of this.displayMapLines()) {
+      if (k.kind !== 'wall' || k.points.length < 2) continue;
+      const pts = smooth(k.points.map((p) => [p[0], p[1]] as [number, number]), null, 8, k.closed).pts as [number, number][];
+      out.push(k.closed ? [...pts, pts[0]] : pts);
+    }
+    return out;
+  }
+
   /** The drawing tool picked on the Draw tab (a palette type), or empty for none. */
   setDrawTool(key: string) {
     this.eraserArmed = key === 'eraser';
@@ -1624,7 +1662,12 @@ export class CaveView {
       }
       // A curve through the fit points (straight where part of it is behind the camera).
       const whole = projected.every((p) => !!p);
-      const curve = whole ? smooth(projected as [number, number][], k.widths, 10, k.closed) : { pts: projected, widths: k.widths };
+      let curve: { pts: ([number, number] | null)[]; widths: number[] | null } = whole ? smooth(projected as [number, number][], k.widths, 10, k.closed) : { pts: projected, widths: k.widths };
+      if (whole && handInkOn() && !isFillKind(k.kind)) {
+        // Ink style: the curve wobbles, swells and tapers as if inked by hand (the picture only)
+        const pxPerMm = ((this.pixelsPerMetreAt(k.points[0]) ?? 0) * drawing.scale) / 1000;
+        curve = inkCurve(curve.pts as [number, number][], curve.widths, k.id, pxPerMm, k.closed);
+      }
       const pts = curve.pts;
       const trace = (extra: number, alpha: number, dash: number[]) => {
         g.globalAlpha = base * alpha;
@@ -1633,6 +1676,7 @@ export class CaveView {
           const a = pts[i - 1];
           const b = pts[i];
           if (!a || !b) continue;
+          if (!extra && curve.widths && (curve.widths[i - 1] === 0 || curve.widths[i] === 0)) continue; // the pen lifted (Ink style)
           g.lineWidth = l.weight * (curve.widths ? (curve.widths[i - 1] + curve.widths[i]) / 2 : 1) + extra;
           g.beginPath();
           g.moveTo(a[0], a[1]);
@@ -1993,7 +2037,8 @@ export class CaveView {
     lines(sh.splays_under, 'splay', true);
     lines(sh.legs_over, legType);
     lines(sh.legs_under, legType, true);
-    if (walls) {
+    if (walls && !this.inkWalls) {
+      // (in Ink style the walls are drawn by hand in the overlay instead)
       lines(sh.walls_over, 'wall');
       lines(sh.walls_under, 'wall', true);
     }
@@ -2063,6 +2108,10 @@ export class CaveView {
     g.font = '11px system-ui, sans-serif';
     g.textAlign = 'left';
     if (this.halo) this.drawHaloPlan(g, s.walls);
+    if (this.inkWalls && this.showWalls && s.walls.length) {
+      // Ink style: the survey's walls inked by hand like every drawn line
+      this.strokeLines(g, s.walls.map((w, i) => ({ id: `survey-wall-${i}`, closed: false, kind: 'wall', run: '', widths: null, points: w })));
+    }
     const circle = this.circlePick;
     if (circle) {
       // the circle being dragged for the entrance pick, in screen space
@@ -2136,7 +2185,31 @@ export class CaveView {
       g.stroke();
     }
     const live = this.liveLine;
-    if (live && live.pts.length > 1) {
+    if (live && this.drawTool.startsWith('brush-')) {
+      // the brush: a wide soft band where it has swept so far
+      const px = this.pixelsPerMetreAt([live.pts[0][0], live.pts[0][1], live.z]) ?? 0;
+      const pts = live.pts.map((p) => this.project([p[0], p[1], live.z])).filter((p): p is [number, number] => !!p);
+      if (pts.length && px > 0) {
+        g.save();
+        g.strokeStyle = `#${this.theme.accent.getHexString()}`;
+        g.fillStyle = g.strokeStyle;
+        g.globalAlpha = 0.22;
+        g.lineCap = 'round';
+        g.lineJoin = 'round';
+        g.lineWidth = this.brushRadius * 2 * px;
+        g.beginPath();
+        pts.forEach((q, i) => (i === 0 ? g.moveTo(q[0], q[1]) : g.lineTo(q[0], q[1])));
+        if (pts.length === 1) g.lineTo(pts[0][0] + 0.01, pts[0][1]);
+        g.stroke();
+        g.globalAlpha = 0.8;
+        g.lineWidth = 1.5;
+        const last = pts[pts.length - 1];
+        g.beginPath();
+        g.arc(last[0], last[1], this.brushRadius * px, 0, Math.PI * 2);
+        g.stroke();
+        g.restore();
+      }
+    } else if (live && live.pts.length > 1) {
       this.strokeLines(g, [{ id: '', closed: false, kind: this.drawTool || 'sketch', run: '', text: isStampKind(this.drawTool) ? liveWords(this.drawTool, this.drawOptions.label) : undefined, points: live.pts.map((p) => [p[0], p[1], live.z] as [number, number, number]), widths: live.pressure ? live.widths : null }]);
     }
     if (this.eraser.active || this.eraserAt) {
