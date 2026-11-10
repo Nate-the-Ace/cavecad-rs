@@ -8,6 +8,7 @@ import type { PickKind } from './cave.svelte';
 import StationTab from '../components/StationTab.svelte';
 import ShotTab from '../components/ShotTab.svelte';
 import HaloTab from '../components/HaloTab.svelte';
+import ViewframeTab from '../components/ViewframeTab.svelte';
 
 export interface Inspector {
   /** The tab's name. */
@@ -40,6 +41,7 @@ export const INSPECTORS: Record<Exclude<PickKind, ''>, Inspector> = {
     component: StationTab,
   },
   halo: { title: 'Rock halo', groups: [{ name: 'Rock halo', part: 'main' }], component: HaloTab },
+  viewframe: { title: 'Viewframe', groups: [{ name: 'Scale', part: 'scale' }, { name: 'Frame', part: 'lock' }], component: ViewframeTab },
   leg: shot('Survey leg'),
   splay: shot('Splay'),
 };
