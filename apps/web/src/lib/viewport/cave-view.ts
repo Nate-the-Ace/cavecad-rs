@@ -6,17 +6,21 @@ import { LineSegments2 } from 'three/addons/lines/LineSegments2.js';
 import { LineSegmentsGeometry } from 'three/addons/lines/LineSegmentsGeometry.js';
 import { LineMaterial } from 'three/addons/lines/LineMaterial.js';
 import type { MapSection, PassageBuffers, Pt, ProfileSketch3d, Scene, TypeStyle } from '../engine';
-import { PenGuard, isEraser, widthFor } from '../pen';
+import { PenGuard, SideButtonMenu, isEraser, widthFor } from '../pen';
+import { EraserDrag, eraserRadiusPx, paintEraser, type EraseLine } from '../eraser-drag';
+import { option } from '../cave.svelte';
 import { arrowAt, attachOf, resolveLeaders, withArrow, withoutArrow } from '../leader-edit';
 import { acquireHover, chosen, clearPick, commit, overrideName, query, snap, snapping } from '../snap.svelte';
 import { drawAperture, drawSnap } from '../snap-draw';
 import { sceneThings } from '../snap-scene';
 import { cameraOf, planFrame, type SnapScene } from '../snap-types';
 import { withAttach } from '../line-style-text';
-import { drawStampHalo, liveWords, stampEditSpot, drawStamp, drawStationMarker, hitsLabelNote, hitsStamp, isStampKind, leaderLook, placement } from '../symbols';
+import { drawStampHalo, liveWords, stampEditSpot, drawStamp, drawStationMarker, hitsLabelNote, hitsStamp, isStampKind, leaderLook, placement, withLabelSpots } from '../symbols';
 import { paintCopy } from '../copy-ghost';
 import type { ClipLine } from '../clip';
 import { drawMarks, isFillKind, marksFor } from '../fills';
+import { inkCurve } from '../hand-ink';
+import { handInkOn } from '../hand-ink-option';
 import { drawing, fillLength, parseStyle, patternName, styleFor } from '../line-style.svelte';
 import { lineMarksPx, strokeMarksPx } from '../pattern-draw';
 import { dashMetres } from '../dash';
@@ -30,6 +34,7 @@ import { PICKUP_REACH, joinFit } from '../line-editor';
 import { looks } from '../ink';
 import { elevationColor, inkColor, readTheme, type ViewTheme } from './theme';
 import { metresPer, niceNumber, unitName, type Units } from '../units';
+import { thinTerrain, type Terrain } from '../terrain';
 
 export type Projection = 'perspective' | 'orthographic';
 export type Dir = [number, number, number];
@@ -66,6 +71,16 @@ export class CaveView {
   private camera: THREE.PerspectiveCamera | THREE.OrthographicCamera = this.persp;
   private content = new THREE.Group();
   private materials: LineMaterial[] = [];
+  /** The ground above the cave (contours, terrain): beside `content`, never cleared by `rebuild()`. */
+  private surfaceGroup = new THREE.Group();
+  private surfaceMaterials: LineMaterial[] = [];
+  /** "Pick entrance on surface": on, and the circle being dragged (centre on the plan, and on screen). */
+  private circlePick: { at: [number, number]; px: [number, number]; now: [number, number] } | null = null;
+  private circlePickOn = false;
+  /** A circle was let go: its centre and radius in cave metres on the plan. */
+  onCirclePicked: (cx: number, cy: number, r: number) => void = () => {};
+  /** Where each major contour's level is written (its run's middle point) and what it says. */
+  private contourLabels: { at: [number, number, number]; text: string }[] = [];
   private data: Scene | null = null;
   private theme: ViewTheme = readTheme();
   private width = 1;
@@ -91,6 +106,10 @@ export class CaveView {
   private mapLines: ProfileSketch3d[] = [];
   /** The drawing tool picked on the Draw tab (a palette type), or empty. */
   private drawTool = '';
+  /** The breakdown brush's reach, in metres (half its width). */
+  private brushRadius = 1.5;
+  /** A brush stroke (a `brush-` tool) has ended: its points in plan metres, as dragged. */
+  onBrushDrawn: (points: [number, number][]) => void = () => {};
   private liveLine: { pts: [number, number][]; widths: number[]; pressure: boolean; z: number } | null = null;
   /** The line selected for editing (a feature id), shown with a halo and, for a map line, handles. */
   private selectedLine = '';
@@ -106,8 +125,14 @@ export class CaveView {
   onLeaderEdited: (id: string, points: [number, number][], style: string) => void = () => {};
   onLineEdited: (id: string, points: [number, number][], widths: number[] | null) => void = () => {};
   onSelectLine: (id: string, additive?: boolean) => void = () => {};
+  /** The lines under the last press that selected, topmost first (see `takePressStack`). */
+  private pressStack: ProfileSketch3d[] = [];
   /** Called on a right click on a map line: where, which line, and the ids of the map lines of its kind. */
-  onLineMenu: (x: number, y: number, id: string, similar: string[]) => void = () => {};
+  onLineMenu: (x: number, y: number, id: string, similar: string[], editWords: (() => void) | null) => void = () => {};
+  /** A right click on a station (nothing drawn under the pointer). */
+  onStationMenu: (x: number, y: number, id: string, label: string) => void = () => {};
+  /** A right click on empty space. */
+  onViewMenu: (x: number, y: number) => void = () => {};
   /** Called when a right click (not a right drag, which pans) asks to end the running command. */
   onEndCommand: () => void = () => {};
   private rightDown: { x: number; y: number } | null = null;
@@ -170,12 +195,18 @@ export class CaveView {
     this.remoteCursors = list;
     this.requestRender();
   }
-  /** The eraser end of a pen passed over a line: delete it. */
-  onLineErased: (id: string) => void = () => {};
+  /** An eraser drag changed the map's linework (one undoable edit, already made). */
+  onErased: () => void = () => {};
   private guard = new PenGuard();
   /** Told why a touch was ignored (a palm), so it can be shown. */
   onPalm: (why: string) => void = () => {};
-  private erasing = false;
+  /** The Eraser is the running tool (it is not a drawing tool, so `drawTool` stays empty while it runs). */
+  private eraserArmed = false;
+  /** One eraser drag, by the Eraser tool or a pen's eraser end (or side button): its path is in plan metres. */
+  private eraser = new EraserDrag();
+  /** Where the eraser's circle is drawn (screen pixels), while erasing or while the Eraser waits. */
+  private eraserAt: [number, number] | null = null;
+  private sideMenu = new SideButtonMenu();
   onLineDrawn: (points: [number, number][], widths: number[] | null, closed: boolean, text?: string) => void = () => {};
   /** Offsets being dragged right now, before they are saved. */
   private liveOffsets = new Map<string, [number, number, number]>();
@@ -202,10 +233,13 @@ export class CaveView {
     this.ortho.up.set(0, 0, 1);
     this.persp.position.copy(viewDirection(HOME_DIR).multiplyScalar(50));
     this.scene.add(this.content);
+    this.scene.add(this.surfaceGroup);
     this.scene.add(new THREE.AmbientLight(0xffffff, 0.9));
     this.scene.add(this.headlamp);
     this.controls = new OrbitControls(this.persp, canvas);
     this.controls.screenSpacePanning = true;
+    // The wheel zooms toward the point under the mouse, not toward the turning point.
+    this.controls.zoomToCursor = true;
     // CAD mouse: middle drag pans, wheel zooms, left drag orbits (right drag pans too).
     this.controls.mouseButtons = { LEFT: THREE.MOUSE.ROTATE, MIDDLE: THREE.MOUSE.PAN, RIGHT: THREE.MOUSE.PAN };
     // Stops the browser's middle-click autoscroll from taking over the drag.
@@ -218,6 +252,16 @@ export class CaveView {
       lastMiddle = { time: quick ? 0 : e.timeStamp, x: e.clientX, y: e.clientY };
       if (quick) this.fit();
     });
+    // Turning the view turns the cave about what is in the middle of the view, not about the cave's middle: a left
+    // press (the orbit button) first moves the turning point along the line of sight onto the passage there.
+    canvas.addEventListener(
+      'pointerdown',
+      (e) => {
+        if (e.button === 0 && !this.drawTool && this.fingers.size === 0) this.pivotAtViewCenter();
+      },
+      { capture: true },
+    );
+    this.controls.addEventListener('start', () => (this.autoFit = false)); // the person moved the view: it is theirs now
     this.controls.addEventListener('change', () => {
       this.requestRender();
       // Which lines run under another passage depends on where the camera is: ask again once it settles.
@@ -236,14 +280,8 @@ export class CaveView {
             this.lineEdit = null;
             this.controls.enabled = true;
           }
-          if (isEraser(e) && this.canDrawHere) {
-            e.stopImmediatePropagation();
-            e.stopPropagation();
-            this.erasing = true;
-            this.controls.enabled = false;
-            this.canvas.setPointerCapture(e.pointerId);
-            this.eraseAt(e);
-          }
+          // the eraser end, or the side button when it erases: only from straight above or below, as drawing is
+          if (isEraser(e, option('penButtonErases', false)) && this.canDrawHere && this.startErase(e) && !isEraser(e)) this.sideMenu.used();
           return;
         }
         if (e.pointerType !== 'touch') return;
@@ -255,10 +293,11 @@ export class CaveView {
           return;
         }
         this.fingers.add(e.pointerId);
-        if (this.fingers.size >= 2 && (this.liveLine || this.lineEdit)) {
+        if (this.fingers.size >= 2 && (this.liveLine || this.lineEdit || this.eraser.active)) {
           // A second finger: that was the start of a pinch or pan, not a line. The gesture goes to the orbit controls.
           this.liveLine = null;
           this.lineEdit = null;
+          this.eraser.cancel();
           this.controls.enabled = true;
           this.requestRender();
         }
@@ -270,13 +309,7 @@ export class CaveView {
         this.fingers.delete(e.pointerId);
         this.guard.touchUp(e);
       }
-      if (e.pointerType === 'pen') {
-        this.guard.pen(e);
-        if (this.erasing) {
-          this.erasing = false;
-          this.controls.enabled = true;
-        }
-      }
+      if (e.pointerType === 'pen') this.guard.pen(e);
     };
     canvas.addEventListener('pointerup', lift);
     canvas.addEventListener('pointercancel', (e) => {
@@ -297,31 +330,18 @@ export class CaveView {
       if (e.button !== 2 || !d) return;
       this.rightDown = null;
       if (Math.hypot(e.clientX - d.x, e.clientY - d.y) >= 5) return;
-      // Shift or Ctrl right click while a point is wanted: the one-pick snap menu, not the end of the command.
-      if ((e.shiftKey || e.ctrlKey) && this.wantsPoint()) {
-        this.onSnapMenu(e.clientX, e.clientY);
-        return;
-      }
-      if (this.pasteOn) {
-        this.onEndPaste();
-        return;
-      }
-      if (this.copyOn) {
-        this.onEndCopy();
-        return;
-      }
-      if (this.drawTool) {
-        this.onEndCommand();
-        return;
-      }
-      const rect = canvas.getBoundingClientRect();
-      const k = this.lineAt(e.clientX - rect.left, e.clientY - rect.top);
-      if (k) this.onLineMenu(e.clientX, e.clientY, k.id, this.mapLines.filter((m) => m.kind === k.kind && !isKindHidden(m.kind)).map((m) => m.id));
+      this.rightClick(e);
     });
-    canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+    // A Mac's Control-click is a right click that arrives as a left button: only the context-menu event says so.
+    canvas.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      if (this.sideMenu.swallow(e)) return; // the pen's side button erased: it was not a right click
+      if (e.button === 0 && e.ctrlKey) this.rightClick(e);
+    });
+
     // A double click on a symbol, a text or a leader edits its words in place.
     canvas.addEventListener('dblclick', (e) => {
-      if (this.drawTool || this.copyOn || this.pasteOn || e.button !== 0) return;
+      if (this.drawTool || this.eraserArmed || this.copyOn || this.pasteOn || e.button !== 0) return;
       const rect = canvas.getBoundingClientRect();
       const k = this.lineAt(e.clientX - rect.left, e.clientY - rect.top);
       if (k && isStampKind(k.kind)) this.editWordsOf(k);
@@ -331,6 +351,26 @@ export class CaveView {
       'pointerdown',
       (e) => {
         if (e.button !== 0) return;
+        if (this.circlePickOn) {
+          // Picking the entrance: the press is the circle's centre; nothing else gets it.
+          e.stopImmediatePropagation();
+          e.stopPropagation();
+          const at = this.planPoint(e.clientX, e.clientY);
+          if (!at) return;
+          const rect = canvas.getBoundingClientRect();
+          const px: [number, number] = [e.clientX - rect.left, e.clientY - rect.top];
+          this.circlePick = { at, px, now: px };
+          this.controls.enabled = false;
+          canvas.setPointerCapture(e.pointerId);
+          this.requestRender();
+          return;
+        }
+        if (this.eraserArmed) {
+          // The Eraser: from straight above or below a press erases; from any other angle, or with a second finger, it turns the view.
+          if (!this.canDrawHere || this.fingers.size > 1 || (e.pointerType === 'touch' && !this.drawOptions.finger)) return;
+          this.startErase(e);
+          return;
+        }
         if (this.drawTool) {
           // Drawing on the map: only from straight above or below, where plan is what is seen.
           if (!this.canDrawHere || this.fingers.size > 1 || (e.pointerType === 'touch' && !this.drawOptions.finger)) return;
@@ -372,22 +412,42 @@ export class CaveView {
       true,
     );
     canvas.addEventListener('pointermove', (e) => {
+      if (this.circlePickOn) {
+        canvas.style.cursor = 'crosshair';
+        const c = this.circlePick;
+        if (c) {
+          const rect = canvas.getBoundingClientRect();
+          c.now = [e.clientX - rect.left, e.clientY - rect.top];
+          this.requestRender();
+        }
+        return;
+      }
       if (e.pointerType !== 'touch') {
         const cp = this.planPoint(e.clientX, e.clientY);
         this.lastPlan = cp;
         if (cp) this.onCursor(cp[0], cp[1]);
         if (this.copyOn || this.pasteOn) this.requestRender();
       }
+      if (e.pointerType === 'pen') this.guard.pen(e);
+      if (this.eraser.active || ((this.eraserArmed || isEraser(e, option('penButtonErases', false))) && this.canDrawHere)) {
+        // the eraser's circle follows the pointer; during a drag every sample the pointer gave extends its path
+        const r = this.canvas.getBoundingClientRect();
+        this.eraserAt = [e.clientX - r.left, e.clientY - r.top];
+        if (this.eraser.active) {
+          for (const ev of e.getCoalescedEvents?.().length ? e.getCoalescedEvents() : [e]) {
+            const p = this.planPoint(ev.clientX, ev.clientY);
+            if (p) this.eraser.move(p);
+          }
+        }
+        this.requestRender();
+        if (this.eraser.active) return;
+      } else if (this.eraserAt) {
+        this.eraserAt = null;
+        this.requestRender();
+      }
       // What a pick here would snap to (the thing being edited is not snapped to).
       const here = this.pickPoint(e, this.lineEdit?.id ?? '');
       if (this.wantsPoint()) this.requestRender();
-      if (e.pointerType === 'pen') {
-        this.guard.pen(e);
-        if (this.erasing) {
-          this.eraseAt(e);
-          return;
-        }
-      }
       const edit = this.lineEdit;
       if (edit) {
         const p = here?.p ?? null;
@@ -441,6 +501,26 @@ export class CaveView {
       }
     });
     const drop = (e: PointerEvent) => {
+      if (this.eraser.active) {
+        // the eraser lifts: the whole drag is applied at once, as one undoable edit (a cancelled pointer erases nothing)
+        this.controls.enabled = true;
+        if (e.type === 'pointercancel') this.eraser.cancel();
+        else if (this.eraser.finish(this.erasableLines(), 'map', '')) this.onErased();
+        this.sideMenu.lifted();
+        if (e.pointerType !== 'mouse' && !this.eraserArmed) this.eraserAt = null; // a pen or finger left: no circle stays behind
+        this.requestRender();
+        return;
+      }
+      const circle = this.circlePick;
+      if (circle) {
+        this.circlePick = null;
+        this.controls.enabled = true;
+        this.requestRender();
+        if (e.type !== 'pointerup') return; // a cancelled press picks nothing
+        const end = this.planPoint(e.clientX, e.clientY);
+        if (end) this.onCirclePicked(circle.at[0], circle.at[1], Math.hypot(end[0] - circle.at[0], end[1] - circle.at[1]));
+        return;
+      }
       const edit = this.lineEdit;
       if (edit) {
         this.lineEdit = null;
@@ -460,6 +540,12 @@ export class CaveView {
         const end = this.pickPoint(e);
         if (end && line.pts.length >= 2) line.pts[line.pts.length - 1] = end.p;
         clearPick();
+        if (this.drawTool.startsWith('brush-')) {
+          // the breakdown brush: the swept ground (stopped at the walls) becomes area fill
+          this.onBrushDrawn(line.pts.map((p) => [p[0], p[1]] as [number, number]));
+          this.requestRender();
+          return;
+        }
         if (isStampKind(this.drawTool) && line.pts.length === 2) {
           const a = this.project([line.pts[0][0], line.pts[0][1], line.z]);
           const b = this.project([line.pts[1][0], line.pts[1][1], line.z]);
@@ -530,6 +616,7 @@ export class CaveView {
     this.overlay.style.width = `${this.width}px`;
     this.overlay.style.height = `${this.height}px`;
     for (const m of this.materials) m.resolution.set(this.width, this.height);
+    for (const m of this.surfaceMaterials) m.resolution.set(this.width, this.height);
     this.persp.aspect = this.width / this.height;
     this.persp.updateProjectionMatrix();
     this.setOrthoHeight(this.visibleHalfHeight());
@@ -574,6 +661,27 @@ export class CaveView {
     this.onProjection(kind);
     if (this.reshade()) this.rebuild();
     this.requestRender();
+  }
+
+  /** Moves the orbit's turning point along the line of sight to the passage, line or station under the middle of
+   *  the view, so turning keeps that in place. The camera does not move and the picture does not change: the point
+   *  only slides along the ray the camera already looks down. Nothing there: the turning point stays where it is. */
+  private pivotAtViewCenter() {
+    const ray = new THREE.Raycaster();
+    ray.params.Line = { threshold: this.visibleHalfHeight() * 0.02 };
+    ray.params.Points = { threshold: this.visibleHalfHeight() * 0.02 };
+    ray.setFromCamera(new THREE.Vector2(0, 0), this.camera);
+    const targets: THREE.Object3D[] = [this.content];
+    if (this.passage) targets.push(this.passage);
+    const hit = ray.intersectObjects(targets, true).find((h) => h.object.visible);
+    if (!hit) return;
+    const offset = this.camera.position.clone().sub(this.controls.target);
+    const along = hit.point.clone().sub(this.camera.position).dot(offset.clone().normalize().negate());
+    if (!(along > 0)) return;
+    // the new turning point: on the camera's line of sight, at the depth of what was hit
+    const dir = offset.clone().normalize().negate();
+    this.controls.target.copy(this.camera.position).addScaledVector(dir, along);
+    this.controls.update();
   }
 
   // ---- views -------------------------------------------------------------------------------
@@ -725,6 +833,10 @@ export class CaveView {
   }
 
   private readonly scans = new Map<string, { mesh: THREE.Mesh; url: string }>();
+  /** The latest request for each scan, so a picture that finishes loading after a newer request is dropped and the newest placement is the one used. */
+  private readonly scanWanted = new Map<string, { sig: string; item: Parameters<CaveView['setScans']>[0][number] }>();
+  /** `key|sig` of pictures still loading, so a repeat request does not load them twice. */
+  private readonly scanLoading = new Set<string>();
   private static readonly SCAN_MAX = 4096;
 
   /**
@@ -733,24 +845,33 @@ export class CaveView {
    * at height `z`. Drawn before the lines and without depth, so the passage never hides it and the
    * survey is drawn over it.
    */
-  setScans(list: { key: string; url: string; matrix: number[]; z: number; opacity: number; trim?: [number, number][] | null; warp?: Warp | null; plane?: [number, number, number] | null; height?: ((x: number, y: number) => number) | null }[]) {
+  setScans(list: { key: string; url: string; matrix: number[]; z: number; opacity: number; trim?: [number, number][] | null; warp?: Warp | null; plane?: [number, number, number] | null; height?: ((x: number, y: number) => number) | null; order?: number }[]) {
     const keep = new Set(list.map((l) => l.key));
     for (const [key, s] of this.scans) {
       if (!keep.has(key)) this.removeScan(key, s);
     }
-    for (const item of list) {
-      const have = this.scans.get(item.key);
-      const sig = item.url + '|' + (item.trim ? item.trim.join(';') : '');
+    for (const key of [...this.scanWanted.keys()]) if (!keep.has(key)) this.scanWanted.delete(key);
+    for (const request of list) {
+      const have = this.scans.get(request.key);
+      const sig = request.url + '|' + (request.trim ? request.trim.join(';') : '');
+      this.scanWanted.set(request.key, { sig, item: request });
       if (have && have.url === sig) {
-        this.placeScan(have.mesh, item);
+        this.placeScan(have.mesh, request);
         continue;
       }
-      if (have) this.removeScan(item.key, have);
-      new THREE.TextureLoader().load(item.url, (loaded) => {
-        if (this.scans.has(item.key) || !keep.has(item.key)) {
+      if (have) this.removeScan(request.key, have);
+      const loading = `${request.key}|${sig}`;
+      if (this.scanLoading.has(loading)) continue; // already on its way; it will use the newest placement
+      this.scanLoading.add(loading);
+      new THREE.TextureLoader().load(request.url, (loaded) => {
+        this.scanLoading.delete(loading);
+        // A newer request for this scan (another picture, or none) wins over a load that finished late.
+        const want = this.scanWanted.get(request.key);
+        if (!want || want.sig !== sig || this.scans.has(request.key)) {
           loaded.dispose();
           return;
         }
+        const item = want.item;
         const img = loaded.image as CanvasImageSource & { width: number; height: number };
         const full = { x0: 0, y0: 0, w: img.width as number, h: img.height as number };
         let tex: THREE.Texture = loaded;
@@ -791,13 +912,13 @@ export class CaveView {
         mesh.userData.box = box;
         mesh.userData.flat = geo;
         mesh.matrixAutoUpdate = false;
-        mesh.renderOrder = -10;
+        mesh.renderOrder = item.order ?? -10; // the surface photo asks to be lower still, under every scan
         mesh.frustumCulled = false;
         this.scans.set(item.key, { mesh, url: sig });
         this.placeScan(mesh, item);
         this.scene.add(mesh);
         this.requestRender();
-      });
+      }, undefined, () => this.scanLoading.delete(loading));
     }
     this.requestRender();
   }
@@ -843,6 +964,102 @@ export class CaveView {
     this.requestRender();
   }
 
+  /**
+   * Contour lines over the surface photo: minor lines thin and pale, majors thicker and darker, each
+   * major run labelled at its middle point. Points are cave metres (z in the survey frame, or level at
+   * the entrance's height when the ground's datum is unknown). `unit` is the label's unit name.
+   */
+  setContours(list: { xyz: number[]; major: boolean; closed: boolean; level: number }[], unit: string, visible: boolean) {
+    for (const c of [...this.surfaceGroup.children]) {
+      if (c.userData.kind !== 'contour') continue;
+      this.surfaceGroup.remove(c);
+      (c as LineSegments2).geometry.dispose();
+    }
+    for (const m of this.surfaceMaterials) m.dispose();
+    this.surfaceMaterials = [];
+    this.contourLabels = [];
+    if (!visible) return this.requestRender();
+    for (const major of [false, true]) {
+      const segs: number[] = [];
+      for (const c of list) {
+        if (c.major !== major) continue;
+        const p = c.xyz;
+        const n = Math.floor(p.length / 3);
+        const count = c.closed ? n : n - 1;
+        for (let i = 0; i < count; i++) {
+          const a = i * 3;
+          const b = ((i + 1) % n) * 3;
+          segs.push(p[a], p[a + 1], p[a + 2], p[b], p[b + 1], p[b + 2]);
+        }
+      }
+      if (!segs.length) continue;
+      const geo = new LineSegmentsGeometry();
+      geo.setPositions(segs);
+      // Opaque and without depth: drawn first (render order), so the survey's lines always draw over them.
+      const mat = new LineMaterial({ color: major ? 0x8a5a2b : 0xb89a78, linewidth: major ? 1.6 : 0.8, depthTest: false, depthWrite: false });
+      mat.resolution.set(this.width, this.height);
+      const mesh = new LineSegments2(geo, mat);
+      mesh.userData.kind = 'contour';
+      mesh.renderOrder = -1;
+      mesh.frustumCulled = false;
+      this.surfaceGroup.add(mesh);
+      this.surfaceMaterials.push(mat);
+    }
+    for (const c of list) {
+      const n = Math.floor(c.xyz.length / 3);
+      if (!c.major || n === 0) continue;
+      const m = Math.floor(n / 2) * 3;
+      this.contourLabels.push({ at: [c.xyz[m], c.xyz[m + 1], c.xyz[m + 2]], text: `${+c.level.toFixed(3)} ${unit}` });
+    }
+    this.requestRender();
+  }
+
+  /** Switches the entrance pick: a press and drag on the map draws a circle; letting go calls `onCirclePicked`. */
+  setCirclePick(on: boolean) {
+    this.circlePickOn = on;
+    if (!on && this.circlePick) {
+      this.circlePick = null;
+      this.controls.enabled = true;
+    }
+    this.canvas.style.cursor = on ? 'crosshair' : '';
+    this.requestRender();
+  }
+
+  /** The ground as a translucent surface (a w x h grid of cave-metre points, NaN z = hole), or none. */
+  setTerrain(t: Terrain | null, visible: boolean) {
+    for (const c of [...this.surfaceGroup.children]) {
+      if (c.userData.kind !== 'terrain') continue;
+      this.surfaceGroup.remove(c);
+      const mesh = c as THREE.Mesh;
+      mesh.geometry.dispose();
+      (mesh.material as THREE.Material).dispose();
+    }
+    if (!t || !visible) return this.requestRender();
+    // A full 512 x 512 grid is a quarter of a million points: every other one draws the same ground.
+    const g = t.w * t.h > 200_000 ? thinTerrain(t, 2) : t;
+    const ok = (i: number) => Number.isFinite(g.xyz[i * 3 + 2]);
+    const idx: number[] = [];
+    for (let r = 0; r + 1 < g.h; r++)
+      for (let c = 0; c + 1 < g.w; c++) {
+        const a = r * g.w + c;
+        const b = a + 1;
+        const d = a + g.w;
+        const e = d + 1;
+        if (ok(a) && ok(b) && ok(d) && ok(e)) idx.push(a, d, b, b, d, e);
+      }
+    const pos = Float32Array.from(g.xyz, (v) => (Number.isFinite(v) ? v : 0));
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    geo.setIndex(idx);
+    geo.computeVertexNormals();
+    const mat = new THREE.MeshLambertMaterial({ color: 0x9c8f73, transparent: true, opacity: 0.35, depthWrite: false, side: THREE.DoubleSide });
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.userData.kind = 'terrain';
+    mesh.renderOrder = -2;
+    this.surfaceGroup.add(mesh);
+    this.requestRender();
+  }
+
   private removeScan(key: string, s: { mesh: THREE.Mesh }) {
     this.scene.remove(s.mesh);
     s.mesh.geometry.dispose();
@@ -881,9 +1098,44 @@ export class CaveView {
     this.requestRender();
   }
 
+  /** Depth shading is on: the passage floor is washed darker the deeper it lies. */
+  private depthShade = false;
+  setDepthShade(on: boolean) {
+    this.depthShade = on;
+    this.requestRender();
+  }
+
+  /** Ink style is on: the survey's walls leave the 3D lines and are drawn by hand in the overlay. */
+  private inkWalls = false;
+  setHandInk(on: boolean) {
+    if (on === this.inkWalls) return this.requestRender();
+    this.inkWalls = on;
+    this.rebuild();
+  }
+
+  /** How far the breakdown brush reaches from the pointer, in metres. */
+  setBrushRadius(m: number) {
+    this.brushRadius = m > 0 ? m : 1.5;
+    this.requestRender();
+  }
+
+  /** Every wall in plan (metres): the survey's passage walls and the walls drawn on the map, as polylines. The brush stops at these. */
+  planWalls(): [number, number][][] {
+    const out: [number, number][][] = [];
+    for (const w of this.data?.walls ?? []) out.push(w.map((p) => [p[0], p[1]] as [number, number]));
+    for (const k of this.displayMapLines()) {
+      if (k.kind !== 'wall' || k.points.length < 2) continue;
+      const pts = smooth(k.points.map((p) => [p[0], p[1]] as [number, number]), null, 8, k.closed).pts as [number, number][];
+      out.push(k.closed ? [...pts, pts[0]] : pts);
+    }
+    return out;
+  }
+
   /** The drawing tool picked on the Draw tab (a palette type), or empty for none. */
   setDrawTool(key: string) {
-    this.drawTool = key;
+    this.eraserArmed = key === 'eraser';
+    this.drawTool = this.eraserArmed ? '' : key;
+    if (!this.eraserArmed && !this.eraser.active) this.eraserAt = null;
     this.canvas.style.cursor = key && this.canDrawHere ? 'crosshair' : '';
     this.requestRender();
   }
@@ -983,6 +1235,37 @@ export class CaveView {
   }
 
   /** Opens the in-place box on a stamp's words. */
+  /** A right click at the pointer: it ends a running command (or opens the snap menu); otherwise it opens the menu for what is under it. */
+  private rightClick(e: MouseEvent) {
+    // Shift or Ctrl right click while a point is wanted: the one-pick snap menu, not the end of the command.
+    if ((e.shiftKey || e.ctrlKey) && this.wantsPoint()) {
+      this.onSnapMenu(e.clientX, e.clientY);
+      return;
+    }
+    if (this.pasteOn) {
+      this.onEndPaste();
+      return;
+    }
+    if (this.copyOn) {
+      this.onEndCopy();
+      return;
+    }
+    if (this.drawTool || this.eraserArmed) {
+      this.onEndCommand();
+      return;
+    }
+    const rect = this.canvas.getBoundingClientRect();
+    const k = this.lineAt(e.clientX - rect.left, e.clientY - rect.top);
+    if (k) {
+      const similar = this.mapLines.filter((m) => m.kind === k.kind && !isKindHidden(m.kind)).map((m) => m.id);
+      this.onLineMenu(e.clientX, e.clientY, k.id, similar, isStampKind(k.kind) ? () => this.editWordsOf(k) : null);
+      return;
+    }
+    const st = this.pickStation(e.clientX, e.clientY);
+    if (st) this.onStationMenu(e.clientX, e.clientY, st.id, st.label);
+    else this.onViewMenu(e.clientX, e.clientY);
+  }
+
   private editWordsOf(k: ProfileSketch3d) {
     const pts = this.screenPoints(k).filter((p): p is [number, number] => !!p);
     const spot = stampEditSpot(k.kind, pts, leaderLook(k.style, ((this.pixelsPerMetreAt(k.points[0]) ?? 0) * drawing.scale) / 1000));
@@ -1057,44 +1340,82 @@ export class CaveView {
    * hatch of a fill can be clicked as well as its outline while a wall or symbol over a fill still gets the click. Null if none.
    */
   private lineAt(x: number, y: number): ProfileSketch3d | null {
+    return this.linesAt(x, y, true)[0] ?? null;
+  }
+
+  /**
+   * Every map line at a screen point, in the order `lineAt` ranks them (its first is `lineAt`'s answer): edges and symbols
+   * within reach topmost first, then shaped lines by their marks, then areas the point is inside. What selection cycling lists.
+   */
+  private linesAt(x: number, y: number, firstOnly = false): ProfileSketch3d[] {
+    const out: ProfileSketch3d[] = [];
     const lines = [...resolveLeaders(this.mapLines)].reverse().filter((k) => !isKindHidden(k.kind));
     const pts = (k: ProfileSketch3d) => this.screenPoints(k).filter((p): p is [number, number] => !!p);
     for (const k of lines) {
       const p = pts(k);
-      if (p.length === k.points.length && (isStampKind(k.kind) ? hitsStamp(k.kind, k.text, p[0], p[1], x, y, 4, leaderLook(k.style, ((this.pixelsPerMetreAt(k.points[0]) ?? 0) * drawing.scale) / 1000), p.slice(2) as [number, number][]) : distanceToCurve(p, x, y, k.closed) <= 7)) return k;
+      if (p.length === k.points.length && (isStampKind(k.kind) ? hitsStamp(k.kind, k.text, p[0], p[1], x, y, 4, leaderLook(k.style, ((this.pixelsPerMetreAt(k.points[0]) ?? 0) * drawing.scale) / 1000), p.slice(2) as [number, number][]) : distanceToCurve(p, x, y, k.closed) <= 7)) {
+        out.push(k);
+        if (firstOnly) return out;
+      }
     }
     // a shaped line (ledge ticks, pit hachures, flowstone, slope, ...) is also picked by any part of its marks
     const stationsXY = (this.data?.stations ?? []).map((s) => [s.at[0], s.at[1]] as [number, number]);
     for (const k of lines) {
-      if (isStampKind(k.kind) || isFillKind(k.kind) || k.points.length < 2) continue;
+      if (out.includes(k) || isStampKind(k.kind) || isFillKind(k.kind) || k.points.length < 2) continue;
       const plan = smooth(k.points.map((q) => [q[0], q[1]] as [number, number]), null, 10, k.closed).pts;
       const z = k.points[0][2];
       for (const line of ornamentFor(k.kind, k.id, plan, k.closed, stationsXY).lines) {
         const screen = line.map((q) => this.project([q[0], q[1], z])).filter((q): q is [number, number] => !!q);
-        if (screen.length === line.length && distanceToPolyline(screen, x, y) <= 7) return k;
+        if (screen.length === line.length && distanceToPolyline(screen, x, y) <= 7) {
+          out.push(k);
+          if (firstOnly) return out;
+          break;
+        }
       }
     }
     for (const k of lines) {
+      if (out.includes(k)) continue;
       const p = pts(k);
-      if (isFillKind(k.kind) && p.length === k.points.length && insideCurve(p, x, y)) return k;
+      if (isFillKind(k.kind) && p.length === k.points.length && insideCurve(p, x, y)) {
+        out.push(k);
+        if (firstOnly) return out;
+      }
     }
-    return null;
+    return out;
+  }
+
+  /** The map lines under the last plain press that selected one, topmost first (what selection cycling offers); reading empties it. */
+  takePressStack(): ProfileSketch3d[] {
+    const out = this.pressStack;
+    this.pressStack = [];
+    return out;
+  }
+
+  /** The eraser touches down at a pointer (Top or Bottom view): its drag starts, and nothing else gets the press. False when the pointer is off the plan. */
+  private startErase(e: PointerEvent): boolean {
+    const p = this.planPoint(e.clientX, e.clientY);
+    if (!p) return false;
+    e.stopImmediatePropagation();
+    e.stopPropagation();
+    this.controls.enabled = false;
+    this.canvas.setPointerCapture(e.pointerId);
+    const rect = this.canvas.getBoundingClientRect();
+    this.eraserAt = [e.clientX - rect.left, e.clientY - rect.top];
+    this.eraser.start(p);
+    this.requestRender();
+    return true;
+  }
+
+  /** The map lines an eraser drag may cut: those the Show menu leaves on, in plan metres (east, north). */
+  private erasableLines(): EraseLine[] {
+    return resolveLeaders(this.mapLines)
+      .filter((k) => !isKindHidden(k.kind))
+      .map((k) => ({ id: k.id, kind: k.kind, points: k.points.map((q) => [q[0], q[1]] as [number, number]), widths: k.widths, closed: k.closed }));
   }
 
   /** A press in the Top or Bottom view with no tool: pick up a fit point of the selected map line, or select the line there. */
-  private eraseAt(e: PointerEvent) {
-    const rect = this.canvas.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
-    const k = this.lineAt(x, y);
-    if (k) {
-      this.mapLines = this.mapLines.filter((m) => m.id !== k.id);
-      this.onLineErased(k.id);
-      this.requestRender();
-    }
-  }
-
   private pressLine(e: PointerEvent) {
+    this.pressStack = [];
     // Selecting a line works from any angle (its settings are edited in the ribbon); only moving its fit points needs the top view.
     if (this.drawTool || e.button !== 0 || this.fingers.size > 1) return;
     const rect = this.canvas.getBoundingClientRect();
@@ -1167,8 +1488,10 @@ export class CaveView {
         return;
       }
     }
-    const k = this.lineAt(x, y);
+    const stack = this.linesAt(x, y);
+    const k = stack[0];
     if (k) {
+      this.pressStack = additive ? [] : stack;
       this.onSelectLine(k.id, additive);
       return;
     }
@@ -1176,7 +1499,8 @@ export class CaveView {
   }
 
   setMapLines(list: ProfileSketch3d[]) {
-    this.mapLines = list;
+    // a labelled symbol always has its label's note point, so the label has a grip and can be pulled away
+    this.mapLines = withLabelSpots(list);
     this.requestRender();
   }
 
@@ -1345,7 +1669,12 @@ export class CaveView {
       }
       // A curve through the fit points (straight where part of it is behind the camera).
       const whole = projected.every((p) => !!p);
-      const curve = whole ? smooth(projected as [number, number][], k.widths, 10, k.closed) : { pts: projected, widths: k.widths };
+      let curve: { pts: ([number, number] | null)[]; widths: number[] | null } = whole ? smooth(projected as [number, number][], k.widths, 10, k.closed) : { pts: projected, widths: k.widths };
+      if (whole && handInkOn() && !isFillKind(k.kind)) {
+        // Ink style: the curve wobbles, swells and tapers as if inked by hand (the picture only)
+        const pxPerMm = ((this.pixelsPerMetreAt(k.points[0]) ?? 0) * drawing.scale) / 1000;
+        curve = inkCurve(curve.pts as [number, number][], curve.widths, k.id, pxPerMm, k.closed);
+      }
       const pts = curve.pts;
       const trace = (extra: number, alpha: number, dash: number[]) => {
         g.globalAlpha = base * alpha;
@@ -1354,6 +1683,7 @@ export class CaveView {
           const a = pts[i - 1];
           const b = pts[i];
           if (!a || !b) continue;
+          if (!extra && curve.widths && (curve.widths[i - 1] === 0 || curve.widths[i] === 0)) continue; // the pen lifted (Ink style)
           g.lineWidth = l.weight * (curve.widths ? (curve.widths[i - 1] + curve.widths[i]) / 2 : 1) + extra;
           g.beginPath();
           g.moveTo(a[0], a[1]);
@@ -1421,6 +1751,13 @@ export class CaveView {
   }
 
   private selectedShot = '';
+  private attachedLegs: [[number, number, number], [number, number, number]][] = [];
+
+  /** The legs a just-drawn map line hangs on, glowed so it is plain which passage (level) it took. */
+  setAttachedLegs(list: [[number, number, number], [number, number, number]][]) {
+    this.attachedLegs = list;
+    this.requestRender();
+  }
   /** The leg or splay (shot id) to light up on the map. */
   setSelectedShot(id: string) {
     this.selectedShot = id;
@@ -1463,6 +1800,57 @@ export class CaveView {
     return best;
   }
 
+  /**
+   * Every leg and splay within `radius` pixels of a screen point, nearest first (a splay counts 1.5 px farther, as in
+   * `pickShot`), with the ends it runs between. What selection cycling lists for the survey under a click.
+   */
+  shotsAt(clientX: number, clientY: number, radius = 7): { kind: 'leg' | 'splay'; id: string; from: [number, number, number]; to: [number, number, number]; d: number }[] {
+    const s = this.data;
+    if (!s) return [];
+    const rect = this.canvas.getBoundingClientRect();
+    const x = clientX - rect.left;
+    const y = clientY - rect.top;
+    const out: { kind: 'leg' | 'splay'; id: string; from: [number, number, number]; to: [number, number, number]; d: number }[] = [];
+    const near = (a: [number, number, number], b: [number, number, number]) => {
+      const p = this.project(a);
+      const q = this.project(b);
+      if (!p || !q) return Infinity;
+      const dx = q[0] - p[0];
+      const dy = q[1] - p[1];
+      const len2 = dx * dx + dy * dy;
+      const t = len2 < 1e-9 ? 0 : Math.max(0, Math.min(1, ((x - p[0]) * dx + (y - p[1]) * dy) / len2));
+      return Math.hypot(x - (p[0] + t * dx), y - (p[1] + t * dy));
+    };
+    for (const l of s.legs) {
+      const d = near(l.from, l.to);
+      if (d <= radius) out.push({ kind: 'leg', id: l.shot, from: l.from, to: l.to, d });
+    }
+    s.splays.forEach((sp, i) => {
+      const from: [number, number, number] = [sp[0], sp[1], sp[2]];
+      const to: [number, number, number] = [sp[3], sp[4], sp[5]];
+      const d = near(from, to) + 1.5;
+      if (d <= radius && s.splay_shots[i]) out.push({ kind: 'splay', id: s.splay_shots[i], from, to, d });
+    });
+    return out.sort((a, b) => a.d - b.d);
+  }
+
+  /** Every station within `radius` pixels of a screen point, nearest first (stations of two levels can sit on one spot in plan). */
+  stationsAt(clientX: number, clientY: number, radius = 14): { id: string; label: string; at: [number, number, number]; d: number }[] {
+    const s = this.data;
+    if (!s) return [];
+    const rect = this.canvas.getBoundingClientRect();
+    const x = clientX - rect.left;
+    const y = clientY - rect.top;
+    const out: { id: string; label: string; at: [number, number, number]; d: number }[] = [];
+    for (const st of s.stations) {
+      const p = this.project(st.at);
+      if (!p) continue;
+      const d = Math.hypot(p[0] - x, p[1] - y);
+      if (d <= radius) out.push({ id: st.id, label: st.label, at: st.at, d });
+    }
+    return out.sort((a, b) => a.d - b.d);
+  }
+
   /** The station (id) to ring on the map, e.g. the one the Cross Section panel shows. */
   setSelected(id: string) {
     this.selected = id;
@@ -1500,6 +1888,75 @@ export class CaveView {
   setShowLabels(on: boolean) {
     this.showLabels = on;
     this.requestRender();
+  }
+
+  /** Depth shading: the passage seen from above, each piece washed darker the deeper it lies (deepest drawn last, so a
+   *  passage under another shows through where it is deeper), and a small key. Seen only when looking down on the plan. */
+  private drawDepthShade(g: CanvasRenderingContext2D) {
+    const up = Math.abs(this.cameraOffset.clone().normalize().z);
+    const strength = Math.min(1, Math.max(0, (up - 0.8) / 0.15));
+    const pos = this.passage?.geometry.getAttribute('position');
+    if (strength <= 0 || !pos || pos.count < 3) return;
+    const v = new THREE.Vector3();
+    let lo = Infinity;
+    let hi = -Infinity;
+    const tris: { z: number; p: [number, number][] }[] = [];
+    for (let i = 0; i + 2 < pos.count; i += 3) {
+      const p: [number, number][] = [];
+      let z = 0;
+      for (let k = 0; k < 3; k++) {
+        v.fromBufferAttribute(pos, i + k);
+        z += v.z / 3;
+        lo = Math.min(lo, v.z);
+        hi = Math.max(hi, v.z);
+        v.project(this.camera);
+        p.push([(v.x * 0.5 + 0.5) * this.width, (-v.y * 0.5 + 0.5) * this.height]);
+      }
+      tris.push({ z, p });
+    }
+    const span = Math.max(hi - lo, 1e-6);
+    tris.sort((a, b) => b.z - a.z);
+    g.save();
+    g.lineJoin = 'round';
+    g.lineWidth = 0.6; // a hair of stroke closes the seams between triangles
+    for (const t of tris) {
+      const depth = (hi - t.z) / span; // 0 at the highest point, 1 at the deepest
+      // a grey ramp, pale where high and near-black where deep, so it reads on a dark or light theme and prints in black and white
+      const k = Math.round(225 - 190 * depth);
+      const shade = `rgba(${k}, ${k}, ${k}, ${(strength * 0.6).toFixed(3)})`;
+      g.fillStyle = shade;
+      g.strokeStyle = shade;
+      g.beginPath();
+      g.moveTo(t.p[0][0], t.p[0][1]);
+      g.lineTo(t.p[1][0], t.p[1][1]);
+      g.lineTo(t.p[2][0], t.p[2][1]);
+      g.closePath();
+      g.fill();
+      g.stroke();
+    }
+    // the key: highest to deepest, in the view's units, measured down from the highest point
+    const w = 120;
+    const x = this.width - w - 16;
+    const y = this.height - 34;
+    const grad = g.createLinearGradient(x, 0, x + w, 0);
+    grad.addColorStop(0, `rgba(225, 225, 225, ${0.6 * strength})`);
+    grad.addColorStop(1, `rgba(35, 35, 35, ${0.6 * strength})`);
+    g.globalAlpha = 1;
+    g.fillStyle = `#${this.theme.bg.getHexString()}`;
+    g.fillRect(x - 6, y - 18, w + 12, 34);
+    g.fillStyle = grad;
+    g.fillRect(x, y, w, 8);
+    g.strokeStyle = `#${this.theme.accent.getHexString()}`;
+    g.lineWidth = 0.5;
+    g.strokeRect(x, y, w, 8);
+    g.fillStyle = this.theme.css.text ?? '#888';
+    g.font = '10px system-ui, sans-serif';
+    g.textAlign = 'left';
+    g.fillText('Highest', x, y - 5);
+    g.textAlign = 'right';
+    const deep = this.units === 'imperial' ? `${Math.round(span / 0.3048)} ft deeper` : `${Math.round(span)} m deeper`;
+    g.fillText(deep, x + w, y - 5);
+    g.restore();
   }
 
   /** The rock halo: a soft glow from the walls out into the rock, seen when looking down on the plan. */
@@ -1591,13 +2048,20 @@ export class CaveView {
   }
 
   setScene(scene: Scene | null, refit = true) {
+    // A cave that starts with no survey keeps its survey framed while it is typed in, until the person moves
+    // the view themself; otherwise a new cave grows off-screen.
+    if (refit) this.autoFit = (scene?.stations.length ?? 0) < 2; // a cave opened: only an empty one is framed as it grows
+    else if ((this.data?.stations.length ?? 0) < 2 && (scene?.stations.length ?? 0) < 2) this.autoFit = true;
     this.data = scene;
     this.shadedFrom.set(0, 0, 1); // a fresh scene is shaded for the view from above
     this.shadedPersp = false;
     if (!refit || this.camera === this.persp) this.reshade();
     this.rebuild();
     if (refit) this.resetView();
+    else if (this.autoFit && (scene?.stations.length ?? 0) >= 2) this.fit();
   }
+  /** Keep framing the survey as it grows (a cave begun from nothing, until the view is moved by hand). */
+  private autoFit = false;
 
   applyTheme() {
     this.theme = readTheme();
@@ -1649,7 +2113,8 @@ export class CaveView {
     lines(sh.splays_under, 'splay', true);
     lines(sh.legs_over, legType);
     lines(sh.legs_under, legType, true);
-    if (walls) {
+    if (walls && !this.inkWalls) {
+      // (in Ink style the walls are drawn by hand in the overlay instead)
       lines(sh.walls_over, 'wall');
       lines(sh.walls_under, 'wall', true);
     }
@@ -1719,6 +2184,39 @@ export class CaveView {
     g.font = '11px system-ui, sans-serif';
     g.textAlign = 'left';
     if (this.halo) this.drawHaloPlan(g, s.walls);
+    if (this.depthShade) this.drawDepthShade(g);
+    if (this.inkWalls && this.showWalls && s.walls.length) {
+      // Ink style: the survey's walls inked by hand like every drawn line
+      this.strokeLines(g, s.walls.map((w, i) => ({ id: `survey-wall-${i}`, closed: false, kind: 'wall', run: '', widths: null, points: w })));
+    }
+    const circle = this.circlePick;
+    if (circle) {
+      // the circle being dragged for the entrance pick, in screen space
+      const r = Math.hypot(circle.now[0] - circle.px[0], circle.now[1] - circle.px[1]);
+      const hi = `#${this.theme.accent.getHexString()}`;
+      g.strokeStyle = hi;
+      g.fillStyle = hi;
+      g.lineWidth = 2;
+      g.globalAlpha = 0.15;
+      g.beginPath();
+      g.arc(circle.px[0], circle.px[1], r, 0, Math.PI * 2);
+      g.fill();
+      g.globalAlpha = 1;
+      g.stroke();
+      g.beginPath();
+      g.arc(circle.px[0], circle.px[1], 2.5, 0, Math.PI * 2);
+      g.fill();
+    }
+    if (this.contourLabels.length) {
+      // the major contours' levels, under everything else the overlay draws
+      g.fillStyle = '#8a5a2b';
+      g.textAlign = 'center';
+      for (const l of this.contourLabels) {
+        const p = this.project(l.at);
+        if (p && p[0] > -40 && p[1] > -20 && p[0] < this.width + 40 && p[1] < this.height + 20) g.fillText(l.text, p[0], p[1] - 3);
+      }
+      g.textAlign = 'left';
+    }
 
     const zmin = s.bounds?.[2] ?? 0;
     const zspan = Math.max(1e-6, (s.bounds?.[5] ?? 0) - zmin);
@@ -1764,8 +2262,39 @@ export class CaveView {
       g.stroke();
     }
     const live = this.liveLine;
-    if (live && live.pts.length > 1) {
+    if (live && this.drawTool.startsWith('brush-')) {
+      // the brush: a wide soft band where it has swept so far
+      const px = this.pixelsPerMetreAt([live.pts[0][0], live.pts[0][1], live.z]) ?? 0;
+      const pts = live.pts.map((p) => this.project([p[0], p[1], live.z])).filter((p): p is [number, number] => !!p);
+      if (pts.length && px > 0) {
+        g.save();
+        g.strokeStyle = `#${this.theme.accent.getHexString()}`;
+        g.fillStyle = g.strokeStyle;
+        g.globalAlpha = 0.22;
+        g.lineCap = 'round';
+        g.lineJoin = 'round';
+        g.lineWidth = this.brushRadius * 2 * px;
+        g.beginPath();
+        pts.forEach((q, i) => (i === 0 ? g.moveTo(q[0], q[1]) : g.lineTo(q[0], q[1])));
+        if (pts.length === 1) g.lineTo(pts[0][0] + 0.01, pts[0][1]);
+        g.stroke();
+        g.globalAlpha = 0.8;
+        g.lineWidth = 1.5;
+        const last = pts[pts.length - 1];
+        g.beginPath();
+        g.arc(last[0], last[1], this.brushRadius * px, 0, Math.PI * 2);
+        g.stroke();
+        g.restore();
+      }
+    } else if (live && live.pts.length > 1) {
       this.strokeLines(g, [{ id: '', closed: false, kind: this.drawTool || 'sketch', run: '', text: isStampKind(this.drawTool) ? liveWords(this.drawTool, this.drawOptions.label) : undefined, points: live.pts.map((p) => [p[0], p[1], live.z] as [number, number, number]), widths: live.pressure ? live.widths : null }]);
+    }
+    if (this.eraser.active || this.eraserAt) {
+      // the eraser: what it has swept this drag (on the plan it erases in), and its circle at the pointer
+      const z = this.controls.target.z;
+      const trail = this.eraser.path.map((p) => this.project([p[0], p[1], z])).filter((q): q is [number, number] => !!q);
+      const px = this.pixelsPerMetreAt([this.controls.target.x, this.controls.target.y, z]) ?? pxPerM;
+      paintEraser(g, trail, this.eraserAt, eraserRadiusPx(px), `#${this.theme.accent.getHexString()}`);
     }
     if (this.showSections) {
       for (const sec of this.sections) {
@@ -1791,6 +2320,23 @@ export class CaveView {
         g.fillText(sec.label, shell.below[0], shell.below[1]);
         g.textAlign = 'left';
       }
+    }
+    // the legs a just-drawn line hangs on: a soft glow in the highlight colour
+    if (this.attachedLegs.length) {
+      g.lineCap = 'round';
+      g.strokeStyle = `#${this.theme.accent.getHexString()}`;
+      g.globalAlpha = 0.25;
+      g.lineWidth = 9;
+      for (const [from, to] of this.attachedLegs) {
+        const a = this.project(from);
+        const b = this.project(to);
+        if (!a || !b) continue;
+        g.beginPath();
+        g.moveTo(a[0], a[1]);
+        g.lineTo(b[0], b[1]);
+        g.stroke();
+      }
+      g.globalAlpha = 1;
     }
     // the picked leg or splay: a bright line in the theme's highlight colour along it
     if (this.selectedShot) {
@@ -1841,7 +2387,7 @@ export class CaveView {
       g.beginPath();
       g.arc(p[0], p[1], 7, 0, Math.PI * 2);
       g.stroke();
-      if (k.percent !== null && pxPerM > 1.2) g.fillText(`${k.percent.toFixed(2)}%`, p[0] + 10, p[1] + 4);
+      if (k.percent !== null && pxPerM > 1.2) g.fillText(`loop ${k.percent.toFixed(2)}% off`, p[0] + 10, p[1] + 4); // says what the number is: how far the loop misses itself
     }
     if (this.projection === 'orthographic') {
       const per = metresPer(this.units); // metres in one display unit

@@ -10,6 +10,7 @@ import { cave, changed, option } from './cave.svelte';
 import { engine, loadEngine } from './engine';
 import type { Anchored, Layout, PlanView, ProfileView, Pt, SectionView, SketchSource, SketchViews, Transform } from './sketch-types';
 import { DEFAULT_FEET_PER_INCH, pxPerMetre } from './sketch-grid';
+import type { EraseResult } from './erase';
 
 export type Pane = 'plan' | 'profile' | 'section';
 export const PANES: Pane[] = ['plan', 'profile', 'section'];
@@ -164,6 +165,34 @@ class Sketch {
     if (!s) return;
     this.apply(s.view, () => {
       this.strokes = this.strokes.map((k) => (k.id === id ? { ...k, ...change } : k));
+    });
+  }
+
+  /**
+   * Applies one eraser drag (lib/erase.ts's answer, in the pane's own metres) as ONE undoable step: whole lines go, a cut
+   * line keeps its id and the longest piece, and every other piece becomes a new line like it, hung on the same station.
+   * A cut line is open, whatever it was.
+   */
+  erase(pane: Pane, r: EraseResult) {
+    const hung = (s: Stroke, world: Pt[]): Pt[] | null => {
+      const st = this.stationsOf(s.view).find((x) => x.label === s.anchor);
+      return st ? world.map((p) => [p[0] - st.p[0], p[1] - st.p[1]] as Pt) : null;
+    };
+    this.apply(pane, () => {
+      const gone = new Set(r.remove);
+      const out = this.strokes
+        .filter((k) => !gone.has(k.id))
+        .map((k) => {
+          const e = r.edits.find((x) => x.id === k.id);
+          const pts = e && hung(k, e.points);
+          return e && pts ? { ...k, pts, widths: e.widths, closed: false } : k;
+        });
+      for (const a of r.adds) {
+        const from = this.find(a.from);
+        const pts = from && !gone.has(from.id) ? hung(from, a.points) : null;
+        if (from && pts) out.push({ ...from, id: newId(), pts, widths: a.widths, closed: false });
+      }
+      this.strokes = out;
     });
   }
 

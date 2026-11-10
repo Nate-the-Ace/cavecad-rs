@@ -4,6 +4,8 @@
 #
 # Run it by hand: Actions > desktop > Run workflow, or `gh workflow run desktop.yml`.
 # The apps are not code-signed yet: macOS and Windows will warn the first time one is opened.
+# Each build is versioned 0.1.<run number> and its updates are signed with the CaveCAD update key (secrets
+# TAURI_SIGNING_PRIVATE_KEY and TAURI_SIGNING_PRIVATE_KEY_PASSWORD; spec 2026-11-09-desktop-self-update-design).
 name: desktop
 
 on:
@@ -58,14 +60,24 @@ jobs:
           npm ci --prefix apps/web
           npm ci --prefix apps/desktop
 
+      - name: Version this build 0.1.<run number>, so an installed app knows it is newer
+        shell: bash
+        run: |
+          node -e "const fs=require('fs'),f='apps/desktop/src-tauri/tauri.conf.json',c=JSON.parse(fs.readFileSync(f,'utf8'));c.version='0.1.${{ github.run_number }}';fs.writeFileSync(f,JSON.stringify(c,null,2))"
+
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          VITE_RELAY_URL: ${{ secrets.RELAY_URL }}
+          # signs each update file (the app refuses any update not signed with this key; its public half is in
+          # tauri.conf.json). tauri-action then writes latest.json, which deploy/update-downloads.sh publishes.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           VITE_FEEDBACK_ENDPOINT: ${{ secrets.FEEDBACK_ENDPOINT }}
           VITE_FEEDBACK_KEY: ${{ secrets.FEEDBACK_KEY }}
-          VITE_SIGNAL_ENDPOINT: ${{ secrets.SIGNAL_ENDPOINT }}
-          VITE_SIGNAL_KEY: ${{ secrets.SIGNAL_KEY }}
+          # accounts: the offline pass's public key, CaveCAD's sign-in page, and the API host the desktop app calls
+          VITE_PASS_PUBLIC_KEY: ${{ vars.PASS_PUBLIC_KEY }}
+          VITE_SIGNIN_URL: ${{ vars.SIGNIN_URL }}
+          VITE_ACCOUNT_BASE: ${{ vars.ACCOUNT_BASE }}
         with:
           projectPath: apps/desktop
           tagName: desktop-latest

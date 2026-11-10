@@ -1,6 +1,7 @@
 // State every panel shares about the open cave. The cave itself lives in the Rust engine; this
 // only says "it changed, look again" so panels refresh together.
 
+import { installHandInk } from './hand-ink-option';
 import type { Units } from './units';
 import { engine } from './engine';
 import { setHiddenTest } from './section-glyph';
@@ -201,10 +202,11 @@ export function setTool(key: string) {
 /** The cave's revision at the last open or save: what "nothing unsaved" means. */
 let savedRevision = 0;
 
-/** Says the cave on screen is the one just opened, loaded or saved: nothing is unsaved now. */
-export function markSaved() {
+/** Says the cave on screen is the one just opened, loaded or saved: nothing is unsaved now. `at` is the revision
+ *  that was written, when the write took time (an edit made meanwhile stays unsaved). */
+export function markSaved(at?: number) {
   try {
-    savedRevision = engine.revision();
+    savedRevision = at ?? engine.revision();
   } catch {
     savedRevision = 0; // the engine is not loaded yet
   }
@@ -263,3 +265,6 @@ export function toggleSelected(id: string) {
   const now = selectedIds();
   selectIds(now.includes(id) ? now.filter((i) => i !== id) : [...now, id]);
 }
+
+// Ink style: the drawing code asks through `hand-ink-option` (it cannot import this module).
+installHandInk(() => option('handInk', false));

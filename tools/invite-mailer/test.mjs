@@ -1,0 +1,27 @@
+// node tools/invite-mailer/test.mjs -- checks Logic.gs.
+import { createRequire } from 'node:module';
+const L = createRequire(import.meta.url)('./Logic.gs');
+let bad = 0;
+const ok = (c, m) => { if (!c) { bad++; console.log('FAIL', m); } };
+const site = 'https://cavecad.com';
+const good = { key: 'K', expected: 'K', to: 'rick@example.com', link: site + '/?signup=abc', site, countThisHour: 0 };
+ok(L.check(good) === null, 'a good request passes');
+ok(L.check({ ...good, key: 'x' }) === 'key', 'wrong key');
+ok(L.check({ ...good, expected: '' }) === 'key', 'no key set');
+ok(L.check({ ...good, to: 'nope' }) === 'address', 'bad address');
+ok(L.check({ ...good, link: 'https://evil.example/?signup=abc' }) === 'link', 'foreign link');
+ok(L.check({ ...good, countThisHour: 40 }) === 'busy', 'hourly cap');
+const m = L.message({ inviter: 'Nathan', to: 'rick@example.com', link: good.link });
+ok(m.subject === 'Nathan invited you to CaveCAD', 'subject');
+ok(m.body.includes('stores caves on its server') && !/in a form it can read/.test(m.body), 'body says where caves live');
+ok(m.body.includes('rick@example.com') && m.body.includes('7 days') && m.body.includes(good.link), 'body');
+const cg = { key: 'K', expected: 'K', kind: 'code', to: 'rick@example.com', code: '123456', site, countThisHour: 0 };
+ok(L.check(cg) === null, 'a code request passes');
+ok(L.check({ ...cg, code: '12345' }) === 'code', 'code must be 6 digits');
+ok(L.check({ ...cg, code: 'abcdef' }) === 'code', 'code must be digits');
+const cm = L.message(cg);
+ok(cm.subject === 'Your CaveCAD sign-in code: 123456', 'code subject');
+ok(cm.body.includes('123456') && cm.body.includes('10 minutes'), 'code body');
+ok(m.body.includes('Google or an emailed code'), 'invite says both ways in');
+console.log(bad ? `invite-mailer: ${bad} failed` : 'invite-mailer: all ok');
+process.exit(bad ? 1 : 0);

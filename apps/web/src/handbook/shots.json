@@ -1,0 +1,50 @@
+{
+  "map.png": {
+    "source": "apps/web/src/panels/MapPanel.svelte",
+    "hash": "ce3c8f5d2bf218be967c046bd26a8ad10da0296dff78edfa62bfab75b817f437"
+  },
+  "profile.png": {
+    "source": "apps/web/src/panels/ProfilePanel.svelte",
+    "hash": "81dd50301cd92de81e9a721f3e7cf1eab469a8ab04f9597884469937ec2a9e86"
+  },
+  "section.png": {
+    "source": "apps/web/src/panels/SectionPanel.svelte",
+    "hash": "d7bbd328ec1711aefb2b5adc4d648917401dce27553367e1d8189c1224e59d2a"
+  },
+  "notebook.png": {
+    "source": "apps/web/src/panels/NotebookPanel.svelte",
+    "hash": "d985ebbcdadda186d595f524ce87f660edac36edac160cefb2c5ab23da5b5a83"
+  },
+  "stations.png": {
+    "source": "apps/web/src/panels/StationsPanel.svelte",
+    "hash": "0e95c464e542ec672c4a2e0b2fd946aceec7409b4c611220966cec0cf88502f6"
+  },
+  "symbols.png": {
+    "source": "apps/web/src/panels/SymbolsPanel.svelte",
+    "hash": "73832fef1badc697803a473de6429656a23db58efb787029375e128caa856360"
+  },
+  "scans.png": {
+    "source": "apps/web/src/panels/ScansPanel.svelte",
+    "hash": "8aca86d1400596440d8f9dead6e39ffdce86be7d3fd771c5442a3b2eb37d944c"
+  },
+  "sheet.png": {
+    "source": "apps/web/src/panels/SheetPanel.svelte",
+    "hash": "7d48f942cf35ba2050c72d5d0b7d3237c0b52414a1a9d63253d92f1f3a63c16d"
+  },
+  "patterns.png": {
+    "source": "apps/web/src/panels/PatternsPanel.svelte",
+    "hash": "803a458080430d7adead15912a4a4169976067ecc0c7874b51e679dbf5e20a1e"
+  },
+  "console.png": {
+    "source": "apps/web/src/components/Console.svelte",
+    "hash": "c94c655d7a258dd19b5e1663ec995d63eef679b94ff0d5a323138280b1ed143a"
+  },
+  "rooms.png": {
+    "source": "apps/web/src/panels/RoomsPanel.svelte",
+    "hash": "4a68fc492595d9444435590f65bbbe8d8b38a2727d4783147b3796bce06ffd18"
+  },
+  "survey.png": {
+    "source": "apps/web/src/panels/SurveyPanel.svelte",
+    "hash": "6ec190eb5f6b4fe528cfab2c6080646c7e73879d4c81adfcffe6073b9f541fa8"
+  }
+}

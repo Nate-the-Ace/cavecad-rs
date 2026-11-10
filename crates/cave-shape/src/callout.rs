@@ -150,6 +150,36 @@ pub fn layout(tip: [f64; 2], at: [f64; 2], chars: usize, curved: bool) -> Layout
     layout_with(tip, at, chars, curved, None, false)
 }
 
+/// How far a symbol's label note must be from the symbol, in symbol radii, before a leader is drawn to it.
+pub const LABEL_CLEAR: f64 = 2.6;
+
+/// The leader from a placed symbol (centre `at`, radius `radius`) to its label note at `note`: `None`
+/// while the note sits beside the symbol (within [`LABEL_CLEAR`] radii), otherwise a callout whose
+/// arrow touches the symbol's edge on the side facing the note, with text `height` high. Only the note
+/// point is authored; this is derived every time, so moving the symbol keeps the leader on it.
+pub fn label_leader(
+    at: [f64; 2],
+    radius: f64,
+    note: [f64; 2],
+    chars: usize,
+    height: f64,
+) -> Option<Layout> {
+    let (dx, dy) = (note[0] - at[0], note[1] - at[1]);
+    let d = dx.hypot(dy);
+    if radius.is_nan() || radius <= 0.0 || !d.is_finite() || d <= LABEL_CLEAR * radius {
+        return None;
+    }
+    let tip = [at[0] + radius * dx / d, at[1] + radius * dy / d];
+    Some(layout_with(
+        tip,
+        note,
+        chars.max(1),
+        false,
+        Some(height),
+        false,
+    ))
+}
+
 /// A leader with any number of arrows, laid out.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct MultiLayout {
@@ -265,5 +295,42 @@ pub fn layout_with(
         note: [b.x1, b.y1, b.x2, b.y2],
         leader,
         head,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_label_beside_its_symbol_has_no_leader() {
+        assert!(label_leader([0.0, 0.0], 1.0, [1.3, 0.0], 2, 0.9).is_none());
+        assert!(label_leader([0.0, 0.0], 1.0, [2.6, 0.0], 2, 0.9).is_none());
+        // a symbol with no size has nothing to point at
+        assert!(label_leader([0.0, 0.0], 0.0, [9.0, 0.0], 2, 0.9).is_none());
+    }
+
+    #[test]
+    fn a_label_pulled_clear_gets_an_arrow_on_the_symbol_edge() {
+        let l = label_leader([0.0, 0.0], 1.0, [6.0, 8.0], 2, 0.9).expect("a leader");
+        // the arrow touches the symbol's circle on the side facing the note
+        assert!((l.leader[0][0] - 0.6).abs() < 1e-12 && (l.leader[0][1] - 0.8).abs() < 1e-12);
+        assert_eq!(l.head[1], l.leader[0]);
+        assert_eq!(l.head.len(), 3);
+        assert_eq!(l.height, 0.9);
+        // the note's near edge is where it was put
+        assert_eq!(l.side, Side::Left);
+        assert!((l.note[0] - 6.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn the_leader_follows_the_symbol() {
+        // moving symbol and note together moves the whole leader by the same amount
+        let a = label_leader([0.0, 0.0], 1.0, [-5.0, 2.0], 3, 1.0).unwrap();
+        let b = label_leader([10.0, -4.0], 1.0, [5.0, -2.0], 3, 1.0).unwrap();
+        for (p, q) in a.leader.iter().zip(&b.leader) {
+            assert!((q[0] - p[0] - 10.0).abs() < 1e-9 && (q[1] - p[1] + 4.0).abs() < 1e-9);
+        }
+        assert_eq!(a.side, Side::Right);
     }
 }

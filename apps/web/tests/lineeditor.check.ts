@@ -1,4 +1,4 @@
-import { LineEditor, endpointNear, joinFit, topLineAt, type EditableLine } from '../src/lib/line-editor.ts';
+import { LineEditor, endpointNear, joinFit, linesAt, topLineAt, type EditableLine } from '../src/lib/line-editor.ts';
 let bad = 0;
 const ok = (c: boolean, m: string) => { if (!c) { bad++; console.log('FAIL', m); } };
 let selected = '';
@@ -37,10 +37,13 @@ ok(ed.refitLine('nothing', 5) === false, 'no such line');
 lines.push({ id: 'sym', kind: 'sym-pit', points: [[0, 0], [0, 10]], widths: null });
 ok(ed.refitLine('sym', 5) === false, 'a symbol has no curve to re-fit');
 lines.pop(); lines.pop();
-// the eraser end of a pen
-removed.length = 0; selected = 'b';
-ok(ed.eraseAt(300, 300) === false && removed.length === 0, 'the eraser over nothing deletes nothing');
-ok(ed.eraseAt(50, 102) === true && removed[0] === 'b' && selected === '', 'the eraser deletes the line under it (and lets go of it)');
+// the eraser cuts the lines the view shows, in the view's own metres; a type switched off in the Show menu is left alone
+{
+  const shownEd = new LineEditor({ lines: () => [...lines, { id: 'h', kind: 'ledge', points: [[0, 0], [1, 1]], widths: null }], toScreen: (p) => p, toWorld: (x, y) => [x, y], selected: () => '', select: () => {}, commit: () => {}, remove: () => {}, redraw: () => {}, hidden: (k) => k === 'ledge' });
+  const ids = shownEd.erasable().map((l) => l.id);
+  ok(ids.includes('a') && ids.includes('b') && !ids.includes('h'), 'the eraser reaches shown lines only');
+  ok(shownEd.erasable().find((l) => l.id === 'b')?.points[1][0] === 100, 'in the view\'s own metres');
+}
 // picking up an unclosed line where it ended
 const open: EditableLine[] = [
   { id: 'w', kind: 'wall', points: [[0, 0], [50, 0], [100, 20]], widths: null },
@@ -112,4 +115,29 @@ ok(!!sw && sw.id === 's' && sw.text === '30' && sw.x > 200, `a symbol's label is
 const n = ed.wordsAt(301, 300); // (the note's own box needs the engine's layout; here the tip is what answers)
 ok(!!n && n.id === 'l' && n.text === 'Squeeze' && Math.abs(n.x - 380) < 1, `a leader's note is found, got ${JSON.stringify(n)}`);
 ok(ed.wordsAt(100, 101) === null, 'a plain line has no words to edit');
+
+// selection cycling: every line under a press, topmost first, and what the press leaves for the list
+{
+  const stacked: EditableLine[] = [
+    { id: 'fill', kind: 'fill-sand', points: [[0, 0], [200, 0], [200, 200], [0, 200]], widths: null, closed: true },
+    { id: 'low', points: [[0, 100], [200, 100]], widths: null },
+    { id: 'high', points: [[100, 0], [100, 200]], widths: null },
+  ];
+  const id = (p: [number, number]) => p;
+  ok(JSON.stringify(linesAt(stacked, id, 100, 100, 7)) === '[2,1,0]', `crossing lines over a fill list topmost first, fill last, got ${JSON.stringify(linesAt(stacked, id, 100, 100, 7))}`);
+  ok(JSON.stringify(linesAt(stacked, id, 50, 100, 7)) === '[1,0]', 'one line over the fill: the line, then the fill');
+  ok(JSON.stringify(linesAt(stacked, id, 400, 400, 7)) === '[]', 'nothing under the press: an empty list');
+  ok(topLineAt(stacked, id, 100, 100, 7) === 2, 'the topmost is what a press selects');
+  let sel = '';
+  const e2 = new LineEditor({ lines: () => stacked, toScreen: id, toWorld: (x, y) => [x, y], selected: () => sel, select: (i) => (sel = i), commit: () => {}, remove: () => {}, redraw: () => {} });
+  e2.press(100, 100);
+  ok(sel === 'high' && JSON.stringify(e2.takeStack()) === '["high","low","fill"]', 'a press selects the top and keeps the stack for the list');
+  ok(e2.takeStack().length === 0, 'reading the stack empties it');
+  e2.press(100, 100, true);
+  ok(e2.takeStack().length === 0, 'a shift press (adding to the selection) offers no list');
+  sel = 'high';
+  e2.press(100, 0);
+  ok(e2.takeStack().length === 0, 'picking up a fit point of the selected line offers no list');
+  e2.release();
+}
 console.log(bad ? 'FAILED' : 'line editor checks ok'); process.exit(bad ? 1 : 0);

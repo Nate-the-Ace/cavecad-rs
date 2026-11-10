@@ -1,6 +1,6 @@
 // Loads the Rust engine (WASM) once and re-exports the few calls the UI uses.
 import type { FillDef as PatternFillDef, LineDef, Motif, PatternKind, PatternLibrary, PatternMarks, Prim } from './patterns';
-import init, { start, log, console_events, console_clear, engine_version, open_demo, scene, profile_runs, profile_band, add_profile_sketch, undo, redo, edit_state, passage_mesh, shading, palette, open_dxf, save_dxf, section_stations, section_at, add_section_sketch, map_sections, place_section, map_profile_sketches, add_map_line, paste_lines, last_added_id, map_lines, draw_tools, edit_line, edit_leader, delete_line, set_line_closed, set_line_kind, line_info, set_line_flip, set_line_style, drawing_scale, set_drawing_scale, linetypes, pattern_library, motif_from_drawing, save_pattern, remove_pattern, check_pattern, line_pattern_marks, fill_pattern_marks, line_pattern_marks_named, fill_pattern_marks_named, set_line_text, ornament, callout, sheet_options, sheet_plan, sheets_list, sheet_put, sheet_remove, sheet_new, sheet_render, sheet_title_values, sheet_gen_params, sheet_generate, sheet_set_values, flipped_lines, revision, station_rows, set_station_mark, station_detail, shot_detail, set_shot, set_station_walls, set_station_note, set_station_benchmark, symbols, fills, fill_marks, draw_tool_groups, sync_outbox, sync_apply, sync_snapshot, sync_load, notebook_trips, notebook_page, notebook_set_reading, notebook_set_walls, notebook_set_note, notebook_set_trip_field, notebook_set_declination, notebook_add_shot, notebook_remove_shot, notebook_rename_station, notebook_new_trip, scan_links, scan_link, scan_unlink, scan_placements, scan_alignment, scan_add_anchor, scan_remove_anchor, scan_set_mode, scan_trim, scan_set_trim, scan_view_stations, new_cave, scan_completed, scan_set_complete, shelf_summary, shelf_summarize, shelf_summarize_demo, shelf_summarize_native, survey_sync_trip, survey_snapshot, survey_connect, survey_frame, survey_flush_link, survey_disconnect, survey_link_down, survey_sim_station, survey_settle_now, survey_accept, survey_discard, survey_undo_last, survey_set_mode, survey_set_backsights, survey_set_auto, survey_skip_backsight, survey_next_station, survey_set_names, survey_set_standing_wall, instrument_catalog, instrument_identify, sketch_source, sketch_views, sketch_anchor, sketch_place, snap_pick, snap_commit, snap_session, snap_along, snap_catalog } from '../wasm/cave_wasm.js';
+import init, { start, log, console_events, console_clear, engine_version, open_demo, scene, profile_runs, profile_band, add_profile_sketch, undo, redo, edit_state, passage_mesh, shading, palette, open_dxf, save_dxf, section_stations, section_at, add_section_sketch, map_sections, place_section, map_profile_sketches, add_map_line, paste_lines, last_added_id, map_lines, draw_tools, edit_line, edit_leader, delete_line, set_line_closed, set_line_kind, line_info, set_line_flip, set_line_style, drawing_scale, set_drawing_scale, room_id, set_room_id, linetypes, pattern_library, motif_from_drawing, save_pattern, remove_pattern, check_pattern, line_pattern_marks, fill_pattern_marks, line_pattern_marks_named, fill_pattern_marks_named, set_line_text, edit_line_text, ornament, callout, sheet_options, sheet_plan, flipped_lines, revision, station_rows, set_station_mark, station_detail, shot_detail, set_shot, set_station_walls, set_station_note, set_station_benchmark, symbols, fills, fill_marks, draw_tool_groups, sync_outbox, sync_apply, sync_snapshot, sync_load, notebook_trips, notebook_page, notebook_set_reading, notebook_set_walls, notebook_set_note, notebook_set_trip_field, notebook_set_declination, notebook_add_shot, notebook_remove_shot, notebook_rename_station, notebook_new_trip, scan_links, scan_link, scan_unlink, scan_placements, scan_alignment, scan_add_anchor, scan_remove_anchor, scan_set_mode, scan_trim, scan_set_trim, scan_view_stations, new_cave, scan_completed, scan_set_complete, shelf_summary, shelf_summarize, shelf_summarize_demo, shelf_summarize_native, folder_name, folder_plan, room_id_of_native, survey_sync_trip, survey_snapshot, survey_connect, survey_frame, survey_flush_link, survey_disconnect, survey_link_down, survey_sim_station, survey_settle_now, survey_accept, survey_discard, survey_undo_last, survey_set_mode, survey_set_backsights, survey_set_auto, survey_skip_backsight, survey_next_station, survey_set_names, survey_set_standing_wall, instrument_catalog, instrument_identify, sketch_source, sketch_views, sketch_anchor, sketch_place, snap_pick, snap_commit, snap_session, snap_along, snap_catalog, survey_formats, import_survey, import_folder, import_topodroid, export_survey, geo_status, geo_set_location, surface_plan, surface_plan_for_record, surface_ground, surface_commit, set_contour_interval, surface_layers, surface_terrain, surface_pick, doc_serial, geo_entrance_xyz, map_line_level, reanchor_line, hopped_lines, fix_hopped_lines, hidden_drawings, delete_hidden_drawings, scan_keep_matches, erase_lines, brush_outlines, sheets_list, sheet_put, sheet_remove, sheet_new, sheet_render, sheet_title_values, sheet_gen_params, sheet_generate, sheet_set_values } from '../wasm/cave_wasm.js';
 
 import { setInkPalette } from './ink';
 import { setOrnamentSource } from './section-glyph';
@@ -9,14 +9,29 @@ import { setCalloutSource, setSymbolCatalogue, type SymbolDef } from './symbols'
 import type { Warp } from './scan-warp';
 import { setFillSource, type FillDef, type Marks } from './fills';
 import { guardEngine } from './readonly';
+import type { EraseResult } from './erase';
 import type { StationRow } from './station-table';
 import type { Lrud, NotebookPage, TripChoice } from './notebook';
 import type { Catalog, Identified, Step } from './survey-types';
 import type { Anchored, Mark, SketchSource, SketchViews } from './sketch-types';
 import type { SnapAcquired, SnapCatalog, SnapGuide, SnapMode, SnapOutcome, SnapResult, SnapScene, SnapSession, SnapSettings, V3 } from './snap-types';
 
-/** The panels that keep their own undo history. */
-export type Scope = 'profile' | 'section' | 'map' | 'stations' | 'notebook' | 'scans';
+// Surface Data and the entrance location (cave-wasm/src/geo.rs). Coordinates stay on this screen: never log them.
+export interface GeoLocation { station: string; lat: number; lon: number; ground_m?: number; source: string }
+export interface SurfaceRecord { zone: number; bounds: { xmin: number; ymin: number; xmax: number; ymax: number }; photo?: [number, number]; elevation?: [number, number]; for_at: { lat: number; lon: number }; fetched: string }
+export interface GeoStatus {
+  location: GeoLocation | null;
+  surface: SurfaceRecord | null;
+  candidate: { kind: 'stored' } | { kind: 'imported'; station: string; lat: number; lon: number } | { kind: 'ask'; station: string | null };
+  interval_m: number | null;
+  stations: { id: string; label: string }[];
+}
+export interface SurfacePlan { zone: number; bounds: SurfaceRecord['bounds']; for_at: { lat: number; lon: number }; photo?: { w: number; h: number; url: string }; elevation?: { w: number; h: number; url: string } }
+export interface SurfaceContour { level: number; major: boolean; closed: boolean; xyz: number[] }
+export interface SurfaceLayers { photo_matrix: number[] | null; photo_size: [number, number] | null; contours: SurfaceContour[]; stale: boolean }
+
+/** The panels that keep their own undo history (`settings`: the cave's own settings, such as its location and surface). */
+export type Scope = 'profile' | 'section' | 'map' | 'stations' | 'notebook' | 'scans' | 'settings';
 
 export type Level = 'debug' | 'detail' | 'info' | 'warn' | 'error';
 export interface ConsoleEvent {
@@ -360,6 +375,8 @@ export interface ScanPlacement {
 export interface ScanAlignment {
   mode: 'rigid' | 'warp' | 'rubber';
   anchors: { px: number; py: number; station: string; label: string; x: number | null; y: number | null }[];
+  /** How far (metres) the survey has bent under the scan since its matches were made or kept; null when not known (fewer than three station matches, or matches made before this was kept). */
+  drift: number | null;
 }
 /** One trip's line in the Cave Shelf. */
 export interface ShelfTrip {
@@ -377,6 +394,26 @@ export interface ShelfTrip {
   ends: string[];
 }
 /** What the Cave Shelf shows about a cave. */
+/** What a cave's project folder holds and what a save there does (from `cave-folder`). */
+export interface FolderPlan {
+  /** What is under the cave's folder name: nothing, a folder with a cave in it, or a folder without one. */
+  place: { kind: 'empty' } | { kind: 'hasCave'; file: string } | { kind: 'notACave' };
+  /** Standard subfolders (and the hidden cache) to make. */
+  missing: string[];
+  /** The folder exports go to. */
+  exports: string;
+  /** The scans folder's name as it is on disk. */
+  scans: string;
+  /** The backup folder's name as it is on disk. */
+  backupFolder: string;
+  /** This save takes a backup first. */
+  backupDue: boolean;
+  /** The backup's file name. */
+  backupName: string | null;
+  /** Old backups to delete. */
+  prune: string[];
+}
+
 export interface CaveSummary {
   name: string;
   unit: 'ft' | 'm';
@@ -410,6 +447,13 @@ export function loadEngine(): Promise<void> {
   return ready;
 }
 
+/** A survey data format (see `cave-formats`). */
+export interface SurveyFormat {
+  id: string;
+  label: string;
+  extensions: string[];
+}
+
 const rawEngine = {
   version: () => engine_version(),
   log: (level: Level, source: string, message: string) => log(level, source, message),
@@ -423,6 +467,34 @@ const rawEngine = {
   /** The drawing's scale, the N of 1:N. */
   drawingScale: (): number => drawing_scale(),
   setDrawingScale: (n: number): string => set_drawing_scale(n),
+  /** The cave's location, downloaded surface and candidate entrance (`{ error }` with no cave open). */
+  geoStatus: (): GeoStatus | { error: string } => { const t = geo_status(); return t.startsWith('error') ? { error: t.slice(7) } : JSON.parse(t); },
+  /** Changes whenever the open cave is replaced (open, sync, new): compare readings to tell a job its cave went. */
+  docSerial: (): number => doc_serial(),
+  /** The entrance station's solved position `[x, y, z]` (cave metres), or empty when unknown. */
+  geoEntranceXyz: (adjusted: boolean): number[] => Array.from(geo_entrance_xyz(adjusted)),
+  /** Stores the cave's location (one undoable edit on `scope`'s history); `ok` or `error: ...`. */
+  geoSetLocation: (l: GeoLocation, scope: Scope = 'settings'): string => geo_set_location(JSON.stringify(l), scope),
+  /** What to download for the open cave. */
+  surfacePlan: (photo: boolean, elevation: boolean, adjusted: boolean): SurfacePlan | { error: string } => { const t = surface_plan(photo, elevation, adjusted); return t.startsWith('error') ? { error: t.slice(7) } : JSON.parse(t); },
+  /** The plan that downloads again exactly what the stored surface record lists (no new window). */
+  surfacePlanForRecord: (adjusted: boolean): SurfacePlan | { error: string } => { const t = surface_plan_for_record(adjusted); return t.startsWith('error') ? { error: t.slice(7) } : JSON.parse(t); },
+  /** Ground (m NAVD88) at the stored location from an elevation TIFF, or NaN. */
+  surfaceGround: (plan: SurfacePlan, tiff: Uint8Array): number => surface_ground(JSON.stringify(plan), tiff),
+  /** Records a finished download (one edit on `scope`'s history); a NaN ground leaves the stored ground alone. */
+  surfaceCommit: (plan: SurfacePlan, groundM: number, today: string, scope: Scope = 'settings'): string => surface_commit(JSON.stringify(plan), groundM, today, scope),
+  /** Sets the contour spacing in metres (one edit). */
+  setContourInterval: (m: number): string => set_contour_interval(m),
+  /** The photo matrix and contours in the cave frame (`{ error }` when there is no surface). */
+  surfaceLayers: (tiff: Uint8Array, interval: number, feet: boolean, adjusted: boolean): SurfaceLayers | { error: string } => { const t = surface_layers(tiff, interval, feet, adjusted); return t.startsWith('error') ? { error: t.slice(7) } : JSON.parse(t); },
+  /** The ground mesh in the cave frame as numbers (xyz is x,y,z per vertex row by row, NaN z = hole); null when there is no surface or datum. */
+  surfaceTerrain: (tiff: Uint8Array, adjusted: boolean): { w: number; h: number; xyz: Float32Array } | null => { const a = surface_terrain(tiff, adjusted); return a.length < 2 ? null : { w: a[0], h: a[1], xyz: a.subarray(2) }; },
+  /** The entrance pick: lowest ground inside a circle (cave metres). */
+  surfacePick: (tiff: Uint8Array, cx: number, cy: number, r: number, adjusted: boolean): { x: number; y: number; lat: number; lon: number; ground_m: number } | { error: string } => { const t = surface_pick(tiff, cx, cy, r, adjusted); return t.startsWith('error') ? { error: t.slice(7) } : JSON.parse(t); },
+  /** The open cave's room id on the server ('' when it has none). */
+  roomId: (): string => room_id(),
+  /** Sets the open cave's room id; `ok` or `error: ...`. */
+  setRoomId: (id: string): string => set_room_id(id),
   /** The line patterns a line can be given, on paper in millimetres. */
   linetypes: (): { dot_mm: number; types: { key: string; pattern: number[] }[] } => JSON.parse(linetypes()),
   /** The motifs, linetypes and fills the cave can pick from: the built-in ones and its own (`own`). */
@@ -543,6 +615,8 @@ const rawEngine = {
   /** Matches a spot on a scan (pixels from its top left) with a station (its id) or a point in the view (`x:y`, metres). */
   scanAddAnchor: (trip: string, view: string, path: string, px: number, py: number, target: string): string => scan_add_anchor(trip, view, path, px, py, target),
   scanRemoveAnchor: (trip: string, view: string, path: string, index: number): string => scan_remove_anchor(trip, view, path, index),
+  /** Keeps a scan's matches as right against the survey as it is now (its drift starts again from zero). */
+  scanKeepMatches: (trip: string, view: string, path: string): string => scan_keep_matches(trip, view, path),
   scanSetMode: (trip: string, view: string, path: string, mode: 'rigid' | 'warp' | 'rubber'): string => scan_set_mode(trip, view, path, mode),
   /** The outline a scan is trimmed to in a view (scan pixels), or null. */
   scanTrim: (trip: string, view: string, path: string): [number, number][] | null => JSON.parse(scan_trim(trip, view, path)),
@@ -560,6 +634,10 @@ const rawEngine = {
   shelfSummarizeDemo: (json: string): CaveSummary | null => JSON.parse(shelf_summarize_demo(json)),
   /** Starts a brand new cave with one empty trip (`ft` or `m`); returns `ok` or `error: ...`. */
   newCave: (name: string, trip: string, unit: 'ft' | 'm'): string => new_cave(name, trip, unit),
+  /** The folder a cave's name becomes. */
+  folderName: (name: string): string => folder_name(name),
+  /** The project folder's rules for what is in it (see `folder_plan` in cave-wasm). */
+  folderPlan: (inside: string[] | null, backups: string[], stem: string, now: string): FolderPlan => JSON.parse(folder_plan(JSON.stringify(inside), JSON.stringify(backups), stem, now)),
   /** Goes up whenever the open cave really changes; compared with the value at the last save. */
   revision: (): number => revision(),
   /** Local edits since the last call (JSON ops, as a string; `[]` when none). */
@@ -577,11 +655,34 @@ const rawEngine = {
   openDxf: (text: string): { ok: boolean; message: string; warnings: string[] } => JSON.parse(open_dxf(text)),
   /** The open cave as DXF text (the whole cave is inside the file). */
   saveDxf: (adjusted: boolean): string => save_dxf(adjusted),
+  /** The survey data formats that can be imported and exported (Compass, Walls, Survex, Therion, CSV). */
+  surveyFormats: (): SurveyFormat[] => JSON.parse(survey_formats()),
+  /** Opens a survey data file as the cave. `others` are the other files picked with it, which a Therion file's `input` lines are found among. */
+  importSurvey: (name: string, text: string, others: Record<string, string> = {}): { ok: boolean; message: string; warnings: string[] } => JSON.parse(import_survey(name, text, JSON.stringify(others))),
+  /** Opens a TopoDroid archive (its files, unzipped) as the cave: its survey and its plan sketches. */
+  importTopodroid: (name: string, files: { name: string; data: Uint8Array }[]): { ok: boolean; message: string; warnings: string[] } => {
+    const total = files.reduce((n, f) => n + f.data.length, 0);
+    const data = new Uint8Array(total);
+    const index: [string, number, number][] = [];
+    let at = 0;
+    for (const f of files) {
+      data.set(f.data, at);
+      index.push([f.name, at, f.data.length]);
+      at += f.data.length;
+    }
+    return JSON.parse(import_topodroid(name, JSON.stringify(index), data));
+  },
+  /** Opens a whole folder (path to text) as the cave: through its project file when it has one, else every survey file in it. */
+  importFolder: (files: Record<string, string>): { ok: boolean; message: string; warnings: string[] } => JSON.parse(import_folder(JSON.stringify(files))),
+  /** The open cave as a survey data file in the format with this id. */
+  exportSurvey: (format: string): { ok: boolean; text: string; extension: string; message: string } => JSON.parse(export_survey(format)),
   /** The whole cave in CaveCAD's own format: every op, as JSON text. */
   saveNative: (): string => sync_snapshot(),
   /** Opens a cave from its own format (JSON ops). Returns `ok` or `error: ...`. */
   openNative: (ops: string): string => sync_load(ops),
   shelfSummarizeNative: (ops: string): CaveSummary | null => JSON.parse(shelf_summarize_native(ops)),
+  /** The room id of a cave kept in its own format, without opening it ('' when none). */
+  roomIdOfNative: (ops: string): string => room_id_of_native(ops),
   /** The stations a cross section can be cut at. */
   sectionStations: (adjusted: boolean, fillGaps: boolean, filter = '{}'): SectionStation[] => JSON.parse(section_stations(adjusted, fillGaps, filter)),
   /** The cross section at a station, with its sketches. */
@@ -595,6 +696,8 @@ const rawEngine = {
   /** Places a station's section sketches by hand in a view (an undoable edit). */
   placeSection: (station: string, view: 'map' | 'profile', offset: [number, number, number]): string => place_section(station, view, offset[0], offset[1], offset[2]),
   /** Adds a line of `kind` drawn in plan on the map (anchored to the survey, undoable). */
+  /** Outlines of the ground a round brush swept along a plan stroke, stopped at the walls (largest first). */
+  brushOutlines: (stroke: [number, number][], radius: number, walls: [number, number][][]): [number, number][][] => JSON.parse(brush_outlines(JSON.stringify(stroke), radius, JSON.stringify(walls))),
   addMapLine: (kind: string, points: [number, number][], widths: number[] | null, closed: boolean, adjusted: boolean, text = '', style = ''): string => add_map_line(kind, JSON.stringify(points), widths ? JSON.stringify(widths) : '', closed, adjusted, text, style),
   /** The id of the line most recently added (map, profile or section). */
   lastAddedId: (): string => last_added_id(),
@@ -606,12 +709,26 @@ const rawEngine = {
   /** Moves the fit points of a line already drawn (in the space it was drawn in); re-anchors it to the survey. */
   editLeader: (id: string, points: number[][], style: string, adjusted: boolean): string => edit_leader(id, JSON.stringify(points), style, adjusted),
   editLine: (id: string, points: [number, number][], widths: number[] | null, adjusted: boolean): string => edit_line(id, JSON.stringify(points), widths ? JSON.stringify(widths) : '', adjusted),
+  /** The legs a map line hangs on (to glow) and the other level it could be on, or null. */
+  mapLineLevel: (id: string, adjusted: boolean): { legs: [[number, number, number], [number, number, number]][]; other: [string, string] | null } | null => JSON.parse(map_line_level(id, adjusted)),
+  /** Moves a map line onto the level of the leg between stations `a` and `b`. */
+  reanchorLine: (id: string, a: string, b: string, adjusted: boolean): string => reanchor_line(id, a, b, adjusted),
+  /** Map lines that hop between passages on different levels. */
+  hoppedLines: (adjusted: boolean): string[] => JSON.parse(hopped_lines(adjusted)),
+  /** Re-attaches every hopped map line to its level; `ok <n>`. */
+  fixHoppedLines: (adjusted: boolean): string => fix_hopped_lines(adjusted),
+  /** Drawings nothing can show because a station they hang on is gone (a shot deleted). */
+  hiddenDrawings: (adjusted: boolean): string[] => JSON.parse(hidden_drawings(adjusted)),
+  /** Deletes those drawings: one undoable edit per view they were drawn in. `ok <n>` or `error: ...`. */
+  deleteHiddenDrawings: (adjusted: boolean): string => delete_hidden_drawings(adjusted),
   /** Closes or opens a line already drawn. */
   setLineClosed: (id: string, closed: boolean): string => set_line_closed(id, closed),
   /** Changes what a line already drawn is (wall, ledge, ...). */
   setLineKind: (id: string, kind: string): string => set_line_kind(id, kind),
   /** What a drawn line is, or null when the id is not a drawn line. */
   setLineText: (id: string, text: string): string => set_line_text(id, text),
+  /** Moves a line's points and sets its words, one undoable edit. */
+  editLineText: (id: string, points: number[][], text: string, adjusted: boolean): string => edit_line_text(id, JSON.stringify(points), text, adjusted),
   setLineStyle: (id: string, style: string): string => set_line_style(id, style),
   setLineFlip: (id: string, flip: boolean): string => set_line_flip(id, flip),
   /** The papers and plot scales a sheet offers. */
@@ -644,6 +761,14 @@ const rawEngine = {
   lineInfo: (id: string): { kind: string; view: 'profile' | 'section' | 'map'; closed: boolean; flip: boolean; text: string; style: string } | null => JSON.parse(line_info(id)),
   /** Deletes a line drawn in a view. */
   deleteLine: (id: string): string => delete_line(id),
+  /**
+   * Applies one eraser drag (what `eraseLines` in lib/erase.ts worked out, in the view's own metres) as ONE undoable edit in
+   * that view: `target` is the run (profile) or station id (section) a new piece falls back on, '' on the map.
+   */
+  eraseLines: (view: 'map' | 'profile' | 'section', target: string, adjusted: boolean, plan: EraseResult): { ok: true; removed: number; cut: number } | { ok: false; message: string } => {
+    const r = erase_lines(view, target, adjusted, JSON.stringify(plan));
+    return r.startsWith('error') ? { ok: false, message: r.replace(/^error:\s*/, '') } : JSON.parse(r);
+  },
   /** The linework drawn in plan on the map, lifted to the passage's elevation. */
   mapLines: (adjusted: boolean): ProfileSketch3d[] => JSON.parse(map_lines(adjusted)),
   /** The drawing tools the Draw tab offers. */

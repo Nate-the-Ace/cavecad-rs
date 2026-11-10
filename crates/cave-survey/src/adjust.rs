@@ -253,10 +253,74 @@ pub fn adjust(legs: &[Leg], resolved: &Resolved, params: &Params) -> Adjusted {
             w: *w,
         })
         .collect();
+    // A dead-end branch carries no loop, so least squares leaves its shots exactly as measured:
+    // its stations are peeled off (outermost first), the loops are solved alone, and the branch is
+    // hung back on afterwards. A big cave is mostly branches, and solving them with the loops made
+    // the solve take seconds.
+    let mut degree = vec![0usize; free.len()];
+    let mut touching: Vec<Vec<usize>> = vec![Vec::new(); free.len()];
+    for (k, e) in edges.iter().enumerate() {
+        if e.a.is_some() && e.a == e.b {
+            continue;
+        }
+        for i in [e.a, e.b].into_iter().flatten() {
+            degree[i] += 1;
+            touching[i].push(k);
+        }
+    }
+    let mut peeled_edge = vec![false; edges.len()];
+    let mut peeled: Vec<(usize, usize)> = Vec::new(); // (free station, the one leg holding it)
+    let mut queue: Vec<usize> = (0..free.len()).filter(|&i| degree[i] == 1).collect();
+    while let Some(i) = queue.pop() {
+        if degree[i] != 1 {
+            continue;
+        }
+        let Some(&k) = touching[i].iter().find(|&&k| !peeled_edge[k]) else {
+            continue;
+        };
+        peeled_edge[k] = true;
+        degree[i] = 0;
+        peeled.push((i, k));
+        let other = if edges[k].a == Some(i) {
+            edges[k].b
+        } else {
+            edges[k].a
+        };
+        if let Some(j) = other {
+            degree[j] -= 1;
+            if degree[j] == 1 {
+                queue.push(j);
+            }
+        }
+    }
+    let is_peeled = {
+        let mut v = vec![false; free.len()];
+        for &(i, _) in &peeled {
+            v[i] = true;
+        }
+        v
+    };
+    let core: Vec<Edge> = edges
+        .iter()
+        .zip(&peeled_edge)
+        .map(|(e, &gone)| Edge {
+            a: e.a,
+            b: e.b,
+            // a peeled leg is left out of the solve
+            w: if gone { 0.0 } else { e.w },
+        })
+        .collect();
     let mut diag = vec![0.0; free.len()];
-    for e in &edges {
+    for e in &core {
         for i in [e.a, e.b].into_iter().flatten() {
             diag[i] += e.w;
+        }
+    }
+    for (i, d) in diag.iter_mut().enumerate() {
+        if is_peeled[i] || *d <= 0.0 {
+            // no leg left in the solve: its row is 0 = 0 and it stays where it starts (the
+            // preconditioner just needs something to divide by); a branch is placed afterwards
+            *d = 1.0;
         }
     }
 
@@ -284,7 +348,12 @@ pub fn adjust(legs: &[Leg], resolved: &Resolved, params: &Params) -> Adjusted {
         for axis in 0..3 {
             let comp = |v: Vec3| [v.x, v.y, v.z][axis];
             let mut rhs = vec![0.0; free.len()];
-            for ((l, e), w) in used.iter().zip(&edges).zip(&weights) {
+            for (l, e) in used.iter().zip(&core) {
+                let w = &e.w;
+                if *w == 0.0 {
+                    // a peeled leg: its stations' rows stay 0 = 0, so the solve leaves them be
+                    continue;
+                }
                 let d = comp(l.offset);
                 if let Some(b) = e.b {
                     rhs[b] += w * d;
@@ -300,7 +369,7 @@ pub fn adjust(legs: &[Leg], resolved: &Resolved, params: &Params) -> Adjusted {
                 }
             }
             let x0: Vec<f64> = solved.iter().map(|s| s[axis]).collect();
-            let (x, it, ok) = solve(&diag, &edges, &rhs, &x0, tol, max_iter);
+            let (x, it, ok) = solve(&diag, &core, &rhs, &x0, tol, max_iter);
             for (s, v) in solved.iter_mut().zip(x) {
                 s[axis] = v;
             }
@@ -329,6 +398,20 @@ pub fn adjust(legs: &[Leg], resolved: &Resolved, params: &Params) -> Adjusted {
         };
     }
 
+    // the peeled branches hung back on, innermost first: each station is its neighbour plus the shot
+    for &(i, k) in peeled.iter().rev() {
+        let l = used[k];
+        let at = |id: Id, solved: &[[f64; 3]]| match index.get(&id) {
+            Some(&j) => Vec3::new(solved[j][0], solved[j][1], solved[j][2]),
+            None => raw[&id],
+        };
+        let p = if index.get(&l.to) == Some(&i) {
+            at(l.from, &solved).plus(l.offset)
+        } else {
+            at(l.to, &solved).minus(l.offset)
+        };
+        solved[i] = [p.x, p.y, p.z];
+    }
     let mut stations = raw.clone();
     for (id, s) in free.iter().zip(&solved) {
         stations.insert(*id, Vec3::new(s[0], s[1], s[2]));

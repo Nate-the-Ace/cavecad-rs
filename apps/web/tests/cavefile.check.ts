@@ -61,5 +61,18 @@ const deflated = await (async () => {
 const got = await unzip(deflated.zipped);
 ok(!!got && got.length === 1 && new TextDecoder().decode(got[0].data) === new TextDecoder().decode(deflated.raw), 'deflated entries are read');
 
+// surface parts round trip
+const sRec = '{"zone":16}', sPhoto = new Uint8Array([1, 2, 3]), sElev = new Uint8Array([4, 5]);
+const withSurf = await unpack(pack({ name: 's', app: 't', cave, surface: { record: sRec, photo: sPhoto, elevation: sElev } }));
+ok(!!withSurf && !('error' in withSurf) && !!withSurf.surface && withSurf.surface.record === sRec && withSurf.surface.photo?.join() === '1,2,3' && withSurf.surface.elevation?.join() === '4,5', 'surface parts come back byte for byte');
+if (withSurf && !('error' in withSurf)) {
+  const paths = (withSurf.manifest.surface ?? []).map((e) => `${e.path}:${e.bytes}`).sort().join();
+  ok(paths === 'surface/elevation.tif:2,surface/photo.jpg:3,surface/surface.json:11', 'manifest lists the surface parts with sizes');
+}
+const noSurf = pack({ name: 's', app: 't', cave });
+ok(!(await unzip(noSurf))!.some((f) => f.name.startsWith('surface/')), 'no surface entries without surface');
+const noSurfBack = await unpack(noSurf);
+ok(!!noSurfBack && !('error' in noSurfBack) && noSurfBack.surface === null, 'a file without surface unpacks with surface null');
+
 if (bad) process.exit(1);
 console.log('cavefile ok');

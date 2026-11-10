@@ -9,6 +9,8 @@ import type { Look } from './ink';
 import { smooth } from './spline.ts';
 import { drawStamp, drawStampHalo, isStampKind, leaderLook, placement } from './symbols.ts';
 import { drawMarks, isFillKind, marksFor } from './fills.ts';
+import { inkCurve } from './hand-ink.ts';
+import { handInkOn } from './hand-ink-option.ts';
 
 /** Where shaped-line ornament comes from (the engine sets this once it has loaded). */
 export interface OrnamentSource {
@@ -153,12 +155,14 @@ export function drawStrokes(
       drawStamp(g, k.kind, p0, p1, (k as { text?: string }).text, look, more);
       continue;
     }
-    const curve = smooth(
+    let curve = smooth(
       k.points.map((p) => to(p[0], p[1])),
       k.widths,
       10,
       !!k.closed,
     );
+    // Ink style: the curve wobbles, swells and tapers as if inked by hand (the picture only)
+    if (handInkOn() && !isFillKind(k.kind)) curve = inkCurve(curve.pts, curve.widths, k.id ?? `${k.kind}${k.points[0]}`, (pxPerM * drawing.scale) / 1000, !!k.closed);
     // Shaped lines: ornament is regenerated from the curve (in metres) every time it is drawn.
     const metres = smooth(k.points, null, 10, !!k.closed).pts;
     const orn = ornamentFor(k.kind, k.id ?? '', metres, !!k.closed, survey);
@@ -167,6 +171,7 @@ export function drawStrokes(
       g.globalAlpha = alpha;
       g.setLineDash(dash);
       for (let i = 1; i < curve.pts.length; i++) {
+        if (!extra && curve.widths && (curve.widths[i - 1] === 0 || curve.widths[i] === 0)) continue; // the pen lifted (Ink style)
         g.lineWidth = l.weight * scale * (curve.widths ? (curve.widths[i - 1] + curve.widths[i]) / 2 : 1) + extra;
         g.beginPath();
         g.moveTo(curve.pts[i - 1][0], curve.pts[i - 1][1]);

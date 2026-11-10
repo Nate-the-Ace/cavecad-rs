@@ -20,7 +20,9 @@ pub use station_survey::{
 pub mod blobs;
 pub mod patterns;
 
-use cave_doc::{Action, AnchorError, Document, Field, Frame, Kind, Value, anchor_stroke};
+use cave_doc::{
+    Action, AnchorError, Document, Field, Frame, Kind, Value, anchor_stroke, anchor_stroke_path,
+};
 use cave_geom::{Path, Point};
 use cave_id::{Id, IdSource};
 
@@ -158,8 +160,8 @@ pub fn profile_sketch(
 /// Actions that add a stroke of `kind` drawn in plan on the map.
 ///
 /// `points` are `(x, y)` in metres (east, north); `frames` are the survey's legs with their plan
-/// positions, and the stroke is anchored to the nearest of them so it follows the survey when it
-/// is adjusted. `widths` is optional pen weight per point.
+/// positions, and the stroke is anchored to them as one path, so it follows the survey when it is
+/// adjusted and stays on the passage it was drawn on where levels overlap in plan. `widths` is optional pen weight per point.
 pub fn map_line(
     _doc: &Document,
     ids: &mut impl IdSource,
@@ -172,7 +174,7 @@ pub fn map_line(
         return Err(DrawError::BadStroke);
     }
     let (pts, widths) = distinct(points, widths)?;
-    let anchored = anchor_stroke(&pts, frames, widths)?;
+    let anchored = anchor_stroke_path(&pts, frames, widths, None)?;
     Ok(feature(
         ids,
         kind,
@@ -265,11 +267,40 @@ pub fn edit_stroke(
             Value::Path(Some(spline(&pts, widths, closed)?)),
         )
     } else {
-        let mut anchored = anchor_stroke(&pts, frames, widths)?;
+        let mut anchored = if view == VIEW_MAP {
+            anchor_stroke_path(&pts, frames, widths, None)?
+        } else {
+            anchor_stroke(&pts, frames, widths)?
+        };
         anchored.closed = closed && pts.len() >= 3;
         (Field::FeatureAnchored, Value::Anchored(Some(anchored)))
     };
     Ok(vec![Action::Set { id, field, value }])
+}
+
+/// Actions that re-anchor a map stroke at its current shape (`points`, plan metres) with its
+/// first point held on `frames[pin]`: moves a line drawn where two levels overlap onto the other
+/// level, or re-attaches a line that hopped levels.
+pub fn reanchor_stroke(
+    doc: &Document,
+    id: Id,
+    points: &[[f64; 2]],
+    widths: Option<Vec<f64>>,
+    frames: &[Frame],
+    pin: usize,
+) -> Result<Vec<Action>, DrawError> {
+    let (view, _) = drawn_in(doc, id).ok_or(DrawError::NoStations)?;
+    if view != VIEW_MAP {
+        return Err(DrawError::BadStroke);
+    }
+    let (pts, widths) = distinct(points, widths)?;
+    let mut anchored = anchor_stroke_path(&pts, frames, widths, Some(pin))?;
+    anchored.closed = is_closed(doc, id) && pts.len() >= 3;
+    Ok(vec![Action::Set {
+        id,
+        field: Field::FeatureAnchored,
+        value: Value::Anchored(Some(anchored)),
+    }])
 }
 
 /// True if the stroke's curve loops back to its first point.
@@ -469,6 +500,46 @@ pub fn set_drawing_scale(doc: &Document, n: f64) -> Result<Vec<Action>, DrawErro
     Ok(actions)
 }
 
+/// The id of the cave's room on the CaveCAD server, or `""` when it has none yet.
+pub fn room_id(doc: &Document) -> String {
+    doc.entity(setting_id("room-id"))
+        .map(|e| e.text(Field::SettingValue).trim().to_string())
+        .unwrap_or_default()
+}
+
+/// Actions that set the cave's room id (8-64 of letters, digits, `_` and `-`); none when it is already that.
+pub fn set_room_id(doc: &Document, id: &str) -> Result<Vec<Action>, DrawError> {
+    let ok = (8..=64).contains(&id.len())
+        && id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-');
+    if !ok {
+        return Err(DrawError::BadStroke);
+    }
+    if room_id(doc) == id {
+        return Ok(Vec::new());
+    }
+    let key = setting_id("room-id");
+    let mut actions = Vec::new();
+    if doc.entity(key).is_none() {
+        actions.push(Action::Create {
+            id: key,
+            kind: Kind::Setting,
+        });
+        actions.push(Action::Set {
+            id: key,
+            field: Field::SettingKey,
+            value: Value::Text("room-id".into()),
+        });
+    }
+    actions.push(Action::Set {
+        id: key,
+        field: Field::SettingValue,
+        value: Value::Text(id.to_string()),
+    });
+    Ok(actions)
+}
+
 /// The line patterns a single line may be given, besides its type's own (empty).
 pub const LINETYPE_CHOICES: &[&str] = &["", "solid", "dashed", "longdash", "sparse", "dashdot"];
 
@@ -651,6 +722,30 @@ pub fn set_stroke_style(doc: &Document, id: Id, style: &str) -> Result<Vec<Actio
     }])
 }
 
+/// Actions that copy what a stroke carries besides its shape (style, flip, tags and trip) from `from` onto `to`.
+/// `to` may be a stroke that the same edit is still adding. Only what `from` actually has is copied.
+pub fn copy_stroke_fields(doc: &Document, from: Id, to: Id) -> Result<Vec<Action>, DrawError> {
+    drawn_in(doc, from).ok_or(DrawError::NoStations)?;
+    let e = doc.entity(from).ok_or(DrawError::NoStations)?;
+    let mut out = Vec::new();
+    for field in [
+        Field::FeatureStyle,
+        Field::FeatureFlip,
+        Field::FeatureTags,
+        Field::FeatureTrip,
+    ] {
+        let value = e.get(field);
+        if value != field.default_value() {
+            out.push(Action::Set {
+                id: to,
+                field,
+                value,
+            });
+        }
+    }
+    Ok(out)
+}
+
 /// Actions that put a shaped line's ornament on the other side.
 pub fn set_stroke_flip(doc: &Document, id: Id, flip: bool) -> Result<Vec<Action>, DrawError> {
     drawn_in(doc, id).ok_or(DrawError::NoStations)?;
@@ -823,12 +918,44 @@ mod tests {
             b,
             pa: [0.0, 0.0],
             pb: [10.0, 0.0],
+            za: 0.0,
+            zb: 0.0,
         }];
         (doc, frames, [a, b])
     }
 
     fn stroke() -> Vec<[f64; 2]> {
         vec![[0.0, 0.0], [1.0, 0.5], [2.0, 0.0]]
+    }
+
+    #[test]
+    fn reanchor_pins_the_first_leg() {
+        let (mut doc, frames, _) = cave();
+        let (id, actions) = map_line(
+            &doc,
+            &mut SeqIds::new(900),
+            "wall",
+            &stroke(),
+            None,
+            &frames,
+        )
+        .unwrap();
+        doc.edit(actions).unwrap();
+        let actions = reanchor_stroke(&doc, id, &stroke(), None, &frames, 0).unwrap();
+        assert_eq!(actions.len(), 1);
+        let Action::Set {
+            field,
+            value: Value::Anchored(Some(p)),
+            ..
+        } = &actions[0]
+        else {
+            panic!("expected an anchored set");
+        };
+        assert_eq!(*field, Field::FeatureAnchored);
+        assert_eq!(
+            p.frames[p.points[0].frame as usize],
+            (frames[0].a, frames[0].b)
+        );
     }
 
     #[test]
@@ -1431,6 +1558,36 @@ mod tests {
             setting_id("drawing-scale"),
             "the id comes from the name"
         );
+    }
+
+    #[test]
+    fn room_id_round_trips() {
+        use cave_doc::{ActorId, Document};
+        let mut doc = Document::new(ActorId(1));
+        assert_eq!(room_id(&doc), "");
+        let before = doc.revision();
+        let actions = set_room_id(&doc, "cave_abc12345").unwrap();
+        doc.edit(actions).unwrap();
+        assert_eq!(room_id(&doc), "cave_abc12345");
+        // a change like any other, so the app sees the cave as unsaved and keeps it on the shelf
+        assert!(doc.revision() > before);
+        assert!(set_room_id(&doc, "cave_abc12345").unwrap().is_empty());
+        assert!(set_room_id(&doc, "bad id!").is_err());
+        assert!(set_room_id(&doc, "short").is_err());
+        assert!(set_room_id(&doc, &"a".repeat(65)).is_err());
+        // another copy applying the same operations knows the same room
+        let mut other = Document::new(ActorId(2));
+        for op in doc.snapshot() {
+            other.apply(&op).unwrap();
+        }
+        assert_eq!(room_id(&other), "cave_abc12345");
+        // the shelf and a saved CaveCAD file keep the cave as its snapshot ops in JSON: the room id survives the text
+        let text = serde_json::to_string(&doc.snapshot()).unwrap();
+        let mut reopened = Document::new(ActorId(3));
+        for op in serde_json::from_str::<Vec<cave_doc::Op>>(&text).unwrap() {
+            reopened.apply(&op).unwrap();
+        }
+        assert_eq!(room_id(&reopened), "cave_abc12345");
     }
 
     #[test]

@@ -9,8 +9,6 @@ import { GroupActions, SveltePanel } from './dock-parts';
 import { setOption } from './cave.svelte';
 import { setLayoutHost } from './layouts.svelte';
 import { isDark, onTheme } from './theme';
-import { frontPanels, layoutShape, registerMirror } from './classroom-mirror';
-import { classroom } from './classroom.svelte';
 import MapPanel from '../panels/MapPanel.svelte';
 import ConsolePanel from '../components/Console.svelte';
 import ProfilePanel from '../panels/ProfilePanel.svelte';
@@ -22,6 +20,9 @@ import NotebookPanel from '../panels/NotebookPanel.svelte';
 import ScansPanel from '../panels/ScansPanel.svelte';
 import SurveyPanel from '../panels/SurveyPanel.svelte';
 import PatternsPanel from '../panels/PatternsPanel.svelte';
+import RoomsPanel from '../panels/RoomsPanel.svelte';
+import HandbookPanel from '../panels/HandbookPanel.svelte';
+import { showInstruments } from './features';
 
 const LAYOUT_KEY = 'cavecad.layout.v1';
 
@@ -32,6 +33,8 @@ interface PanelDef {
   height?: number;
   /** Width in pixels when first opened beside another panel. */
   width?: number;
+  /** When closed and opened, join the group holding this panel as a tab, if it is open. */
+  openWithin?: string;
 }
 
 /** Every panel the workspace can show. Add new panels here. */
@@ -42,11 +45,14 @@ export const PANELS: Record<string, PanelDef> = {
   symbols: { title: 'Symbols', component: SymbolsPanel, width: 300 },
   stations: { title: 'Stations', component: StationsPanel, height: 260 },
   notebook: { title: 'Notebook', component: NotebookPanel, height: 320 },
-  survey: { title: 'Survey', component: SurveyPanel, width: 380 },
+  // instrument work is not ready yet: a saved layout that holds the Survey panel is dropped for the default
+  ...(showInstruments ? { survey: { title: 'Survey', component: SurveyPanel, width: 380 } } : {}),
   scans: { title: 'Scans', component: ScansPanel, width: 520 },
   sheet: { title: 'Sheet', component: SheetPanel, width: 520 },
   patterns: { title: 'Patterns', component: PatternsPanel, width: 560 },
   console: { title: 'Console', component: ConsolePanel, height: 260 },
+  rooms: { title: 'Rooms', component: RoomsPanel, width: 460, height: 360 },
+  handbook: { title: 'Handbook', component: HandbookPanel, width: 520, openWithin: 'profile' },
 };
 
 /** Which panels are open right now (drives the View tab's toggles). */
@@ -91,11 +97,11 @@ function restore(a: DockviewApi): boolean {
 }
 
 /** Builds the workspace inside `el`. Returns a function that tears it down. */
-export function initWorkspace(el: HTMLElement): () => void {
+export function initWorkspace(el: HTMLElement, help?: ConstructorParameters<typeof GroupActions>[0]): () => void {
   api = createDockview(el, {
     theme: isDark() ? themeDark : themeLight,
     createComponent: ({ name }) => new SveltePanel(PANELS[name].component),
-    createRightHeaderActionComponent: () => new GroupActions(),
+    createRightHeaderActionComponent: () => new GroupActions(help),
   });
   const a = api;
   if (import.meta.env.DEV) (window as unknown as { __dock: DockviewApi }).__dock = a; // for tests and debugging
@@ -127,7 +133,6 @@ export function initWorkspace(el: HTMLElement): () => void {
     refreshOpen();
     clearTimeout(timer);
     timer = setTimeout(() => {
-      if (classroom.role === 'student') return; // the teacher's arrangement is not this person's own
       try {
         localStorage.setItem(LAYOUT_KEY, JSON.stringify(a.toJSON()));
       } catch {
@@ -138,29 +143,9 @@ export function initWorkspace(el: HTMLElement): () => void {
   // Which tab is in front decides what can be seen, so a change of tab refreshes it too.
   const activeSub = a.onDidActivePanelChange(() => refreshOpen());
   const offTheme = onTheme((dark) => a.updateOptions({ theme: dark ? themeDark : themeLight }));
-  // In a class the teacher's arrangement of panels is mirrored: a different arrangement rebuilds the workspace,
-  // sizes and the tab in front are matched without rebuilding (so the views keep their place).
-  const offMirror = registerMirror('layout', {
-    read: () => ({ layout: a.toJSON() }),
-    write: (state) => {
-      const layout = (state as { layout?: unknown }).layout;
-      if (!layout) return;
-      if (layoutShape(layout) !== layoutShape(a.toJSON())) {
-        try {
-          a.fromJSON(layout as Parameters<DockviewApi['fromJSON']>[0]);
-        } catch {
-          return; // a layout this build cannot read: keep the one on screen
-        }
-        refreshOpen();
-        return;
-      }
-      for (const id of frontPanels(layout)) a.getPanel(id)?.api.setActive();
-    },
-  });
 
   return () => {
     setLayoutHost(null);
-    offMirror();
     clearTimeout(timer);
     layoutSub.dispose();
     offTheme();
@@ -177,8 +162,11 @@ export function togglePanel(id: string) {
   if (existing) {
     api.removePanel(existing);
   } else {
+    const within = PANELS[id].openWithin;
     const ref = api.panels[0];
-    api.addPanel({ id, component: id, title: PANELS[id].title, position: ref ? { referencePanel: ref.id, direction: 'below' } : undefined, initialHeight: PANELS[id].height });
+    if (within && api.getPanel(within)) {
+      api.addPanel({ id, component: id, title: PANELS[id].title, position: { referencePanel: within, direction: 'within' } });
+    } else api.addPanel({ id, component: id, title: PANELS[id].title, position: ref ? { referencePanel: ref.id, direction: 'below' } : undefined, initialHeight: PANELS[id].height });
   }
   refreshOpen();
 }
@@ -230,7 +218,7 @@ export function workLayout() {
  * Cross Section on the right, so each shot shows in all three views as it is taken.
  */
 export function surveyLayout() {
-  if (!api) return;
+  if (!api || !showInstruments) return;
   const a = api;
   a.clear();
   a.addPanel({ id: 'survey', component: 'survey', title: PANELS.survey.title });

@@ -15,6 +15,8 @@ use wasm_bindgen::prelude::*;
 static CONSOLE: OnceLock<LogBuffer> = OnceLock::new();
 
 mod sheets;
+mod formats;
+mod geo;
 mod snap;
 mod survey;
 
@@ -27,6 +29,16 @@ thread_local! {
     static HISTORY: RefCell<HashMap<String, History>> = RefCell::new(HashMap::new());
     /// The line most recently added with `add_map_line`, `add_profile_sketch` or `add_section_sketch`.
     static LAST_ADDED: RefCell<String> = const { RefCell::new(String::new()) };
+    /// Counts every time the open cave is replaced (`install` is the only door), so work that began
+    /// against one cave can tell it landed in another.
+    static DOC_SERIAL: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+}
+
+/// Changes whenever the open cave is replaced (opening, syncing, starting a new one). Compare two
+/// readings to know whether the cave under a long-running job is still the one it began with.
+#[wasm_bindgen]
+pub fn doc_serial() -> u32 {
+    DOC_SERIAL.with(|s| s.get())
 }
 
 fn console() -> &'static LogBuffer {
@@ -107,6 +119,7 @@ fn install(mut doc: Document) {
     doc.set_actor(random_actor());
     doc.take_outbox();
     DOC.with(|d| *d.borrow_mut() = Some(doc));
+    DOC_SERIAL.with(|s| s.set(s.get().wrapping_add(1)));
     HISTORY.with(|h| h.borrow_mut().clear());
 }
 
@@ -343,13 +356,20 @@ pub fn add_map_line(
 /// One undoable edit. Returns `ok` or `error: ...`.
 #[wasm_bindgen]
 pub fn edit_line(id: &str, points: &str, widths: &str, adjusted: bool) -> String {
-    edit_line_with(id, points, widths, adjusted, None)
+    edit_line_with(id, points, widths, adjusted, None, None)
+}
+
+/// Moves a line's points and sets its words as one undoable edit: a symbol whose label is cleared drops its label's note
+/// point with it, so the note's grip goes and a label added later starts beside the symbol again. Returns `ok` or `error: ...`.
+#[wasm_bindgen]
+pub fn edit_line_text(id: &str, points: &str, text: &str, adjusted: bool) -> String {
+    edit_line_with(id, points, "", adjusted, None, Some(text))
 }
 
 /// Moves a leader's points and sets its style (where its arrows are fastened) as one undoable edit. Returns `ok` or `error: ...`.
 #[wasm_bindgen]
 pub fn edit_leader(id: &str, points: &str, style: &str, adjusted: bool) -> String {
-    edit_line_with(id, points, "", adjusted, Some(style))
+    edit_line_with(id, points, "", adjusted, Some(style), None)
 }
 
 fn edit_line_with(
@@ -358,6 +378,7 @@ fn edit_line_with(
     widths: &str,
     adjusted: bool,
     style: Option<&str>,
+    text: Option<&str>,
 ) -> String {
     let Ok(points) = serde_json::from_str::<Vec<[f64; 2]>>(points) else {
         return "error: unreadable stroke".into();
@@ -389,6 +410,10 @@ fn edit_line_with(
             actions.extend(
                 cave_draw::set_stroke_style(doc, line, style).map_err(|e| format!("{e:?}"))?,
             );
+        }
+        if let Some(text) = text {
+            actions
+                .extend(cave_draw::set_stroke_text(doc, line, text).map_err(|e| format!("{e:?}"))?);
         }
         let edit = doc.edit(actions).map_err(|e| format!("{e:?}"))?;
         record_edit(&scope, &edit);
@@ -546,6 +571,144 @@ pub fn flipped_lines() -> String {
     })
 }
 
+/// Which passage a map line hangs on (legs to glow) and the other level it could be on, as JSON
+/// (`{"legs": [[[e,n,u],[e,n,u]], ...], "other": ["a","b"] | null}`), or `null`.
+#[wasm_bindgen]
+pub fn map_line_level(id: &str, adjusted: bool) -> String {
+    let Ok(line) = id.parse::<cave_id::Id>() else {
+        return "null".into();
+    };
+    DOC.with(|d| {
+        d.borrow()
+            .as_ref()
+            .and_then(|doc| cave_scene::line_level(doc, line, adjusted))
+            .and_then(|l| serde_json::to_string(&l).ok())
+            .unwrap_or_else(|| "null".into())
+    })
+}
+
+/// Moves a map line onto another level: re-anchors it where it is drawn now, its first point on
+/// the leg between stations `a` and `b`. One undoable edit. Returns `ok` or `error: ...`.
+#[wasm_bindgen]
+pub fn reanchor_line(id: &str, a: &str, b: &str, adjusted: bool) -> String {
+    let (Ok(a), Ok(b)) = (a.parse::<cave_id::Id>(), b.parse::<cave_id::Id>()) else {
+        return "error: no such leg".into();
+    };
+    change_line(id, |doc, line| {
+        let frames = cave_scene::map_frames(doc, adjusted);
+        let pin = cave_doc::frame_index(&frames, (a, b)).ok_or(cave_draw::DrawError::NoStations)?;
+        let (pts, widths) =
+            cave_scene::placed_line(doc, line, adjusted).ok_or(cave_draw::DrawError::NoStations)?;
+        cave_draw::reanchor_stroke(doc, line, &pts, widths, &frames, pin)
+    })
+}
+
+/// Map lines that hop between passages on different levels (JSON array of ids).
+#[wasm_bindgen]
+pub fn hopped_lines(adjusted: bool) -> String {
+    DOC.with(|d| {
+        let ids: Vec<String> = d
+            .borrow()
+            .as_ref()
+            .map(|doc| cave_scene::hopped_lines(doc, adjusted))
+            .unwrap_or_default()
+            .into_iter()
+            .map(|id| id.to_string())
+            .collect();
+        serde_json::to_string(&ids).unwrap_or_else(|_| "[]".into())
+    })
+}
+
+/// Drawings nothing can show because a station they hang on is gone (JSON array of ids).
+#[wasm_bindgen]
+pub fn hidden_drawings(adjusted: bool) -> String {
+    DOC.with(|d| {
+        let ids: Vec<String> = d
+            .borrow()
+            .as_ref()
+            .map(|doc| cave_scene::hidden_drawings(doc, adjusted))
+            .unwrap_or_default()
+            .into_iter()
+            .map(|id| id.to_string())
+            .collect();
+        serde_json::to_string(&ids).unwrap_or_else(|_| "[]".into())
+    })
+}
+
+/// Deletes the drawings that are hidden because their stations are gone: one undoable edit per view
+/// they were drawn in, kept in that view's history. Returns `ok <how many>` or `error: ...`.
+#[wasm_bindgen]
+pub fn delete_hidden_drawings(adjusted: bool) -> String {
+    let result = DOC.with(|d| {
+        let mut slot = d.borrow_mut();
+        let doc = slot.as_mut().ok_or("no cave is open")?;
+        let mut by_view: std::collections::BTreeMap<String, Vec<cave_doc::Action>> =
+            Default::default();
+        let mut n = 0;
+        for line in cave_scene::hidden_drawings(doc, adjusted) {
+            let view = doc
+                .entity(line)
+                .map(|e| e.text(cave_doc::Field::FeatureView))
+                .unwrap_or_default();
+            let actions = cave_draw::remove_stroke(doc, line).map_err(|e| format!("{e:?}"))?;
+            by_view.entry(view).or_default().extend(actions);
+            n += 1;
+        }
+        for (view, actions) in by_view {
+            let edit = doc.edit(actions).map_err(|e| format!("{e:?}"))?;
+            record_edit(&view, &edit);
+        }
+        Ok::<usize, String>(n)
+    });
+    match result {
+        Ok(n) => format!("ok {n}"),
+        Err(e) => format!("error: {e}"),
+    }
+}
+
+/// Re-attaches every map line that hops levels to the level its first point is on. One
+/// undoable edit. Returns `ok <how many>` or `error: ...`.
+#[wasm_bindgen]
+pub fn fix_hopped_lines(adjusted: bool) -> String {
+    let result = DOC.with(|d| {
+        let mut slot = d.borrow_mut();
+        let doc = slot.as_mut().ok_or("no cave is open")?;
+        let frames = cave_scene::map_frames(doc, adjusted);
+        let mut actions = Vec::new();
+        let mut fixed = 0;
+        for line in cave_scene::hopped_lines(doc, adjusted) {
+            let Some((pts, widths)) = cave_scene::placed_line(doc, line, adjusted) else {
+                continue;
+            };
+            let Some(cave_doc::Value::Anchored(Some(path))) = doc
+                .entity(line)
+                .map(|e| e.get(cave_doc::Field::FeatureAnchored))
+            else {
+                continue;
+            };
+            let first = path.frames[path.points[0].frame as usize];
+            let Some(pin) = cave_doc::frame_index(&frames, first) else {
+                continue;
+            };
+            actions.extend(
+                cave_draw::reanchor_stroke(doc, line, &pts, widths, &frames, pin)
+                    .map_err(|e| format!("{e:?}"))?,
+            );
+            fixed += 1;
+        }
+        if actions.is_empty() {
+            return Ok(0);
+        }
+        let edit = doc.edit(actions).map_err(|e| format!("{e:?}"))?;
+        record_edit("map", &edit);
+        Ok::<usize, String>(fixed)
+    });
+    match result {
+        Ok(n) => format!("ok {n}"),
+        Err(e) => format!("error: {e}"),
+    }
+}
+
 /// Changes the words of a line already drawn (a symbol's label, or a text stroke's text). One
 /// undoable edit. Returns `ok` or `error: ...`.
 #[wasm_bindgen]
@@ -570,6 +733,37 @@ pub fn set_drawing_scale(n: f64) -> String {
         let mut slot = d.borrow_mut();
         let doc = slot.as_mut().ok_or("no cave is open")?;
         let actions = cave_draw::set_drawing_scale(doc, n).map_err(|e| format!("{e:?}"))?;
+        if actions.is_empty() {
+            return Ok(());
+        }
+        let edit = doc.edit(actions).map_err(|e| format!("{e:?}"))?;
+        record_edit("settings", &edit);
+        Ok::<(), String>(())
+    });
+    match result {
+        Ok(()) => "ok".into(),
+        Err(e) => format!("error: {e}"),
+    }
+}
+
+/// The open cave's room id on the CaveCAD server, or "" when it has none.
+#[wasm_bindgen]
+pub fn room_id() -> String {
+    DOC.with(|d| {
+        d.borrow()
+            .as_ref()
+            .map(cave_draw::room_id)
+            .unwrap_or_default()
+    })
+}
+
+/// Sets the open cave's room id. One edit in the settings history. Returns `ok` or `error: ...`.
+#[wasm_bindgen]
+pub fn set_room_id(id: &str) -> String {
+    let result = DOC.with(|d| {
+        let mut slot = d.borrow_mut();
+        let doc = slot.as_mut().ok_or("no cave is open")?;
+        let actions = cave_draw::set_room_id(doc, id).map_err(|e| format!("{e:?}"))?;
         if actions.is_empty() {
             return Ok(());
         }
@@ -883,6 +1077,17 @@ pub fn symbols() -> String {
     serde_json::to_string(cave_symbols::catalogue()).unwrap_or_else(|_| "[]".to_string())
 }
 
+/// The outlines a round brush of `radius` metres swept along `stroke` (JSON `[[x, y], ...]`, plan
+/// metres), stopped at `walls` (JSON array of polylines): JSON array of closed outlines, largest
+/// first. The breakdown brush stores each one as an area fill.
+#[wasm_bindgen]
+pub fn brush_outlines(stroke: &str, radius: f64, walls: &str) -> String {
+    let stroke: Vec<[f64; 2]> = serde_json::from_str(stroke).unwrap_or_default();
+    let walls: Vec<Vec<[f64; 2]>> = serde_json::from_str(walls).unwrap_or_default();
+    serde_json::to_string(&cave_brush::swept_outlines(&stroke, radius, &walls))
+        .unwrap_or_else(|_| "[]".to_string())
+}
+
 /// The kinds of area fill, with what each means (JSON array of `{key, label, help}`).
 #[wasm_bindgen]
 pub fn fills() -> String {
@@ -1096,6 +1301,186 @@ pub fn paste_lines(view: &str, target: &str, adjusted: bool, items: &str) -> Str
     });
     match result {
         Ok(made) => serde_json::json!({ "ids": made }).to_string(),
+        Err(e) => format!("error: {e}"),
+    }
+}
+
+/// Applies one eraser drag as ONE undoable edit. `view` is `map`, `profile` or `section`; `target` is the
+/// run (profile) or station (section) as a fallback when a line does not say. `plan` is JSON:
+/// `{remove: [id], edits: [{id, points, widths}], adds: [{from, points, widths}]}` in the view's own space.
+/// An edit reshapes a line (and opens it if it was closed); an add makes a new line like `from` (same kind,
+/// run or station, style, flip, tags and trip). Ids that are not features drawn in `view` are ignored.
+/// Returns `{"ok":true,"removed":n,"cut":m}` or `error: ...`.
+#[wasm_bindgen]
+pub fn erase_lines(view: &str, target: &str, adjusted: bool, plan: &str) -> String {
+    #[derive(serde::Deserialize)]
+    struct Edit {
+        id: String,
+        points: Vec<[f64; 2]>,
+        #[serde(default)]
+        widths: Option<Vec<f64>>,
+    }
+    #[derive(serde::Deserialize)]
+    struct Add {
+        from: String,
+        points: Vec<[f64; 2]>,
+        #[serde(default)]
+        widths: Option<Vec<f64>>,
+    }
+    #[derive(serde::Deserialize, Default)]
+    struct Plan {
+        #[serde(default)]
+        remove: Vec<String>,
+        #[serde(default)]
+        edits: Vec<Edit>,
+        #[serde(default)]
+        adds: Vec<Add>,
+    }
+    let Ok(plan) = serde_json::from_str::<Plan>(plan) else {
+        return "error: unreadable eraser plan".into();
+    };
+    if !matches!(view, "map" | "profile" | "section") {
+        return "error: no such view".into();
+    }
+    let result = DOC.with(|d| {
+        let mut slot = d.borrow_mut();
+        let doc = slot.as_mut().ok_or("no cave is open")?;
+        // A feature drawn in this view, by id text.
+        let drawn = |doc: &cave_doc::Document, id: &str| -> Option<cave_id::Id> {
+            let id = id.parse::<cave_id::Id>().ok()?;
+            let e = doc.entity(id)?;
+            (e.kind() == cave_doc::Kind::Feature
+                && e.is_live()
+                && e.text(cave_doc::Field::FeatureView) == view)
+                .then_some(id)
+        };
+        let frames_for = |doc: &cave_doc::Document, run: &str| -> Vec<cave_doc::Frame> {
+            match view {
+                "profile" => cave_scene::profile_frames(doc, run, adjusted).unwrap_or_default(),
+                "map" => cave_scene::map_frames(doc, adjusted),
+                _ => Vec::new(),
+            }
+        };
+        let mut all = Vec::new();
+        let (mut removed, mut cut) = (0usize, 0usize);
+        let mut gone = std::collections::HashSet::new();
+        for id in &plan.remove {
+            let Some(id) = drawn(doc, id) else { continue };
+            if gone.insert(id) {
+                all.extend(cave_draw::remove_stroke(doc, id).map_err(|e| format!("{e:?}"))?);
+                removed += 1;
+            }
+        }
+        for ed in plan.edits {
+            let Some(id) = drawn(doc, &ed.id) else {
+                continue;
+            };
+            if gone.contains(&id) {
+                continue;
+            }
+            let e = doc.entity(id).ok_or("no such line")?;
+            let frames = frames_for(doc, &e.text(cave_doc::Field::FeatureRun));
+            let widths = ed.widths.filter(|w| w.len() == ed.points.len());
+            all.extend(
+                cave_draw::edit_stroke(doc, id, &ed.points, widths, &frames)
+                    .map_err(|e| format!("{e:?}"))?,
+            );
+            let was_closed = match e.get(cave_doc::Field::FeatureAnchored) {
+                cave_doc::Value::Anchored(Some(a)) => a.closed,
+                _ => matches!(
+                    e.get(cave_doc::Field::FeaturePath),
+                    cave_doc::Value::Path(Some(cave_geom::Path::Spline { closed: true, .. }))
+                ),
+            };
+            if was_closed {
+                // The edit above wrote the whole path; open it in the same edit by patching its value.
+                for a in &mut all {
+                    if let cave_doc::Action::Set { id: aid, value, .. } = a
+                        && *aid == id
+                    {
+                        match value {
+                            cave_doc::Value::Anchored(Some(an)) => an.closed = false,
+                            cave_doc::Value::Path(Some(cave_geom::Path::Spline {
+                                closed, ..
+                            })) => *closed = false,
+                            _ => {}
+                        }
+                    }
+                }
+            }
+            cut += 1;
+        }
+        let mut ids = random_ids();
+        for add in plan.adds {
+            let Some(from) = drawn(doc, &add.from) else {
+                continue;
+            };
+            if gone.contains(&from) {
+                continue;
+            }
+            let e = doc.entity(from).ok_or("no such line")?;
+            let kind = e.text(cave_doc::Field::FeatureType);
+            let widths = add.widths.filter(|w| w.len() == add.points.len());
+            let (id, actions) = match view {
+                "map" => cave_draw::map_line(
+                    doc,
+                    &mut ids,
+                    &kind,
+                    &add.points,
+                    widths,
+                    &cave_scene::map_frames(doc, adjusted),
+                ),
+                "profile" => {
+                    let mut run = e.text(cave_doc::Field::FeatureRun);
+                    if run.is_empty() {
+                        run = target.to_string();
+                    }
+                    let frames =
+                        cave_scene::profile_frames(doc, &run, adjusted).ok_or("no such run")?;
+                    cave_draw::profile_sketch(
+                        doc,
+                        &mut ids,
+                        &kind,
+                        &run,
+                        &add.points,
+                        widths,
+                        &frames,
+                    )
+                }
+                _ => {
+                    let station = match e.get(cave_doc::Field::FeatureStation) {
+                        cave_doc::Value::Ref(Some(s)) => s,
+                        _ => target
+                            .parse::<cave_id::Id>()
+                            .map_err(|_| "no such station")?,
+                    };
+                    cave_draw::section_sketch(
+                        doc,
+                        &mut ids,
+                        &kind,
+                        station,
+                        &add.points,
+                        widths,
+                        cave_scene::section_trip(doc, adjusted, &station.to_string()),
+                    )
+                }
+            }
+            .map_err(|e| format!("{e:?}"))?;
+            all.extend(cave_draw::with_closed(actions, false).map_err(|e| format!("{e:?}"))?);
+            all.extend(cave_draw::copy_stroke_fields(doc, from, id).map_err(|e| format!("{e:?}"))?);
+            cut += 1;
+        }
+        if all.is_empty() {
+            return Ok::<(usize, usize), String>((0, 0));
+        }
+        let edit = doc.edit(all).map_err(|e| format!("{e:?}"))?;
+        record_edit(view, &edit);
+        Ok((removed, cut))
+    });
+    match result {
+        Ok((removed, cut)) => {
+            serde_json::json!({"ok": true, "removed": removed, "cut": cut}).to_string()
+        }
         Err(e) => format!("error: {e}"),
     }
 }
@@ -1399,8 +1784,22 @@ pub fn shading(adjusted: bool, x: f64, y: f64, z: f64, perspective: bool, filter
 /// Random ids for new things, from the browser's own random source.
 fn random_ids() -> cave_id::EntropyIds<impl FnMut() -> u64> {
     cave_id::EntropyIds::new(|| {
-        let word = || (js_sys::Math::random() * 4_294_967_296.0) as u64;
-        (word() << 32) | word()
+        #[cfg(target_arch = "wasm32")]
+        {
+            let word = || (js_sys::Math::random() * 4_294_967_296.0) as u64;
+            (word() << 32) | word()
+        }
+        // Natively (the tests) there is no JS to ask: a counter run through splitmix64 is unique enough.
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+            let mut z = NEXT
+                .fetch_add(0x9E37_79B9_7F4A_7C15, std::sync::atomic::Ordering::Relaxed)
+                .wrapping_add(0x9E37_79B9_7F4A_7C15);
+            z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+            z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+            z ^ (z >> 31)
+        }
     })
 }
 
@@ -1616,12 +2015,89 @@ pub fn passage_mesh(adjusted: bool, mode: &str, fill_gaps: bool, filter: &str) -
 mod tests {
     use super::*;
 
+    fn map_wall_list() -> Vec<serde_json::Value> {
+        serde_json::from_str(&map_lines(true)).unwrap()
+    }
+
+    #[test]
+    fn erase_lines_applies_one_drag_as_one_edit() {
+        open_demo(CAVE);
+        assert_eq!(
+            add_map_line(
+                "wall",
+                "[[0,5],[2,5],[4,5],[6,5]]",
+                "",
+                false,
+                true,
+                "",
+                "dashed"
+            ),
+            "ok"
+        );
+        let before = map_wall_list();
+        assert_eq!(before.len(), 1);
+        let id = before[0]["id"].as_str().unwrap().to_string();
+        let plan = serde_json::json!({
+            "remove": [],
+            "edits": [{"id": id, "points": [[0,5],[2,5]], "widths": null}],
+            "adds": [{"from": id, "points": [[4,5],[6,5]], "widths": null}],
+        })
+        .to_string();
+        let r: serde_json::Value =
+            serde_json::from_str(&erase_lines("map", "", true, &plan)).unwrap();
+        assert_eq!(r, serde_json::json!({"ok": true, "removed": 0, "cut": 2}));
+        let after = map_wall_list();
+        assert_eq!(after.len(), 2);
+        for l in &after {
+            assert_eq!(l["kind"], "wall");
+            assert_eq!(l["style"], before[0]["style"]);
+            assert!(l["style"].as_str().unwrap().starts_with("dashed"));
+        }
+        assert!(undo("map"));
+        let back = map_wall_list();
+        assert_eq!(back, before, "one undo restores the single wall");
+    }
+
+    #[test]
+    fn erase_lines_removes_and_ignores_what_it_cannot_erase() {
+        open_demo(CAVE);
+        add_map_line("wall", "[[0,5],[3,5],[6,5]]", "", false, true, "", "");
+        let id = map_wall_list()[0]["id"].as_str().unwrap().to_string();
+        let none = erase_lines("map", "", true, r#"{"remove":[],"edits":[],"adds":[]}"#);
+        assert_eq!(none, r#"{"cut":0,"ok":true,"removed":0}"#);
+        assert_eq!(map_wall_list().len(), 1);
+        let plan = serde_json::json!({"remove": [id, "nonsense"]}).to_string();
+        // Not drawn in the profile view: ignored.
+        let r: serde_json::Value =
+            serde_json::from_str(&erase_lines("profile", "", true, &plan)).unwrap();
+        assert_eq!(r["removed"], 0);
+        assert_eq!(map_wall_list().len(), 1);
+        let r: serde_json::Value =
+            serde_json::from_str(&erase_lines("map", "", true, &plan)).unwrap();
+        assert_eq!(r["removed"], 1);
+        assert!(map_wall_list().is_empty());
+        assert!(undo("map"));
+        assert_eq!(map_wall_list().len(), 1);
+    }
+
     const CAVE: &str = r#"{"unit":"m","name":"t","shots":[
         {"from":"A","to":"B","distance":10,"azimuth":0,"inclination":0,"left":1,"right":1},
         {"from":"B","to":"C","distance":8,"azimuth":90,"inclination":-5}]}"#;
 
     fn open_result(text: &str) -> serde_json::Value {
         serde_json::from_str(&open_dxf(text)).unwrap()
+    }
+
+    #[test]
+    fn the_document_serial_changes_whenever_the_cave_is_replaced() {
+        let a = doc_serial();
+        open_demo(CAVE);
+        let b = doc_serial();
+        assert_ne!(a, b);
+        assert_eq!(sync_load("[]"), "ok");
+        let c = doc_serial();
+        assert_ne!(b, c);
+        assert_eq!(doc_serial(), c, "reading it changes nothing");
     }
 
     #[test]
@@ -1634,6 +2110,18 @@ mod tests {
         let r = open_result(&file);
         assert_eq!(r["ok"], true, "{r}");
         assert_eq!(scene(false, "{}"), before);
+    }
+
+    #[test]
+    fn a_kept_caves_room_id_is_read_without_opening_it() {
+        open_demo(CAVE);
+        assert_eq!(room_id_of_native(&sync_snapshot()), "");
+        assert_eq!(set_room_id("cave_0123456789abcdef01234567"), "ok");
+        let kept = sync_snapshot();
+        open_demo(CAVE);
+        assert_eq!(room_id_of_native(&kept), "cave_0123456789abcdef01234567");
+        assert_eq!(room_id(), "", "the open cave is untouched");
+        assert_eq!(room_id_of_native("not a cave"), "");
     }
 
     #[test]
@@ -2054,7 +2542,7 @@ pub fn scan_view_stations(view: &str, adjusted: bool) -> String {
     })
 }
 
-/// A scan's matches on a trip in a view: JSON `{mode, anchors: [{px, py, station, label, x, y}]}`,
+/// A scan's matches on a trip in a view: JSON `{mode, drift, anchors: [{px, py, station, label, x, y}]}`,
 /// or `null`. A match to a station has its `station` id and `label`; a match to a point has `x`, `y`.
 #[wasm_bindgen]
 pub fn scan_alignment(trip: &str, view: &str, path: &str) -> String {
@@ -2071,11 +2559,14 @@ pub fn scan_alignment(trip: &str, view: &str, path: &str) -> String {
     struct Out {
         mode: cave_scans::FitMode,
         anchors: Vec<A>,
+        /// How far the survey has bent under the scan since its matches were made or kept (metres), if known.
+        drift: Option<f64>,
     }
     DOC.with(|d| {
         let slot = d.borrow();
         let out = parse_id(trip).zip(slot.as_ref()).and_then(|(t, doc)| {
             cave_scans::alignment(doc, t, view, path).map(|al| Out {
+                drift: al.drift(&raw_positions(doc, view)),
                 mode: al.mode,
                 anchors: al
                     .anchors
@@ -2133,7 +2624,33 @@ pub fn scan_add_anchor(
         },
     };
     scoped_edit("scans", |doc| {
-        cave_scans::add_anchor(doc, trip, view, path, px, py, target)
+        // a station match remembers where the station is now, as measured, so a later survey change shows
+        let seen = match target {
+            cave_scans::Target::Station { id } => raw_positions(doc, view).get(&id).copied(),
+            cave_scans::Target::Point { .. } => None,
+        };
+        cave_scans::add_anchor(doc, trip, view, path, px, py, target, seen)
+    })
+}
+
+/// Where each station is in `view` as measured (not adjusted): what a match remembers, and what its drift is
+/// measured against, so adjusting the survey is not drift and editing a shot is.
+fn raw_positions(doc: &cave_doc::Document, view: &str) -> cave_scans::Positions {
+    view_positions(doc, view, false)
+        .into_iter()
+        .map(|(id, _, at)| (id, at))
+        .collect()
+}
+
+/// Keeps a scan's matches as right against the survey as it is now (its drift starts again from zero).
+#[wasm_bindgen]
+pub fn scan_keep_matches(trip: &str, view: &str, path: &str) -> String {
+    let Some(trip) = parse_id(trip) else {
+        return "error: no such trip".into();
+    };
+    scoped_edit("scans", |doc| {
+        let positions = raw_positions(doc, view);
+        cave_scans::keep_matches(doc, trip, view, path, &positions)
     })
 }
 
@@ -2265,10 +2782,63 @@ pub fn shelf_summarize_native(ops: &str) -> String {
         .unwrap_or_else(|_| "null".into())
 }
 
+/// The room id of a cave kept in CaveCAD's own format (its ops as JSON), without opening it; "" when it has none
+/// or the text is not a cave.
+#[wasm_bindgen]
+pub fn room_id_of_native(ops: &str) -> String {
+    serde_json::from_str::<Vec<cave_doc::Op>>(ops)
+        .ok()
+        .and_then(|ops| {
+            let mut doc = Document::new(ActorId(1));
+            ops.iter().all(|op| doc.apply(op).is_ok()).then_some(doc)
+        })
+        .map(|doc| cave_draw::room_id(&doc))
+        .unwrap_or_default()
+}
+
 /// What the shelf shows about a sample cave given as shot-list JSON, without opening it.
 #[wasm_bindgen]
 pub fn shelf_summarize_demo(json: &str) -> String {
     let doc = cave_fixture::from_shot_list(json, ActorId(1)).ok();
     serde_json::to_string(&doc.as_ref().map(cave_shelf::summarize))
         .unwrap_or_else(|_| "null".into())
+}
+
+/// The folder a cave's name becomes (see `cave_folder::folder_name`).
+#[wasm_bindgen]
+pub fn folder_name(name: &str) -> String {
+    cave_folder::folder_name(name)
+}
+
+/// The project folder's rules for the browser, which reads and writes the folder itself: given the
+/// names directly inside the cave's folder (`inside`, a JSON array, or `null` when there is no
+/// folder) and in its `backup/` (`backups`), and the person's local time as `yyyy-mm-dd hhmm`, says
+/// what New cave finds there, which subfolders to make, where exports go, whether this save takes a
+/// backup, what it is called, and which old backups to delete. `stem` is the cave file's name
+/// without `.cavecad`.
+#[wasm_bindgen]
+pub fn folder_plan(inside: &str, backups: &str, stem: &str, now: &str) -> String {
+    let inside: Option<Vec<String>> = serde_json::from_str(inside).unwrap_or(None);
+    let backups: Vec<String> = serde_json::from_str(backups).unwrap_or_default();
+    let names: Vec<&str> = inside.iter().flatten().map(String::as_str).collect();
+    let backups: Vec<&str> = backups.iter().map(String::as_str).collect();
+    let now = cave_folder::Stamp::parse(now);
+    let due = now.is_some_and(|n| cave_folder::backup_due(stem, &backups, n));
+    let backup_name = now.map(|n| cave_folder::backup_name(stem, n));
+    let mut subfolders: Vec<&str> = cave_folder::missing(&names);
+    if cave_folder::find(&names, cave_folder::CACHE).is_none() {
+        subfolders.push(cave_folder::CACHE);
+    }
+    let backup = cave_folder::find(&names, cave_folder::BACKUP).unwrap_or(cave_folder::BACKUP);
+    serde_json::json!({
+        "place": cave_folder::place(inside.as_ref().map(|_| names.as_slice())),
+        "missing": subfolders,
+        "exports": cave_folder::exports_folder(&names),
+        "scans": cave_folder::find(&names, cave_folder::SCANS).unwrap_or(cave_folder::SCANS),
+        "backupFolder": backup,
+        "backupDue": due,
+        "backupName": backup_name,
+        "prune": cave_folder::prune(stem, &backups),
+    })
+    .to_string()
 }

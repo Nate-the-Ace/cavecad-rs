@@ -1,0 +1,11 @@
+[package]
+name = "cave-geomag"
+edition.workspace = true
+version.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+serde_json = "1"

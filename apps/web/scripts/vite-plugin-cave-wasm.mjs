@@ -34,7 +34,12 @@ function describeTree() {
 function buildWasm(release) {
   return new Promise((resolve) => {
     const args = ['build', 'crates/cave-wasm', '--target', 'web', '--out-dir', outDir, '--out-name', 'cave_wasm', release ? '--release' : '--dev'];
-    const p = spawn('wasm-pack', args, { cwd: repo, env });
+    // On Windows an npm-installed wasm-pack is a `wasm-pack.cmd` shim, which only a shell can run;
+    // the shell joins the arguments into one line, so each one is quoted (paths may hold spaces).
+    const p =
+      process.platform === 'win32'
+        ? spawn('wasm-pack', args.map((a) => `"${a}"`), { cwd: repo, env, shell: true })
+        : spawn('wasm-pack', args, { cwd: repo, env });
     let log = '';
     p.stdout.on('data', (d) => (log += d));
     p.stderr.on('data', (d) => (log += d));

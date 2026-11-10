@@ -51,6 +51,10 @@ pub struct Anchor {
     pub py: f64,
     /// What the spot is.
     pub target: Target,
+    /// For a station: where it was (in the view's frame, as measured, not adjusted) when the match was
+    /// made or last kept, so a later change to the survey can be noticed (`drift`). `None` for matches
+    /// made before this was kept, and for points.
+    pub seen: Option<(f64, f64)>,
 }
 
 /// A scan's matches in one view, and how to fit them.
@@ -80,6 +84,9 @@ impl Alignment {
                 Target::Point { x, y } => format!("{x}:{y}"),
             };
             out.push_str(&format!(";{},{},{}", a.px, a.py, target));
+            if let (Target::Station { .. }, Some((x, y))) = (a.target, a.seen) {
+                out.push_str(&format!(",{x}:{y}")); // a fourth field older readers skip
+            }
         }
         out
     }
@@ -98,6 +105,10 @@ impl Alignment {
             .map(|p| {
                 let mut f = p.split(',');
                 let (px, py, t) = (finite(f.next()?)?, finite(f.next()?)?, f.next()?);
+                let seen = f
+                    .next()
+                    .and_then(|s| s.split_once(':'))
+                    .and_then(|(x, y)| Some((finite(x)?, finite(y)?)));
                 let target = match t.split_once(':') {
                     Some((x, y)) => Target::Point {
                         x: finite(x)?,
@@ -107,10 +118,63 @@ impl Alignment {
                         id: t.parse().ok()?,
                     },
                 };
-                Some(Anchor { px, py, target })
+                Some(Anchor {
+                    px,
+                    py,
+                    target,
+                    seen,
+                })
             })
             .collect::<Option<Vec<_>>>()?;
         Some(Alignment { mode, anchors })
+    }
+
+    /// How far the survey has bent under this scan since its matches were made or last kept: the
+    /// largest distance (in the view's units) by which a matched station is off from where its
+    /// match-time spot lands once all of them are moved, turned and scaled together. Moving, turning or
+    /// scaling the whole survey is no drift; a shot changed between the matches is. `None` with fewer
+    /// than three station matches that know where they were (two always fit).
+    pub fn drift(&self, positions: &Positions) -> Option<f64> {
+        let pairs: Vec<((f64, f64), (f64, f64))> = self
+            .anchors
+            .iter()
+            .filter_map(|a| match a.target {
+                Target::Station { id } => Some((a.seen?, *positions.get(&id)?)),
+                Target::Point { .. } => None,
+            })
+            .collect();
+        if pairs.len() < 3 {
+            return None;
+        }
+        let n = pairs.len() as f64;
+        let (pc, qc) = pairs
+            .iter()
+            .fold(((0.0, 0.0), (0.0, 0.0)), |(p, q), (a, b)| {
+                (
+                    (p.0 + a.0 / n, p.1 + a.1 / n),
+                    (q.0 + b.0 / n, q.1 + b.1 / n),
+                )
+            });
+        // the similarity q = qc + k (p - pc), with k a complex number (scale and turn), by least squares
+        let (mut re, mut im, mut norm) = (0.0, 0.0, 0.0);
+        for ((px, py), (qx, qy)) in &pairs {
+            let (ux, uy, vx, vy) = (px - pc.0, py - pc.1, qx - qc.0, qy - qc.1);
+            re += vx * ux + vy * uy;
+            im += vy * ux - vx * uy;
+            norm += ux * ux + uy * uy;
+        }
+        if norm <= 1e-12 {
+            return None;
+        }
+        let (kr, ki) = (re / norm, im / norm);
+        pairs
+            .iter()
+            .map(|((px, py), (qx, qy))| {
+                let (ux, uy) = (px - pc.0, py - pc.1);
+                let (fx, fy) = (qc.0 + kr * ux - ki * uy, qc.1 + kr * uy + ki * ux);
+                (qx - fx).hypot(qy - fy)
+            })
+            .reduce(f64::max)
     }
 }
 
@@ -159,7 +223,8 @@ pub fn set_alignment(
     }])
 }
 
-/// Adds a match (the spot `px`, `py` on the scan is `target`).
+/// Adds a match (the spot `px`, `py` on the scan is `target`; `seen`: where a station is now, as measured).
+#[allow(clippy::too_many_arguments)]
 pub fn add_anchor(
     doc: &Document,
     trip: Id,
@@ -168,6 +233,7 @@ pub fn add_anchor(
     px: f64,
     py: f64,
     target: Target,
+    seen: Option<(f64, f64)>,
 ) -> Result<Vec<Action>, ScanError> {
     if !px.is_finite() || !py.is_finite() || px < 0.0 || py < 0.0 {
         return Err(ScanError::BadPath);
@@ -176,7 +242,32 @@ pub fn add_anchor(
         mode: FitMode::Warp,
         anchors: Vec::new(),
     });
-    a.anchors.push(Anchor { px, py, target });
+    a.anchors.push(Anchor {
+        px,
+        py,
+        target,
+        seen,
+    });
+    set_alignment(doc, trip, view, path, Some(a))
+}
+
+/// Keeps a scan's matches as they are against the survey now: each station match remembers where its
+/// station is (`positions`, as measured), so `drift` starts again from zero ("the match is still right").
+pub fn keep_matches(
+    doc: &Document,
+    trip: Id,
+    view: &str,
+    path: &str,
+    positions: &Positions,
+) -> Result<Vec<Action>, ScanError> {
+    let Some(mut a) = alignment(doc, trip, view, path) else {
+        return Ok(Vec::new());
+    };
+    for anchor in &mut a.anchors {
+        if let Target::Station { id } = anchor.target {
+            anchor.seen = positions.get(&id).copied();
+        }
+    }
     set_alignment(doc, trip, view, path, Some(a))
 }
 
@@ -681,5 +772,67 @@ mod tests {
             )
             .is_none()
         );
+    }
+
+    fn ids(n: u64) -> Vec<Id> {
+        (1..=n)
+            .map(|i| format!("{i:026}").parse().unwrap())
+            .collect()
+    }
+
+    fn at_stations(st: &[Id], seen: &[(f64, f64)]) -> Alignment {
+        Alignment {
+            mode: FitMode::Warp,
+            anchors: st
+                .iter()
+                .zip(seen)
+                .map(|(id, s)| Anchor {
+                    px: 0.0,
+                    py: 0.0,
+                    target: Target::Station { id: *id },
+                    seen: Some(*s),
+                })
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn drift_ignores_the_survey_moving_or_turning_as_a_whole_and_sees_a_bend() {
+        let st = ids(3);
+        let then = [(0.0, 0.0), (10.0, 0.0), (10.0, 10.0)];
+        let a = at_stations(&st, &then);
+        // moved 5 m and turned 30 degrees: no drift
+        let (c, s) = (30f64.to_radians().cos(), 30f64.to_radians().sin());
+        let moved: Positions = st
+            .iter()
+            .zip(then)
+            .map(|(id, (x, y))| (*id, (5.0 + c * x - s * y, 2.0 + s * x + c * y)))
+            .collect();
+        assert!(a.drift(&moved).unwrap() < 1e-9);
+        // the last station pushed 3 m east (a shot changed between the matches): drift
+        let mut bent: Positions = st.iter().zip(then).map(|(id, p)| (*id, p)).collect();
+        bent.insert(st[2], (13.0, 10.0));
+        assert!(a.drift(&bent).unwrap() > 1.0);
+        // two matches always fit; old matches without a remembered place say nothing
+        assert!(at_stations(&st[..2], &then[..2]).drift(&bent).is_none());
+        let old = Alignment {
+            mode: FitMode::Warp,
+            anchors: a
+                .anchors
+                .iter()
+                .map(|x| Anchor { seen: None, ..*x })
+                .collect(),
+        };
+        assert!(old.drift(&bent).is_none());
+    }
+
+    #[test]
+    fn a_remembered_place_survives_the_round_trip_and_old_text_still_reads() {
+        let st = ids(2);
+        let a = at_stations(&st, &[(1.5, -2.25), (3.0, 4.0)]);
+        assert_eq!(Alignment::decode(&a.encode()), Some(a.clone()));
+        let old = format!("warp;10,20,{};30,40,{}", st[0], st[1]);
+        let read = Alignment::decode(&old).unwrap();
+        assert!(read.anchors.iter().all(|x| x.seen.is_none()));
     }
 }

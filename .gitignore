@@ -12,3 +12,4 @@ node_modules
 # local settings and keys: never committed
 .env.local
 .env.*.local
+pass-key.json

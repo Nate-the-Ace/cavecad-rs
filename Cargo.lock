@@ -9,6 +9,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "72f5acc6cb2ba439de613abc23857ec3d78374d8ed5ac84e9d11336e87da8649"
 
 [[package]]
+name = "cave-brush"
+version = "0.0.1"
+
+[[package]]
 name = "cave-doc"
 version = "0.0.1"
 dependencies = [
@@ -63,8 +67,40 @@ name = "cave-fixture"
 version = "0.0.1"
 dependencies = [
  "cave-doc",
+ "cave-formats",
+ "cave-survey",
+ "serde_json",
+]
+
+[[package]]
+name = "cave-folder"
+version = "0.0.1"
+dependencies = [
+ "serde",
+]
+
+[[package]]
+name = "cave-formats"
+version = "0.0.1"
+dependencies = [
+ "cave-doc",
+ "cave-geo",
+ "cave-geomag",
  "cave-id",
  "cave-survey",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "cave-geo"
+version = "0.0.1"
+dependencies = [
+ "cave-doc",
+ "cave-draw",
+ "cave-geomag",
+ "cave-id",
+ "serde",
  "serde_json",
 ]
 
@@ -73,6 +109,13 @@ name = "cave-geom"
 version = "0.0.1"
 dependencies = [
  "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "cave-geomag"
+version = "0.0.1"
+dependencies = [
  "serde_json",
 ]
 
@@ -271,6 +314,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "cave-th2"
+version = "0.0.1"
+dependencies = [
+ "cave-doc",
+ "cave-draw",
+ "cave-formats",
+ "cave-id",
+ "cave-scans",
+ "cave-scene",
+ "cave-style",
+ "cave-symbols",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "cave-walls"
 version = "0.0.1"
 dependencies = [
@@ -285,12 +344,17 @@ dependencies = [
 name = "cave-wasm"
 version = "0.0.1"
 dependencies = [
+ "cave-brush",
  "cave-doc",
  "cave-draw",
  "cave-dxf",
  "cave-fill",
  "cave-fixture",
+ "cave-folder",
+ "cave-formats",
+ "cave-geo",
  "cave-geom",
+ "cave-geomag",
  "cave-id",
  "cave-instrument",
  "cave-log",
@@ -306,6 +370,7 @@ dependencies = [
  "cave-snap",
  "cave-style",
  "cave-symbols",
+ "cave-th2",
  "js-sys",
  "serde",
  "serde_json",

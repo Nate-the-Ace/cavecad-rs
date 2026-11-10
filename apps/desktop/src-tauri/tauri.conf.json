@@ -34,7 +34,8 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "createUpdaterArtifacts": true
   },
   "plugins": {
     "deep-link": {
@@ -43,6 +44,12 @@
           "cavecad"
         ]
       }
+    },
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDEzNDJBRjNEMzlCODYzQ0UKUldUT1k3ZzVQYTlDRTRGaXM1SDUraTRzN3hRVVh1NWNubkMrZVN4ajNMeGF3U3EwT2RNTUlEZm8K",
+      "endpoints": [
+        "https://api.cavecad.com/api/desktop-update/{{target}}/{{arch}}/{{current_version}}"
+      ]
     }
   }
 }

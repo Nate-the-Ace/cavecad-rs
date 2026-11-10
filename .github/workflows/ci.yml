@@ -16,3 +16,18 @@ jobs:
         run: cargo build --target wasm32-unknown-unknown -p cave-id -p cave-store -p cave-log -p cave-geom -p cave-doc -p cave-survey
       - name: Code index is current
         run: python3 tools/make_code_index.py --check
+  server-and-web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 26
+      - name: Account server tests
+        working-directory: apps/server
+        run: node --test
+      - name: Invite mailer decisions
+        run: node tools/invite-mailer/test.mjs
+      - name: Web app tests
+        working-directory: apps/web
+        run: npm ci && npm test

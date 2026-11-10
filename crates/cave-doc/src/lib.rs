@@ -15,6 +15,7 @@ mod entity;
 mod field;
 mod history;
 mod json;
+mod level_anchor;
 mod op;
 
 pub use anchored::{AnchorError, AnchorPoint, AnchoredPath, Frame, anchor_stroke};
@@ -25,4 +26,7 @@ pub use entity::{Entity, Lww};
 pub use field::{Field, Kind, Value, ValueType};
 pub use history::History;
 pub use json::{JsonError, SCHEMA};
+pub use level_anchor::{
+    AMBIGUOUS_RADIUS, Hops, anchor_stroke_path, frame_index, other_level, path_hops_level,
+};
 pub use op::{Action, Op};

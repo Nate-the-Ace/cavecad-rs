@@ -3,10 +3,10 @@
   // and north arrow. What is drawn here is what the Print and PNG buttons in the Sheets tab produce.
   import { onMount, untrack } from 'svelte';
   import { onTheme } from '../lib/theme';
-  import { cave } from '../lib/cave.svelte';
+  import { cave, option } from '../lib/cave.svelte';
   import { engine, loadEngine } from '../lib/engine';
   import { looks } from '../lib/ink';
-  import { sheet } from '../lib/sheet.svelte';
+  import { followUnits, scaleText, sheet } from '../lib/sheet.svelte';
   import { drawSheet, overflows } from '../lib/sheet-draw';
   import { currentSheet } from '../lib/sheet-export';
 
@@ -33,13 +33,14 @@
     g.setTransform(dpr, 0, 0, dpr, 0, 0);
     drawSheet(g, plan, scene, lines, k, looks());
     const per = plan.feet_per_inch;
-    note = overflows(plan, scene.bounds) ? 'The cave does not fit this paper at this scale: pick a bigger sheet or a smaller scale.' : sheet.feetPerInch === 0 && !plan.fits ? 'No scale fits this cave on this paper.' : `Plotted at ${per < 10 ? per.toFixed(2) : per.toFixed(0)} ft per inch`;
+    note = overflows(plan, scene.bounds) ? 'The cave does not fit this paper at this scale: pick a bigger sheet or a smaller scale.' : sheet.feetPerInch === 0 && !plan.fits ? 'No scale fits this cave on this paper.' : `Plotted at ${scaleText(per, cave.units)}`;
   }
 
   $effect(() => {
     void cave.version;
     void cave.adjusted;
     void cave.fileName;
+    void cave.units;
     void ready;
     void size;
     void sheet.paper;
@@ -50,7 +51,11 @@
     void sheet.title;
     void sheet.bar;
     void sheet.north;
-    untrack(paint);
+    void option('handInk', false); // Ink style redraws every line
+    untrack(() => {
+      followUnits(cave.units); // the paper of the units, until one is picked
+      paint();
+    });
   });
 
   onMount(() => {

@@ -6,7 +6,8 @@ use crate::solved::{Solved, solve};
 use cave_doc::{Document, Field, Frame, Kind, Value};
 use cave_id::Id;
 use cave_profile::{
-    FLAT_SPLAY_DEG, Graph, LegInfo, WallInput, band_wall_runs, group_runs, hierarchy, unroll_band,
+    FLAT_SPLAY_DEG, Graph, LegInfo, WallInput, band_wall_runs, group_runs_linked, hierarchy,
+    unroll_band,
 };
 use cave_survey::LegKind;
 use serde::Serialize;
@@ -189,7 +190,7 @@ pub fn runs(doc: &Document, use_adjustment: bool) -> Vec<RunInfo> {
     let s = solve(doc, use_adjustment);
     let g = graph(&s);
     let z_of = |id: Id| s.positions.get(&id).map(|p| p.z);
-    let grouped = group_runs(&s.labels, &s.order);
+    let grouped = group_runs_linked(&s.labels, &s.order, &leg_infos(&s));
     let ties = tie_stations(&s, &grouped);
     grouped
         .runs
@@ -212,7 +213,7 @@ pub fn profile_scene(doc: &Document, key: &str, use_adjustment: bool) -> Option<
     let s = solve(doc, use_adjustment);
     let g = graph(&s);
     let z_of = |id: Id| s.positions.get(&id).map(|p| p.z);
-    let grouped = group_runs(&s.labels, &s.order);
+    let grouped = group_runs_linked(&s.labels, &s.order, &leg_infos(&s));
     let run = grouped.runs.iter().find(|r| r.key == key)?;
     let tie = tie_stations(&s, &grouped).get(key).copied();
     let band = unroll_band(run, tie, &g, &s.labels, &z_of, &s.ex.lruds);
@@ -351,7 +352,7 @@ pub fn profile_sketches_3d(doc: &Document, use_adjustment: bool) -> Vec<Sketch3d
     let s = solve(doc, use_adjustment);
     let g = graph(&s);
     let z_of = |id: Id| s.positions.get(&id).map(|p| p.z);
-    let grouped = group_runs(&s.labels, &s.order);
+    let grouped = group_runs_linked(&s.labels, &s.order, &leg_infos(&s));
     let ties = tie_stations(&s, &grouped);
     let mut bands: HashMap<String, HashMap<Id, [f64; 2]>> = HashMap::new();
     let mut out = Vec::new();
@@ -429,7 +430,7 @@ pub fn profile_frames(doc: &Document, key: &str, use_adjustment: bool) -> Option
     let s = solve(doc, use_adjustment);
     let g = graph(&s);
     let z_of = |id: Id| s.positions.get(&id).map(|p| p.z);
-    let grouped = group_runs(&s.labels, &s.order);
+    let grouped = group_runs_linked(&s.labels, &s.order, &leg_infos(&s));
     let run = grouped.runs.iter().find(|r| r.key == key)?;
     let tie = tie_stations(&s, &grouped).get(key).copied();
     let band = unroll_band(run, tie, &g, &s.labels, &z_of, &s.ex.lruds);
@@ -441,6 +442,8 @@ pub fn profile_frames(doc: &Document, key: &str, use_adjustment: bool) -> Option
                 b: w[1].id,
                 pa: [w[0].s, w[0].z],
                 pb: [w[1].s, w[1].z],
+                za: 0.0,
+                zb: 0.0,
             })
             .collect(),
     )

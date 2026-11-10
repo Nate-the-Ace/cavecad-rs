@@ -239,7 +239,10 @@ fn a_turned_pattern_is_written_turned_inside_the_same_outline() {
     let fill_id = doc
         .ids_of(cave_doc::Kind::Feature)
         .into_iter()
-        .find(|id| doc.entity(*id).is_some_and(|e| e.text(Field::FeatureType) == "fill-custom"))
+        .find(|id| {
+            doc.entity(*id)
+                .is_some_and(|e| e.text(Field::FeatureType) == "fill-custom")
+        })
         .unwrap();
     let before = export(&doc, &ExportOptions::default());
     let actions = cave_draw::set_stroke_style(&doc, fill_id, "pat:Hatchy;1;1;;;;1;45").unwrap();
@@ -250,5 +253,34 @@ fn a_turned_pattern_is_written_turned_inside_the_same_outline() {
         cave_draw::patterns::own_library(&doc).fills.len(),
         1,
         "turning is a property of the area, not of the fill"
+    );
+}
+
+/// Pitfall with one labelled pit whose label note is at `note` (metres east and north of the symbol).
+fn labelled_pit(note: [f64; 2]) -> String {
+    let mut doc = pitfall();
+    let mut ids = SeqIds::new(500);
+    let frames = cave_scene::map_frames(&doc, true);
+    let at = frames[0].pa;
+    let pts = [at, [at[0], at[1] + 2.0], [at[0] + note[0], at[1] + note[1]]];
+    let (id, actions) =
+        cave_draw::map_line(&doc, &mut ids, "sym-pit", &pts, None, &frames).unwrap();
+    doc.edit(cave_draw::with_text(actions, id, "P 19")).unwrap();
+    export(&doc, &ExportOptions::default())
+}
+
+#[test]
+fn a_symbol_label_pulled_clear_is_exported_with_its_leader() {
+    let beside = labelled_pit([2.6, 0.0]);
+    assert!(beside.contains("P 19"));
+    assert!(
+        !beside.contains("CAVE-CALLOUTS-MAP"),
+        "no leader while the label sits beside it"
+    );
+    let away = labelled_pit([15.0, 10.0]);
+    assert!(away.contains("P 19"));
+    assert!(
+        away.contains("CAVE-CALLOUTS-MAP"),
+        "a leader once the label is pulled away"
     );
 }

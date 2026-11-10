@@ -95,8 +95,9 @@ pub fn read(root: &Path, rel: &str) -> io::Result<Vec<u8>> {
 mod tests {
     use super::*;
 
-    fn tree() -> PathBuf {
-        let root = std::env::temp_dir().join(format!("cavecad-files-{}", std::process::id()));
+    fn tree(tag: &str) -> PathBuf {
+        // each test its own folder: tests run at the same time
+        let root = std::env::temp_dir().join(format!("cavecad-files-{tag}-{}", std::process::id()));
         let _ = fs::remove_dir_all(&root);
         fs::create_dir_all(root.join("2024 Scans/Team A")).unwrap();
         fs::create_dir_all(root.join(".hidden")).unwrap();
@@ -111,7 +112,7 @@ mod tests {
 
     #[test]
     fn lists_pictures_and_pdfs_at_every_depth_with_slashes() {
-        let root = tree();
+        let root = tree("list");
         let got: Vec<_> = list(&root)
             .unwrap()
             .into_iter()
@@ -153,7 +154,7 @@ mod tests {
 
     #[test]
     fn reads_a_page_and_refuses_anything_else() {
-        let root = tree();
+        let root = tree("read");
         assert_eq!(read(&root, "2024 Scans/p2.png").unwrap(), b"22");
         assert!(read(&root, "notes.txt").is_err(), "not a scan");
         assert!(read(&root, "../outside.png").is_err(), "outside the folder");

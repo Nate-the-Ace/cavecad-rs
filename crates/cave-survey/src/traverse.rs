@@ -77,8 +77,8 @@ pub fn effective_inclination(r: &Reading) -> Option<f64> {
     }
 }
 
-/// True when the shot is a pitch (steeper than [`PLUMB_DEG`]). Absence of a reading is not
-/// evidence of vertical.
+/// True when the shot is a pitch (inclination at or beyond [`PLUMB_DEG`] in magnitude). Absence of
+/// a reading is not evidence of vertical.
 pub fn is_plumb(r: &Reading) -> bool {
     effective_inclination(r).is_some_and(|i| i.abs() >= PLUMB_DEG)
 }
@@ -211,5 +211,109 @@ mod tests {
             distance: 1.0,
             ..Default::default()
         }));
+    }
+
+    #[test]
+    fn a_shot_at_exactly_plus_90_goes_straight_up() {
+        let o = offset(&shot(10.0, 37.5, 90.0), TapeMode::Slope).unwrap();
+        assert!(close(o.v.z, 10.0));
+        assert!(o.plan.abs() < 1e-12, "plan was {} (float dust)", o.plan);
+        assert!(o.v.x.abs() < 1e-12 && o.v.y.abs() < 1e-12);
+        assert!(is_plumb(&shot(10.0, 37.5, 90.0)));
+    }
+
+    #[test]
+    fn a_shot_at_exactly_minus_90_goes_straight_down() {
+        let o = offset(&shot(10.0, 37.5, -90.0), TapeMode::Slope).unwrap();
+        assert!(close(o.v.z, -10.0));
+        assert!(o.plan.abs() < 1e-12, "plan was {} (float dust)", o.plan);
+        assert!(o.v.x.abs() < 1e-12 && o.v.y.abs() < 1e-12);
+        assert!(is_plumb(&shot(10.0, 37.5, -90.0)));
+    }
+
+    #[test]
+    fn a_plumb_shot_lands_where_it_lands_whatever_bearing_is_recorded() {
+        // cos(90 deg) is 6e-17, not 0, so the horizontal part of a plumb shot is dust. It must not
+        // depend on the recorded bearing: a plumb has no passage direction to read.
+        let a = offset(&shot(10.0, 0.0, 90.0), TapeMode::Slope).unwrap();
+        let b = offset(&shot(10.0, 273.4, 90.0), TapeMode::Slope).unwrap();
+        assert!(a.v.minus(b.v).norm() < 1e-12);
+    }
+
+    #[test]
+    fn just_under_the_plumb_threshold_is_not_a_pitch() {
+        let r = shot(10.0, 45.0, 84.999);
+        assert!(!is_plumb(&r), "84.999 is below PLUMB_DEG = {PLUMB_DEG}");
+        let o = offset(&r, TapeMode::Slope).unwrap();
+        assert!(o.plan > 0.08, "a near-plumb still has real plan distance");
+        assert!(close(o.plan, 10.0 * 84.999f64.to_radians().cos()));
+    }
+
+    #[test]
+    fn just_over_the_plumb_threshold_is_a_pitch() {
+        let r = shot(10.0, 45.0, 85.001);
+        assert!(
+            is_plumb(&r),
+            "85.001 is at or beyond PLUMB_DEG = {PLUMB_DEG}"
+        );
+    }
+
+    #[test]
+    fn the_plumb_threshold_is_inclusive() {
+        assert!(is_plumb(&shot(10.0, 45.0, PLUMB_DEG)));
+        assert!(is_plumb(&shot(10.0, 45.0, -PLUMB_DEG)));
+    }
+
+    #[test]
+    fn a_plumb_shot_needs_no_bearing_when_the_notes_say_it_was_omitted() {
+        let r = Reading {
+            distance: 12.0,
+            inclination: Some(90.0),
+            azimuth_omitted: true,
+            ..Default::default()
+        };
+        assert!(effective_azimuth(&r).is_none());
+        let o = offset(&r, TapeMode::Slope).unwrap();
+        assert!(close(o.v.z, 12.0));
+        assert!(o.plan.abs() < 1e-12);
+    }
+
+    #[test]
+    fn a_plumb_shot_with_no_bearing_and_no_omitted_flag_is_refused() {
+        // Current behaviour: `offset` only guesses bearing 0 when the notes flag the bearing as
+        // omitted. A plumb with a blank bearing field and no flag is refused rather than drawn
+        // north. See also `a_level_shot_needs_a_bearing`.
+        let r = Reading {
+            distance: 12.0,
+            inclination: Some(90.0),
+            ..Default::default()
+        };
+        assert!(is_plumb(&r));
+        assert!(offset(&r, TapeMode::Slope).is_none());
+    }
+
+    #[test]
+    fn a_level_shot_needs_a_bearing() {
+        let r = Reading {
+            distance: 12.0,
+            inclination: Some(0.0),
+            ..Default::default()
+        };
+        assert!(!is_plumb(&r));
+        assert!(offset(&r, TapeMode::Slope).is_none());
+    }
+
+    #[test]
+    fn a_plumb_read_only_from_the_backsight_is_still_a_pitch() {
+        let r = Reading {
+            distance: 8.0,
+            back_inclination: Some(-90.0),
+            azimuth_omitted: true,
+            ..Default::default()
+        };
+        assert!(close(effective_inclination(&r).unwrap(), 90.0));
+        assert!(is_plumb(&r));
+        let o = offset(&r, TapeMode::Slope).unwrap();
+        assert!(close(o.v.z, 8.0) && o.plan.abs() < 1e-12);
     }
 }

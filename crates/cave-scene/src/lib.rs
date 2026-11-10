@@ -6,6 +6,7 @@
 
 mod detail;
 mod filter;
+mod hidden;
 mod maplines;
 mod mesh;
 mod profile;
@@ -16,7 +17,10 @@ mod under;
 
 pub use detail::{NoteField, ShotDetail, StationDetail, WallsOut, shot_detail, station_detail};
 pub use filter::{TripInfo, ViewFilter};
-pub use maplines::{map_frames, map_lines_3d};
+pub use hidden::hidden_drawings;
+pub use maplines::{
+    LineLevel, PlacedLine, hopped_lines, line_level, map_frames, map_lines_3d, placed_line,
+};
 pub use mesh::{ColorMode, Mesh, passage_mesh};
 pub use profile::{
     BandSection, ProfileScene, RunInfo, Sketch3d, profile_frames, profile_scene,
@@ -24,7 +28,7 @@ pub use profile::{
 };
 pub use section::{
     MapSection, SectionSketch, SectionStation, StationSection, map_sections, placements,
-    section_at, section_stations, section_trip, sketches_by_station,
+    section_at, section_frame, section_stations, section_trip, sketches_by_station,
 };
 pub use stations::{
     KINDS as STATION_KINDS, LoopMark, Note, StationRow, compare_natural, says_closed, station_rows,
@@ -33,7 +37,7 @@ pub use under::Shading;
 
 use cave_doc::{Document, Field, Kind};
 use cave_id::Id;
-use cave_survey::{LegKind, LegResult, Params, Splay, adjust, extract, resolve};
+use cave_survey::{LegKind, LegResult, Splay, extract, resolve};
 use serde::Serialize;
 use std::collections::HashMap;
 
@@ -224,7 +228,7 @@ pub fn build_seen_from(
     let touched_any = touched(&r.legs, &ex.splays);
     let touched_vis = touched(&legs, &vis_splays);
     let adj = use_adjustment
-        .then(|| adjust(&ex.legs, &r, &Params::default()))
+        .then(|| solved::adjusted(&ex.legs, &ex.fixed, &r))
         .filter(|a| a.adjusted);
     let pos = |id: Id| -> Option<cave_survey::Vec3> {
         match &adj {

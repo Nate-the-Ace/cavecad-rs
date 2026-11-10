@@ -1,3 +1,5 @@
+Retired 2026-10-26 (server caves): describes removed code.
+
 # Handoff: Classroom (branch `classroom`)
 
 Written on a PC where Rust cannot be built, so the **engine was not rebuilt or run here**. This branch

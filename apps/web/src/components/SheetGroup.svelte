@@ -4,7 +4,7 @@
   import { Download, Printer, FileImage } from '@lucide/svelte';
   import { cave } from '../lib/cave.svelte';
   import { engine, loadEngine, type SheetOptions } from '../lib/engine';
-  import { orderedScales, sheet, setSheet } from '../lib/sheet.svelte';
+  import { choosePaper, followUnits, orderedScales, sheet, setSheet } from '../lib/sheet.svelte';
   import { downloadSheet, printSheet } from '../lib/sheet-export';
   import { showPanel } from '../lib/workspace.svelte';
 
@@ -16,15 +16,17 @@
       showPanel('sheet');
     });
   });
-  // metric scales first when the cave is shown in metric
-  const scales = $derived(opts ? orderedScales(opts.scales, cave.units) : []);
+  // the scales of the units the cave is shown in (and the one in use, whatever its kind)
+  const scales = $derived(opts ? orderedScales(opts.scales, cave.units, sheet.feetPerInch) : []);
   const tell = (m: string) => engine.log('info', 'sheet', m);
+  // the paper follows the units until one is picked
+  $effect(() => followUnits(cave.units));
 </script>
 
 {#if part === 'paper'}
   <div class="col">
     <label class="row"><span class="name">Paper</span>
-      <select value={sheet.paper} onchange={(e) => setSheet({ paper: Number(e.currentTarget.value) })} aria-label="Paper">
+      <select value={sheet.paper} onchange={(e) => choosePaper(Number(e.currentTarget.value))} aria-label="Paper">
         {#each opts?.papers ?? [] as p, i}<option value={i}>{p.name}</option>{/each}
       </select>
     </label>

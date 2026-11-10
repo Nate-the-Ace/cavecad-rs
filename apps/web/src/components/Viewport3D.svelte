@@ -1,19 +1,22 @@
 <script lang="ts">
   import { onMount, untrack } from 'svelte';
-  import { Home, Maximize, Box, Square, Palette, Eye, Library, Lock, LockOpen } from '@lucide/svelte';
+  import { Home, Maximize, Box, Square, Palette, Eye, Library, Lock, LockOpen, History } from '@lucide/svelte';
   import PanelUndo from './PanelUndo.svelte';
   import { shelf } from '../lib/shelf.svelte';
   import { isSymbolKind, needsWords, symbolDef, withLabelSpot } from '../lib/symbols';
-  import { registerMirror } from '../lib/classroom-mirror';
   import { drawing, liveStyle } from '../lib/line-style.svelte';
-  import { cursorsFor, live as room, reportCursor } from '../lib/sync.svelte';
+  import { cursorsFor, presence as room, reportCursor } from '../lib/presence.svelte';
+  import { parseStyle, styleText } from '../lib/line-style-text';
+  import TripTimeline from './TripTimeline.svelte';
   import { engine, loadEngine, type Scene, type TypeStyle } from '../lib/engine';
-  import { CaveView, type CameraState, type Projection } from '../lib/viewport/cave-view';
+  import { CaveView, type Projection } from '../lib/viewport/cave-view';
   import { fitPlane, heightSurface } from '../lib/plane';
   import { markViewUsed, registerSelectAll } from '../lib/select-all';
   import { copyGhost, copyOp, copyPress, endCopy, endPaste, pasteGhost, pasteOp, pastePlace, registerClipView } from '../lib/view-clip.svelte';
   import { openNewText, openTextEdit } from '../lib/text-edit.svelte';
-  import { openLineMenu } from '../lib/line-menu.svelte';
+  import { openContextMenu } from '../lib/context-menu.svelte';
+  import { lineCandidate, lineItems, stationItems, viewItems } from '../lib/context-items';
+  import { closeCycle, offerStack, type Candidate } from '../lib/cycle.svelte';
   import { snap, clearPick, cycle, escapePick, pickBuiltUp, toggleSnap } from '../lib/snap.svelte';
   import SnapButton from './SnapButton.svelte';
   import { cave, changed, filter, haloFade, haloReach, option, setOption, selectedIds, selectIds, toggleSelected, setPick, setShowSections, setShown, wireFilter, toolStyle } from '../lib/cave.svelte';
@@ -23,12 +26,17 @@
   import { panelState, showPanel } from '../lib/workspace.svelte';
   import { setActiveView } from '../lib/snapshot';
   import { have, mapUrl, scans } from '../lib/scans.svelte';
+  import { entrancePick, pickEntrance, pickUndoable, surface, undoEntrancePick } from '../lib/surface.svelte';
+  import { terrainSampler } from '../lib/terrain';
+  import { formatLength, unitName } from '../lib/units';
 
   let wrap: HTMLDivElement;
   let gl: HTMLCanvasElement;
   let overlay: HTMLCanvasElement;
   let cubeHost: HTMLDivElement;
   let view: CaveView | null = null;
+  /** Set once the view exists, so the effects that feed it run again then. */
+  let viewReady = $state(false);
 
   let depthColor = $state(false);
   let walls = $state(true);
@@ -91,14 +99,27 @@
     void cave.adjusted;
     void filter.hiddenTrips.length;
     void scans.paths.length;
+    void scans.fetched; // a page of the cave arrived from the server
     const on = option('showScans', true);
     const opacity = option('scanOpacity', 0.5);
     const halo = option('halo', true);
+    const ink = option('handInk', false); // Ink style: the lines are redrawn
+    const shade = option('depthShade', false);
     const haloM = haloReach();
     const haloF = haloFade();
+    // the surface photo rides with the scans, under all of them
+    void viewReady;
+    const layers = surface.layers;
+    const photoUrl = surface.photoUrl;
+    const photoActual = photoSize;
+    const terrain = surface.terrain;
+    const photoOn = option('surfacePhoto', true);
+    const engineLoaded = loaded; // nothing can be asked of the engine before it has loaded
     untrack(() => {
-      if (!view) return;
+      if (!view || !engineLoaded) return;
       view.setHalo(halo, haloM, haloF);
+      view.setHandInk(ink);
+      view.setDepthShade(shade);
       // A scan lies in the plane of the stations it is matched to, so it touches them (and lies level when it has none, at the survey's average height).
       const all = scene?.stations ?? [];
       const surveyZ = all.length ? all.reduce((t, st) => t + st.at[2], 0) / all.length : (scene?.bounds?.[2] ?? 0);
@@ -111,13 +132,99 @@
         const pts = (ids ?? []).map((id) => all.find((st) => st.id === id)?.at).filter((v): v is [number, number, number] => !!v);
         return pts.length >= 3 ? heightSurface(pts, surveyZ) : null;
       };
-      const list = on
+      const list: Parameters<CaveView['setScans']>[0] = on
         ? engine
             .scanPlacements('map', cave.adjusted)
             .filter((p) => !filter.hiddenTrips.includes(p.trip) && have(p.path))
             .map((p) => ({ key: `${p.trip}/${p.path}`, url: mapUrl(p.path)!, matrix: p.matrix, z: surveyZ, plane: planeFor(p.stations), height: heightFor(p.stations), opacity, trim: p.trim, warp: p.warp }))
         : [];
+      if (photoOn && photoUrl && layers?.photo_matrix) {
+        // The picture must cover the recorded window whatever size the service sent: scale the pixel columns by recorded / actual.
+        const m = layers.photo_matrix.slice();
+        const rec = layers.photo_size;
+        if (rec && photoActual && photoActual.url === photoUrl && photoActual.w > 0 && photoActual.h > 0 && (photoActual.w !== rec[0] || photoActual.h !== rec[1])) {
+          const kx = rec[0] / photoActual.w;
+          const ky = rec[1] / photoActual.h;
+          m[0] *= kx; m[3] *= kx; // a, d: per pixel across
+          m[1] *= ky; m[4] *= ky; // b, e: per pixel down
+        }
+        // On the ground when its heights are known, else level at the survey's height like a scan.
+        const ground = terrain ? terrainSampler(terrain) : null;
+        const height = ground ? (x: number, y: number) => ground(x, y) ?? surveyZ : null;
+        list.push({ key: 'surface-photo', url: photoUrl, matrix: m, z: surveyZ, plane: null, height, opacity: 0.5, trim: null, warp: null, order: -11 });
+      }
       view.setScans(list);
+    });
+  });
+
+  // The photo's received size, read once per picture (it may differ from the size recorded).
+  let photoSize = $state<{ url: string; w: number; h: number } | null>(null);
+  $effect(() => {
+    const url = surface.photoUrl;
+    if (!url) {
+      photoSize = null;
+      return;
+    }
+    const img = new Image();
+    let live = true;
+    img.onload = () => { if (live) photoSize = { url, w: img.naturalWidth, h: img.naturalHeight }; };
+    img.src = url;
+    return () => { live = false; };
+  });
+
+  // The ground above the cave: contours (labelled in the display unit) and the terrain, each with its own switch.
+  const surfaceShown = $derived(surface.layers !== null);
+  $effect(() => {
+    void viewReady;
+    const layers = surface.layers;
+    const terrain = surface.terrain;
+    const contoursOn = option('surfaceContours', true);
+    const terrainOn = option('surfaceTerrain', false);
+    const unit = unitName(cave.units);
+    untrack(() => {
+      view?.setContours(layers?.contours ?? [], unit, contoursOn);
+      view?.setTerrain(terrain, terrainOn);
+    });
+  });
+
+  // "Pick entrance on surface" (the ribbon's Pick entrance button): press for the centre, drag for the
+  // radius, let go. Escape gives up. It runs while the pointer is down on the map, so the keys are
+  // heard on the window: the press does not reach the map's own handlers to give it focus.
+  $effect(() => {
+    const on = entrancePick.on;
+    void viewReady;
+    untrack(() => {
+      view?.setCirclePick(on);
+      if (on) entrancePick.message = 'Drag a circle round the entrance on the map; Escape to stop.';
+      else if (entrancePick.message.startsWith('Drag a circle')) entrancePick.message = '';
+    });
+    if (!on) return;
+    const esc = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      e.preventDefault();
+      entrancePick.on = false;
+    };
+    window.addEventListener('keydown', esc);
+    return () => window.removeEventListener('keydown', esc);
+  });
+  async function circlePicked(cx: number, cy: number, r: number) {
+    if (r < 1) {
+      entrancePick.message = `Drag a bigger circle: at least ${formatLength(1, cave.units, 1)} across from the centre.`;
+      return; // stays on for another try
+    }
+    entrancePick.on = false;
+    entrancePick.message = 'Moving the entrance and downloading the surface for it…';
+    entrancePick.message = await pickEntrance(cx, cy, r);
+  }
+  function undoPick() {
+    entrancePick.message = undoEntrancePick();
+  }
+  // The message's Undo goes once anything else is edited or undone (the Map's Undo may already have taken the pick back).
+  $effect(() => {
+    void cave.version;
+    void cave.opened;
+    untrack(() => {
+      if (entrancePick.canUndo && !pickUndoable()) entrancePick.canUndo = false;
     });
   });
 
@@ -231,6 +338,7 @@
     const symbolSize = option('symbolSize', 1.5);
     const label = option('label', '');
     view?.setDrawOptions({ tolerancePx: tol, pressure, close, finger, symbolSize, label });
+    view?.setBrushRadius(option('brushSize', 3) / 2);
   });
 
   // The picked drawing tool: drawing on the map goes to its plan, from the Top or Bottom view.
@@ -259,18 +367,40 @@
   function onUp(e: PointerEvent) {
     const d = down;
     down = null;
+    const lines = view?.takePressStack() ?? [];
     if (!d || !view || cave.tool || Math.hypot(e.clientX - d.x, e.clientY - d.y) > 4) return;
-    const hit = view.pickStation(e.clientX, e.clientY);
-    if (!hit) {
-      // not a station: a leg or a splay under the click gets its own tab; empty space lets go
-      const shot = view.pickShot(e.clientX, e.clientY);
-      setPick(shot?.kind ?? '', shot?.id ?? '');
+    // Everything under the click, topmost first: drawn lines (drawn over the survey), then stations, then legs and splays.
+    // The first is selected; when there is more than one, the selection cycling list offers the rest.
+    // the nearest station within the usual reach, and others only when they truly sit on the same spot (two levels in plan)
+    const stations = view.stationsAt(e.clientX, e.clientY).filter((st, i) => i === 0 || st.d <= 7);
+    const same = (a: number[], b: number[]) => a[0] === b[0] && a[1] === b[1] && a[2] === b[2];
+    // a leg or splay running out of a station under the click is that station's own, not something stacked on it
+    const shots = view.shotsAt(e.clientX, e.clientY).filter((sh) => !stations.some((st) => same(st.at, sh.from) || same(st.at, sh.to)));
+    const labelAt = (p: number[]) => scene?.stations.find((st) => same(st.at, p))?.label ?? '?';
+    const pickStationNow = (id: string, label: string, final: boolean) => {
+      cave.station = id;
+      setPick('station', id);
+      if (!final) return;
+      showPanel('section');
+      engine.log('info', 'section', `cross section at ${label}`);
+    };
+    const items: (Candidate & { z: number })[] = [
+      ...lines.map((k) => ({ ...lineCandidate(k.id, k.kind ?? '', k.text, () => (setPick('', ''), selectIds([k.id]))), z: k.points[0]?.[2] ?? 0 })),
+      ...stations.map((st) => ({ key: `station:${st.id}`, label: `Station ${st.label}`, choose: (final: boolean) => pickStationNow(st.id, st.label, final), z: st.at[2] })),
+      ...shots.map((sh) => ({ key: `${sh.kind}:${sh.id}`, label: sh.kind === 'leg' ? `Leg ${labelAt(sh.from)} – ${labelAt(sh.to)}` : `Splay from ${labelAt(sh.from)}`, choose: () => setPick(sh.kind, sh.id), z: (sh.from[2] + sh.to[2]) / 2 })),
+    ];
+    const top = items[0];
+    if (!top) {
+      setPick('', ''); // empty space lets go
+      closeCycle();
       return;
     }
-    cave.station = hit.id;
-    setPick('station', hit.id);
-    showPanel('section');
-    engine.log('info', 'section', `cross section at ${hit.label}`);
+    if (!lines.length) top.choose(true); // a drawn line was already selected by the press
+    else setPick('', '');
+    // when the things under the click are on different levels, each row says how high it is
+    const zs = items.map((it) => it.z);
+    if (Math.max(...zs) - Math.min(...zs) > 0.5) for (const it of items) it.detail = [it.detail, formatLength(it.z, cave.units, 1)].filter(Boolean).join(' · ');
+    offerStack(e.clientX, e.clientY, items);
   }
 
   // A cave opened from a file replaces the one on screen.
@@ -308,9 +438,56 @@
         view.setShowLabels(!filter.hiddenTypes.includes('label'));
         view.setScene(scene, false);
         loadPassage();
+        hopped = engine.hoppedLines(cave.adjusted).length;
+        hidden = engine.hiddenDrawings(cave.adjusted).length;
       });
     });
   });
+
+  let levelChoice = $state<{ id: string; other: [string, string] } | null>(null);
+  let levelTimer = 0;
+  let hopped = $state(0);
+  /** Drawings nothing can show because the shot they hang on was deleted. */
+  let hidden = $state(0);
+
+  function deleteHidden() {
+    const n = hidden;
+    if (!window.confirm(`${n} drawing${n === 1 ? '' : 's'} hang${n === 1 ? 's' : ''} on survey shots that were deleted, so ${n === 1 ? 'it' : 'they'} cannot be shown anywhere. Putting the shot back (Undo, or typing it again) brings ${n === 1 ? 'it' : 'them'} back.\n\nDelete ${n === 1 ? 'it' : 'them'}?`)) return;
+    const r = engine.deleteHiddenDrawings(cave.adjusted);
+    if (!r.startsWith('ok')) engine.log('warn', 'draw', r);
+    changed();
+  }
+
+  /** Glows the legs a map line took and offers the other level when its start was ambiguous. */
+  function showLevel(id: string) {
+    const info = engine.mapLineLevel(id, cave.adjusted);
+    view?.setAttachedLegs(info?.legs ?? []);
+    levelChoice = info?.other ? { id, other: info.other } : null;
+    clearTimeout(levelTimer);
+    levelTimer = window.setTimeout(() => {
+      view?.setAttachedLegs([]);
+      levelChoice = null;
+    }, 6000);
+  }
+
+  /** Moves the line just drawn onto the other level; offered again, so it can go back. */
+  function flipLevel() {
+    if (!levelChoice) return;
+    const { id, other } = levelChoice;
+    const r = engine.reanchorLine(id, other[0], other[1], cave.adjusted);
+    if (r !== 'ok') engine.log('warn', 'draw', r);
+    changed();
+    showLevel(id);
+  }
+
+  function fixHopped() {
+    const r = engine.fixHoppedLines(cave.adjusted);
+    if (!r.startsWith('ok')) engine.log('warn', 'draw', r);
+    changed();
+  }
+
+  /** The trips the survey timeline is playing through (in survey order), or null when it is closed. */
+  let timelineTrips = $state<{ id: string; name: string }[] | null>(null);
 
   function refresh() {
     if (!view) return;
@@ -337,10 +514,12 @@
       if (hint !== drawHint) drawHint = hint;
     };
     v.onSelectLine = (id, additive) => (additive && id ? toggleSelected(id) : selectIds(id ? [id] : []));
-    v.onLineMenu = (x, y, id, similar) => {
+    v.onLineMenu = (x, y, id, similar, editWords) => {
       if (!selectedIds().includes(id)) selectIds([id]);
-      openLineMenu(x, y, () => similar);
+      openContextMenu(x, y, lineItems('map', () => similar, editWords));
     };
+    v.onStationMenu = (x, y, id, label) => openContextMenu(x, y, stationItems(id, label));
+    v.onViewMenu = (x, y) => openContextMenu(x, y, viewItems('map', () => v.fit()));
     v.onEditText = (id, text, kind, x, y, size, angle) => openTextEdit(id, text, x, y, size, kind === 'text' ? 'Type the text' : kind === 'callout' ? 'Type the note' : 'Label', angle);
     v.copyLines = (cursor) => copyGhost('map', cursor)?.lines ?? null;
     v.onCopyPress = (p) => copyPress('map', p);
@@ -363,9 +542,25 @@
       changed();
     };
     v.onCursor = (x, y) => reportCursor('map', '', x, y, cave.tool);
-    v.onLineErased = (id) => {
-      if (cave.selected === id) cave.selected = '';
-      engine.deleteLine(id);
+    v.onErased = () => changed(); // the eraser's edit is made; everything that shows the cave reads it again
+    v.onBrushDrawn = (points) => {
+      // the breakdown brush: the ground swept (stopped at every wall) is stored as plain area fill, one area per piece
+      const kind = cave.tool === 'brush-debris' ? 'fill-debris' : 'fill-blocks';
+      const radius = option('brushSize', 3) / 2;
+      const pieces = engine.brushOutlines(points, radius, view?.planWalls() ?? []);
+      if (pieces.length === 0) {
+        engine.log('warn', 'draw', 'The brush covered no open ground: start the stroke inside a passage.');
+        return;
+      }
+      const density = option('brushDensity', 1);
+      const style = styleText({ ...parseStyle(''), density });
+      let made = 0;
+      for (const outline of pieces) {
+        const r = engine.addMapLine(kind, outline, null, true, cave.adjusted, '', style);
+        if (r === 'ok') made++;
+        else engine.log('warn', 'draw', r);
+      }
+      if (pieces.length > 1) engine.log('info', 'draw', `The brush crossed a wall: ${made} separate areas made, one on each side.`);
       changed();
     };
     v.onLineDrawn = (points, widths, closed, text = '') => {
@@ -389,6 +584,7 @@
       const r = engine.addMapLine(cave.tool, withLabelSpot(cave.tool, points, text), widths, closed, cave.adjusted, text, toolStyle());
       if (r !== 'ok') engine.log('warn', 'draw', r);
       changed();
+      if (r === 'ok') showLevel(engine.lastAddedId());
       // a leader placed without words asks for them at once
       if (r === 'ok' && cave.tool === 'callout' && !text.trim()) view?.editWordsAtPlan(engine.lastAddedId(), 'callout', '', points);
     };
@@ -406,9 +602,10 @@
       if (r !== 'ok') engine.log('warn', 'section', r);
       changed();
     };
+    v.onCirclePicked = (cx, cy, r) => void circlePicked(cx, cy, r);
     v.shadingFor = (dir, persp) => engine.shading(cave.adjusted, dir, persp, wireFilter());
     view = v;
-    const unmirror = registerMirror('map', { read: () => v.getCamera(), write: (c) => v.setCamera(c as CameraState) });
+    viewReady = true;
     if (import.meta.env.DEV) (window as unknown as { __view: CaveView }).__view = v; // for tests
     setActiveView(v);
 
@@ -425,12 +622,12 @@
     return () => {
       offSelectAll();
       offClip();
-      unmirror();
       ro.disconnect();
       offTheme();
       cube.dispose();
       v.dispose();
       view = null;
+      viewReady = false;
     };
   });
 </script>
@@ -439,8 +636,14 @@
 <div class="vp" role="application" aria-label="Map" bind:this={wrap} tabindex="-1" onkeydown={onKey} onpointerdowncapture={() => markViewUsed('map')}>
   <canvas bind:this={gl} onpointerdown={onDown} onpointerup={onUp}></canvas>
   <canvas bind:this={overlay} class="overlay"></canvas>
+  {#if timelineTrips}
+    <TripTimeline trips={timelineTrips} onChange={refresh} onClose={() => (timelineTrips = null)} />
+  {/if}
   <div class="bar">
     <button class="caves" title="The Cave Shelf: open a cave, start a new one, add a trip" onclick={() => (shelf.open = true)}><Library size={15} /> {cave.hasCave ? cave.name || 'Cave' : 'Caves'}</button>
+    {#if scene && scene.trips.length > 1}
+      <button class:on={!!timelineTrips} title="Survey timeline: watch the cave grow trip by trip, in the order it was surveyed" onclick={() => (timelineTrips = timelineTrips ? null : scene ? scene.trips.slice() : null)}><History size={15} /> Timeline</button>
+    {/if}
     <div class="menu">
       <button class:on={showMenu || filter.hiddenTypes.length + filter.hiddenTrips.length > 0} title="Show or hide: walls, passage, sketches, sections, types and trips" aria-expanded={showMenu} onclick={openMenu}><Eye size={15} /> Show</button>
       {#if showMenu}
@@ -452,6 +655,12 @@
           <label title="Show the profile sketches along their runs (they fade out from the top or bottom, where they cannot be read)"><input type="checkbox" checked={cave.showSections.profileSketches} onchange={(e) => setShowSections('profileSketches', e.currentTarget.checked)} /> Profile sketches</label>
           <label title="Show the cross sections drawn at stations, next to their stations (drag one to place it)"><input type="checkbox" checked={cave.showSections.map} onchange={(e) => setShowSections('map', e.currentTarget.checked)} /> Sections</label>
           <label title="Draw a paler section through stations with no measurements"><input type="checkbox" bind:checked={fillGaps} onchange={loadPassage} /> Fill gaps</label>
+          {#if surfaceShown}
+            <h4>Surface</h4>
+            <label title="The aerial photo under the cave, at half strength"><input type="checkbox" checked={option('surfacePhoto', true)} onchange={(e) => setOption('surfacePhoto', e.currentTarget.checked)} /> Photo</label>
+            <label title="Contour lines of the ground; the thicker ones are labelled with their height"><input type="checkbox" checked={option('surfaceContours', true)} onchange={(e) => setOption('surfaceContours', e.currentTarget.checked)} /> Contours</label>
+            <label title="The ground as a see-through surface, best seen from the side"><input type="checkbox" checked={option('surfaceTerrain', false)} onchange={(e) => setOption('surfaceTerrain', e.currentTarget.checked)} /> Terrain</label>
+          {/if}
           <h4>Types</h4>
           {#each listed as t}
             <label><input type="checkbox" checked={!filter.hiddenTypes.includes(t.key)} onchange={(e) => (setShown('types', t.key, e.currentTarget.checked), refresh())} /> {t.label}</label>
@@ -477,7 +686,16 @@
     <PanelUndo scope="map" label="on the map" />
     <SnapButton />
     <button class:on={depthColor} title="Colour by elevation" onclick={() => ((depthColor = !depthColor), view?.setElevationColors(depthColor), loadPassage())}><Palette size={15} /></button>
-    {#if drawHint}<span class="status">{drawHint}</span>{:else if status}<span class="status">{status}</span>{/if}
+    {#if hopped > 0}
+      <button title="Some lines hop between passages on different levels. Re-attach each to the level it starts on." onclick={fixHopped}>Fix {hopped} line{hopped === 1 ? '' : 's'}</button>
+    {/if}
+    {#if hidden > 0}
+      <button class="warn" title="Drawings that hang on survey shots that were deleted, so nothing can show them. Putting the shot back brings them back; or delete them." onclick={deleteHidden}>{hidden} hidden drawing{hidden === 1 ? '' : 's'}</button>
+    {/if}
+    {#if levelChoice}
+      <button class="on" title="This line starts where two passages overlap. Move it to the other level." onclick={flipLevel}>Other level</button>
+    {/if}
+    {#if drawHint}<span class="status">{drawHint}</span>{:else if entrancePick.message}<span class="status pick">{entrancePick.message}{#if entrancePick.canUndo}<button title="Put the entrance and its surface back as they were before this pick" onclick={undoPick}>Undo</button>{/if}<button title="Dismiss" aria-label="Dismiss" onclick={() => ((entrancePick.message = ''), (entrancePick.canUndo = false))}>×</button></span>{:else if status}<span class="status">{status}</span>{/if}
   </div>
   <div class="cube" class:locked>
     <div bind:this={cubeHost}></div>
@@ -506,8 +724,10 @@
   button.caves { display: inline-flex; gap: 5px; align-items: center; font-weight: 600; }
   button:disabled { opacity: 0.4; cursor: default; }
   button.on { background: var(--accent-bg); }
+  button.warn { color: var(--warn); border-color: var(--warn); }
   label { display: flex; gap: 4px; align-items: center; color: var(--muted); white-space: nowrap; }
   .status { color: var(--muted); }
+  .status.pick { display: inline-flex; flex-wrap: wrap; gap: 6px; align-items: center; color: var(--text); max-width: 46em; }
   .menu { position: relative; }
   .menu > button { gap: 5px; grid-auto-flow: column; }
   .pop { position: absolute; top: calc(100% + 10px); left: 0; z-index: 5; min-width: 200px; max-height: 60vh; overflow: auto; display: flex; flex-direction: column; gap: 4px; padding: 8px 10px; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: 0 6px 20px rgb(0 0 0 / 0.25); }

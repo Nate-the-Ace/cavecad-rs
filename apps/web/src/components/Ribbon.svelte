@@ -7,6 +7,10 @@
     icon: Component<any>;
     run: () => void;
     pressed?: () => boolean;
+    /** Greyed out while this says so. */
+    disabled?: () => boolean;
+    /** Says more than the label, on hover. */
+    title?: string;
   }
   /** One group of a ribbon tab. */
   export interface Group {
@@ -21,33 +25,34 @@
 
 <script lang="ts">
   import { engine, loadEngine } from '../lib/engine';
-  import { exportDxf, exportProject, openCave, saveCave } from '../lib/files';
+  import { caveFolder, openCave, saveCave } from '../lib/files';
+  import { folder } from '../lib/cavefolder.svelte';
+  import ProjectFiles from './ProjectFiles.svelte';
   import { shelf } from '../lib/shelf.svelte';
-  import { leaveP2p, p2p } from '../lib/p2p.svelte';
-  import { leave, live } from '../lib/sync.svelte';
-  import { classroom } from '../lib/classroom.svelte';
-  import { registerMirror } from '../lib/classroom-mirror';
-  import { cave, clearPick, selectedIds, selectIds, setCompactRibbon, setPick, setUnits, option, setOption } from '../lib/cave.svelte';
+  import { cave, clearPick, selectedIds, selectIds, setCompactRibbon, setPick, setUnits, option, setOption, setTool } from '../lib/cave.svelte';
   import DrawTools from './DrawTools.svelte';
   import ThemeGroup from './ThemeGroup.svelte';
   import ContextOptions from './ContextOptions.svelte';
   import SelectionTools from './SelectionTools.svelte';
   import CopyIcon from './CopyIcon.svelte';
   import { copyOp, endCopy, endPaste, pasteOp, startCopy } from '../lib/view-clip.svelte';
-  import CollaborateGroup from './CollaborateGroup.svelte';
   import LayoutGroup from './LayoutGroup.svelte';
   import { surveyGroups } from './survey-groups';
+  import { showInstruments } from '../lib/features';
   import FillTools from './FillTools.svelte';
+  import EraseTools from './EraseTools.svelte';
   import SheetGroup from './SheetGroup.svelte';
   import { INSPECTORS } from '../lib/inspectors';
   import DrawingScale from './DrawingScale.svelte';
   import type { PickKind } from '../lib/cave.svelte';
   import UserMenu from './UserMenu.svelte';
+  import RoomStatus from './RoomStatus.svelte';
   import { isStampKind, symbolDef } from '../lib/symbols';
   import { fillLabel, isFillKind } from '../lib/fills';
   import { onMount, untrack } from 'svelte';
   import { PANELS, panelState, resetLayout, showPanel, surveyLayout, togglePanel, workLayout } from '../lib/workspace.svelte';
-  import { GraduationCap, Check, Trash2, LogIn, LogOut, Users, Library, FilePlus, FileInput, FolderOpen, Save, Ruler, Footprints, Route, Waypoints, Scissors, Map as MapIcon, Terminal, LayoutDashboard, Activity, Shapes, Table2, BookOpen, ScanLine, FileText, ChevronDown, PanelTop, FileOutput, Package, Mountain, SlidersHorizontal, Crosshair, Tent, Lock } from '@lucide/svelte';
+  import { Check, Trash2, Library, FilePlus, FolderOpen, FolderTree, Save, Ruler, Footprints, Scissors, Map as MapIcon, Terminal, LayoutDashboard, Activity, Shapes, Table2, BookOpen, ScanLine, FileText, ChevronDown, PanelTop, Mountain, SlidersHorizontal, Crosshair, Tent, Lock, Cloud, PenTool, Brush, SprayCan, Layers } from '@lucide/svelte';
+  import { entrancePick, surface } from '../lib/surface.svelte';
 
   /**
    * The app shows the ribbon as it is. A host that is only a part of the app (the survey harness) can give its own
@@ -56,8 +61,6 @@
    */
   let { tabs: given }: { tabs?: Record<string, Group[]> } = $props();
 
-  const press = (label: string) => engine.log('info', 'ribbon', `${label}: not built yet`);
-  const stub = (label: string, icon: Component<any>): Item => ({ label, icon, run: () => press(label) });
   const panelItem = (id: string, icon: Component<any>): Item => ({
     label: PANELS[id].title,
     icon,
@@ -78,16 +81,19 @@
 
   const own: Record<string, Group[]> = {
     Home: [
-      { name: 'File', items: [{ label: 'Caves', icon: Library, run: () => (shelf.open = true) }, { label: 'New', icon: FilePlus, run: () => (cave.newDialog = true) }, { label: 'Open', icon: FolderOpen, run: open }, { label: 'Save', icon: Save, run: save }, { label: 'Save as', icon: Save, run: saveAs }, { label: 'Scans in file', icon: ScanLine, run: () => setOption('saveScans', !option('saveScans', true)), pressed: () => option('saveScans', true) }] },
-      { name: 'Export', items: [{ label: 'DXF', icon: FileOutput, run: () => run(exportDxf()) }, { label: 'Project', icon: Package, run: () => run(exportProject()) }] },
-      { name: 'Survey', items: [stub('Import', FileInput), stub('Draw', Route), stub('Adjust', Waypoints)] },
+      { name: 'File', items: [{ label: 'Caves', icon: Library, run: () => (shelf.open = true) }, { label: 'New', icon: FilePlus, run: () => (cave.newDialog = true) }, { label: 'Open', icon: FolderOpen, run: open }, { label: 'Save a copy', icon: Save, title: 'Your cave is kept as you work. This saves a copy of it as a CaveCAD file wherever you choose.', run: saveAs }, { label: 'Folder', icon: FolderTree, title: "Give the cave a folder on this computer (or show the one it has)", run: () => run(caveFolder()), pressed: () => folder.label !== '' }] },
+      { name: 'Import and export', items: [], custom: ProjectFiles },
       {
-        name: 'Live',
+        name: 'Surface',
         items: [
-          { label: 'Share', icon: Users, run: () => (p2p.dialog = true), pressed: () => live.status === 'live' && p2p.role === 'host' },
-          { label: 'Join', icon: LogIn, run: () => { shelf.join = true; shelf.open = true; }, pressed: () => live.status === 'live' && p2p.role === 'guest' },
-          { label: 'Classroom', icon: GraduationCap, run: () => (classroom.dialog = true), pressed: () => classroom.role === 'teacher' },
-          { label: 'Leave', icon: LogOut, run: () => { leaveP2p(); leave(); } },
+          { label: 'Surface Data', icon: Mountain, title: 'Download the aerial photo and ground elevation above the cave', run: () => (surface.dialog = true), pressed: () => surface.dialog },
+          { label: 'Pick entrance', icon: Crosshair, title: 'Pick entrance on surface: drag a circle on the Map round the entrance (needs the ground elevation)', run: () => ((entrancePick.on = !entrancePick.on), entrancePick.on && showPanel('map')), pressed: () => entrancePick.on, disabled: () => !surface.tiff || surface.busy },
+        ],
+      },
+      {
+        name: 'Rooms',
+        items: [
+          { label: 'Rooms', icon: Cloud, run: () => showPanel('rooms'), pressed: () => !!panelState.open.rooms },
         ],
       },
     ],
@@ -97,8 +103,17 @@
       { name: 'Geology and relief', items: [], custom: DrawTools, props: { group: 'Geology and relief' } },
       { name: 'Symbols', items: [{ label: 'Symbols', icon: Shapes, run: () => showPanel('symbols'), pressed: () => !!panelState.visible.symbols }] },
       { name: 'Area fill', items: [], custom: FillTools },
+      {
+        name: 'Brushes',
+        items: [
+          { label: 'Boulder brush', icon: Brush, title: 'Boulder brush: drag through a passage on the Map and boulders are strewn where you swept. They stop at the walls. Width and thickness are in the tab that opens', run: () => setTool('brush-blocks'), pressed: () => cave.tool === 'brush-blocks' },
+          { label: 'Rubble brush', icon: SprayCan, title: 'Rubble brush: drag through a passage on the Map and small rubble is strewn where you swept. It stops at the walls', run: () => setTool('brush-debris'), pressed: () => cave.tool === 'brush-debris' },
+        ],
+      },
+      { name: 'Erase', items: [], custom: EraseTools },
     ],
-    Survey: surveyGroups({ inCave: surveyLayout }),
+    // connecting an instrument is future work: its tab shows only where showInstruments says so
+    ...(showInstruments ? { Survey: surveyGroups({ inCave: surveyLayout }) } : {}),
     Annotation: [
       { name: 'Notes and leaders', items: [], custom: DrawTools, props: { group: 'Annotation' } },
     ],
@@ -109,14 +124,14 @@
       { name: 'Save', items: [], custom: SheetGroup, props: { part: 'save' } },
     ],
     View: [
-      { name: 'Panels', items: [panelItem('map', MapIcon), panelItem('profile', Activity), panelItem('section', Scissors), panelItem('symbols', Shapes), panelItem('patterns', Shapes), panelItem('stations', Table2), panelItem('notebook', BookOpen), panelItem('survey', Crosshair), panelItem('scans', ScanLine), panelItem('sheet', FileText), panelItem('console', Terminal)] },
+      { name: 'Panels', items: [panelItem('map', MapIcon), panelItem('profile', Activity), panelItem('section', Scissors), panelItem('symbols', Shapes), panelItem('patterns', Shapes), panelItem('stations', Table2), panelItem('notebook', BookOpen), ...(showInstruments ? [panelItem('survey', Crosshair)] : []), panelItem('scans', ScanLine), panelItem('sheet', FileText), panelItem('console', Terminal), panelItem('rooms', Cloud)] },
       { name: 'Units', items: [{ label: 'Metric', icon: Ruler, run: () => setUnits('metric'), pressed: () => cave.units === 'metric' }, { label: 'Imperial', icon: Footprints, run: () => setUnits('imperial'), pressed: () => cave.units === 'imperial' }] },
       { name: 'Theme', items: [], custom: ThemeGroup },
       { name: 'Drawing scale', items: [], custom: DrawingScale },
+      { name: 'Map style', items: [{ label: 'Ink style', icon: PenTool, title: 'Ink style: every line drawn as if inked by hand (wobble, thick and thin, tapered ends). Changes only the picture, on screen and on printed sheets', run: () => setOption('handInk', !option('handInk', false)), pressed: () => option('handInk', false) }, { label: 'Depth shading', icon: Layers, title: 'Depth shading: the passage floor is washed darker the deeper it lies, from the survey itself, with a key in the corner. Seen on the Map from the top', run: () => setOption('depthShade', !option('depthShade', false)), pressed: () => option('depthShade', false) }] },
       { name: 'Rock halo', items: [{ label: 'Rock halo', icon: Mountain, run: () => setOption('halo', !option('halo', true)), pressed: () => option('halo', true) }, { label: 'Settings', icon: SlidersHorizontal, run: () => setPick('halo', 'halo'), pressed: () => cave.pick.kind === 'halo' }] },
       { name: 'Map view', items: [{ label: 'Lock view', icon: Lock, run: () => setOption('mapLock', !option('mapLock', false)), pressed: () => option('mapLock', false) }] },
-      { name: 'Live editing', items: [], custom: CollaborateGroup },
-      { name: 'Layout', items: [{ label: 'Reset', icon: LayoutDashboard, run: resetLayout }, { label: 'In cave', icon: Tent, run: surveyLayout }, { label: 'Scans', icon: ScanLine, run: workLayout }] },
+      { name: 'Layout', items: [{ label: 'Reset', icon: LayoutDashboard, run: resetLayout }, ...(showInstruments ? [{ label: 'In cave', icon: Tent, run: surveyLayout }] : []), { label: 'Scans', icon: ScanLine, run: workLayout }] },
       { name: 'Saved layouts', items: [], custom: LayoutGroup },
       { name: 'Ribbon settings', items: [{ label: 'Compact layout', icon: PanelTop, run: () => setCompactRibbon(!cave.compactRibbon), pressed: () => cave.compactRibbon }] },
     ],
@@ -128,18 +143,9 @@
 
   // A running command gets its own tab, in front, with its settings and a way to finish it.
   const CONTEXT = '\u0000command';
-  // In a class the teacher's tab is mirrored (a contextual tab is each person's own, from the tool they have).
-  $effect(() =>
-    registerMirror('ribbon', {
-      read: () => (active === CONTEXT ? undefined : active),
-      write: (tab) => {
-        if (typeof tab === 'string' && tab in tabs) active = tab;
-      },
-    })
-  );
   let toolLabels = $state<Record<string, string>>({});
   onMount(() => {
-    loadEngine().then(() => (toolLabels = Object.fromEntries(engine.drawTools().map((t) => [t.key, t.label]))));
+    loadEngine().then(() => (toolLabels = { ...Object.fromEntries(engine.drawTools().map((t) => [t.key, t.label])), eraser: 'Eraser', 'brush-blocks': 'Boulder brush', 'brush-debris': 'Rubble brush' })); // the Eraser draws nothing, so the engine's list does not name it
   });
   // A selected line gets one too, with what can be done to it, so it is easy to adjust.
   let loaded = $state(false);
@@ -315,7 +321,7 @@
     <div class="btns">
       {#if g.custom}<g.custom {...(g.props ?? {})} />{/if}
       {#each g.items as item}
-        <button class="tool" class:pressed={item.pressed?.()} onclick={item.run}>
+        <button class="tool" class:pressed={item.pressed?.()} disabled={item.disabled?.()} title={item.title} onclick={item.run}>
           <item.icon size={22} strokeWidth={1.6} />
           <span>{item.label}</span>
         </button>
@@ -335,7 +341,10 @@
     {#if mode}
       <button class="ctx" class:on={active === CONTEXT} onclick={() => (active = CONTEXT)}>{contextName}</button>
     {/if}
-    <UserMenu />
+    <div class="account">
+      <RoomStatus />
+      <UserMenu />
+    </div>
   </nav>
   <div class="bar" bind:clientWidth={barW}>
     {#each shownGroups as g, i (g.name)}
@@ -376,7 +385,7 @@
       <div class="grid">
         {#if g.custom}<g.custom {...(g.props ?? {})} />{/if}
         {#each g.items as item}
-          <button class="tool" class:pressed={item.pressed?.()} role="menuitem" onclick={() => { item.run(); openAt = null; }}>
+          <button class="tool" class:pressed={item.pressed?.()} disabled={item.disabled?.()} title={item.title} role="menuitem" onclick={() => { item.run(); openAt = null; }}>
             <item.icon size={16} strokeWidth={1.6} />
             <span>{item.label}</span>
           </button>
@@ -389,6 +398,7 @@
 <style>
   header { background: var(--panel); }
   .tabs { display: flex; gap: 2px; padding: 6px 10px 0; align-items: flex-end; }
+  .account { margin-left: auto; align-self: center; display: flex; align-items: center; min-width: 0; }
   .tabs button { background: none; border: 0; padding: 6px 14px; color: var(--muted); border-radius: var(--radius) var(--radius) 0 0; cursor: pointer; }
   .tabs button.ctx { color: var(--accent); margin-left: 10px; box-shadow: inset 0 2px 0 var(--accent); }
   .tabs button.on { color: var(--text); background: var(--accent-bg); font-weight: 500; }
@@ -397,6 +407,7 @@
   .btns { display: flex; align-items: center; gap: 4px; height: var(--ribbon-body); overflow: hidden; }
   .tool { display: flex; flex-direction: column; align-items: center; gap: 4px; min-width: 58px; box-sizing: border-box; height: calc(var(--ribbon-body) - 1px); justify-content: center; overflow: hidden; padding: 4px 8px; background: none; border: 0; border-radius: var(--radius); cursor: pointer; font-size: 12px; }
   .tool:hover { background: var(--panel-2); }
+  .tool:disabled { opacity: 0.45; cursor: default; background: none; }
   .tool:active, .tool.pressed { background: var(--accent-bg); }
   .gname { height: var(--ribbon-name); line-height: var(--ribbon-name); font-size: 11px; color: var(--muted); white-space: nowrap; }
   section.collapsed { width: 96px; box-sizing: border-box; padding: 0 8px; }

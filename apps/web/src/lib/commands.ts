@@ -90,10 +90,61 @@ export const TEXT_OPTIONS: OptionDef[] = [
 /** The options of an area fill: how closely the outline follows the hand. Always a loop. */
 export const FILL_OPTIONS: OptionDef[] = [DRAW_OPTIONS[0], DRAW_OPTIONS[2]];
 
+/** The breakdown brush's options: how wide it is and how thick the rock lies. */
+export const BRUSH_OPTIONS: OptionDef[] = [
+  {
+    id: 'brushSize',
+    label: 'Brush width',
+    hint: 'How wide a band of ground one stroke covers. The brush stops at passage walls (measured and drawn), so it never spills into the next passage.',
+    kind: 'range',
+    min: 0.5,
+    max: 10,
+    step: 0.25,
+    default: 3,
+    show: (v, units) => formatLength(v, units, 2),
+  },
+  {
+    id: 'brushDensity',
+    label: 'How thick',
+    hint: 'How closely the rocks lie: 1 is the usual spread; higher packs them tighter. You can change it later on a selected area.',
+    kind: 'range',
+    min: 0.25,
+    max: 3,
+    step: 0.25,
+    default: 1,
+    show: (v) => `${v}x`,
+  },
+  DRAW_OPTIONS[2],
+];
+
+/** The Eraser's options: how wide it is, and whether a pen's side button erases too. */
+export const ERASER_OPTIONS: OptionDef[] = [
+  {
+    id: 'eraserSize',
+    label: 'Size',
+    hint: 'How wide the eraser is on the printed page, at the drawing scale. The circle under the pointer shows it on screen.',
+    kind: 'range',
+    min: 1,
+    max: 20,
+    step: 0.5,
+    default: 4,
+    show: (v) => `${v} mm`,
+  },
+  {
+    id: 'penButtonErases',
+    label: 'Pen side button erases',
+    hint: 'For pens with no eraser end (a Samsung S Pen, for one). When on, holding the side button while the pen touches erases instead of opening the right-click menu.',
+    kind: 'toggle',
+    default: false,
+  },
+];
+
 /** The options of a running command (`wall`, `ledge`, ...), or none. */
 export function optionsFor(command: string): OptionDef[] {
   if (!command) return [];
+  if (command === 'eraser') return ERASER_OPTIONS;
   if (command === 'text' || command === 'callout') return TEXT_OPTIONS;
   if (command.startsWith('fill-')) return FILL_OPTIONS;
+  if (command.startsWith('brush-')) return BRUSH_OPTIONS;
   return command.startsWith('sym-') ? SYMBOL_OPTIONS : DRAW_OPTIONS;
 }

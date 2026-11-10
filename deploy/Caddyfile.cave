@@ -1,0 +1,54 @@
+# CaveCAD on the edge VM. CaveCAD signs people in itself (apps/server/src/signin.ts); the edge only wipes
+# identity headers a visitor sends (nothing believes them any more, kept as a belt) and passes everything on.
+#
+# Each site is one `route`, so the directives run in the order written (the wipe comes first).
+# Port 8787 on the container must accept only the edge (192.168.86.13): rate limits read the LAST
+# X-Forwarded-For entry, which only the edge can be trusted to have written.
+auth.cavecad.com {
+	import hardening
+	redir https://cavecad.com/signin 302
+}
+
+www.cavecad.com {
+	import hardening
+	redir https://cavecad.com{uri} 301
+}
+
+# The old addresses forward to the new ones.
+cave.schonegg.stream {
+	import hardening
+	redir https://cavecad.com{uri} 301
+}
+
+cave-api.schonegg.stream {
+	import hardening
+	redir https://api.cavecad.com{uri} 308
+}
+
+cavecad.com {
+	import hardening
+	route {
+		request_header -Remote-User
+		request_header -Remote-Email
+		request_header -Remote-Name
+		request_header -Remote-Groups
+		request_header -Remote-Sub
+		request_header -X-Cave-Gate
+		reverse_proxy CAVECAD_CT:8787 {
+			flush_interval -1
+		}
+	}
+}
+
+api.cavecad.com {
+	import hardening
+	route {
+		request_header -Remote-User
+		request_header -Remote-Email
+		request_header -Remote-Name
+		request_header -Remote-Groups
+		request_header -Remote-Sub
+		request_header -X-Cave-Gate
+		reverse_proxy CAVECAD_CT:8787
+	}
+}
