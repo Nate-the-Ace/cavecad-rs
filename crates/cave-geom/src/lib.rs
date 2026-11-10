@@ -8,6 +8,7 @@
 //! counter-clockwise, as in DXF.
 
 mod arc;
+pub mod clip;
 mod path;
 mod point;
 pub mod spline;
