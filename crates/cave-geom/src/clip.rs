@@ -33,7 +33,16 @@ fn clip(line: &[P], inside: impl Fn(P) -> bool, hits: impl Fn(P, P) -> Vec<f64>)
     }
     for w in line.windows(2) {
         let (a, b) = (w[0], w[1]);
-        let at = |t: f64| [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
+        // the ends exactly as given (no rounding), anything between interpolated
+        let at = |t: f64| {
+            if t <= 0.0 {
+                a
+            } else if t >= 1.0 {
+                b
+            } else {
+                [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t]
+            }
+        };
         // cut the segment at every crossing, then keep the parts whose middle is inside
         let mut ts = vec![0.0];
         let mut h = hits(a, b);
