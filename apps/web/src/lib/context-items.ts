@@ -60,7 +60,8 @@ export function lineItems(view: View, similar: () => string[], editWords: (() =>
     'separator',
     ...(lines ? [{ label: closed ? 'Open the curve' : 'Close the curve', run: () => each((id) => engine.setLineClosed(id, !closed)) }] : []),
     ...(alike && SHAPED.includes(kind) ? [{ label: 'Flip side', run: () => each((id) => engine.setLineFlip(id, !flipped)) }] : []),
-    { label: alike ? `Select all ${kindName(kind).toLowerCase()}` : 'Select similar', run: () => selectIds(similar()) },
+    // always named Select similar, so it is found where people look for it; what it selects is the selection's type
+    { label: 'Select similar', run: () => selectIds(similar()) },
     'separator',
     { label: 'Delete', keys: 'Del', danger: true, run: deleteSelection },
   ];
