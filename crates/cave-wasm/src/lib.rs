@@ -1281,6 +1281,186 @@ pub fn paste_lines(view: &str, target: &str, adjusted: bool, items: &str) -> Str
     }
 }
 
+/// Applies one eraser drag as ONE undoable edit. `view` is `map`, `profile` or `section`; `target` is the
+/// run (profile) or station (section) as a fallback when a line does not say. `plan` is JSON:
+/// `{remove: [id], edits: [{id, points, widths}], adds: [{from, points, widths}]}` in the view's own space.
+/// An edit reshapes a line (and opens it if it was closed); an add makes a new line like `from` (same kind,
+/// run or station, style, flip, tags and trip). Ids that are not features drawn in `view` are ignored.
+/// Returns `{"ok":true,"removed":n,"cut":m}` or `error: ...`.
+#[wasm_bindgen]
+pub fn erase_lines(view: &str, target: &str, adjusted: bool, plan: &str) -> String {
+    #[derive(serde::Deserialize)]
+    struct Edit {
+        id: String,
+        points: Vec<[f64; 2]>,
+        #[serde(default)]
+        widths: Option<Vec<f64>>,
+    }
+    #[derive(serde::Deserialize)]
+    struct Add {
+        from: String,
+        points: Vec<[f64; 2]>,
+        #[serde(default)]
+        widths: Option<Vec<f64>>,
+    }
+    #[derive(serde::Deserialize, Default)]
+    struct Plan {
+        #[serde(default)]
+        remove: Vec<String>,
+        #[serde(default)]
+        edits: Vec<Edit>,
+        #[serde(default)]
+        adds: Vec<Add>,
+    }
+    let Ok(plan) = serde_json::from_str::<Plan>(plan) else {
+        return "error: unreadable eraser plan".into();
+    };
+    if !matches!(view, "map" | "profile" | "section") {
+        return "error: no such view".into();
+    }
+    let result = DOC.with(|d| {
+        let mut slot = d.borrow_mut();
+        let doc = slot.as_mut().ok_or("no cave is open")?;
+        // A feature drawn in this view, by id text.
+        let drawn = |doc: &cave_doc::Document, id: &str| -> Option<cave_id::Id> {
+            let id = id.parse::<cave_id::Id>().ok()?;
+            let e = doc.entity(id)?;
+            (e.kind() == cave_doc::Kind::Feature
+                && e.is_live()
+                && e.text(cave_doc::Field::FeatureView) == view)
+                .then_some(id)
+        };
+        let frames_for = |doc: &cave_doc::Document, run: &str| -> Vec<cave_doc::Frame> {
+            match view {
+                "profile" => cave_scene::profile_frames(doc, run, adjusted).unwrap_or_default(),
+                "map" => cave_scene::map_frames(doc, adjusted),
+                _ => Vec::new(),
+            }
+        };
+        let mut all = Vec::new();
+        let (mut removed, mut cut) = (0usize, 0usize);
+        let mut gone = std::collections::HashSet::new();
+        for id in &plan.remove {
+            let Some(id) = drawn(doc, id) else { continue };
+            if gone.insert(id) {
+                all.extend(cave_draw::remove_stroke(doc, id).map_err(|e| format!("{e:?}"))?);
+                removed += 1;
+            }
+        }
+        for ed in plan.edits {
+            let Some(id) = drawn(doc, &ed.id) else {
+                continue;
+            };
+            if gone.contains(&id) {
+                continue;
+            }
+            let e = doc.entity(id).ok_or("no such line")?;
+            let frames = frames_for(doc, &e.text(cave_doc::Field::FeatureRun));
+            let widths = ed.widths.filter(|w| w.len() == ed.points.len());
+            all.extend(
+                cave_draw::edit_stroke(doc, id, &ed.points, widths, &frames)
+                    .map_err(|e| format!("{e:?}"))?,
+            );
+            let was_closed = match e.get(cave_doc::Field::FeatureAnchored) {
+                cave_doc::Value::Anchored(Some(a)) => a.closed,
+                _ => matches!(
+                    e.get(cave_doc::Field::FeaturePath),
+                    cave_doc::Value::Path(Some(cave_geom::Path::Spline { closed: true, .. }))
+                ),
+            };
+            if was_closed {
+                // The edit above wrote the whole path; open it in the same edit by patching its value.
+                for a in &mut all {
+                    if let cave_doc::Action::Set { id: aid, value, .. } = a
+                        && *aid == id
+                    {
+                        match value {
+                            cave_doc::Value::Anchored(Some(an)) => an.closed = false,
+                            cave_doc::Value::Path(Some(cave_geom::Path::Spline {
+                                closed, ..
+                            })) => *closed = false,
+                            _ => {}
+                        }
+                    }
+                }
+            }
+            cut += 1;
+        }
+        let mut ids = random_ids();
+        for add in plan.adds {
+            let Some(from) = drawn(doc, &add.from) else {
+                continue;
+            };
+            if gone.contains(&from) {
+                continue;
+            }
+            let e = doc.entity(from).ok_or("no such line")?;
+            let kind = e.text(cave_doc::Field::FeatureType);
+            let widths = add.widths.filter(|w| w.len() == add.points.len());
+            let (id, actions) = match view {
+                "map" => cave_draw::map_line(
+                    doc,
+                    &mut ids,
+                    &kind,
+                    &add.points,
+                    widths,
+                    &cave_scene::map_frames(doc, adjusted),
+                ),
+                "profile" => {
+                    let mut run = e.text(cave_doc::Field::FeatureRun);
+                    if run.is_empty() {
+                        run = target.to_string();
+                    }
+                    let frames =
+                        cave_scene::profile_frames(doc, &run, adjusted).ok_or("no such run")?;
+                    cave_draw::profile_sketch(
+                        doc,
+                        &mut ids,
+                        &kind,
+                        &run,
+                        &add.points,
+                        widths,
+                        &frames,
+                    )
+                }
+                _ => {
+                    let station = match e.get(cave_doc::Field::FeatureStation) {
+                        cave_doc::Value::Ref(Some(s)) => s,
+                        _ => target
+                            .parse::<cave_id::Id>()
+                            .map_err(|_| "no such station")?,
+                    };
+                    cave_draw::section_sketch(
+                        doc,
+                        &mut ids,
+                        &kind,
+                        station,
+                        &add.points,
+                        widths,
+                        cave_scene::section_trip(doc, adjusted, &station.to_string()),
+                    )
+                }
+            }
+            .map_err(|e| format!("{e:?}"))?;
+            all.extend(cave_draw::with_closed(actions, false).map_err(|e| format!("{e:?}"))?);
+            all.extend(cave_draw::copy_stroke_fields(doc, from, id).map_err(|e| format!("{e:?}"))?);
+            cut += 1;
+        }
+        if all.is_empty() {
+            return Ok::<(usize, usize), String>((0, 0));
+        }
+        let edit = doc.edit(all).map_err(|e| format!("{e:?}"))?;
+        record_edit(view, &edit);
+        Ok((removed, cut))
+    });
+    match result {
+        Ok((removed, cut)) => {
+            serde_json::json!({"ok": true, "removed": removed, "cut": cut}).to_string()
+        }
+        Err(e) => format!("error: {e}"),
+    }
+}
+
 /// The view filter the viewer sends (JSON); anything unreadable hides nothing.
 fn parse_filter(json: &str) -> cave_scene::ViewFilter {
     serde_json::from_str(json).unwrap_or_default()
@@ -1580,8 +1760,22 @@ pub fn shading(adjusted: bool, x: f64, y: f64, z: f64, perspective: bool, filter
 /// Random ids for new things, from the browser's own random source.
 fn random_ids() -> cave_id::EntropyIds<impl FnMut() -> u64> {
     cave_id::EntropyIds::new(|| {
-        let word = || (js_sys::Math::random() * 4_294_967_296.0) as u64;
-        (word() << 32) | word()
+        #[cfg(target_arch = "wasm32")]
+        {
+            let word = || (js_sys::Math::random() * 4_294_967_296.0) as u64;
+            (word() << 32) | word()
+        }
+        // Natively (the tests) there is no JS to ask: a counter run through splitmix64 is unique enough.
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+            let mut z = NEXT
+                .fetch_add(0x9E37_79B9_7F4A_7C15, std::sync::atomic::Ordering::Relaxed)
+                .wrapping_add(0x9E37_79B9_7F4A_7C15);
+            z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+            z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+            z ^ (z >> 31)
+        }
     })
 }
 
@@ -1796,6 +1990,71 @@ pub fn passage_mesh(adjusted: bool, mode: &str, fill_gaps: bool, filter: &str) -
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn map_wall_list() -> Vec<serde_json::Value> {
+        serde_json::from_str(&map_lines(true)).unwrap()
+    }
+
+    #[test]
+    fn erase_lines_applies_one_drag_as_one_edit() {
+        open_demo(CAVE);
+        assert_eq!(
+            add_map_line(
+                "wall",
+                "[[0,5],[2,5],[4,5],[6,5]]",
+                "",
+                false,
+                true,
+                "",
+                "dashed"
+            ),
+            "ok"
+        );
+        let before = map_wall_list();
+        assert_eq!(before.len(), 1);
+        let id = before[0]["id"].as_str().unwrap().to_string();
+        let plan = serde_json::json!({
+            "remove": [],
+            "edits": [{"id": id, "points": [[0,5],[2,5]], "widths": null}],
+            "adds": [{"from": id, "points": [[4,5],[6,5]], "widths": null}],
+        })
+        .to_string();
+        let r: serde_json::Value =
+            serde_json::from_str(&erase_lines("map", "", true, &plan)).unwrap();
+        assert_eq!(r, serde_json::json!({"ok": true, "removed": 0, "cut": 2}));
+        let after = map_wall_list();
+        assert_eq!(after.len(), 2);
+        for l in &after {
+            assert_eq!(l["kind"], "wall");
+            assert_eq!(l["style"], before[0]["style"]);
+            assert!(l["style"].as_str().unwrap().starts_with("dashed"));
+        }
+        assert!(undo("map"));
+        let back = map_wall_list();
+        assert_eq!(back, before, "one undo restores the single wall");
+    }
+
+    #[test]
+    fn erase_lines_removes_and_ignores_what_it_cannot_erase() {
+        open_demo(CAVE);
+        add_map_line("wall", "[[0,5],[3,5],[6,5]]", "", false, true, "", "");
+        let id = map_wall_list()[0]["id"].as_str().unwrap().to_string();
+        let none = erase_lines("map", "", true, r#"{"remove":[],"edits":[],"adds":[]}"#);
+        assert_eq!(none, r#"{"cut":0,"ok":true,"removed":0}"#);
+        assert_eq!(map_wall_list().len(), 1);
+        let plan = serde_json::json!({"remove": [id, "nonsense"]}).to_string();
+        // Not drawn in the profile view: ignored.
+        let r: serde_json::Value =
+            serde_json::from_str(&erase_lines("profile", "", true, &plan)).unwrap();
+        assert_eq!(r["removed"], 0);
+        assert_eq!(map_wall_list().len(), 1);
+        let r: serde_json::Value =
+            serde_json::from_str(&erase_lines("map", "", true, &plan)).unwrap();
+        assert_eq!(r["removed"], 1);
+        assert!(map_wall_list().is_empty());
+        assert!(undo("map"));
+        assert_eq!(map_wall_list().len(), 1);
+    }
 
     const CAVE: &str = r#"{"unit":"m","name":"t","shots":[
         {"from":"A","to":"B","distance":10,"azimuth":0,"inclination":0,"left":1,"right":1},
