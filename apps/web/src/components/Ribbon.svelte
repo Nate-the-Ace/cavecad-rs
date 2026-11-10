@@ -40,6 +40,7 @@
   import { surveyGroups } from './survey-groups';
   import { showInstruments } from '../lib/features';
   import FillTools from './FillTools.svelte';
+  import EraseTools from './EraseTools.svelte';
   import SheetGroup from './SheetGroup.svelte';
   import { INSPECTORS } from '../lib/inspectors';
   import DrawingScale from './DrawingScale.svelte';
@@ -102,6 +103,7 @@
       { name: 'Geology and relief', items: [], custom: DrawTools, props: { group: 'Geology and relief' } },
       { name: 'Symbols', items: [{ label: 'Symbols', icon: Shapes, run: () => showPanel('symbols'), pressed: () => !!panelState.visible.symbols }] },
       { name: 'Area fill', items: [], custom: FillTools },
+      { name: 'Erase', items: [], custom: EraseTools },
     ],
     // connecting an instrument is future work: its tab shows only where showInstruments says so
     ...(showInstruments ? { Survey: surveyGroups({ inCave: surveyLayout }) } : {}),
@@ -135,7 +137,7 @@
   const CONTEXT = '\u0000command';
   let toolLabels = $state<Record<string, string>>({});
   onMount(() => {
-    loadEngine().then(() => (toolLabels = Object.fromEntries(engine.drawTools().map((t) => [t.key, t.label]))));
+    loadEngine().then(() => (toolLabels = { ...Object.fromEntries(engine.drawTools().map((t) => [t.key, t.label])), eraser: 'Eraser' })); // the Eraser draws nothing, so the engine's list does not name it
   });
   // A selected line gets one too, with what can be done to it, so it is easy to adjust.
   let loaded = $state(false);

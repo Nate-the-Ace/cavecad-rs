@@ -192,15 +192,9 @@ export class LineEditor<T extends EditableLine = EditableLine> {
     return out;
   }
 
-  /** The eraser passing screen (`x`, `y`): deletes the topmost line there (one undoable edit). Returns true if it did. */
-  eraseAt(x: number, y: number): boolean {
-    const lines = this.shown();
-    const hit = topLineAt(lines, this.h.toScreen, x, y, LINE_REACH, this.h.paperPx?.(), this.h.ornament);
-    if (hit < 0) return false;
-    if (this.h.selected() === lines[hit].id) this.h.select('');
-    this.h.remove(lines[hit].id);
-    this.h.redraw();
-    return true;
+  /** The lines the eraser may cut: those switched on in the Show menu, in the view's own metres (lib/eraser-drag.ts). */
+  erasable(): T[] {
+    return this.shown();
   }
 
   /** Fits a drawn line again at another curve detail (1 to 10), as one edit. Returns true if it changed. */

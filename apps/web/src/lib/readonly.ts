@@ -65,6 +65,7 @@ export const WRITES: readonly string[] = [
   'surfaceCommit',
   'setContourInterval',
   'deleteLine',
+  'eraseLines',
   'addSketch',
   'undo',
   'redo',

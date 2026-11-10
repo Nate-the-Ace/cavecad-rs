@@ -6,7 +6,9 @@ import { LineSegments2 } from 'three/addons/lines/LineSegments2.js';
 import { LineSegmentsGeometry } from 'three/addons/lines/LineSegmentsGeometry.js';
 import { LineMaterial } from 'three/addons/lines/LineMaterial.js';
 import type { MapSection, PassageBuffers, Pt, ProfileSketch3d, Scene, TypeStyle } from '../engine';
-import { PenGuard, isEraser, widthFor } from '../pen';
+import { PenGuard, SideButtonMenu, isEraser, widthFor } from '../pen';
+import { EraserDrag, eraserRadiusPx, paintEraser, type EraseLine } from '../eraser-drag';
+import { option } from '../cave.svelte';
 import { arrowAt, attachOf, resolveLeaders, withArrow, withoutArrow } from '../leader-edit';
 import { acquireHover, chosen, clearPick, commit, overrideName, query, snap, snapping } from '../snap.svelte';
 import { drawAperture, drawSnap } from '../snap-draw';
@@ -187,12 +189,18 @@ export class CaveView {
     this.remoteCursors = list;
     this.requestRender();
   }
-  /** The eraser end of a pen passed over a line: delete it. */
-  onLineErased: (id: string) => void = () => {};
+  /** An eraser drag changed the map's linework (one undoable edit, already made). */
+  onErased: () => void = () => {};
   private guard = new PenGuard();
   /** Told why a touch was ignored (a palm), so it can be shown. */
   onPalm: (why: string) => void = () => {};
-  private erasing = false;
+  /** The Eraser is the running tool (it is not a drawing tool, so `drawTool` stays empty while it runs). */
+  private eraserArmed = false;
+  /** One eraser drag, by the Eraser tool or a pen's eraser end (or side button): its path is in plan metres. */
+  private eraser = new EraserDrag();
+  /** Where the eraser's circle is drawn (screen pixels), while erasing or while the Eraser waits. */
+  private eraserAt: [number, number] | null = null;
+  private sideMenu = new SideButtonMenu();
   onLineDrawn: (points: [number, number][], widths: number[] | null, closed: boolean, text?: string) => void = () => {};
   /** Offsets being dragged right now, before they are saved. */
   private liveOffsets = new Map<string, [number, number, number]>();
@@ -264,14 +272,8 @@ export class CaveView {
             this.lineEdit = null;
             this.controls.enabled = true;
           }
-          if (isEraser(e) && this.canDrawHere) {
-            e.stopImmediatePropagation();
-            e.stopPropagation();
-            this.erasing = true;
-            this.controls.enabled = false;
-            this.canvas.setPointerCapture(e.pointerId);
-            this.eraseAt(e);
-          }
+          // the eraser end, or the side button when it erases: only from straight above or below, as drawing is
+          if (isEraser(e, option('penButtonErases', false)) && this.canDrawHere && this.startErase(e) && !isEraser(e)) this.sideMenu.used();
           return;
         }
         if (e.pointerType !== 'touch') return;
@@ -283,10 +285,11 @@ export class CaveView {
           return;
         }
         this.fingers.add(e.pointerId);
-        if (this.fingers.size >= 2 && (this.liveLine || this.lineEdit)) {
+        if (this.fingers.size >= 2 && (this.liveLine || this.lineEdit || this.eraser.active)) {
           // A second finger: that was the start of a pinch or pan, not a line. The gesture goes to the orbit controls.
           this.liveLine = null;
           this.lineEdit = null;
+          this.eraser.cancel();
           this.controls.enabled = true;
           this.requestRender();
         }
@@ -298,13 +301,7 @@ export class CaveView {
         this.fingers.delete(e.pointerId);
         this.guard.touchUp(e);
       }
-      if (e.pointerType === 'pen') {
-        this.guard.pen(e);
-        if (this.erasing) {
-          this.erasing = false;
-          this.controls.enabled = true;
-        }
-      }
+      if (e.pointerType === 'pen') this.guard.pen(e);
     };
     canvas.addEventListener('pointerup', lift);
     canvas.addEventListener('pointercancel', (e) => {
@@ -330,12 +327,13 @@ export class CaveView {
     // A Mac's Control-click is a right click that arrives as a left button: only the context-menu event says so.
     canvas.addEventListener('contextmenu', (e) => {
       e.preventDefault();
+      if (this.sideMenu.swallow(e)) return; // the pen's side button erased: it was not a right click
       if (e.button === 0 && e.ctrlKey) this.rightClick(e);
     });
 
     // A double click on a symbol, a text or a leader edits its words in place.
     canvas.addEventListener('dblclick', (e) => {
-      if (this.drawTool || this.copyOn || this.pasteOn || e.button !== 0) return;
+      if (this.drawTool || this.eraserArmed || this.copyOn || this.pasteOn || e.button !== 0) return;
       const rect = canvas.getBoundingClientRect();
       const k = this.lineAt(e.clientX - rect.left, e.clientY - rect.top);
       if (k && isStampKind(k.kind)) this.editWordsOf(k);
@@ -357,6 +355,12 @@ export class CaveView {
           this.controls.enabled = false;
           canvas.setPointerCapture(e.pointerId);
           this.requestRender();
+          return;
+        }
+        if (this.eraserArmed) {
+          // The Eraser: from straight above or below a press erases; from any other angle, or with a second finger, it turns the view.
+          if (!this.canDrawHere || this.fingers.size > 1 || (e.pointerType === 'touch' && !this.drawOptions.finger)) return;
+          this.startErase(e);
           return;
         }
         if (this.drawTool) {
@@ -416,16 +420,26 @@ export class CaveView {
         if (cp) this.onCursor(cp[0], cp[1]);
         if (this.copyOn || this.pasteOn) this.requestRender();
       }
+      if (e.pointerType === 'pen') this.guard.pen(e);
+      if (this.eraser.active || ((this.eraserArmed || isEraser(e, option('penButtonErases', false))) && this.canDrawHere)) {
+        // the eraser's circle follows the pointer; during a drag every sample the pointer gave extends its path
+        const r = this.canvas.getBoundingClientRect();
+        this.eraserAt = [e.clientX - r.left, e.clientY - r.top];
+        if (this.eraser.active) {
+          for (const ev of e.getCoalescedEvents?.().length ? e.getCoalescedEvents() : [e]) {
+            const p = this.planPoint(ev.clientX, ev.clientY);
+            if (p) this.eraser.move(p);
+          }
+        }
+        this.requestRender();
+        if (this.eraser.active) return;
+      } else if (this.eraserAt) {
+        this.eraserAt = null;
+        this.requestRender();
+      }
       // What a pick here would snap to (the thing being edited is not snapped to).
       const here = this.pickPoint(e, this.lineEdit?.id ?? '');
       if (this.wantsPoint()) this.requestRender();
-      if (e.pointerType === 'pen') {
-        this.guard.pen(e);
-        if (this.erasing) {
-          this.eraseAt(e);
-          return;
-        }
-      }
       const edit = this.lineEdit;
       if (edit) {
         const p = here?.p ?? null;
@@ -479,6 +493,16 @@ export class CaveView {
       }
     });
     const drop = (e: PointerEvent) => {
+      if (this.eraser.active) {
+        // the eraser lifts: the whole drag is applied at once, as one undoable edit (a cancelled pointer erases nothing)
+        this.controls.enabled = true;
+        if (e.type === 'pointercancel') this.eraser.cancel();
+        else if (this.eraser.finish(this.erasableLines(), 'map', '')) this.onErased();
+        this.sideMenu.lifted();
+        if (e.pointerType !== 'mouse' && !this.eraserArmed) this.eraserAt = null; // a pen or finger left: no circle stays behind
+        this.requestRender();
+        return;
+      }
       const circle = this.circlePick;
       if (circle) {
         this.circlePick = null;
@@ -1062,7 +1086,9 @@ export class CaveView {
 
   /** The drawing tool picked on the Draw tab (a palette type), or empty for none. */
   setDrawTool(key: string) {
-    this.drawTool = key;
+    this.eraserArmed = key === 'eraser';
+    this.drawTool = this.eraserArmed ? '' : key;
+    if (!this.eraserArmed && !this.eraser.active) this.eraserAt = null;
     this.canvas.style.cursor = key && this.canDrawHere ? 'crosshair' : '';
     this.requestRender();
   }
@@ -1177,7 +1203,7 @@ export class CaveView {
       this.onEndCopy();
       return;
     }
-    if (this.drawTool) {
+    if (this.drawTool || this.eraserArmed) {
       this.onEndCommand();
       return;
     }
@@ -1318,19 +1344,29 @@ export class CaveView {
     return out;
   }
 
-  /** A press in the Top or Bottom view with no tool: pick up a fit point of the selected map line, or select the line there. */
-  private eraseAt(e: PointerEvent) {
+  /** The eraser touches down at a pointer (Top or Bottom view): its drag starts, and nothing else gets the press. False when the pointer is off the plan. */
+  private startErase(e: PointerEvent): boolean {
+    const p = this.planPoint(e.clientX, e.clientY);
+    if (!p) return false;
+    e.stopImmediatePropagation();
+    e.stopPropagation();
+    this.controls.enabled = false;
+    this.canvas.setPointerCapture(e.pointerId);
     const rect = this.canvas.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
-    const k = this.lineAt(x, y);
-    if (k) {
-      this.mapLines = this.mapLines.filter((m) => m.id !== k.id);
-      this.onLineErased(k.id);
-      this.requestRender();
-    }
+    this.eraserAt = [e.clientX - rect.left, e.clientY - rect.top];
+    this.eraser.start(p);
+    this.requestRender();
+    return true;
   }
 
+  /** The map lines an eraser drag may cut: those the Show menu leaves on, in plan metres (east, north). */
+  private erasableLines(): EraseLine[] {
+    return resolveLeaders(this.mapLines)
+      .filter((k) => !isKindHidden(k.kind))
+      .map((k) => ({ id: k.id, kind: k.kind, points: k.points.map((q) => [q[0], q[1]] as [number, number]), widths: k.widths, closed: k.closed }));
+  }
+
+  /** A press in the Top or Bottom view with no tool: pick up a fit point of the selected map line, or select the line there. */
   private pressLine(e: PointerEvent) {
     this.pressStack = [];
     // Selecting a line works from any angle (its settings are edited in the ribbon); only moving its fit points needs the top view.
@@ -2100,6 +2136,13 @@ export class CaveView {
     const live = this.liveLine;
     if (live && live.pts.length > 1) {
       this.strokeLines(g, [{ id: '', closed: false, kind: this.drawTool || 'sketch', run: '', text: isStampKind(this.drawTool) ? liveWords(this.drawTool, this.drawOptions.label) : undefined, points: live.pts.map((p) => [p[0], p[1], live.z] as [number, number, number]), widths: live.pressure ? live.widths : null }]);
+    }
+    if (this.eraser.active || this.eraserAt) {
+      // the eraser: what it has swept this drag (on the plan it erases in), and its circle at the pointer
+      const z = this.controls.target.z;
+      const trail = this.eraser.path.map((p) => this.project([p[0], p[1], z])).filter((q): q is [number, number] => !!q);
+      const px = this.pixelsPerMetreAt([this.controls.target.x, this.controls.target.y, z]) ?? pxPerM;
+      paintEraser(g, trail, this.eraserAt, eraserRadiusPx(px), `#${this.theme.accent.getHexString()}`);
     }
     if (this.showSections) {
       for (const sec of this.sections) {

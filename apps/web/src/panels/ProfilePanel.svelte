@@ -20,7 +20,8 @@ import { PaneSnap } from '../lib/snap-pane';
 import { snap, snapping } from '../lib/snap.svelte';
 import { planFrame } from '../lib/snap-types';
   import { Touches } from '../lib/touch';
-  import { PenGuard, isEraser, widthFor } from '../lib/pen';
+  import { PenGuard, SideButtonMenu, isEraser, widthFor } from '../lib/pen';
+  import { EraserDrag, eraserRadiusPx, paintEraser } from '../lib/eraser-drag';
   import { drawStationMarker, isStampKind, leaderLook, liveWords, needsWords, stampEditSpot, withLabelSpot } from '../lib/symbols';
   import { isFillKind } from '../lib/fills';
   import { cursorsFor, presence as room, reportCursor } from '../lib/presence.svelte';
@@ -92,16 +93,22 @@ import { planFrame } from '../lib/snap-types';
     extra: () => (band?.stations ?? []).map((st, i) => ({ id: `station-${i}`, kind: 'station' as const, frame: planFrame(0), geom: { type: 'point' as const, at: [st.s, st.z, 0] as [number, number, number] }, label: st.label ?? '' })),
     tf: () => ({ scale, tx: ox, ty: oy }),
     size: () => ({ w: width, h: height }),
-    wants: (): boolean => !!cave.tool || (copyOp.on && copyOp.view === 'profile') || (pasteOp.on && pasteOp.view === 'profile') || editor.dragging || !!cave.arrowOp.op,
+    wants: (): boolean => (!!cave.tool && cave.tool !== 'eraser') || (copyOp.on && copyOp.view === 'profile') || (pasteOp.on && pasteOp.view === 'profile') || editor.dragging || !!cave.arrowOp.op,
     redraw: () => schedule(),
     stamp: (kind) => isStampKind(kind),
     hidden: (kind) => !!kind && filter.hiddenTypes.includes(kind),
     openMenu: (x, y) => (snap.menu = { x, y }),
   });
-  // A new tool starts with a clean pick.
+  // A new tool starts with a clean pick (and the eraser's circle goes when the Eraser is put down).
   $effect(() => {
     void cave.tool;
-    untrack(() => psnap.done());
+    untrack(() => {
+      psnap.done();
+      if (cave.tool !== 'eraser' && !eraser.active && eraserAt) {
+        eraserAt = null;
+        schedule();
+      }
+    });
   });
   $effect(() => {
     void cave.selected;
@@ -347,6 +354,8 @@ import { planFrame } from '../lib/snap-types';
       }
     }
     if (live && live.pts.length > 1) drawStrokes(g, [{ kind: cave.tool || 'sketch', text: isStampKind(cave.tool) ? liveWords(cave.tool, option('label', '')) : undefined, points: live.pts, widths: live.pressure ? live.widths : null, closed: false }], toScreen, look);
+    // the eraser: what it has swept this drag, and its circle at the pointer (also while the Eraser waits)
+    if (eraser.active || eraserAt) paintEraser(g, eraser.path.map((p) => toScreen(p[0], p[1])), eraserAt, eraserRadiusPx(scale), c.accent);
     // other people's pointers in this view
     for (const o of cursorsFor('profile', cave.run)) {
       const [ox, oy] = toScreen(o.x, o.y);
@@ -383,7 +392,11 @@ import { planFrame } from '../lib/snap-types';
   // Fingers: one draws (with a tool running) or pans, two pan and pinch-zoom together.
   const touches = new Touches();
   const guard = new PenGuard();
-  let erasing = false;
+  // The Eraser tool, and a pen's eraser end (or its side button, with that setting on): a drag cuts the lines it passes over.
+  const eraser = new EraserDrag();
+  const sideMenu = new SideButtonMenu();
+  /** Where the eraser's circle is drawn (screen pixels): at the pointer while erasing, or while the Eraser waits. */
+  let eraserAt: [number, number] | null = null;
   let gesturing = false;
   let panning: { x: number; y: number } | null = null;
   let lastMiddle = 0;
@@ -437,9 +450,9 @@ import { planFrame } from '../lib/snap-types';
         panning = null;
         editor.cancel();
       }
-      if (isEraser(e)) {
-        erasing = true;
-        eraseAt(e);
+      if (isEraser(e, option('penButtonErases', false))) {
+        if (!isEraser(e)) sideMenu.used(); // the side button: its right click must not open the menu
+        startErase(e);
         return;
       }
     }
@@ -452,6 +465,7 @@ import { planFrame } from '../lib/snap-types';
       gesturing = true;
       live = null;
       panning = null;
+      eraser.cancel();
       editor.cancel();
       schedule();
       return;
@@ -461,6 +475,12 @@ import { planFrame } from '../lib/snap-types';
       e.preventDefault();
       if (e.timeStamp - lastMiddle < 350) fit();
       lastMiddle = e.timeStamp;
+    }
+    if (cave.tool === 'eraser') {
+      // The Eraser never draws or selects: a press erases, and the middle button (or a finger, when fingers do not draw) pans.
+      if (!middle && e.button === 0 && (e.pointerType !== 'touch' || option('finger', true)) && band) startErase(e);
+      else panning = { x: e.clientX, y: e.clientY };
+      return;
     }
     if (e.button === 0 && !cave.tool && pasteOp.on && pasteOp.view === 'profile') {
       // a paste waits: the press says where it goes
@@ -528,9 +548,18 @@ import { planFrame } from '../lib/snap-types';
     }
   }
 
-  function eraseAt(e: PointerEvent) {
+  /** The eraser touches down: its drag starts here (nothing is erased until it lifts). */
+  function startErase(e: PointerEvent) {
     const r = canvas.getBoundingClientRect();
-    if (editor.eraseAt(e.clientX - r.left, e.clientY - r.top)) schedule();
+    eraserAt = [e.clientX - r.left, e.clientY - r.top];
+    eraser.start(toWorld(eraserAt[0], eraserAt[1]));
+    schedule();
+  }
+
+  /** The eraser lifts: the drag cuts the lines this band shows, as one undoable edit. */
+  function finishErase() {
+    if (eraser.finish(editor.erasable(), 'profile', cave.run)) changed();
+    schedule();
   }
 
   /** Where the pointer last was, in this view's own space (for paste and the Copy command). */
@@ -544,13 +573,7 @@ import { planFrame } from '../lib/snap-types';
       if (copyOp.on || pasteOp.on) schedule();
       reportCursor('profile', cave.run, w[0], w[1], cave.tool);
     }
-    if (e.pointerType === 'pen') {
-      guard.pen(e);
-      if (erasing) {
-        eraseAt(e);
-        return;
-      }
-    }
+    if (e.pointerType === 'pen') guard.pen(e);
     if (e.pointerType === 'touch' && guard.ignored(e)) return;
     if (e.pointerType === 'touch') {
       const g = touches.move(e);
@@ -568,12 +591,25 @@ import { planFrame } from '../lib/snap-types';
       if (gesturing) return; // one finger left after a gesture: wait until all are lifted
     }
     const r = canvas.getBoundingClientRect();
+    if (eraser.active || cave.tool === 'eraser' || isEraser(e, option('penButtonErases', false))) {
+      // the circle follows the pointer; during a drag every sample the pointer gave extends the eraser's path
+      eraserAt = [e.clientX - r.left, e.clientY - r.top];
+      if (eraser.active) {
+        const samples = e.getCoalescedEvents?.() ?? [];
+        for (const ev of samples.length > 0 ? samples : [e]) eraser.move(toWorld(ev.clientX - r.left, ev.clientY - r.top));
+      }
+      schedule();
+      if (eraser.active) return;
+    } else if (eraserAt) {
+      eraserAt = null;
+      schedule();
+    }
     if (!editor.dragging && psnap.active()) {
       psnap.pick(e.clientX - r.left, e.clientY - r.top);
       schedule(); // the markers follow the pointer
     }
     if (editor.move(e.clientX - r.left, e.clientY - r.top)) return;
-    if (!live && !panning && cave.tool) showPickup(e.clientX - r.left, e.clientY - r.top);
+    if (!live && !panning && cave.tool && cave.tool !== 'eraser') showPickup(e.clientX - r.left, e.clientY - r.top);
     if (dragSection) {
       const s = band?.sections.find((k) => k.id === dragSection!.id);
       if (s) {
@@ -636,13 +672,7 @@ import { planFrame } from '../lib/snap-types';
   }
 
   function onUp(e?: PointerEvent) {
-    if (e?.pointerType === 'pen') {
-      guard.pen(e);
-      if (erasing) {
-        erasing = false;
-        return;
-      }
-    }
+    if (e?.pointerType === 'pen') guard.pen(e);
     if (e?.pointerType === 'touch' && guard.ignored(e)) {
       guard.touchUp(e);
       return;
@@ -659,12 +689,22 @@ import { planFrame } from '../lib/snap-types';
         // The system took the touch (a palm, a system gesture): drop the stroke.
         live = null;
         panning = null;
+        eraser.cancel();
         editor.cancel();
         schedule();
         return;
       }
     }
     panning = null;
+    if (eraser.active) {
+      // a cancelled pointer erases nothing; a lift applies the whole drag at once
+      if (e?.type === 'pointercancel') eraser.cancel();
+      else finishErase();
+      sideMenu.lifted();
+      if (e?.pointerType !== 'mouse' && cave.tool !== 'eraser') eraserAt = null; // a pen or finger left: no circle stays behind
+      schedule();
+      return;
+    }
     if (editor.release()) return;
     if (dragSection) {
       const id = dragSection.id;
@@ -820,6 +860,12 @@ import { planFrame } from '../lib/snap-types';
     onpointermove={onMove}
     onpointerup={onUp}
     onpointercancel={onUp}
+    onpointerleave={() => {
+      if (eraserAt && !eraser.active) {
+        eraserAt = null; // the circle goes with the pointer
+        schedule();
+      }
+    }}
     onwheel={onWheel}
     onclick={pickStation}
     ondblclick={(e) => {
@@ -833,6 +879,7 @@ import { planFrame } from '../lib/snap-types';
     onkeydown={onKey}
     oncontextmenu={(e) => {
       e.preventDefault();
+      if (sideMenu.swallow(e)) return; // the pen's side button erased: it was not a right click
       if (psnap.rightClick(e)) return;
       if (pasteOp.on) {
         endPaste(); // a right click drops a waiting paste
