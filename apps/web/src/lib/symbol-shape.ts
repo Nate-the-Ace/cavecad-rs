@@ -3,6 +3,7 @@
 // symbol's tab (Size and Rotation), so a symbol can be resized and turned exactly, not only by dragging.
 import { engine } from './engine';
 import { cave } from './cave.svelte';
+import { isSymbolKind } from './symbols';
 
 type Pt = [number, number];
 
@@ -45,4 +46,15 @@ export function setShape(id: string, view: string, change: { size?: number; rota
   const rotation = change.rotation ?? now.rotation;
   if (!(size > 0) || !Number.isFinite(rotation)) return 'error: not a size or a rotation';
   return engine.editLine(id, pointsFor(pts[0], size, rotation), null, cave.adjusted);
+}
+
+/** Sets a line's words. A symbol whose label is cleared loses its label's note point too (one undo step), so no stray grip is left
+ * where the note was pulled to, and a label added back starts beside the symbol again. Returns `ok` or why not. */
+export function setText(id: string, text: string): string {
+  const info = engine.lineInfo(id);
+  if (info && isSymbolKind(info.kind) && !text.trim()) {
+    const pts = placedPoints(id, info.view);
+    if (pts && pts.length > 2) return engine.editLineText(id, pts.slice(0, 2), text, cave.adjusted);
+  }
+  return engine.setLineText(id, text);
 }

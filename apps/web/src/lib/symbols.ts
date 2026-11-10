@@ -296,10 +296,14 @@ export function withLabelSpot<T extends number[]>(kind: string, points: T[], tex
 /**
  * Every line as it is shown and edited: a labelled symbol that has no note point yet (placed before labels were notes, or
  * labelled afterwards) gets one where its label has always sat, so its label has a grip and can be pulled away like any other.
- * The point is saved with the symbol's next edit.
+ * The point is saved with the symbol's next edit. An unlabelled symbol shows only its own two points.
  */
 export function withLabelSpots<L extends { kind?: string; text?: string; points: number[][] }>(lines: L[]): L[] {
-  return lines.map((l) => (l.points.length === 2 && isSymbolKind(l.kind) && l.text?.trim() ? { ...l, points: withLabelSpot(l.kind ?? '', l.points, l.text) as L['points'] } : l));
+  return lines.map((l) => {
+    if (!isSymbolKind(l.kind)) return l;
+    if (!l.text?.trim()) return l.points.length > 2 ? { ...l, points: l.points.slice(0, 2) as L['points'] } : l; // no label, no note grip
+    return l.points.length === 2 ? { ...l, points: withLabelSpot(l.kind ?? '', l.points, l.text) as L['points'] } : l;
+  });
 }
 
 /** Draws a symbol (with its label) or a text stroke at `p0`, aimed toward `p1`. A leader's `more` are the points its further arrows touch. */

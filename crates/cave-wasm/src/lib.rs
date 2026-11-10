@@ -355,13 +355,20 @@ pub fn add_map_line(
 /// One undoable edit. Returns `ok` or `error: ...`.
 #[wasm_bindgen]
 pub fn edit_line(id: &str, points: &str, widths: &str, adjusted: bool) -> String {
-    edit_line_with(id, points, widths, adjusted, None)
+    edit_line_with(id, points, widths, adjusted, None, None)
+}
+
+/// Moves a line's points and sets its words as one undoable edit: a symbol whose label is cleared drops its label's note
+/// point with it, so the note's grip goes and a label added later starts beside the symbol again. Returns `ok` or `error: ...`.
+#[wasm_bindgen]
+pub fn edit_line_text(id: &str, points: &str, text: &str, adjusted: bool) -> String {
+    edit_line_with(id, points, "", adjusted, None, Some(text))
 }
 
 /// Moves a leader's points and sets its style (where its arrows are fastened) as one undoable edit. Returns `ok` or `error: ...`.
 #[wasm_bindgen]
 pub fn edit_leader(id: &str, points: &str, style: &str, adjusted: bool) -> String {
-    edit_line_with(id, points, "", adjusted, Some(style))
+    edit_line_with(id, points, "", adjusted, Some(style), None)
 }
 
 fn edit_line_with(
@@ -370,6 +377,7 @@ fn edit_line_with(
     widths: &str,
     adjusted: bool,
     style: Option<&str>,
+    text: Option<&str>,
 ) -> String {
     let Ok(points) = serde_json::from_str::<Vec<[f64; 2]>>(points) else {
         return "error: unreadable stroke".into();
@@ -401,6 +409,10 @@ fn edit_line_with(
             actions.extend(
                 cave_draw::set_stroke_style(doc, line, style).map_err(|e| format!("{e:?}"))?,
             );
+        }
+        if let Some(text) = text {
+            actions
+                .extend(cave_draw::set_stroke_text(doc, line, text).map_err(|e| format!("{e:?}"))?);
         }
         let edit = doc.edit(actions).map_err(|e| format!("{e:?}"))?;
         record_edit(&scope, &edit);
