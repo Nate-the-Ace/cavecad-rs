@@ -54,7 +54,7 @@ fn feet_text(m: f64, unit: &str) -> String {
     let digits = n.abs().to_string();
     let mut out = String::new();
     for (i, c) in digits.chars().enumerate() {
-        if i > 0 && (digits.len() - i) % 3 == 0 {
+        if i > 0 && (digits.len() - i).is_multiple_of(3) {
             out.push(',');
         }
         out.push(c);
@@ -310,15 +310,15 @@ pub fn sheet_set_values(group: &str, values: &str) -> String {
             let text = serde_json::to_string(&s).map_err(|e| e.to_string())?;
             actions.extend(blobs::put(doc, &format!("{PREFIX}{}", s.id), &text));
         }
-        if let Some(raw) = blobs::get(doc, &format!("{GEN_PREFIX}{group}")) {
-            if let Ok(mut p) = serde_json::from_str::<serde_json::Value>(&raw) {
-                p["values"] = serde_json::to_value(&v).map_err(|e| e.to_string())?;
-                actions.extend(blobs::put(
-                    doc,
-                    &format!("{GEN_PREFIX}{group}"),
-                    &p.to_string(),
-                ));
-            }
+        if let Some(raw) = blobs::get(doc, &format!("{GEN_PREFIX}{group}"))
+            && let Ok(mut p) = serde_json::from_str::<serde_json::Value>(&raw)
+        {
+            p["values"] = serde_json::to_value(&v).map_err(|e| e.to_string())?;
+            actions.extend(blobs::put(
+                doc,
+                &format!("{GEN_PREFIX}{group}"),
+                &p.to_string(),
+            ));
         }
         apply(doc, actions)
     }))

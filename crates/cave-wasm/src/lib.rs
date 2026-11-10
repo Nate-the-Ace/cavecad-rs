@@ -14,9 +14,9 @@ use wasm_bindgen::prelude::*;
 
 static CONSOLE: OnceLock<LogBuffer> = OnceLock::new();
 
-mod sheets;
 mod formats;
 mod geo;
+mod sheets;
 mod snap;
 mod survey;
 

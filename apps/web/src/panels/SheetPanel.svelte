@@ -9,7 +9,7 @@
   import { followUnits, scaleText, sheet } from '../lib/sheet.svelte';
   import { drawSheet, drawStoredSheet, overflows } from '../lib/sheet-draw';
   import type { SheetDef } from '../lib/engine';
-  import { currentSheet } from '../lib/sheet-export';
+  import { currentSheet, shownSheet } from '../lib/sheet-export';
 
   let canvas: HTMLCanvasElement;
   let box: HTMLDivElement;
@@ -235,7 +235,7 @@
     void sheet.bar;
     void sheet.north;
     void option('handInk', false); // Ink style redraws every line
-    void chosen;
+    shownSheet.id = chosen; // Print and PNG save the sheet shown here
     void chosenFrame;
     untrack(() => {
       followUnits(cave.units); // the paper of the units, until one is picked
