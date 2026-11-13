@@ -41,7 +41,7 @@ pub enum Layer {
         /// ...or at random.
         #[serde(default)]
         random_turn: bool,
-        /// How much sizes vary, 0 (all alike) to 1 (down to half size).
+        /// How much sizes vary, 0 (all alike) to 1 (from a quarter size to one and three quarters).
         #[serde(default)]
         size_var: f64,
         /// How far marks wander from their grid spot, as a fraction of the spacing, 0 to 1.
@@ -282,7 +282,8 @@ pub fn fill_marks(
                         if !inside(at, outline) {
                             continue;
                         }
-                        let s = size * (1.0 - size_var * 0.5 * sz);
+                        // full variety: from a quarter size to one and three quarters, the average size unchanged
+                        let s = size * (1.0 + size_var * (1.5 * sz - 0.75));
                         let a = if *random_turn {
                             turn * std::f64::consts::TAU
                         } else {
@@ -576,6 +577,54 @@ mod tests {
             .len(),
             0
         );
+    }
+
+    #[test]
+    fn size_variety_spreads_the_sizes_and_none_keeps_them_alike() {
+        let ring = Motif::from_drawing(
+            "R",
+            vec![Prim::Circle {
+                c: [0.0, 0.0],
+                r: 0.5,
+                fill: true,
+            }],
+        )
+        .unwrap();
+        let def = |v: f64| FillDef {
+            name: "V".into(),
+            layers: vec![Layer::Tile {
+                motif: "R".into(),
+                size_mm: 2.0,
+                across_mm: 4.0,
+                down_mm: 4.0,
+                stagger: false,
+                turn_deg: 0.0,
+                random_turn: false,
+                size_var: v,
+                jitter: 0.0,
+                skip: 0.0,
+            }],
+            tint: false,
+        };
+        let find = |_: &str| Some(ring.clone());
+        let radii = |v: f64| -> Vec<f64> {
+            fill_marks(&def(v), &find, &square(0.2), 7, 0.001, 1.0)
+                .circles
+                .iter()
+                .map(|c| c[2])
+                .collect()
+        };
+        let same = radii(0.0);
+        assert!(same.iter().all(|r| (r - same[0]).abs() < 1e-12));
+        let mixed = radii(1.0);
+        let (lo, hi) = mixed
+            .iter()
+            .fold((f64::MAX, 0.0f64), |(a, b), r| (a.min(*r), b.max(*r)));
+        assert!(
+            hi / lo > 3.0,
+            "full variety spreads sizes widely: {lo}..{hi}"
+        );
+        assert!(lo >= same[0] * 0.25 - 1e-12 && hi <= same[0] * 1.75 + 1e-12);
     }
 
     #[test]
