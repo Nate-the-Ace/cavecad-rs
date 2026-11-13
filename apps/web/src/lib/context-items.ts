@@ -12,6 +12,7 @@ import { showPanel } from './workspace.svelte';
 import { isStampKind, symbolDef } from './symbols';
 import { fillLabel, isFillKind } from './fills';
 import { startTripAt } from './caves';
+import { openPatternFor, patternFor } from './pattern-focus.svelte';
 
 /** The line types whose marks sit on one side, so Flip side means something (as in the ribbon's line tab). */
 const SHAPED = ['ledge', 'pit', 'flowstone', 'rimstone', 'slope', 'dripline', 'glyphs'];
@@ -62,6 +63,9 @@ export function lineItems(view: View, similar: () => string[], editWords: (() =>
     ...(alike && SHAPED.includes(kind) ? [{ label: 'Flip side', run: () => each((id) => engine.setLineFlip(id, !flipped)) }] : []),
     // always named Select similar, so it is found where people look for it; what it selects is the selection's type
     { label: 'Select similar', run: () => selectIds(similar()) },
+    ...(ids.length === 1 && patternFor(ids[0])
+      ? [{ label: patternFor(ids[0])!.own ? 'Edit pattern…' : 'Make a pattern from this…', run: () => openPatternFor(ids[0]) }]
+      : []),
     'separator',
     { label: 'Delete', keys: 'Del', danger: true, run: deleteSelection },
   ];

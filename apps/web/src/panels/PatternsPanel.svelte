@@ -5,6 +5,8 @@
   import { cave, changed } from '../lib/cave.svelte';
   import { engine, loadEngine } from '../lib/engine';
   import { drawing } from '../lib/line-style.svelte';
+  import { patternFocus } from '../lib/pattern-focus.svelte';
+  import { untrack } from 'svelte';
   import { drawMarks, drawMotif } from '../lib/patterns';
   import PatternCanvas from '../components/patterns/PatternCanvas.svelte';
   import { copyName, plain, type FillDef, type LineDef, type Motif, type PatternKind, type PatternLibrary } from '../lib/patterns';
@@ -88,6 +90,21 @@
     if (last) picked = { kind: 'fill', name: last };
     message = [made ? `Imported ${made} pattern${made === 1 ? '' : 's'} into your fills.` : '', ...said].filter(Boolean).join(' ');
   }
+
+  // Opened from a line or area ("Edit pattern…" in the ribbon or the right-click menu): turn to its pattern.
+  let focusSeen = patternFocus.seq;
+  $effect(() => {
+    const seq = patternFocus.seq;
+    if (seq === focusSeen) return;
+    focusSeen = seq;
+    untrack(() => {
+      if (!mayLeave()) return;
+      pendingNew = null;
+      message = '';
+      kind = patternFocus.kind;
+      picked = patternFocus.name ? { kind: patternFocus.kind, name: patternFocus.name } : null;
+    });
+  });
 
   /** The editor has changes not saved yet. */
   let dirty = $state(false);

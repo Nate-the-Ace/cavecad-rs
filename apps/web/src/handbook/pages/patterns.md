@@ -54,6 +54,10 @@ The Patterns panel is where you look at, copy and make the linetypes, fills and 
 4. **Undo stroke** takes back the last stroke; **Clear…** starts again.
 5. Under the box the motif shows at four sizes and repeated along a line. Press **Save**, then use it in a linetype or fill by adding a Motif part there.
 
+### From a line or area on the map
+
+Select one line or area, then press **Edit pattern…** beside its linetype or fill in the ribbon, or right-click it and pick **Edit pattern…**. The Patterns panel opens on the pattern it uses. A line or area that does not use one of your patterns shows **Make a pattern…** instead: the panel opens on the matching starting point (a Presumed line opens **Presumed wall**, Sand opens **Sand**) for you to copy.
+
 ## What can go wrong
 
 | Message or symptom | What it means | Do this |
