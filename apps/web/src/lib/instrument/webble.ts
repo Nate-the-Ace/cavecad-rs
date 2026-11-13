@@ -103,7 +103,7 @@ export class WebBleInstrument implements Instrument {
       this.events.status(
         'unsupported',
         inApp
-          ? "The desktop app can't reach Bluetooth yet. For now, connect from Chrome at cavecad.com."
+          ? "This copy of the desktop app has no Bluetooth. Update it, or connect from Chrome at cavecad.com."
           : 'This browser has no Web Bluetooth. On an iPad, open CaveCAD in the Bluefy browser.',
       );
       return;

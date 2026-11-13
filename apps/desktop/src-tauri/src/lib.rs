@@ -3,6 +3,7 @@
 //! folder dialog gives the real path, pages are read straight from it, and Reveal opens the file
 //! manager on the real file.
 
+mod ble;
 mod bridge;
 mod cavefolder;
 mod files;
@@ -227,6 +228,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(update::Pending::default())
+        .manage(ble::Ble::default())
         .manage(bridge::Waiting::default())
         .invoke_handler(tauri::generate_handler![
             pick_folder,
@@ -245,7 +247,13 @@ pub fn run() {
             write_export,
             update::update_prepare,
             update::update_install,
-            bridge::bridge_result
+            bridge::bridge_result,
+            ble::ble_scan,
+            ble::ble_connect,
+            ble::ble_disconnect,
+            ble::ble_read,
+            ble::ble_write,
+            ble::ble_subscribe
         ])
         .run(tauri::generate_context!())
         .expect("the CaveCAD desktop app could not start");
