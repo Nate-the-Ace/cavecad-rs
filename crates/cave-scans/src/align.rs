@@ -537,8 +537,11 @@ pub fn rubber(pairs: &[Pair]) -> Option<Tps> {
 pub struct Placed {
     /// The trip it is linked to.
     pub trip: Id,
-    /// The scan.
+    /// The scan (the page).
     pub path: String,
+    /// Which sketch on the page this is (1 for the first): a page can hold several, each with its
+    /// own matches and outline.
+    pub piece: u32,
     /// Pixel to the view's metres, see [`Fit`].
     pub matrix: [f64; 6],
     /// Matches used (those whose station is in the view).
@@ -577,14 +580,15 @@ fn pixel_size(m: &[f64; 6]) -> f64 {
 pub fn placements(doc: &Document, view: &str, positions: &Positions) -> Vec<Placed> {
     let mut out = Vec::new();
     // scans with one match, waiting for an average scale: (trip, path, mode, the match)
-    let mut singles: Vec<(Id, String, FitMode, Pair, Vec<Id>)> = Vec::new();
+    let mut singles: Vec<(Id, String, u32, FitMode, Pair, Vec<Id>)> = Vec::new();
     for trip in doc.ids_of(Kind::Trip) {
         let Some(e) = doc.entity(trip) else { continue };
         let linked = crate::scans_of(doc, trip);
         for (k, text) in e.map(Field::TripScanAlign) {
-            let Some((v, path)) = crate::split_key(&k) else {
+            let Some((v, key_path)) = crate::split_key(&k) else {
                 continue;
             };
+            let (path, piece) = crate::split_piece(key_path);
             if v != view || !linked.iter().any(|p| p == path) {
                 continue;
             }
@@ -603,12 +607,20 @@ pub fn placements(doc: &Document, view: &str, positions: &Positions) -> Vec<Plac
                 })
                 .collect();
             if pairs.len() == 1 {
-                singles.push((trip, path.to_string(), al.mode, pairs[0], station_ids(&al)));
+                singles.push((
+                    trip,
+                    path.to_string(),
+                    piece,
+                    al.mode,
+                    pairs[0],
+                    station_ids(&al),
+                ));
             } else if let Some(f) = fit(&pairs, al.mode) {
                 out.push(Placed {
                     trip,
-                    trim: crate::trim(doc, trip, view, path),
+                    trim: crate::trim(doc, trip, view, key_path),
                     path: path.to_string(),
+                    piece,
                     matrix: f.matrix,
                     used: pairs.len(),
                     rms: f.rms,
@@ -630,11 +642,12 @@ pub fn placements(doc: &Document, view: &str, positions: &Positions) -> Vec<Plac
         .collect();
     if !sizes.is_empty() {
         let size = sizes.iter().sum::<f64>() / sizes.len() as f64;
-        for (trip, path, mode, ((px, py), (x, y)), stations) in singles {
+        for (trip, path, piece, mode, ((px, py), (x, y)), stations) in singles {
             out.push(Placed {
-                trim: crate::trim(doc, trip, view, &path),
+                trim: crate::trim(doc, trip, view, &crate::piece_path(&path, piece)),
                 trip,
                 path,
+                piece,
                 // x = size*px + c, y = -size*py + f (pixels go down, the view goes up), through the one match
                 matrix: [size, 0.0, x - size * px, 0.0, -size, y + size * py],
                 used: 1,

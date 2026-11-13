@@ -21,7 +21,7 @@
     oncancel: () => void;
   } = $props();
 
-  const TILES = 'https://basemap.nationalmap.gov/arcgis/rest/services/USGSImageryOnly/MapServer/tile/{z}/{y}/{x}';
+  const TILES = 'https://basemap.nationalmap.gov/arcgis/rest/services/USGSImageryTopo/MapServer/tile/{z}/{y}/{x}';
 
   let el = $state<HTMLDivElement>();
   let point = $state<{ lat: number; lon: number } | null>(null);
@@ -56,7 +56,7 @@
         L = (await import('leaflet')).default;
         if (gone || !el) return;
         map = L.map(el).setView(start ? [start.lat, start.lon] : [37.5, -86.0], start ? 16 : 7);
-        L.tileLayer(TILES, { maxZoom: 19, attribution: 'Imagery: USGS The National Map' }).addTo(map);
+        L.tileLayer(TILES, { maxZoom: 19, attribution: 'Imagery and roads: USGS The National Map' }).addTo(map);
         map.on('click', (e: Leaflet.LeafletMouseEvent) => {
           const p = { lat: e.latlng.lat, lon: e.latlng.lng };
           text = fmt(p);

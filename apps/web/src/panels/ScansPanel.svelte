@@ -92,6 +92,17 @@
   const DRIFT_M = 0.3;
   const drifted = (path: string) => (drifts[path] ?? 0) >= DRIFT_M;
   let savedTrim = $state<[number, number][] | null>(null);
+  /** Which sketch on the page is being trimmed and placed (1 = the first); a page can hold several. */
+  let piece = $state(1);
+  /** How many sketches the page holds in this view (at least the one being worked on). */
+  let pieces = $state(1);
+  const MAX_PIECES = 50;
+  /** The path naming sketch `n` on page `path`: the plain path for the first. */
+  const piecePath = (path: string, n: number) => (n > 1 ? `${path}|#${n}` : path);
+  /** The page and sketch the matches and outline belong to. */
+  const here = $derived(piecePath(scans.selected, piece));
+  /** Every station in the cave, for choosing the Cross Section a sketch belongs to. */
+  let allStations = $state<{ id: string; station: string }[]>([]);
   loadEngine().then(() => (ready = true));
   checkRemembered();
 
@@ -100,6 +111,7 @@
     void cave.opened;
     void align.view; // what the panel shows is read again for the new view
     void scans.selected; // and for the page on show: its own matches, placement and outline
+    void piece; // and the sketch on it
     void cave.trip;
     void ready;
     untrack(() => {
@@ -109,8 +121,8 @@
       if (!trips.some((t) => t.id === cave.trip)) cave.trip = trips[0]?.id ?? '';
       done = new Set(engine.scanCompleted());
       stations = engine.scanViewStations(align.view, cave.adjusted).map((r) => ({ id: r.id, station: r.label }));
-      al = scans.selected && cave.trip ? engine.scanAlignment(cave.trip, align.view, scans.selected) : null;
-      const p = engine.scanPlacements(align.view, cave.adjusted).find((x) => x.trip === cave.trip && x.path === scans.selected);
+      al = scans.selected && cave.trip ? engine.scanAlignment(cave.trip, align.view, here) : null;
+      const p = engine.scanPlacements(align.view, cave.adjusted).find((x) => x.trip === cave.trip && x.path === scans.selected && (x.piece ?? 1) === piece);
       placed = p ? { used: p.used, rms: p.rms } : null;
       const trip = cave.trip;
       drifts = Object.fromEntries(
@@ -118,7 +130,16 @@
           .filter((l) => l.trip === trip)
           .map((l) => [l.path, engine.scanAlignment(trip, align.view, l.path)?.drift ?? 0] as const),
       );
-      savedTrim = scans.selected && cave.trip ? engine.scanTrim(cave.trip, align.view, scans.selected) : null;
+      savedTrim = scans.selected && cave.trip ? engine.scanTrim(cave.trip, align.view, here) : null;
+      // The sketches this page already holds in this view (each with its own matches or outline).
+      let most = 1;
+      if (scans.selected && cave.trip)
+        for (let n = 2; n <= MAX_PIECES; n++) {
+          const pp = piecePath(scans.selected, n);
+          if (engine.scanAlignment(cave.trip, align.view, pp) || engine.scanTrim(cave.trip, align.view, pp)) most = n;
+        }
+      pieces = Math.max(most, piece);
+      allStations = engine.scanViewStations('map', cave.adjusted).map((r) => ({ id: r.id, station: r.label }));
     });
   });
 
@@ -174,6 +195,13 @@
     trimming.draft = [];
   });
 
+  // A different page, or another drawing: start at its first sketch.
+  $effect(() => {
+    void scans.selected;
+    void align.view;
+    piece = 1;
+  });
+
   /** A spot on the scan was clicked: it waits for its station (click it on the Map, or choose it here). */
   function picked(px: number, py: number, dir?: 'left' | 'right' | 'up' | 'down') {
     if (trimming.on) {
@@ -205,10 +233,10 @@
       return;
     }
     // a new scale replaces the old matches
-    for (let n = al?.anchors.length ?? 0; n > 0; n--) engine.scanRemoveAnchor(cave.trip, align.view, scans.selected, 0);
+    for (let n = al?.anchors.length ?? 0; n > 0; n--) engine.scanRemoveAnchor(cave.trip, align.view, here, 0);
     const there = dir === 'left' ? `${-v}:0` : dir === 'right' ? `${v}:0` : dir === 'up' ? `0:${v}` : `0:${-v}`;
-    const a = engine.scanAddAnchor(cave.trip, align.view, scans.selected, first.px, first.py, cave.station);
-    const b = engine.scanAddAnchor(cave.trip, align.view, scans.selected, px, py, there);
+    const a = engine.scanAddAnchor(cave.trip, align.view, here, first.px, first.py, cave.station);
+    const b = engine.scanAddAnchor(cave.trip, align.view, here, px, py, there);
     scans.message = [a, b].find((r) => r.startsWith('error'))?.replace(/^error: /, '') ?? '';
     align.pending = null;
     changed();
@@ -216,7 +244,7 @@
 
   /** Trims the scan to the outline traced (a dragged loop, or points closed with Enter). */
   function saveTrim(outline: [number, number][]) {
-    const r = engine.scanSetTrim(cave.trip, align.view, scans.selected, outline);
+    const r = engine.scanSetTrim(cave.trip, align.view, here, outline);
     scans.message = r.startsWith('error') ? 'That outline is too small or not a shape.' : '';
     trimming.draft = [];
     if (!r.startsWith('error')) trimming.on = false;
@@ -233,7 +261,7 @@
   function match(station: string) {
     const p = align.pending;
     if (!p || !station || !scans.selected) return;
-    const r = engine.scanAddAnchor(cave.trip, align.view, scans.selected, p.px, p.py, station);
+    const r = engine.scanAddAnchor(cave.trip, align.view, here, p.px, p.py, station);
     scans.message = r.startsWith('error') ? r.replace(/^error: /, '') : '';
     align.pending = null;
     chosen = '';
@@ -249,12 +277,12 @@
   });
 
   function unmatch(i: number) {
-    engine.scanRemoveAnchor(cave.trip, align.view, scans.selected, i);
+    engine.scanRemoveAnchor(cave.trip, align.view, here, i);
     changed();
   }
 
   const setMode = (mode: 'rigid' | 'warp' | 'rubber') => {
-    engine.scanSetMode(cave.trip, align.view, scans.selected, mode);
+    engine.scanSetMode(cave.trip, align.view, here, mode);
     changed();
   };
 
@@ -333,7 +361,7 @@
   /** The selected page's matches are still right: they remember the survey as it is now. */
   function keepMatches() {
     if (!scans.selected || !cave.trip) return;
-    const r = engine.scanKeepMatches(cave.trip, align.view, scans.selected);
+    const r = engine.scanKeepMatches(cave.trip, align.view, here);
     scans.message = r.startsWith('error') ? r.replace(/^error: /, '') : '';
     changed();
   }
@@ -477,7 +505,30 @@
         <select bind:value={align.kind} aria-label="Place the scan in">
           <option value="map">Map</option>
           <option value="profile" disabled={!cave.run}>Profile{cave.run ? ` (run ${cave.run})` : ''}</option>
-          <option value="section" disabled={!cave.station}>Cross Section{cave.station ? ` (${stations.find((s) => s.id === cave.station)?.station ?? 'station'})` : ''}</option>
+          <option value="section">Cross Section</option>
+        </select>
+      </label>
+      {#if align.kind === 'section'}
+        <label title="The station whose cross section this sketch is. The Cross Section panel turns to it too.">at
+          <select value={cave.station} aria-label="Cross section station" onchange={(e) => (cave.station = e.currentTarget.value)}>
+            <option value="" disabled>Station…</option>
+            {#each allStations as s}<option value={s.id}>{s.station}</option>{/each}
+          </select>
+        </label>
+      {/if}
+      <label title="A page can hold several sketches (two plan sketches, or a row of cross sections). Each has its own outline and matches: trim and align them one at a time.">Sketch
+        <select
+          value={String(piece)}
+          aria-label="Which sketch on the page"
+          onchange={(e) => {
+            const v = e.currentTarget.value;
+            piece = v === 'new' ? pieces + 1 : +v;
+            align.pending = null;
+            trimming.draft = [];
+          }}
+        >
+          {#each Array.from({ length: pieces }, (_, i) => i + 1) as n}<option value={String(n)}>{n} of {pieces}</option>{/each}
+          {#if pieces < MAX_PIECES}<option value="new">+ Another sketch on this page</option>{/if}
         </select>
       </label>
     {/if}

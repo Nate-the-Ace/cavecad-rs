@@ -358,6 +358,8 @@ export interface StationSection {
 }
 /** A scan placed under the map: `matrix` takes a pixel (from the top left, y down) to the map in metres. */
 export interface ScanPlacement {
+  /** Which sketch on the page (1 for the first): a page can hold several, each placed on its own. */
+  piece?: number;
   trip: string;
   path: string;
   matrix: [number, number, number, number, number, number];
