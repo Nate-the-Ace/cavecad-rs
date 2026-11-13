@@ -48,7 +48,7 @@ The Patterns panel is where you look at, copy and make the linetypes, fills and 
 ### Motifs
 
 1. Pick **Straight**, **Freehand** or **Circle** and draw in the box. The dashed line across the middle is the line a linetype stands the motif on.
-2. For straight lines, click each corner. For freehand, drag; let go and drag again to carry on the same line. Then press **Finish line** (or Enter) to end it, or **Close shape** to join the end back to the start.
+2. For straight lines, click each corner, then press **Finish line** (or Enter, or double-click), or **Close shape** to join the end back to the start. For freehand, each drag is its own line, ended when you let go; **Close shape** joins the line you just drew back to its start.
 3. Tick **Solid** first to have closed shapes and circles filled in.
 4. **Undo stroke** takes back the last stroke; **Clear…** starts again.
 5. Under the box the motif shows at four sizes and repeated along a line. Press **Save**, then use it in a linetype or fill by adding a Motif part there.

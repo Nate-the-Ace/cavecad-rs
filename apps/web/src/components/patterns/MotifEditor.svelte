@@ -80,11 +80,7 @@
     const p = at(e);
     edited = true;
     if (tool === 'circle') live = { kind: 'circle', c: snapPt(p), r: 0, fill: solid };
-    else if (tool === 'free') {
-      // a freehand line stays open between drags: a new drag carries on from where the last one stopped
-      if (live && live.kind === 'poly') live.pts.push(p);
-      else live = { kind: 'poly', pts: [p], closed: false, fill: false };
-    }
+    else if (tool === 'free') live = { kind: 'poly', pts: [p], closed: false, fill: false };
     else if (live && live.kind === 'poly') live.pts.push(snapPt(p));
     else live = { kind: 'poly', pts: [snapPt(p), snapPt(p)], closed: false, fill: false };
   }
@@ -100,8 +96,18 @@
     if (tool === 'circle') {
       if (live.kind === 'circle' && live.r > 2) keep(live);
       live = null;
+    } else if (tool === 'free') {
+      // each drag is its own line, ended when you let go
+      lastFree = -1;
+      if (live.kind === 'poly' && live.pts.length > 2) {
+        keep({ kind: 'poly', pts: simplify(live.pts, 2.5), closed: false, fill: false });
+        lastFree = strokes.length - 1;
+      }
+      live = null;
     }
   }
+  /** The freehand line just drawn (its index), which Close shape can still close; -1 when there is none. */
+  let lastFree = $state(-1);
   /** The points of the open line: clicked corners without the one following the pointer, or a freehand trace tidied. */
   function openPoints(): [number, number][] {
     if (!live || live.kind !== 'poly') return [];
@@ -115,8 +121,15 @@
       live = null;
     }
   }
-  /** Ends the open line by joining it back to its start. */
+  /** Ends the open line by joining it back to its start; in freehand, closes the line just drawn. */
   function close() {
+    const last = strokes[lastFree];
+    if (!live && tool === 'free' && last && last.kind === 'poly' && !last.closed && last.pts.length >= 3) {
+      strokes[lastFree] = { ...last, closed: true, fill: solid };
+      lastFree = -1;
+      edited = true;
+      return;
+    }
     if (live && live.kind === 'poly') {
       const pts = openPoints();
       if (pts.length >= 3) keep({ kind: 'poly', pts, closed: true, fill: solid });
@@ -125,6 +138,12 @@
   }
   /** A line is open (being clicked out or traced) and can be finished or closed. */
   const lineOpen = $derived(!!live && live.kind === 'poly');
+  /** Close shape can act: on an open line, or on the freehand line just drawn. */
+  const canClose = $derived.by(() => {
+    if (lineOpen) return true;
+    const last = tool === 'free' ? strokes[lastFree] : undefined;
+    return !!last && last.kind === 'poly' && !last.closed && last.pts.length >= 3;
+  });
   function key(e: KeyboardEvent) {
     if (e.key === 'Enter') finish();
     else if (e.key === 'Escape') live = null;
@@ -136,6 +155,7 @@
     if (live) live = null;
     else if (strokes.length) {
       strokes.pop();
+      lastFree = -1;
       edited = true;
     }
   }
@@ -147,6 +167,7 @@
   }
   function pickTool(t: typeof tool) {
     finish();
+    lastFree = -1;
     tool = t;
   }
 
@@ -265,7 +286,7 @@
 
   const HINT = {
     line: 'Click each corner. Press Finish line (or Enter, or double-click) to end it, or Close shape to join it back to the start.',
-    free: 'Drag to draw. Let go and drag again to carry on the same line. Press Finish line (or Enter) to end it, or Close shape to join it back to the start; it is tidied into a few straight pieces then.',
+    free: 'Drag to draw a line; it ends when you let go and is tidied into a few straight pieces. Each drag is a separate line. Close shape joins the line you just drew back to its start.',
     circle: 'Press at the middle and drag outward.',
   };
 </script>
@@ -294,8 +315,8 @@
     <canvas bind:this={canvas} style="width:{PAD}px;height:{PAD}px" tabindex="0" aria-label="Motif drawing pad" onpointerdown={down} onpointermove={move} onpointerup={up} ondblclick={finish} onkeydown={key}></canvas>
     {#if !readonly}
       <div class="side">
-        <button onclick={finish} disabled={!lineOpen} title="End the line here (Enter)">Finish line</button>
-        <button onclick={close} disabled={!lineOpen} title="Join the end back to the start">Close shape</button>
+        {#if tool === 'line'}<button onclick={finish} disabled={!lineOpen} title="End the line here (Enter)">Finish line</button>{/if}
+        <button onclick={close} disabled={!canClose} title={tool === 'free' ? 'Join the end of the line you just drew back to its start' : 'Join the end back to the start'}>Close shape</button>
         <button onclick={undoStroke} disabled={!live && !strokes.length} title="Take back the last stroke (Backspace)">Undo stroke</button>
         <button onclick={clearAll} disabled={!strokes.length}>Clear…</button>
         <p class="muted">The dashed line is the line a linetype stands the motif on.</p>
