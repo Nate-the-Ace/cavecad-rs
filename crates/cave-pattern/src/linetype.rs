@@ -64,18 +64,27 @@ pub struct LineDef {
     pub name: String,
     /// The parts, repeated from the start of the line to its end.
     pub elements: Vec<Element>,
+    /// More rows of parts running beside the line (a stacked or multiline linetype): each its own pattern, set off sideways.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub rows: Vec<LineRow>,
 }
 
+/// One more row of a stacked linetype.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct LineRow {
+    /// How far the row is set off to the left of the way the line was drawn, in millimetres on paper (less than 0 is to the right).
+    pub offset_mm: f64,
+    /// Its parts, repeated from the start of the line to its end.
+    pub elements: Vec<Element>,
+}
+
+/// Most extra rows a stacked linetype may have.
+pub const MAX_ROWS: usize = 6;
+
 impl LineDef {
-    /// How long one repeat is, in millimetres on paper.
+    /// How long one repeat of the line's own row is, in millimetres on paper.
     pub fn period_mm(&self) -> f64 {
-        self.elements
-            .iter()
-            .map(|e| match e {
-                Element::Dash { mm } | Element::Gap { mm } => mm.abs(),
-                _ => 0.0,
-            })
-            .sum()
+        period_of(&self.elements)
     }
 
     /// Checks the definition is storable and will draw something; `has_motif` says which motif names exist.
@@ -83,63 +92,100 @@ impl LineDef {
         if !valid_name(&self.name) {
             return Err(PatternError::BadName);
         }
-        if self.elements.is_empty() || self.elements.len() > MAX_PARTS {
-            return Err(if self.elements.is_empty() {
-                PatternError::NothingToDraw
-            } else {
-                PatternError::TooLong
-            });
+        if self.rows.len() > MAX_ROWS {
+            return Err(PatternError::TooLong);
         }
-        let mut draws = false;
-        for e in &self.elements {
-            match e {
-                Element::Dash { mm } => {
-                    in_range(*mm, MIN_MM, MAX_MM, "A dash length")?;
-                    draws = true;
-                }
-                Element::Gap { mm } => in_range(*mm, MIN_MM, MAX_MM, "A gap length")?,
-                Element::Dot => draws = true,
-                Element::Motif {
-                    motif,
-                    size_mm,
-                    turn_deg,
-                    along_mm,
-                    across_mm,
-                } => {
-                    if !has_motif(motif) {
-                        return Err(PatternError::MissingMotif(motif.clone()));
-                    }
-                    in_range(*size_mm, 0.2, 50.0, "A motif size")?;
-                    in_range(*turn_deg, -360.0, 360.0, "A turn")?;
-                    in_range(*along_mm, -MAX_MM, MAX_MM, "A shift along the line")?;
-                    in_range(*across_mm, -MAX_MM, MAX_MM, "A shift across the line")?;
-                    draws = true;
-                }
-                Element::Text {
-                    text,
-                    size_mm,
-                    turn_deg,
-                    along_mm,
-                    across_mm,
-                } => {
-                    let n = text.trim().chars().count();
-                    if n == 0 || n > MAX_TEXT || text.chars().any(|c| c.is_control()) {
-                        return Err(PatternError::BadText);
-                    }
-                    in_range(*size_mm, 0.5, 20.0, "A text size")?;
-                    in_range(*turn_deg, -360.0, 360.0, "A turn")?;
-                    in_range(*along_mm, -MAX_MM, MAX_MM, "A shift along the line")?;
-                    in_range(*across_mm, -MAX_MM, MAX_MM, "A shift across the line")?;
-                    draws = true;
-                }
-            }
-        }
-        // something has to move along the line, or the layout would never leave the start
-        if !draws || self.period_mm() < MIN_MM {
-            return Err(PatternError::NothingToDraw);
+        check_elements(&self.elements, has_motif)?;
+        for r in &self.rows {
+            in_range(r.offset_mm, -MAX_MM, MAX_MM, "A row offset")?;
+            check_elements(&r.elements, has_motif)?;
         }
         Ok(())
     }
+
+    /// Every row as a single-row linetype with its offset (the line itself first, at 0).
+    pub fn all_rows(&self) -> Vec<(f64, LineDef)> {
+        let one = |elements: &Vec<Element>| LineDef {
+            name: self.name.clone(),
+            elements: elements.clone(),
+            rows: Vec::new(),
+        };
+        std::iter::once((0.0, one(&self.elements)))
+            .chain(self.rows.iter().map(|r| (r.offset_mm, one(&r.elements))))
+            .collect()
+    }
+}
+
+fn period_of(elements: &[Element]) -> f64 {
+    elements
+        .iter()
+        .map(|e| match e {
+            Element::Dash { mm } | Element::Gap { mm } => mm.abs(),
+            _ => 0.0,
+        })
+        .sum()
+}
+
+/// Checks one row's parts: storable, and drawing something that moves along the line.
+fn check_elements(
+    elements: &[Element],
+    has_motif: &dyn Fn(&str) -> bool,
+) -> Result<(), PatternError> {
+    if elements.is_empty() {
+        return Err(PatternError::NothingToDraw);
+    }
+    if elements.len() > MAX_PARTS {
+        return Err(PatternError::TooLong);
+    }
+    let mut draws = false;
+    for e in elements {
+        match e {
+            Element::Dash { mm } => {
+                in_range(*mm, MIN_MM, MAX_MM, "A dash length")?;
+                draws = true;
+            }
+            Element::Gap { mm } => in_range(*mm, MIN_MM, MAX_MM, "A gap length")?,
+            Element::Dot => draws = true,
+            Element::Motif {
+                motif,
+                size_mm,
+                turn_deg,
+                along_mm,
+                across_mm,
+            } => {
+                if !has_motif(motif) {
+                    return Err(PatternError::MissingMotif(motif.clone()));
+                }
+                in_range(*size_mm, 0.2, 50.0, "A motif size")?;
+                in_range(*turn_deg, -360.0, 360.0, "A turn")?;
+                in_range(*along_mm, -MAX_MM, MAX_MM, "A shift along the line")?;
+                in_range(*across_mm, -MAX_MM, MAX_MM, "A shift across the line")?;
+                draws = true;
+            }
+            Element::Text {
+                text,
+                size_mm,
+                turn_deg,
+                along_mm,
+                across_mm,
+            } => {
+                let n = text.trim().chars().count();
+                if n == 0 || n > MAX_TEXT || text.chars().any(|c| c.is_control()) {
+                    return Err(PatternError::BadText);
+                }
+                in_range(*size_mm, 0.5, 20.0, "A text size")?;
+                in_range(*turn_deg, -360.0, 360.0, "A turn")?;
+                in_range(*along_mm, -MAX_MM, MAX_MM, "A shift along the line")?;
+                in_range(*across_mm, -MAX_MM, MAX_MM, "A shift across the line")?;
+                draws = true;
+            }
+        }
+    }
+    // something has to move along the line, or the layout would never leave the start
+    if !draws || period_of(elements) < MIN_MM {
+        return Err(PatternError::NothingToDraw);
+    }
+    Ok(())
 }
 
 /// A motif stood on a line.
@@ -299,6 +345,7 @@ pub fn motifs_used(def: &LineDef) -> Vec<&str> {
     let mut v: Vec<&str> = def
         .elements
         .iter()
+        .chain(def.rows.iter().flat_map(|r| r.elements.iter()))
         .filter_map(|e| match e {
             Element::Motif { motif, .. } => Some(motif.as_str()),
             _ => None,
@@ -318,20 +365,76 @@ pub fn marks(
     paper_m: f64,
     dot_mm: f64,
 ) -> cave_fill::Marks {
-    let lay = lay_out(def, path, paper_m, dot_mm);
-    let mut m = cave_fill::Marks {
-        lines: lay.dashes,
-        texts: lay.texts,
-        ..Default::default()
-    };
-    for p in &lay.placements {
-        if let Some(motif) = motifs(&p.motif) {
-            let (lines, circles) = motif.place(p.at, p.angle, p.size);
-            m.lines.extend(lines);
-            m.circles.extend(circles);
+    let mut m = cave_fill::Marks::default();
+    for (offset_mm, row) in def.all_rows() {
+        let shifted;
+        let along: &[[f64; 2]] = if offset_mm == 0.0 {
+            path
+        } else {
+            shifted = offset_path(path, offset_mm * paper_m);
+            &shifted
+        };
+        let lay = lay_out(&row, along, paper_m, dot_mm);
+        m.lines.extend(lay.dashes);
+        m.texts.extend(lay.texts);
+        for p in &lay.placements {
+            if let Some(motif) = motifs(&p.motif) {
+                let (lines, circles) = motif.place(p.at, p.angle, p.size);
+                m.lines.extend(lines);
+                m.circles.extend(circles);
+            }
         }
     }
     m
+}
+
+/// The path set off `d` to the left of its direction (less than 0 to the right), corners mitred (a sharp corner's mitre is
+/// held to four times the offset so it never shoots off).
+pub fn offset_path(path: &[[f64; 2]], d: f64) -> Vec<[f64; 2]> {
+    let n = path.len();
+    if n < 2 || d == 0.0 {
+        return path.to_vec();
+    }
+    let left = |a: [f64; 2], b: [f64; 2]| {
+        let (dx, dy) = (b[0] - a[0], b[1] - a[1]);
+        let l = dx.hypot(dy);
+        if l > 0.0 {
+            Some([-dy / l, dx / l])
+        } else {
+            None
+        }
+    };
+    let normals: Vec<Option<[f64; 2]>> = path.windows(2).map(|w| left(w[0], w[1])).collect();
+    let pick = |i: usize, back: bool| -> Option<[f64; 2]> {
+        // the nearest segment with a length, looking back or forward from segment i
+        if back {
+            (0..=i).rev().find_map(|j| normals[j])
+        } else {
+            (i..normals.len()).find_map(|j| normals[j])
+        }
+    };
+    (0..n)
+        .map(|i| {
+            let before = if i > 0 { pick(i - 1, true) } else { None };
+            let after = if i < n - 1 { pick(i, false) } else { None };
+            let nrm = match (before, after) {
+                (Some(a), Some(b)) => {
+                    let (sx, sy) = (a[0] + b[0], a[1] + b[1]);
+                    let l = sx.hypot(sy);
+                    if l < 1e-9 {
+                        a
+                    } else {
+                        // the mitre: longer at a corner so both sides stay `d` away
+                        let cos_half = (l / 2.0).max(0.25);
+                        [sx / l / cos_half, sy / l / cos_half]
+                    }
+                }
+                (Some(a), None) | (None, Some(a)) => a,
+                (None, None) => [0.0, 0.0],
+            };
+            [path[i][0] + nrm[0] * d, path[i][1] + nrm[1] * d]
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -342,6 +445,7 @@ mod tests {
         LineDef {
             name: "test".into(),
             elements,
+            rows: Vec::new(),
         }
     }
     fn all(_: &str) -> bool {
@@ -473,6 +577,49 @@ mod tests {
         assert_eq!(bad(&"x".repeat(25)), Err(PatternError::BadText));
         assert_eq!(bad("a\nb"), Err(PatternError::BadText));
         assert_eq!(bad("DIG"), Ok(()));
+    }
+
+    #[test]
+    fn a_stacked_linetype_draws_each_row_beside_the_line() {
+        let mut d = def(vec![Element::Dash { mm: 10.0 }]);
+        d.rows = vec![LineRow {
+            offset_mm: 1.0,
+            elements: vec![Element::Dash { mm: 10.0 }],
+        }];
+        assert_eq!(d.validate(&all), Ok(()));
+        let m = marks(&d, &|_| None, &[[0.0, 0.0], [0.05, 0.0]], 0.001, 0.4);
+        let ys: Vec<f64> = m.lines.iter().map(|l| l[0][1]).collect();
+        assert!(ys.iter().any(|y| y.abs() < 1e-12), "a row on the line");
+        assert!(
+            ys.iter().any(|y| (y - 0.001).abs() < 1e-12),
+            "a row 1 mm to its left"
+        );
+        // a row that draws nothing, or too many rows, is refused
+        d.rows[0].elements = vec![Element::Gap { mm: 1.0 }];
+        assert_eq!(d.validate(&all), Err(PatternError::NothingToDraw));
+        d.rows = vec![
+            LineRow {
+                offset_mm: 1.0,
+                elements: vec![Element::Dash { mm: 1.0 }],
+            };
+            MAX_ROWS + 1
+        ];
+        assert_eq!(d.validate(&all), Err(PatternError::TooLong));
+    }
+
+    #[test]
+    fn an_offset_path_keeps_its_distance_round_a_corner() {
+        let path = [[0.0, 0.0], [10.0, 0.0], [10.0, 10.0]];
+        let left = offset_path(&path, 1.0);
+        assert_eq!(left[0], [0.0, 1.0]);
+        assert!(
+            (left[1][0] - 9.0).abs() < 1e-9 && (left[1][1] - 1.0).abs() < 1e-9,
+            "{:?}",
+            left[1]
+        );
+        assert_eq!(left[2], [9.0, 10.0]);
+        let right = offset_path(&path, -1.0);
+        assert!((right[1][0] - 11.0).abs() < 1e-9 && (right[1][1] + 1.0).abs() < 1e-9);
     }
 
     #[test]

@@ -210,6 +210,7 @@ mod tests {
                 },
                 Element::Gap { mm: 2.0 },
             ],
+            rows: Vec::new(),
         }
     }
     fn save(d: &mut Document, actions: Vec<Action>) {

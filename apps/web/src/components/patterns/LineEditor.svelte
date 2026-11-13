@@ -27,24 +27,58 @@
     unsaved?: boolean;
   } = $props();
 
-  let work = $state<LineDef>(plain(def));
+  let work = $state<LineDef>(withRows(def));
+  /** An editable copy that always has a rows list. */
+  function withRows(d: LineDef): LineDef {
+    const p = plain(d);
+    return { ...p, rows: p.rows ?? [] };
+  }
+  /** A definition as stored: no rows list when there are no extra rows. */
+  function trim(d: LineDef): LineDef {
+    const { rows, ...rest } = d;
+    return rows?.length ? { ...rest, rows } : rest;
+  }
+  /** What is being edited, as it would be saved. */
+  const out = (): LineDef => trim(plain(work));
   let message = $state('');
   let note = $state('');
   let zoom = $state(2);
   let curved = $state(true);
   /** The part being set in the box under the strip. */
   let sel = $state(0);
+  /** The row being edited: 0 is the line itself, 1 on are the rows stacked beside it. */
+  let row = $state(0);
+  const MAX_ROWS = 6;
+  /** The parts of the row being edited. */
+  const parts = $derived(row === 0 ? work.elements : (work.rows?.[row - 1]?.elements ?? work.elements));
+  function pickRow(r: number) {
+    row = r;
+    sel = 0;
+  }
+  function addRow() {
+    if ((work.rows?.length ?? 0) >= MAX_ROWS) return;
+    // 1 mm further out to the left than the outermost row, so a new row never lands on another
+    const outer = Math.max(0, ...work.rows!.map((r) => r.offset_mm));
+    work.rows!.push({ offset_mm: Math.round((outer + 1) * 10) / 10, elements: [{ t: 'dash', mm: 6 }] });
+    pickRow(work.rows!.length);
+  }
+  function removeRow() {
+    if (row === 0) return;
+    work.rows!.splice(row - 1, 1);
+    pickRow(Math.min(row, work.rows!.length));
+  }
+  const offsetText = (mm: number) => (mm === 0 ? 'on the line' : `${Math.abs(mm)} mm ${mm > 0 ? 'left' : 'right'}`);
   const readonly = $derived(!def.own);
   const motifNames = $derived(lib.motifs.map((m) => m.name));
   const problem = $derived.by(() => {
-    const r = engine.checkPattern('line', plain(work));
+    const r = engine.checkPattern('line', out());
     return r === 'ok' ? '' : r.replace(/^error: /, '');
   });
-  const dirty = $derived(!readonly && (unsaved || JSON.stringify(plain(work)) !== JSON.stringify(plain(def))));
+  const dirty = $derived(!readonly && (unsaved || JSON.stringify(out()) !== JSON.stringify(trim(plain(def)))));
   $effect(() => ondirty?.(dirty));
-  const part = $derived(work.elements[sel]);
+  const part = $derived(parts[sel]);
   /** One repeat's length on paper. Dots and motifs take no room of their own. */
-  const repeatMm = $derived(work.elements.reduce((s, e) => s + (e.t === 'dash' || e.t === 'gap' ? Math.abs(e.mm) : 0), 0));
+  const repeatMm = $derived(parts.reduce((s, e) => s + (e.t === 'dash' || e.t === 'gap' ? Math.abs(e.mm) : 0), 0));
 
   const KIND: Record<Element['t'], string> = { dash: 'Line', gap: 'Space', dot: 'Dot', motif: 'Motif', text: 'Text' };
   const KIND_HELP: Record<Element['t'], string> = {
@@ -56,25 +90,25 @@
   };
 
   function add(kind: Element['t']) {
-    const at = work.elements.length ? sel + 1 : 0;
-    work.elements.splice(at, 0, newElement(kind, motifNames[0] ?? ''));
+    const at = parts.length ? sel + 1 : 0;
+    parts.splice(at, 0, newElement(kind, motifNames[0] ?? ''));
     sel = at;
   }
   function move(by: number) {
     const j = sel + by;
-    if (j < 0 || j >= work.elements.length) return;
-    [work.elements[sel], work.elements[j]] = [work.elements[j], work.elements[sel]];
+    if (j < 0 || j >= parts.length) return;
+    [parts[sel], parts[j]] = [parts[j], parts[sel]];
     sel = j;
   }
   function removePart() {
-    work.elements.splice(sel, 1);
-    sel = Math.max(0, Math.min(sel, work.elements.length - 1));
+    parts.splice(sel, 1);
+    sel = Math.max(0, Math.min(sel, parts.length - 1));
   }
   function setKind(kind: Element['t']) {
-    work.elements[sel] = newElement(kind, motifNames[0] ?? '');
+    parts[sel] = newElement(kind, motifNames[0] ?? '');
   }
   function save() {
-    const r = engine.savePattern('line', plain(work));
+    const r = engine.savePattern('line', out());
     message = r === 'ok' ? '' : r.replace(/^error: /, '');
     if (r === 'ok') {
       changed();
@@ -119,7 +153,7 @@
       const x = (mmLong * i) / 120;
       path.push([(x * scale) / 1000, curved ? (Math.sin(x / 14) * 5 * scale) / 1000 : 0]);
     }
-    const marks = engine.linePatternMarks(plain(work), path, scale);
+    const marks = engine.linePatternMarks(out(), path, scale);
     drawMarks(g, marks, ([x, y]) => [10 + x * pxPerM, h / 2 - y * pxPerM], pxPerM);
   }
 
@@ -129,7 +163,7 @@
 
   /** Dragging a block's right edge makes that line or space longer or shorter. */
   function grab(e: PointerEvent, i: number) {
-    const el = work.elements[i];
+    const el = parts[i];
     if (readonly || (el.t !== 'dash' && el.t !== 'gap')) return;
     e.preventDefault();
     e.stopPropagation();
@@ -140,7 +174,7 @@
     const handle = e.currentTarget as HTMLElement;
     handle.setPointerCapture(e.pointerId);
     const moveTo = (m: PointerEvent) => {
-      const now = work.elements[i];
+      const now = parts[i];
       if (now.t === 'dash' || now.t === 'gap') now.mm = Math.max(0.1, Math.round((was + (m.clientX - start) / k) * 10) / 10);
     };
     const up = () => {
@@ -161,7 +195,7 @@
   function onKey(e: KeyboardEvent) {
     if (readonly || (e.target as HTMLElement).closest('input, select')) return;
     if (e.key === 'ArrowLeft') sel = Math.max(0, sel - 1);
-    else if (e.key === 'ArrowRight') sel = Math.min(work.elements.length - 1, sel + 1);
+    else if (e.key === 'ArrowRight') sel = Math.min(parts.length - 1, sel + 1);
     else if (e.key === 'Delete' || e.key === 'Backspace') removePart();
     else return;
     e.preventDefault();
@@ -196,12 +230,31 @@
   </div>
 
   <div class="stripbox">
+    <div class="rowtabs" role="tablist" aria-label="Rows of the linetype">
+      <button role="tab" aria-selected={row === 0} class:on={row === 0} onclick={() => pickRow(0)} title="The line itself">Row 1 <small>on the line</small></button>
+      {#each work.rows ?? [] as r, i}
+        <button role="tab" aria-selected={row === i + 1} class:on={row === i + 1} onclick={() => pickRow(i + 1)} title="A row running beside the line">Row {i + 2} <small>{offsetText(r.offset_mm)}</small></button>
+      {/each}
+      {#if !readonly && (work.rows?.length ?? 0) < MAX_ROWS}
+        <button class="addrow" onclick={addRow} title="Add another row of parts running beside the line (a double line, ticks beside a wall, a dashed line inside a solid one)">+ Row beside</button>
+      {/if}
+    </div>
+    {#if row > 0 && work.rows?.[row - 1]}
+      <label class="field" title="How far this row runs from the drawn line: to the left of the way the line was drawn, or to the right">Offset
+        <input type="range" min="-10" max="10" step="0.1" bind:value={work.rows[row - 1].offset_mm} disabled={readonly} />
+        <input type="number" step="0.1" bind:value={work.rows[row - 1].offset_mm} disabled={readonly} /> mm
+      </label>
+      <div class="row small">
+        <span class="muted">More than 0 is to the left of the way the line was drawn, less than 0 to the right.</span>
+        {#if !readonly}<button class="danger small-btn" onclick={removeRow}>Remove this row</button>{/if}
+      </div>
+    {/if}
     <div class="row small">
-      <b>One repeat</b>
+      <b>One repeat{(work.rows?.length ?? 0) ? ` of row ${row + 1}` : ''}</b>
       <span class="muted">{repeatMm.toFixed(1)} mm on paper, then it starts again{readonly ? '' : '. Click a part to change it; drag its right edge to make a line or space longer.'}</span>
     </div>
     <div class="strip" role="listbox" aria-label="Parts of one repeat" tabindex="-1">
-      {#each work.elements as el, i}
+      {#each parts as el, i}
         <div
           class="block {el.t}"
           class:sel={i === sel}
@@ -223,7 +276,7 @@
           {/if}
         </div>
       {/each}
-      {#if !work.elements.length}<span class="muted">No parts yet: add one below.</span>{/if}
+      {#if !parts.length}<span class="muted">No parts yet: add one below.</span>{/if}
     </div>
     {#if !readonly}
       <div class="row add">
@@ -240,14 +293,14 @@
   {#if part}
     <div class="partbox">
       <div class="row">
-        <b>Part {sel + 1} of {work.elements.length}:</b>
+        <b>Part {sel + 1} of {parts.length}:</b>
         <select value={part.t} onchange={(e) => setKind(e.currentTarget.value as Element['t'])} disabled={readonly} aria-label="Kind of part">
           {#each Object.entries(KIND) as [k, label]}<option value={k}>{label}</option>{/each}
         </select>
         {#if !readonly}
           <span class="btns">
             <button onclick={() => move(-1)} disabled={sel === 0} title="Move this part earlier in the repeat (←)">◀ Earlier</button>
-            <button onclick={() => move(1)} disabled={sel >= work.elements.length - 1} title="Move this part later in the repeat (→)">Later ▶</button>
+            <button onclick={() => move(1)} disabled={sel >= parts.length - 1} title="Move this part later in the repeat (→)">Later ▶</button>
             <button onclick={removePart} title="Take this part out (Delete)">Remove</button>
           </span>
         {/if}
@@ -311,7 +364,7 @@
     {#if !readonly}
       <div class="row actions">
         <button class="primary" onclick={save} disabled={!!problem || !dirty}>Save</button>
-        <button onclick={() => ((work = plain(def)), (sel = 0))} disabled={!dirty || unsaved} title="Go back to how it was last saved">Undo changes</button>
+        <button onclick={() => ((work = withRows(def)), (sel = 0), (row = 0))} disabled={!dirty || unsaved} title="Go back to how it was last saved">Undo changes</button>
         {#if dirty}<span class="unsaved">Not saved yet</span>{/if}
         {#if !unsaved}<button class="danger" onclick={remove}>Delete…</button>{/if}
       </div>
@@ -349,6 +402,13 @@
   .ink { display: block; height: 3px; width: calc(100% - 8px); background: var(--text); border-radius: 2px; }
   .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--text); }
   .icon { width: 26px; }
+  .rowtabs { display: flex; gap: 3px; flex-wrap: wrap; }
+  .rowtabs button { font-size: 11px; padding: 2px 8px; color: var(--muted); }
+  .rowtabs button.on { background: var(--accent-bg); border-color: var(--accent); color: var(--text); }
+  .rowtabs small { display: block; font-size: 9px; color: var(--muted); }
+  .addrow { border-style: dashed; }
+  .small-btn { font-size: 11px; padding: 1px 6px; margin-left: auto; }
+  .danger { color: var(--danger, #c0392b); }
   .words { font-size: 12px; font-weight: 600; max-width: 100%; overflow: hidden; white-space: nowrap; padding: 0 3px; }
   .field .wide { grid-column: 2 / 5; }
   .icon :global(canvas) { border: none; background: none; }

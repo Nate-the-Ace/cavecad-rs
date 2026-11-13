@@ -23,9 +23,17 @@ export type Element =
   | { t: 'motif'; motif: string; size_mm: number; turn_deg: number; along_mm: number; across_mm: number }
   | { t: 'text'; text: string; size_mm: number; turn_deg: number; along_mm: number; across_mm: number };
 
+/** One more row of a stacked linetype: its own parts, set off sideways (mm on paper, more than 0 is to the left of the way the line was drawn). */
+export interface LineRow {
+  offset_mm: number;
+  elements: Element[];
+}
+
 export interface LineDef {
   name: string;
   elements: Element[];
+  /** More rows beside the line (a stacked linetype). */
+  rows?: LineRow[];
   own?: boolean;
 }
 

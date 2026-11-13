@@ -26,8 +26,9 @@ The Patterns panel is where you look at, copy and make the linetypes, fills and 
 2. Click a block to pick it. Its settings show in the box underneath: length on paper for a line or space; for a motif, which one, its size, rotation, and a nudge along or sideways.
 3. Drag the right edge of a line or space block to make it longer or shorter.
 4. Use **+ Line**, **+ Space**, **+ Dot**, **+ Motif** or **+ Text** to add a part after the picked one. **◀ Earlier** and **Later ▶** move it; **Remove** takes it out. The arrow keys and Delete work too.
-5. Under the preview, switch between a **Curve** and a **Straight** line, and between **Actual size**, **2×** and **4×**.
-6. Once saved, select lines on the map and press **Use on selected lines** to give them this linetype. You can also pick it later under **Line style** in the ribbon.
+5. To stack patterns on one line (a double wall, ticks beside a wall, a dashed line inside a solid one), press **+ Row beside**. Each row has its own parts and an **Offset**: how far it runs from the drawn line, to the left of the way the line was drawn (more than 0) or to the right (less than 0). Click a row's tab to edit its parts; **Remove this row** takes it away. **Double line** and **Solid with dashed inside** are starting points. A linetype holds up to 7 rows.
+6. Under the preview, switch between a **Curve** and a **Straight** line, and between **Actual size**, **2×** and **4×**.
+7. Once saved, select lines on the map and press **Use on selected lines** to give them this linetype. You can also pick it later under **Line style** in the ribbon.
 
 ### Fills
 

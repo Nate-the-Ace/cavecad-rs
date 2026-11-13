@@ -121,26 +121,32 @@ pub fn builtin_library() -> Library {
         LineDef {
             name: "Presumed wall".into(),
             elements: vec![dash(4.8), gap(1.0)],
+            rows: Vec::new(),
         },
         LineDef {
             name: "Dashed".into(),
             elements: vec![dash(2.0), gap(1.2)],
+            rows: Vec::new(),
         },
         LineDef {
             name: "Underlying passage".into(),
             elements: vec![dash(1.2), gap(3.4)],
+            rows: Vec::new(),
         },
         LineDef {
             name: "Joint".into(),
             elements: vec![dash(2.8), gap(1.2), Element::Dot, gap(1.2)],
+            rows: Vec::new(),
         },
         LineDef {
             name: "Ledge".into(),
             elements: vec![dash(3.0), motif("Tick up", 1.4, 0.0, -1.5)],
+            rows: Vec::new(),
         },
         LineDef {
             name: "Pit edge".into(),
             elements: vec![dash(3.0), motif("Tick up", 1.4, 180.0, -1.5)],
+            rows: Vec::new(),
         },
         LineDef {
             name: "Unsurveyed wall".into(),
@@ -156,6 +162,7 @@ pub fn builtin_library() -> Library {
                 },
                 gap(1.4),
             ],
+            rows: Vec::new(),
         },
         LineDef {
             name: "Water line".into(),
@@ -171,6 +178,23 @@ pub fn builtin_library() -> Library {
                 },
                 gap(1.6),
             ],
+            rows: Vec::new(),
+        },
+        LineDef {
+            name: "Double line".into(),
+            elements: vec![dash(10.0)],
+            rows: vec![crate::LineRow {
+                offset_mm: 0.9,
+                elements: vec![dash(10.0)],
+            }],
+        },
+        LineDef {
+            name: "Solid with dashed inside".into(),
+            elements: vec![dash(10.0)],
+            rows: vec![crate::LineRow {
+                offset_mm: -1.0,
+                elements: vec![dash(2.0), gap(1.2)],
+            }],
         },
         LineDef {
             name: "Flowline".into(),
@@ -182,6 +206,7 @@ pub fn builtin_library() -> Library {
                 motif("Chevron", 1.8, 0.0, 0.6),
                 gap(2.4),
             ],
+            rows: Vec::new(),
         },
     ];
     let mut lines = like_the_map;
@@ -198,6 +223,7 @@ pub fn builtin_library() -> Library {
                     across_mm: 0.0,
                 },
             ],
+            rows: Vec::new(),
         },
         LineDef {
             name: "Chevron line".into(),
@@ -212,6 +238,7 @@ pub fn builtin_library() -> Library {
                 },
                 Element::Gap { mm: 3.0 },
             ],
+            rows: Vec::new(),
         },
         LineDef {
             name: "Scalloped line".into(),
@@ -225,6 +252,7 @@ pub fn builtin_library() -> Library {
                 },
                 Element::Gap { mm: 3.0 },
             ],
+            rows: Vec::new(),
         },
     ]);
     let fills = vec![
