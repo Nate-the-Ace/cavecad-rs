@@ -156,11 +156,17 @@ pub async fn ble_scan(app: AppHandle, ble: State<'_, Ble>, ms: u64) -> Result<Ve
 pub async fn ble_connect(app: AppHandle, ble: State<'_, Ble>, id: String) -> Result<Vec<Service>, String> {
     adapter(&app, &ble).await?;
     let p = device(&ble, &id)?;
+    // a device that went out of range can leave a connect waiting for ever: give up after a while (the page tries again)
+    let wait = Duration::from_secs(10);
     if !p.is_connected().await.unwrap_or(false) {
-        p.connect().await.map_err(|e| format!("Could not connect: {e}"))?;
+        tokio::time::timeout(wait, p.connect())
+            .await
+            .map_err(|_| "The instrument did not answer. Is it on and close by?".to_string())?
+            .map_err(|e| format!("Could not connect: {e}"))?;
     }
-    p.discover_services()
+    tokio::time::timeout(wait, p.discover_services())
         .await
+        .map_err(|_| "The instrument did not list its services in time.".to_string())?
         .map_err(|e| format!("Could not read the instrument's services: {e}"))?;
     if ble.listening.lock().unwrap().insert(id.clone()) {
         let mut stream = p

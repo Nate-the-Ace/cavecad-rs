@@ -1,0 +1,243 @@
+{
+ "device": "CavwayX1-0312",
+ "via": "CaveCAD desktop test build 0.1.32, native BLE, 2026-11-13",
+ "note": "reconnect after a shot taken while disconnected; X1 re-sent stored memory",
+ "records": [
+  {
+   "t": "gone"
+  },
+  {
+   "t": "gone"
+  },
+  {
+   "t": "notify",
+   "char": "6e400003-b5a3-f393-e0a9-e50e24dcca9e",
+   "hex": "01ff000d15a3485f02a8e68b5f6845b42ac1dbef6a72fa9337854d3af535072f44d9fa45372a4d6af4c5085c46ef0d010000ffffffffffffe7030e5fd847632b"
+  },
+  {
+   "t": "notify",
+   "char": "6e400003-b5a3-f393-e0a9-e50e24dcca9e",
+   "hex": "01ff00ed11129ef20d2512cd5f4847142f0ad5f66ad8df20d9715111d613fa563967e0c6d83f51fdd312fa453aef2b010000ffffffffffffe703985f44495d2e"
+  },
+  {
+   "t": "notify",
+   "char": "6e400003-b5a3-f393-e0a9-e50e24dcca9e",
+   "hex": "01ff003310db9b1b0a9c0fbc5f6947fd2e0dd5f66a7fe850dd145636da60fb6a3c1ce9f9dccb5538d89afb723defdc000000ffffffffffffe703745f55491e2e"
+  },
+  {
+   "t": "notify",
+   "char": "6e400003-b5a3-f393-e0a9-e50e24dcca9e",
+   "hex": "01ff00281521a383088b0a805f5246d62e95d5f66a32ec18e8505a63e00806863ee2eca7e7fb5992df3d078540efd0000000ffffffffffffe703285f9348172e"
+  },
+  {
+   "t": "notify",
+   "char": "6e400003-b5a3-f393-e0a9-e50e24dcca9e",
+   "hex": "01ff002608fc3bd0294ff50361d545752ccfd6f66a05ad090d8930a7cc0eeaee294badc30cb23072cbdfea9d2b0f78277f2793266e26ffff9a03d2607d473d2d"
+  },
+  {
+   "t": "notify",
+   "char": "6e400003-b5a3-f393-e0a9-e50e24dcca9e",
+   "hex": "01ff00770438737b0762d325607345c22f0ad7f66a72ee08544c2b1adbf72f122282eedd53172b9cda65309c248f8026762623015501ffff6400e55f47479e2f"
+  },
+  {
+   "t": "notify",
+   "char": "6e400003-b5a3-f393-e0a9-e50e24dcca9e",
+   "hex": "01ff005b0112498ef3edf2665f6a4a45293bd7f66ab11cb21c5756b10a5befbc47311d661cba55880978f14a498fdf285f288afb96fcfffff702e95e524b302a"
+  },
+  {
+   "t": "notify",
+   "char": "6e400003-b5a3-f393-e0a9-e50e24dcca9e",
+   "hex": "01ff00041b25603f21e8fbad60494b472b98d7f66a94b9a506e74148beebe8901c01ba520602420fbd02ea661e8f0229d328e6fde9feffffe7036b60bd4c542c"
+  },
+  {
+   "t": "notify",
+   "char": "6e400003-b5a3-f393-e0a9-e50e24dcca9e",
+   "hex": "01ff001b03bf5c6405fefe575fe44aac2baad7f66a6cf355027a5e49e043e6c63e0af4f701255e2edf3de8cb408f9128732882fe46ffffff0100ec5e6c4c962c"
+  },
+  {
+   "t": "notify",
+   "char": "6e400003-b5a3-f393-e0a9-e50e24dcca9e",
+   "hex": "01ff004a01935fbc149afc4d5e4b45232db8d7f66a0ed2dc061152e2ce98ed482d8ed26e060052f0cd29effd2e0f77267426b3259825ffff2701f95db246352e"
+  },
+  {
+   "t": "notify",
+   "char": "6e400003-b5a3-f393-e0a9-e50e24dcca9e",
+   "hex": "01ff00de0f3d8491000bfa765f88465b2c74d8f66aaefee80d6f5e9cde660ce03c45ff8d0d055e60deab0c853e9f71266a2646ff1cffffffe703fe5e1c486c2c"
+  },
+  {
+   "t": "notify",
+   "char": "6e400003-b5a3-f393-e0a9-e50e24dcca9e",
+   "hex": "01ff000a105880a6027cfcc15f7746602c95d8f66ac7f93d08325f5fdb7705f33b65fadd07d15e3edbd405663d8f772652265cff42ffffffe7034f5fcc477f2c"
+  },
+  {
+   "t": "notify",
+   "char": "6e400003-b5a3-f393-e0a9-e50e24dcca9e",
+   "hex": "01ff00df0c1d87defe2ef77e5f3147902cb3d8f66aa90280143a5d95e15013663d3e032714cd5c2fe184133a3fffffffffffffffffffffff4e03055fff488e2c"
+  },
+  {
+   "t": "notify",
+   "char": "6e400003-b5a3-f393-e0a9-e50e24dcca9e",
+   "hex": "01ff00e30db8828afe37f8a25f9947a82cbad8f66a6e032512d55da6e1730e373f0404cd115d5d51e1cb0ede40ffffffffffffffffffffffe703215f45499f2c"
+  },
+  {
+   "t": "notify",
+   "char": "6e400003-b5a3-f393-e0a9-e50e24dcca9e",
+   "hex": "01ff00da0ff2813c003efc9f5f2c46602cdbd8f66a72ffcf08365f2cdf4207983d11007908c95e19dfb107373faf5e2652269a000000ffffe7032a5fae47802c"
+  },
+  {
+   "t": "notify",
+   "char": "6e400003-b5a3-f393-e0a9-e50e24dcca9e",
+   "hex": "01ff003c10887c6cffbdfca05fb346782ce1d8f66a5b01a4074f5f68e04902343ff9014b07dd5e63e0fc029e40afaf2687260f010000ffffe7032a5f0048992c"
+  },
+  {
+   "t": "notify",
+   "char": "6e400003-b5a3-f393-e0a9-e50e24dcca9e",
+   "hex": "01ff00af0fae8290ff95fba35fa6468e2cfcd8f66a0701580a125f4be0f2087f3ea501fe09a25e22e060092c40ef8c000000ffffffffffffe7032c5f4348a02c"
+  },
+  {
+   "t": "notify",
+   "char": "6e400003-b5a3-f393-e0a9-e50e24dcca9e",
+   "hex": "01ff00a20faa82ebfd5afc985fd546992c05d9f66ae2048908165fdbe2e20713407f053108a15ea8e26c08af41efc0000000ffffffffffffe703245f6f48952c"
+  },
+  {
+   "t": "notify",
+   "char": "6e400003-b5a3-f393-e0a9-e50e24dcca9e",
+   "hex": "01ff007810ee7bbf07edfacb5ff748cf2b11d9f66ae6edb00b575df8d196037f3879ee4f0b0d5d20d24404003a8fea27a52705ff47ffffffe7035c5f134a3e2c"
+  },
+  {
+   "t": "notify",
+   "char": "6e400003-b5a3-f393-e0a9-e50e24dcca9e",
+   "hex": "01ff00c4042980802d45f8515f104a122ee6ddf66a57aae2070e29f2b55100fe0078aa84070029b4b480ffa5028f702841283701d001ffff6d00265f584be02e"
+  },
+  {
+   "t": "notify",
+   "char": "6e400003-b5a3-f393-e0a9-e50e24dcca9e",
+   "hex": "019f0043057079353054fb9b60724c3a2e07def66a90a62e044724ceb379fa4afdbaa6f3037a242bb24af9bafeffffffffffffffffffffff8d008560224ec12e"
+  },
+  {
+   "t": "notify",
+   "char": "6e400003-b5a3-f393-e0a9-e50e24dcca9e",
+   "hex": "01bf000e0ba23c0ff086373e618e4d31300adef66a15250ba892129e1deeb9e8f0e12415a8cd11571c62bb5bf1ffffffffffffffffffffff2d01fd60ac4b8b30"
+  },
+  {
+   "t": "notify",
+   "char": "6e400003-b5a3-f393-e0a9-e50e24dcca9e",
+   "hex": "01bf001b0bd73e5def7737925f8c4d15300adef66af42535aa3e123f1dd2b9bff00a263eaa7c11f71b46bb34f1ffffffffffffffffffffff48016e5fa94b6c30"
+  },
+  {
+   "t": "notify",
+   "char": "6e400003-b5a3-f393-e0a9-e50e24dcca9e",
+   "hex": "01bf0086191e417d0d343ac05e074e472f0ddef66a33e14da7b50cf0e7e2b8c0ea8be141a7790ceee607b954ebffffffffffffffffffffffe703a75e0f4eb12f"
+  },
+  {
+   "t": "notify",
+   "char": "6e400003-b5a3-f393-e0a9-e50e24dcca9e",
+   "hex": "01bf00cb19db402b10e939a860fb4dec2e0edef66aa4dad9a7460ddbe392ba5eea98dacfa7290dd9e295bafaeaffffffffffffffffffffffe703b2602c4e572f"
+  },
+  {
+   "t": "notify",
+   "char": "6e400003-b5a3-f393-e0a9-e50e24dcca9e",
+   "hex": "01bf00fa1c7b413118d3381660e24ddd2e0fdef66a3fca97b1f40d45d70ec1ecea6aca7fb1da0d2ed6b1c09febffffffffffffffffffffffe7030e60904e662f"
+  },
+  {
+   "t": "notify",
+   "char": "6e400003-b5a3-f393-e0a9-e50e24dcca9e",
+   "hex": "01bf00cb05eb48f9284731b460324d5e2e12def66a55ae8ecf4f120ec146d79ced72ae6dcf6f12bdbf4ed6a1eeffffffffffffffffffffffdb00b2608c4e082f"
+  },
+  {
+   "t": "notify",
+   "char": "6e400003-b5a3-f393-e0a9-e50e24dcca9e",
+   "hex": "01bf003f0503acfb3403d2f3603d4d2e2e15def66a93a26917150b75b8d20f90e790a244176a0bfab6860efbe8ffffffffffffffffffffff9c00f760ee4dde2e"
+  },
+  {
+   "t": "notify",
+   "char": "6e400003-b5a3-f393-e0a9-e50e24dcca9e",
+   "hex": "01bf00200944c29619a8be3c60de4e652e17def66a76c7d54d6ffd68d7ea3919dd4bc7c34d80fdd3d6ff38e8deffffffffffffffffffffff23034660b64d222f"
+  },
+  {
+   "t": "notify",
+   "char": "6e400003-b5a3-f393-e0a9-e50e24dcca9e",
+   "hex": "01bf004f09abc223179fbe8860144fa62e18def66a15cc555140fd11dbb93c55dda2cb4d5154fd98dad53b31dfffffffffffffffffffffff6303be60d14d622f"
+  },
+  {
+   "t": "notify",
+   "char": "6e400003-b5a3-f393-e0a9-e50e24dcca9e",
+   "hex": "01bf00910dbfc2ccfdb2bd2e60cf4e672f1adef66a3205e35f92fa02064346d2dcff04f45f3dfa4206f44407dfffffffffffffffffffffffe7034260b04c4330"
+  },
+  {
+   "t": "notify",
+   "char": "6e400003-b5a3-f393-e0a9-e50e24dcca9e",
+   "hex": "01bf00db097fc201ed30bd4c5f3b4d942f1cdef66ad82aec5421fa9821633c84dd912a09559cf9be21de3a9ddfffffffffffffffffffffff19014f5f304b6f30"
+  },
+  {
+   "t": "notify",
+   "char": "6e400003-b5a3-f393-e0a9-e50e24dcca9e",
+   "hex": "01f300f30430a3592fee04db5d534b512e46def66ae0a980fb07251cb9e8161e0b00aa2ffb3a2532b874161d0d0f42265726c027e127ffff8c00d65d5e4c0f2f"
+  },
+  {
+   "t": "notify",
+   "char": "6e400003-b5a3-f393-e0a9-e50e24dcca9e",
+   "hex": "01ff005107003a0cda437c165fd74c802e53def66a4f4ccefa82c7dd3a0c1c59d7914b3dfb8bc6203aa01b87d88f81286a27c4007900ffff17000c5f7f4b912e"
+  },
+  {
+   "t": "notify",
+   "char": "6e400003-b5a3-f393-e0a9-e50e24dcca9e",
+   "hex": "01f300fb0822753402900a8a5ea54ebb2fb2def66ae4facde73f5ba2de12e653427ffb6be7dd5a8cdd65e7ac440f8f2687266229052affffe7033d5ead50ab2f"
+  },
+  {
+   "t": "notify",
+   "char": "6e400003-b5a3-f393-e0a9-e50e24dcca9e",
+   "hex": "01ff00a509ca740507a9ffb55f984e4330e6def66a96efc800495e71d782f8e74230f06a00fc5dddd51df9c6458f4929802a66020e02ffffe7034e5fcd514130"
+  },
+  {
+   "t": "notify",
+   "char": "6e400003-b5a3-f393-e0a9-e50e24dcca9e",
+   "hex": "01ff007f08fd78f60699019b5ee34c5a2f5cdff66aeaef59fc285d57d640f8284085f0eefbe75c5cd592f980420f9a268f265a281e29ffffe703455e424f752f"
+  },
+  {
+   "t": "notify",
+   "char": "6e400003-b5a3-f393-e0a9-e50e24dcca9e",
+   "hex": "01ff001b047fbcd7024902a65fc5402f2fa7f0f66a56f9a6fa445fa4f98816643cfff946fae15eb4f86c178b3e8f1c22f4223f01a700ffff43003e5f2f43e82e"
+  },
+  {
+   "t": "notify",
+   "char": "6e400003-b5a3-f393-e0a9-e50e24dcca9e",
+   "hex": "01ff00660721ceb93ca27e35615844bb2db1f0f66a1b9fbdff32f86cc3a6e3f5f1e69eabff72f847c24de2fcf33fa627d12711244024ffffc80165618b45992d"
+  },
+  {
+   "t": "notify",
+   "char": "6e400003-b5a3-f393-e0a9-e50e24dcca9e",
+   "hex": "01ff00870309d34009d9fc865f8a402f2fc4f0f66a7fea3207cb5c0dfeb31b433a15ebc806755cbbfc2d1d303c8f2c2200233801f100ffff3900095ff742342f"
+  },
+  {
+   "t": "notify",
+   "char": "6e400003-b5a3-f393-e0a9-e50e24dcca9e",
+   "hex": "01ff00b106124b3dfe9cff425f0843e82ee3f0f66a1d04ea002a5f53fb4ae6ba3db4048a00a85e94f9d1e7353f8f9623a023cd006501ffff2301c65efb43cb2f"
+  },
+  {
+   "t": "notify",
+   "char": "6e400003-b5a3-f393-e0a9-e50e24dcca9e",
+   "hex": "01ff005b06224a0205c7fe955f7942b62eeff0f66a48f4d702d15ee3f143e7103cf0f47702885e27f0a3e87b3d8f5f23892397003801ffff3601355fa743a72f"
+  },
+  {
+   "t": "notify",
+   "char": "6e400003-b5a3-f393-e0a9-e50e24dcca9e",
+   "hex": "01ff00a603914709e97af4ed5e0343442f11f1f66ab73266160e4da61cfbf5bf3b24332d16454c7a1b6df7f23d0fbb26a526bc23f323ffff0300785e4e44a42f"
+  },
+  {
+   "t": "notify",
+   "char": "6e400003-b5a3-f393-e0a9-e50e24dcca9e",
+   "hex": "01ff00c30199a76807fc05d55f1d48a2382e1ff76aadee36f23d5dfdeb9400474556efd7f1eb5c31eb3aff97488f7126bb279a0aa50affff6a00755f854b0139"
+  },
+  {
+   "t": "notify",
+   "char": "6e400003-b5a3-f393-e0a9-e50e24dcca9e",
+   "hex": "01ff00b70188aa30056e02785ff1472a39381ff76ae1f35bfa875e01f13706164685f4f9f92f5efbef6404444a8f5a260a28220b770bffff6300125f1a4cd339"
+  },
+  {
+   "t": "notify",
+   "char": "6e400003-b5a3-f393-e0a9-e50e24dcca9e",
+   "hex": "01ff007406c4f130fd07ff8c5fd73f882fa31ff76a970646024b5f951bf309b5383707e601d25e8a1a7d0bb13a8f2222852277011702ffff71001d5f6e418030"
+  }
+ ]
+}

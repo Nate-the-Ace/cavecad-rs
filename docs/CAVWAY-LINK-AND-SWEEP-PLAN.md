@@ -54,6 +54,26 @@ Checklist (the open questions from `CAVWAY-X1.md`, plus the sweep):
 - [ ] Scan speed Low / Medium / High: shots per second and how far apart they land.
 - [ ] Reconnect after the X1 sleeps or walks out of range: are unsent shots re-sent, nothing doubled?
 
+### First contact results (2026-11-13, CavwayX1-0312, desktop test build 0.1.32 with the native Bluetooth bridge)
+
+Capture: `crates/cave-instrument/tests/captures/x1-2026-11-13-reconnect-memory.json` (46 packets).
+
+- [x] **Advertised name:** `CavwayX1-0312` (prefix `CavwayX1-`). Advertises the Nordic UART service `6e400001-…`.
+- [x] **GATT:** device info `180a`; a vendor service `1d14d6ee-…` with two write characteristics (probably firmware
+      update); NUS `6e400001` with `…0002` write, `…0003` notify, and **`…0004` write + notify** (not in our notes).
+- [x] **Packet size over BLE: 64 bytes**, type byte `0x01` on every shot.
+- [x] **Stored shots push on connect:** every shot never acknowledged before (46, going back days) arrived at once.
+      A shot taken while disconnected arrived on reconnect. CaveCAD put them all as splays at the current station:
+      **old memory must not land in today's notebook unasked** (to fix: offer them, by time, instead).
+- [x] **Ack `flag | 0x55` works:** reconnecting again re-sent none of them.
+- [x] **Scan flag (very likely): bit 6 clear.** Twelve shots 1-3 s apart sweeping round (azimuth 85-274°, clino
+      -27 to +75°) all have bit 6 clear (`0xbf`); the first of them also bit 5 clear (`0x9f`), perhaps "sweep start".
+      Ordinary splays are `0xff`. Two `0xf3` shots (bits 2 and 3 clear) look like M-button marks. To confirm with a
+      deliberate sweep.
+- [ ] Leg flag on three close shots; backsight mark; remote trigger; reconnect after sleep.
+- **Bridge note:** leaving the X1's menu dropped the link once; the page's reconnect then hung on a native connect
+  that never finished. Native connect needs a timeout.
+
 ## Phase 2: the bridge and the test builds
 
 - Tauri commands `ble_scan`, `ble_connect`, `ble_write`, plus a notification event, on `btleplug`. The web side gets
