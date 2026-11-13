@@ -13,6 +13,10 @@ description = "CaveCAD desktop app: the web app in a native window, with real fo
 name = "cavecad_desktop_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
+[features]
+# Test builds only (desktop.yml channel=dev): the localhost debug bridge (src/bridge.rs). Never in a regular release.
+debug-bridge = []
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
@@ -28,3 +32,6 @@ cave-folder = { path = "../../../crates/cave-folder" }
 tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+
+[target."cfg(target_os = \"macos\")".dependencies]
+objc2 = "0.6"

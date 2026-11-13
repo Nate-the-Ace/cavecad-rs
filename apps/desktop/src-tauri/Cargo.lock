@@ -429,6 +429,7 @@ name = "cavecad-desktop"
 version = "0.0.1"
 dependencies = [
  "cave-folder",
+ "objc2",
  "serde",
  "serde_json",
  "tauri",
