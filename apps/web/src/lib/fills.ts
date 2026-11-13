@@ -42,6 +42,14 @@ export function isFillKind(kind: string | undefined): boolean {
   return !!kind && kind.startsWith('fill-');
 }
 
+/** Line types drawn only as closed loops: a stone (boulder) is an outline round the rock. */
+const LOOP_KINDS = new Set(['stone']);
+
+/** True for a type whose stroke is always closed into a loop: every fill, and outlines such as a stone. */
+export function drawsALoop(kind: string | undefined): boolean {
+  return isFillKind(kind) || (!!kind && LOOP_KINDS.has(kind));
+}
+
 /** Every kind of fill, in palette order. */
 export function fillDefs(): FillDef[] {
   return defs ?? [];

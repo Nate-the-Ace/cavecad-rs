@@ -20,11 +20,20 @@ export type Element =
   | { t: 'dash'; mm: number }
   | { t: 'gap'; mm: number }
   | { t: 'dot' }
-  | { t: 'motif'; motif: string; size_mm: number; turn_deg: number; along_mm: number; across_mm: number };
+  | { t: 'motif'; motif: string; size_mm: number; turn_deg: number; along_mm: number; across_mm: number }
+  | { t: 'text'; text: string; size_mm: number; turn_deg: number; along_mm: number; across_mm: number };
+
+/** One more row of a stacked linetype: its own parts, set off sideways (mm on paper, more than 0 is to the left of the way the line was drawn). */
+export interface LineRow {
+  offset_mm: number;
+  elements: Element[];
+}
 
 export interface LineDef {
   name: string;
   elements: Element[];
+  /** More rows beside the line (a stacked linetype). */
+  rows?: LineRow[];
   own?: boolean;
 }
 
@@ -43,7 +52,8 @@ export type Layer =
       size_var: number;
       jitter: number;
       skip: number;
-    };
+    }
+  | { t: 'patlines'; angle_deg: number; x_mm: number; y_mm: number; shift_mm: number; spacing_mm: number; dashes_mm: number[] };
 
 export interface FillDef {
   name: string;
@@ -63,6 +73,35 @@ export interface PatternMarks {
   lines?: [number, number][][];
   circles?: [number, number, number, number][];
   tint?: boolean;
+  /** Words along a line: centred at `at`, baseline turned `angle` radians in the path's own coordinates, `height` tall. */
+  texts?: { at: [number, number]; angle: number; height: number; text: string }[];
+}
+
+/**
+ * Writes a pattern's words. `px` maps a point of the marks' coordinates to the canvas, so the turn and size are worked out
+ * from it (whichever way up those coordinates are).
+ */
+export function drawTexts(g: CanvasRenderingContext2D, texts: PatternMarks['texts'], px: (p: [number, number]) => [number, number]) {
+  if (!texts?.length) return;
+  g.save();
+  g.fillStyle = g.strokeStyle;
+  g.textAlign = 'center';
+  g.textBaseline = 'middle';
+  for (const t of texts) {
+    const [x, y] = px(t.at);
+    const along = px([t.at[0] + Math.cos(t.angle) * t.height, t.at[1] + Math.sin(t.angle) * t.height]);
+    const h = Math.hypot(along[0] - x, along[1] - y);
+    if (!(h >= 2)) continue; // too small to read at this zoom
+    let a = Math.atan2(along[1] - y, along[0] - x);
+    if (Math.cos(a) < -1e-6) a += Math.PI; // still never upside down on screen
+    g.font = `${h.toFixed(1)}px system-ui, sans-serif`;
+    g.save();
+    g.translate(x, y);
+    g.rotate(a);
+    g.fillText(t.text, 0, 0);
+    g.restore();
+  }
+  g.restore();
 }
 
 /** What a new part of a linetype starts as. */
@@ -76,12 +115,16 @@ export function newElement(kind: Element['t'], motif: string): Element {
       return { t: 'dot' };
     case 'motif':
       return { t: 'motif', motif, size_mm: 2, turn_deg: 0, along_mm: 0, across_mm: 0 };
+    case 'text':
+      return { t: 'text', text: '?', size_mm: 2, turn_deg: 0, along_mm: 0, across_mm: 0 };
   }
 }
 
 /** What a new layer of a fill starts as. */
 export function newLayer(kind: Layer['t'], motif: string): Layer {
   switch (kind) {
+    case 'patlines':
+      return { t: 'patlines', angle_deg: 45, x_mm: 0, y_mm: 0, shift_mm: 0, spacing_mm: 3, dashes_mm: [] };
     case 'hatch':
       return { t: 'hatch', angle_deg: 45, spacing_mm: 3 };
     case 'dots':
@@ -125,6 +168,7 @@ export function drawMarks(g: CanvasRenderingContext2D, marks: PatternMarks, px: 
     if (filled) g.fill();
     else g.stroke();
   }
+  drawTexts(g, marks.texts, px);
 }
 
 /** Draws a motif's own drawing (unit coordinates) centred at `(cx, cy)`, `size` pixels across. */

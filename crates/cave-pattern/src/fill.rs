@@ -41,7 +41,7 @@ pub enum Layer {
         /// ...or at random.
         #[serde(default)]
         random_turn: bool,
-        /// How much sizes vary, 0 (all alike) to 1 (down to half size).
+        /// How much sizes vary, 0 (all alike) to 1 (from a quarter size to one and three quarters).
         #[serde(default)]
         size_var: f64,
         /// How far marks wander from their grid spot, as a fraction of the spacing, 0 to 1.
@@ -50,6 +50,23 @@ pub enum Layer {
         /// The share of marks left out at random, 0 to 0.9.
         #[serde(default)]
         skip: f64,
+    },
+    /// A family of parallel dashed lines, as one line of an AutoCAD `.pat` pattern: every row starts `shift_mm` further along
+    /// than the one before and lies `spacing_mm` beside it.
+    PatLines {
+        /// Which way the lines run, in degrees counter-clockwise from east.
+        angle_deg: f64,
+        /// A point the first row passes through, in millimetres on paper.
+        x_mm: f64,
+        /// A point the first row passes through, in millimetres on paper.
+        y_mm: f64,
+        /// How far along each row starts from the one before, in millimetres on paper.
+        shift_mm: f64,
+        /// Distance from one row to the next, in millimetres on paper (the sign says which side).
+        spacing_mm: f64,
+        /// The dash pattern along a row: more than 0 a dash, less than 0 a gap, 0 a dot. Empty is a solid line.
+        #[serde(default)]
+        dashes_mm: Vec<f64>,
     },
 }
 
@@ -112,11 +129,37 @@ impl FillDef {
                     in_range(*jitter, 0.0, 1.0, "The wander")?;
                     in_range(*skip, 0.0, 0.9, "The share left out")?;
                 }
+                Layer::PatLines {
+                    angle_deg,
+                    x_mm,
+                    y_mm,
+                    shift_mm,
+                    spacing_mm,
+                    dashes_mm,
+                } => {
+                    in_range(*angle_deg, -360.0, 360.0, "A line angle")?;
+                    in_range(*x_mm, -MAX_MM, MAX_MM, "A start point")?;
+                    in_range(*y_mm, -MAX_MM, MAX_MM, "A start point")?;
+                    in_range(*shift_mm, -MAX_MM, MAX_MM, "A row shift")?;
+                    in_range(spacing_mm.abs(), MIN_MM, MAX_MM, "A row spacing")?;
+                    if dashes_mm.len() > MAX_DASHES {
+                        return Err(PatternError::TooLong);
+                    }
+                    for d in dashes_mm {
+                        in_range(d.abs(), 0.0, MAX_MM, "A dash or gap")?;
+                    }
+                    if !dashes_mm.is_empty() && dashes_mm.iter().all(|d| *d < 0.0) {
+                        return Err(PatternError::NothingToDraw);
+                    }
+                }
             }
         }
         Ok(())
     }
 }
+
+/// Most dashes and gaps in one row's pattern.
+pub const MAX_DASHES: usize = 16;
 
 /// The most marks one fill makes: a very large outline gets sparser rather than slower.
 pub const MAX_MARKS: usize = 6000;
@@ -239,7 +282,8 @@ pub fn fill_marks(
                         if !inside(at, outline) {
                             continue;
                         }
-                        let s = size * (1.0 - size_var * 0.5 * sz);
+                        // full variety: from a quarter size to one and three quarters, the average size unchanged
+                        let s = size * (1.0 + size_var * (1.5 * sz - 0.75));
                         let a = if *random_turn {
                             turn * std::f64::consts::TAU
                         } else {
@@ -251,9 +295,108 @@ pub fn fill_marks(
                     }
                 }
             }
+            Layer::PatLines {
+                angle_deg,
+                x_mm,
+                y_mm,
+                shift_mm,
+                spacing_mm,
+                dashes_mm,
+            } => {
+                let row = PatRow {
+                    angle: angle_deg.to_radians(),
+                    origin: [x_mm * paper_m, y_mm * paper_m],
+                    shift: shift_mm * paper_m / amount,
+                    spacing: spacing_mm * paper_m / amount,
+                    dashes: dashes_mm.iter().map(|d| d * paper_m).collect(),
+                    dot_r: 0.12 * paper_m,
+                };
+                pat_lines(outline, &row, &mut out);
+            }
         }
     }
     out
+}
+
+/// One `.pat` line family in world units.
+struct PatRow {
+    angle: f64,
+    origin: [f64; 2],
+    shift: f64,
+    spacing: f64,
+    dashes: Vec<f64>,
+    dot_r: f64,
+}
+
+/// Lays a `.pat` line family inside `poly` (even-odd), dashing each row from where the family's own pattern says it starts.
+fn pat_lines(poly: &[[f64; 2]], row: &PatRow, out: &mut Marks) {
+    if poly.len() < 3 || !(row.spacing.abs() > 0.0) {
+        return;
+    }
+    let (c, s) = (row.angle.cos(), row.angle.sin());
+    let to = |p: [f64; 2]| [p[0] * c + p[1] * s, -p[0] * s + p[1] * c];
+    let back = |q: [f64; 2]| [q[0] * c - q[1] * s, q[0] * s + q[1] * c];
+    let q: Vec<[f64; 2]> = poly.iter().map(|p| to(*p)).collect();
+    let (lo, hi) = bounds(&q);
+    let o = to(row.origin);
+    let mut spacing = row.spacing;
+    let mut shift = row.shift;
+    // a huge outline gets sparser rather than slower
+    while ((hi[1] - lo[1]) / spacing.abs()) > 800.0 {
+        spacing *= 2.0;
+        shift *= 2.0;
+    }
+    let (ka, kb) = ((lo[1] - o[1]) / spacing, (hi[1] - o[1]) / spacing);
+    let (k0, k1) = (ka.min(kb).floor() as i64, ka.max(kb).ceil() as i64);
+    let period: f64 = row.dashes.iter().map(|d| d.abs()).sum();
+    let mut made = 0usize;
+    for k in k0..=k1 {
+        let v = o[1] + k as f64 * spacing;
+        if v <= lo[1] || v >= hi[1] {
+            continue;
+        }
+        let start = o[0] + k as f64 * shift;
+        let mut xs: Vec<f64> = Vec::new();
+        for i in 0..q.len() {
+            let (a, b) = (q[i], q[(i + 1) % q.len()]);
+            if (a[1] > v) != (b[1] > v) {
+                xs.push(a[0] + (v - a[1]) / (b[1] - a[1]) * (b[0] - a[0]));
+            }
+        }
+        xs.sort_by(f64::total_cmp);
+        for pair in xs.as_chunks::<2>().0 {
+            let (ua, ub) = (pair[0], pair[1]);
+            if row.dashes.is_empty() || period <= 0.0 {
+                out.lines.push(vec![back([ua, v]), back([ub, v])]);
+                made += 1;
+                continue;
+            }
+            // walk the pattern from the repeat that covers ua
+            let mut at = start + ((ua - start) / period).floor() * period;
+            'walk: loop {
+                for d in &row.dashes {
+                    if at > ub {
+                        break 'walk;
+                    }
+                    if *d > 0.0 {
+                        let (a, b) = (at.max(ua), (at + d).min(ub));
+                        if b > a {
+                            out.lines.push(vec![back([a, v]), back([b, v])]);
+                            made += 1;
+                        }
+                    } else if *d == 0.0 && at >= ua && at <= ub {
+                        let p = back([at, v]);
+                        out.circles.push([p[0], p[1], row.dot_r, 1.0]);
+                        made += 1;
+                    }
+                    at += d.abs();
+                    if made > MAX_MARKS * 4 {
+                        return;
+                    }
+                }
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -434,6 +577,54 @@ mod tests {
             .len(),
             0
         );
+    }
+
+    #[test]
+    fn size_variety_spreads_the_sizes_and_none_keeps_them_alike() {
+        let ring = Motif::from_drawing(
+            "R",
+            vec![Prim::Circle {
+                c: [0.0, 0.0],
+                r: 0.5,
+                fill: true,
+            }],
+        )
+        .unwrap();
+        let def = |v: f64| FillDef {
+            name: "V".into(),
+            layers: vec![Layer::Tile {
+                motif: "R".into(),
+                size_mm: 2.0,
+                across_mm: 4.0,
+                down_mm: 4.0,
+                stagger: false,
+                turn_deg: 0.0,
+                random_turn: false,
+                size_var: v,
+                jitter: 0.0,
+                skip: 0.0,
+            }],
+            tint: false,
+        };
+        let find = |_: &str| Some(ring.clone());
+        let radii = |v: f64| -> Vec<f64> {
+            fill_marks(&def(v), &find, &square(0.2), 7, 0.001, 1.0)
+                .circles
+                .iter()
+                .map(|c| c[2])
+                .collect()
+        };
+        let same = radii(0.0);
+        assert!(same.iter().all(|r| (r - same[0]).abs() < 1e-12));
+        let mixed = radii(1.0);
+        let (lo, hi) = mixed
+            .iter()
+            .fold((f64::MAX, 0.0f64), |(a, b), r| (a.min(*r), b.max(*r)));
+        assert!(
+            hi / lo > 3.0,
+            "full variety spreads sizes widely: {lo}..{hi}"
+        );
+        assert!(lo >= same[0] * 0.25 - 1e-12 && hi <= same[0] * 1.75 + 1e-12);
     }
 
     #[test]

@@ -1,6 +1,7 @@
 <script lang="ts">
   // What can be done to the selected line: change what it is, close or open its curve. (Delete and
   // Done sit in the tab's Command group.) Each is one undoable edit in the view the line was drawn in.
+  import { openPatternFor, patternFor } from '../lib/pattern-focus.svelte';
   import { onMount } from 'svelte';
   import { Spline, FlipHorizontal2 } from '@lucide/svelte';
   import { cave, changed, option, requestRefit, selectedIds } from '../lib/cave.svelte';
@@ -40,6 +41,11 @@
   const isFill = $derived(!!info && isFillKind(info.kind));
   const isLeader = $derived(info?.kind === 'callout');
   const isCustomFill = $derived(info?.kind === 'fill-custom');
+  /** What Edit pattern… would open for the one selected line or area. */
+  const editTarget = $derived.by(() => {
+    void cave.version;
+    return info && !multi ? patternFor(cave.selected) : null;
+  });
   // a placed symbol's size and turn, read from its points (empty when the selection is not all symbols, or they differ)
   const symbolShapes = $derived.by(() => {
     void cave.version;
@@ -220,6 +226,9 @@
           {#each patterns.fills as f}<option value={PATTERN_PREFIX + f.name}>{f.name}</option>{/each}
         </select>
       {/if}
+      {#if !multi && editTarget}
+        <button class="small" onclick={() => openPatternFor(cave.selected)} title="Open the Patterns panel on this area's fill, to change it in detail">{editTarget.own ? 'Edit fill…' : 'Make a fill pattern…'}</button>
+      {/if}
       {#if isCustomFill}
         <label class="detail" title="How many marks or hatch lines this area has">
           <span>Hatch density <b>{various('density') ? 'VARIOUS' : `×${style.density.toFixed(2)}`}</b></span>
@@ -307,6 +316,9 @@
           </optgroup>
         {/if}
       </select>
+      {#if !multi && editTarget}
+        <button class="small" onclick={() => openPatternFor(cave.selected)} title="Open the Patterns panel on this line's pattern, to change it in detail">{editTarget.own ? 'Edit pattern…' : 'Make a pattern…'}</button>
+      {/if}
       <label class="detail" title="How long this line's dashes and gaps are, whatever its pattern">
         <span>Linetype scale <b>{various('scale') ? 'VARIOUS' : `×${style.scale.toFixed(2)}`}</b></span>
         <input type="range" min="0.25" max="4" step="0.05" value={style.scale} oninput={(e) => draft({ scale: Number(e.currentTarget.value) })} onchange={keep} aria-label="Linetype scale" />

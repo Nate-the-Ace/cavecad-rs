@@ -15,6 +15,34 @@ pub use align::{
 pub use marks::{MAX_MARKS, completed, scan_id, set_complete};
 pub use trim::{Outline, set_trim, simplify, trim};
 
+/// Marks a second, third... sketch on one page: `<path>|#<n>`. The first sketch is the plain path.
+const PIECE_MARK: &str = "|#";
+
+/// Most sketches one page may hold in one view.
+pub const MAX_PIECES: u32 = 50;
+
+/// A page path that may name one of several sketches on it, split into the page and the sketch
+/// number (1 for the plain path, the page's first sketch).
+pub fn split_piece(path: &str) -> (&str, u32) {
+    if let Some((page, n)) = path.rsplit_once(PIECE_MARK)
+        && let Ok(n) = n.parse::<u32>()
+        && (2..=MAX_PIECES).contains(&n)
+        && !page.is_empty()
+    {
+        return (page, n);
+    }
+    (path, 1)
+}
+
+/// The path that names sketch `piece` (1-based) on page `path`: the plain path for the first.
+pub fn piece_path(path: &str, piece: u32) -> String {
+    if piece <= 1 {
+        path.to_string()
+    } else {
+        format!("{path}{PIECE_MARK}{}", piece.min(MAX_PIECES))
+    }
+}
+
 use cave_doc::{Action, Document, Field, Kind, Value};
 use cave_id::Id;
 use serde::Serialize;
@@ -158,7 +186,7 @@ pub fn unlink(doc: &Document, trip: Id, path: &str) -> Result<Vec<Action>, ScanE
         for field in [Field::TripScanAlign, Field::TripScanTrim] {
             let mut map = e.map(field);
             let before = map.len();
-            map.retain(|k, _| split_key(k).is_none_or(|(_, p)| p != path));
+            map.retain(|k, _| split_key(k).is_none_or(|(_, p)| split_piece(p).0 != path));
             if map.len() != before {
                 actions.push(Action::Set {
                     id: trip,
@@ -502,5 +530,46 @@ mod tests {
                 alignment(&doc, trips[0], view, "p1.png")
             );
         }
+    }
+
+    #[test]
+    fn one_page_holds_several_sketches_each_placed_and_trimmed_on_its_own() {
+        use std::collections::HashMap;
+        let (mut doc, trips) = cave();
+        let st = doc.ids_of(Kind::Station);
+        let t = trips[0];
+        doc.edit(link(&doc, t, "p1.png").unwrap()).unwrap();
+        let second = piece_path("p1.png", 2);
+        assert_eq!(split_piece(&second), ("p1.png", 2));
+        assert_eq!(split_piece("p1.png"), ("p1.png", 1));
+        assert_eq!(
+            split_piece("odd|#name.png"),
+            ("odd|#name.png", 1),
+            "not a number: a plain path"
+        );
+        for (path, x) in [("p1.png", 0.0), (second.as_str(), 500.0)] {
+            for (i, px) in [x, x + 100.0].into_iter().enumerate() {
+                let a =
+                    add_anchor(&doc, t, "map", path, px, 0.0, Station { id: st[i] }, None).unwrap();
+                doc.edit(a).unwrap();
+            }
+        }
+        let sq = vec![[500.0, 0.0], [600.0, 0.0], [600.0, 90.0]];
+        doc.edit(set_trim(&doc, t, "map", &second, Some(sq.clone())).unwrap())
+            .unwrap();
+        let pos: HashMap<_, _> = [(st[0], (10.0, 20.0)), (st[1], (11.0, 20.0))].into();
+        let mut placed = placements(&doc, "map", &pos);
+        placed.sort_by_key(|p| p.piece);
+        assert_eq!(placed.len(), 2);
+        assert!(placed.iter().all(|p| p.path == "p1.png"));
+        assert_eq!((placed[0].piece, placed[1].piece), (1, 2));
+        assert_eq!(
+            (placed[0].trim.clone(), placed[1].trim.clone()),
+            (None, Some(sq))
+        );
+        // Taking the page off the trip takes every sketch on it.
+        doc.edit(unlink(&doc, t, "p1.png").unwrap()).unwrap();
+        assert!(alignment(&doc, t, "map", &second).is_none());
+        assert!(trim(&doc, t, "map", &second).is_none());
     }
 }

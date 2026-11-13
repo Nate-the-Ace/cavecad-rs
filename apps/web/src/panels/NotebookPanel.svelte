@@ -144,6 +144,9 @@
     }
   }
 
+  /** The Trip list's last entry: picking it starts a new trip instead of turning to one. */
+  const NEW_TRIP = '__new_trip__';
+
   function newTrip() {
     const r = engine.notebookNewTrip(`Trip ${trips.length + 1}`);
     if (r.startsWith('error')) return void run(r);
@@ -235,8 +238,20 @@
 <div class="panel" role="region" aria-label="Survey notebook" tabindex="-1" onkeydown={onKey}>
   <div class="bar">
     <PanelUndo scope="notebook" label="in the notebook" />
-    <select value={cave.trip} aria-label="Trip" onchange={(e) => (cave.trip = e.currentTarget.value)}>
+    <select
+      value={cave.trip}
+      aria-label="Trip"
+      onchange={(e) => {
+        const sel = e.currentTarget;
+        if (sel.value === NEW_TRIP) {
+          sel.value = cave.trip; // the list shows the trip on screen until the new one exists
+          newTrip();
+        } else cave.trip = sel.value;
+      }}
+    >
       {#each trips as t}<option value={t.id}>{t.index + 1}. {t.name || 'Untitled trip'}{t.date ? ` (${t.date})` : ''}</option>{/each}
+      <option disabled>──────────</option>
+      <option value={NEW_TRIP}>+ New trip</option>
     </select>
     <button class="icon" title="Start a new trip (a new page)" aria-label="New trip" onclick={newTrip}><Plus size={15} /></button>
     {#if page}

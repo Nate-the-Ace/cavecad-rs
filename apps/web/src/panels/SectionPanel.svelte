@@ -18,7 +18,7 @@ import { planFrame } from '../lib/snap-types';
   import { PenGuard, SideButtonMenu, isEraser, widthFor } from '../lib/pen';
   import { EraserDrag, eraserRadiusPx, paintEraser } from '../lib/eraser-drag';
   import { drawStationMarker, isStampKind, leaderLook, liveWords, needsWords, stampEditSpot, withLabelSpot } from '../lib/symbols';
-  import { isFillKind } from '../lib/fills';
+  import { drawsALoop, isFillKind } from '../lib/fills';
   import { cursorsFor, presence as room, reportCursor } from '../lib/presence.svelte';
   import { drawCursor } from '../lib/presence-draw';
   import { FIT_SPACING, fitStroke, smooth } from '../lib/spline';
@@ -659,7 +659,7 @@ import { planFrame } from '../lib/snap-types';
     }
     if (stroked.pts.length >= 2 && cave.station) {
       // A freehand stroke becomes a smooth curve through a few fit points.
-      const wantClosed = option('close', false) || isFillKind(cave.tool); // an area fill is always a loop
+      const wantClosed = option('close', false) || drawsALoop(cave.tool); // an area fill or a stone outline is always a loop
       const fit = fitStroke(stroked.pts, stroked.pressure ? stroked.widths : null, tolerancePx(option('detail', 5)) / scale, wantClosed, FIT_SPACING);
       const closed = wantClosed && fit.pts.length >= 3;
       if (isFillKind(cave.tool) && !closed) {

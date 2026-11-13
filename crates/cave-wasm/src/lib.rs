@@ -1639,6 +1639,23 @@ fn pattern_lib() -> cave_pattern::Library {
     })
 }
 
+/// Reads an AutoCAD `.pat` file into fills (not saved): `{"fills":[...]}`, or `error: ...` in plain words. `scale` multiplies
+/// every length (1 for patterns drawn at paper size, smaller for real-size architectural ones).
+#[wasm_bindgen]
+pub fn read_pat(text: &str, scale: f64) -> String {
+    match cave_pattern::parse_pat(
+        text,
+        if scale.is_finite() && scale > 0.0 {
+            scale
+        } else {
+            1.0
+        },
+    ) {
+        Ok(fills) => serde_json::json!({ "fills": fills }).to_string(),
+        Err(e) => format!("error: {e}"),
+    }
+}
+
 /// Checks a linetype or fill definition without saving it: `ok`, or `error: ...` in plain words.
 #[wasm_bindgen]
 pub fn check_pattern(kind: &str, json: &str) -> String {

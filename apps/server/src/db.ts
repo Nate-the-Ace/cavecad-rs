@@ -127,6 +127,30 @@ CREATE TABLE IF NOT EXISTS cave_scans (
   PRIMARY KEY (cave_id, path)
 );
 CREATE INDEX IF NOT EXISTS cave_scans_sha ON cave_scans (sha);
+-- A member's own patterns (linetypes, fills, motifs), there in every cave they open.
+CREATE TABLE IF NOT EXISTS member_patterns (
+  member_id TEXT NOT NULL REFERENCES members(id),
+  kind TEXT NOT NULL CHECK (kind IN ('motif','line','fill')),
+  name TEXT NOT NULL,
+  def TEXT NOT NULL,
+  updated_at INTEGER NOT NULL,
+  PRIMARY KEY (member_id, kind, name)
+);
+-- A member's settings that follow them to every device (saved panel layouts).
+CREATE TABLE IF NOT EXISTS member_prefs (
+  member_id TEXT NOT NULL REFERENCES members(id),
+  key TEXT NOT NULL,
+  value TEXT NOT NULL,
+  updated_at INTEGER NOT NULL,
+  PRIMARY KEY (member_id, key)
+);
+-- A snapshot of some patterns a member shared: anyone signed in with the code can add copies to their own library.
+CREATE TABLE IF NOT EXISTS pattern_shares (
+  code TEXT PRIMARY KEY,
+  member_id TEXT NOT NULL REFERENCES members(id),
+  items TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);
 CREATE TABLE IF NOT EXISTS room_pending (
   room_id TEXT NOT NULL REFERENCES rooms(id),
   email TEXT NOT NULL,

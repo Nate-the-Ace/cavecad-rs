@@ -9,7 +9,7 @@
 
   $effect(() => {
     const off = onTheme(() => theme++);
-    const watch = new ResizeObserver(() => (width = Math.max(100, Math.floor(canvas.clientWidth))));
+    const watch = new ResizeObserver(() => (width = Math.max(10, Math.floor(canvas.clientWidth))));
     watch.observe(canvas);
     return () => {
       off();

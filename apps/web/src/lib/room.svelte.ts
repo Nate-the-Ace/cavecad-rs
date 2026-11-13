@@ -79,6 +79,16 @@ function caveLabel(): string | null {
   return full.length <= 150_000 ? full : JSON.stringify({ name: summary.name }); // a huge trip list stays off the list
 }
 
+/** True when someone is signed in on this device (a stored pass is enough). */
+export function signedIn(): boolean {
+  return memberNow() !== '';
+}
+
+/** True when the cave on screen is a sample, which never gets a room. */
+export function isSampleCave(): boolean {
+  return cave.hasCave && cave.opened === roomless;
+}
+
 /** The cave just put on screen is a sample: it never gets a room. Call right after `cave.opened` is bumped. */
 export function noRoomForThisCave(): void {
   roomless = cave.opened;

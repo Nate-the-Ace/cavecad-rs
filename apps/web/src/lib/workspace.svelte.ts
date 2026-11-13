@@ -3,6 +3,7 @@
 // current panels is discarded rather than trusted.
 // The all-in-one bundle is used on purpose: it is the only build that carries dockview's styles.
 import { createDockview, themeDark, themeLight } from 'dockview-core/dist/dockview-core.js';
+import { snapEdge, transpose, type Grid } from './dock-tidy';
 import type { DockviewApi } from 'dockview-core';
 import type { Component } from 'svelte';
 import { GroupActions, SveltePanel } from './dock-parts';
@@ -96,6 +97,113 @@ function restore(a: DockviewApi): boolean {
   }
 }
 
+/**
+ * Flips a plain grid of panels the other way round (rows to columns, or columns to rows; see dock-tidy.ts), so the
+ * edge that ran right across it is split into one edge per row or column. True when it did.
+ */
+function flip(a: DockviewApi): boolean {
+  const json = a.toJSON();
+  const grid = transpose(json.grid as unknown as Grid);
+  if (!grid) return false;
+  try {
+    a.fromJSON({ ...json, grid: grid as unknown as typeof json.grid });
+    return true;
+  } catch {
+    try {
+      a.fromJSON(json);
+    } catch {
+      /* the dock keeps what it has */
+    }
+    return false;
+  }
+}
+
+/**
+ * Edge snapping: while an edge between panels is dragged, a line shows when it comes near another panel edge
+ * running the same way (in the column beside it, or the window's own edge); let go there and it lines up exactly.
+ */
+function snapEdges(el: HTMLElement, a: DockviewApi): () => void {
+  const guide = document.createElement('div');
+  guide.style.cssText = 'position:fixed;pointer-events:none;z-index:50;background:var(--dv-active-sash-color,#0a84ff);display:none;';
+  document.body.appendChild(guide);
+  let drag: { sash: HTMLElement; across: boolean } | null = null; // across: the edge runs left-right and moves up-down
+  const centre = (r: DOMRect, across: boolean) => (across ? r.top + r.height / 2 : r.left + r.width / 2);
+  const target = (): { at: number; to: number; rect: DOMRect } | null => {
+    if (!drag) return null;
+    const rect = drag.sash.getBoundingClientRect();
+    const at = centre(rect, drag.across);
+    const others = [...el.querySelectorAll<HTMLElement>('.dv-sash')]
+      .filter((s) => s !== drag!.sash && s.closest('.dv-split-view-container')?.classList.contains('dv-horizontal') === !drag!.across)
+      .map((s) => centre(s.getBoundingClientRect(), drag!.across));
+    const to = snapEdge(at, others);
+    return { at, to, rect };
+  };
+  const show = () => {
+    const t = target();
+    if (!t || t.to === t.at || !drag) return void (guide.style.display = 'none');
+    const box = el.getBoundingClientRect();
+    guide.style.display = 'block';
+    if (drag.across) Object.assign(guide.style, { left: `${box.left}px`, width: `${box.width}px`, top: `${t.to - 1}px`, height: '2px' });
+    else Object.assign(guide.style, { top: `${box.top}px`, height: `${box.height}px`, left: `${t.to - 1}px`, width: '2px' });
+  };
+  let handing = false;
+  const down = (e: PointerEvent) => {
+    if (handing) return;
+    let sash = (e.target as HTMLElement | null)?.closest?.('.dv-sash') as HTMLElement | null;
+    if (!sash || !el.contains(sash) || e.button !== 0) return;
+    // An edge running right across a grid of panels (the outermost split's) would drag every row or column with it:
+    // flip the grid so this spot has an edge of its own, and hand the drag to that edge.
+    const outer = sash.closest('.dv-split-view-container');
+    if (outer && outer.parentElement?.closest('.dv-split-view-container, .dv-grid-view')?.classList.contains('dv-grid-view') && el.contains(outer) && transpose(a.toJSON().grid as unknown as Grid)) {
+      const { clientX: x, clientY: y } = e;
+      e.stopPropagation();
+      e.preventDefault();
+      if (!flip(a)) return;
+      const fresh = [...el.querySelectorAll<HTMLElement>('.dv-sash')].find((s) => {
+        const r = s.getBoundingClientRect();
+        return x >= r.left - 3 && x <= r.right + 3 && y >= r.top - 3 && y <= r.bottom + 3;
+      });
+      if (!fresh) return;
+      sash = fresh;
+      handing = true;
+      try {
+        fresh.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true, clientX: x, clientY: y, button: 0, buttons: 1, pointerId: e.pointerId, pointerType: e.pointerType, isPrimary: true }));
+      } finally {
+        handing = false;
+      }
+    }
+    drag = { sash, across: !sash.closest('.dv-split-view-container')?.classList.contains('dv-horizontal') };
+  };
+  const move = () => drag && requestAnimationFrame(show);
+  const up = () => {
+    const t = target();
+    const was = drag;
+    drag = null;
+    guide.style.display = 'none';
+    if (!t || !was || t.to === t.at) return;
+    const delta = t.to - t.at;
+    // The panel just before the edge (above it, or left of it) grows or shrinks by the snap.
+    const before = a.groups.find((g) => {
+      const r = g.element.getBoundingClientRect();
+      return was.across
+        ? Math.abs(r.bottom - t.rect.top - t.rect.height / 2) <= 4 && r.left < t.rect.right && r.right > t.rect.left
+        : Math.abs(r.right - t.rect.left - t.rect.width / 2) <= 4 && r.top < t.rect.bottom && r.bottom > t.rect.top;
+    });
+    if (!before) return;
+    const r = before.element.getBoundingClientRect();
+    before.api.setSize(was.across ? { height: r.height + delta } : { width: r.width + delta });
+  };
+  el.addEventListener('pointerdown', down, true);
+  window.addEventListener('pointermove', move, true);
+  window.addEventListener('pointerup', up, true);
+  return () => {
+    el.removeEventListener('pointerdown', down, true);
+    window.removeEventListener('pointermove', move, true);
+    window.removeEventListener('pointerup', up, true);
+    guide.remove();
+  };
+}
+
 /** Builds the workspace inside `el`. Returns a function that tears it down. */
 export function initWorkspace(el: HTMLElement, help?: ConstructorParameters<typeof GroupActions>[0]): () => void {
   api = createDockview(el, {
@@ -107,6 +215,7 @@ export function initWorkspace(el: HTMLElement, help?: ConstructorParameters<type
   if (import.meta.env.DEV) (window as unknown as { __dock: DockviewApi }).__dock = a; // for tests and debugging
   if (!restore(a)) defaultLayout(a);
   refreshOpen();
+  const offSnap = snapEdges(el, a);
   // Saved layouts read the arrangement from this dock and put one back into it.
   setLayoutHost({
     capture: () => a.toJSON(),
@@ -147,12 +256,35 @@ export function initWorkspace(el: HTMLElement, help?: ConstructorParameters<type
   return () => {
     setLayoutHost(null);
     clearTimeout(timer);
+    offSnap();
     layoutSub.dispose();
     offTheme();
     activeSub.dispose();
     a.dispose();
     api = null;
   };
+}
+
+/** The key the panel arrangement on screen is kept under on this device (account-sync.ts follows it). */
+export const DOCK_KEY = LAYOUT_KEY;
+
+/** Puts an arrangement (from the account) on screen. False when it cannot be used here. */
+export function applyDock(layout: unknown): boolean {
+  if (!api || !layout) return false;
+  const before = api.toJSON();
+  try {
+    api.fromJSON(layout as Parameters<DockviewApi['fromJSON']>[0]);
+    if (!api.panels.length || !api.panels.every((p) => p.id in PANELS)) throw new Error('unknown panels');
+    refreshOpen();
+    return true;
+  } catch {
+    try {
+      api.fromJSON(before);
+    } catch {
+      /* the dock keeps what it has */
+    }
+    return false;
+  }
 }
 
 /** Shows a hidden panel or hides a visible one. */

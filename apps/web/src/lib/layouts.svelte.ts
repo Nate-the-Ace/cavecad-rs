@@ -1,4 +1,5 @@
-// Saved layouts for the person using the app: six slots, kept on this device. A layout is where the panels are
+// Saved layouts for the person using the app: six slots, kept on this device and, when signed in, with their CaveCAD
+// account, so they come back on any device they sign in on (the newer copy wins). A layout is where the panels are
 // (and whether the map view is locked); the workspace says how to read the arrangement from the dock and how to
 // put one back by registering a host, so the app's workspace and any other dock (the survey harness) share this.
 // The slot rules are in layout-slots.ts, which is tested.
@@ -7,6 +8,17 @@ import { option, setOption } from './cave.svelte';
 import { cleanName, emptySlots, fitsPanels, parseSlots, slotName, withSlot, withoutSlot, type Slots } from './layout-slots';
 
 const KEY = 'cavecad.layouts.v1';
+/** When the slots on this device were last changed (or taken from the account). */
+const AT_KEY = 'cavecad.layouts.at';
+
+function loadAt(): number {
+  try {
+    return Number(localStorage.getItem(AT_KEY) ?? 0) || 0;
+  } catch {
+    return 0;
+  }
+}
+let changedAt = loadAt();
 
 function load(): Slots {
   try {
@@ -18,11 +30,68 @@ function load(): Slots {
 
 export const layouts = $state<{ slots: Slots; selected: number }>({ slots: load(), selected: 0 });
 
-function keep() {
+function store(at: number) {
+  changedAt = at;
   try {
     localStorage.setItem(KEY, JSON.stringify($state.snapshot(layouts.slots)));
+    localStorage.setItem(AT_KEY, String(at));
   } catch {
     /* the layouts are just not remembered */
+  }
+}
+
+function keep() {
+  store(Date.now());
+  scheduleSend();
+}
+
+// ---- with the account ----
+let sendTimer: ReturnType<typeof setTimeout> | null = null;
+function scheduleSend() {
+  if (sendTimer) clearTimeout(sendTimer);
+  sendTimer = setTimeout(() => void send(), 800);
+}
+
+async function access() {
+  const { serverAccess } = await import('./room.svelte'); // loaded when needed: the workspace loads this file early
+  return serverAccess();
+}
+
+/** Sends this device's slots to the account (the server keeps whichever copy is newer). */
+async function send(): Promise<void> {
+  const a = await access();
+  if (!a) return;
+  try {
+    await a.fetch(`${a.base}/api/me/prefs/layouts`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', ...(a.headers?.() ?? {}) },
+      body: JSON.stringify({ value: $state.snapshot(layouts.slots), updatedAt: changedAt }),
+      credentials: 'same-origin',
+    });
+  } catch {
+    /* offline: sent again at the next change or sign-in */
+  }
+}
+
+/**
+ * Brings this device and the account into step (call on sign-in): the account's slots replace these when they are newer;
+ * these are sent when they are newer (or the account has none).
+ */
+export async function syncLayouts(): Promise<void> {
+  const a = await access();
+  if (!a) return;
+  try {
+    const res = await a.fetch(`${a.base}/api/me/prefs/layouts`, { headers: a.headers?.() ?? {}, credentials: 'same-origin' });
+    if (!res.ok) return;
+    const { pref } = (await res.json()) as { pref: { value: unknown; updatedAt: number } | null };
+    if (pref && pref.updatedAt > changedAt) {
+      layouts.slots = parseSlots(pref.value);
+      store(pref.updatedAt);
+    } else if (changedAt > (pref?.updatedAt ?? -1) && layouts.slots.some(Boolean)) {
+      await send();
+    }
+  } catch {
+    /* offline: the slots on this device stay as they are */
   }
 }
 

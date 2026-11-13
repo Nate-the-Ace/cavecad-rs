@@ -5,7 +5,7 @@
 // pages lived on the server) show too, with a way to keep them with the cave. A trip links a page by its path.
 import { baseName, isDesktop, listScansNative, pickFolderNative, readScanNative, revealNative, typeOf } from './desktop';
 import { isDerived, scanKind, type ScanKind } from './scan-tree';
-import { MAX_PAGE_BYTES, cannotAdd, fetchPage, pages, refreshPages, uploadPages } from './cave-pages.svelte';
+import { MAX_PAGE_BYTES, cannotAdd, waitUntilAddable, fetchPage, pages, refreshPages, uploadPages } from './cave-pages.svelte';
 
 interface DirHandle {
   name: string;
@@ -106,7 +106,8 @@ function ensure(path: string) {
  * once. Refused, with the reason in the panel, when pages cannot be added (not signed in, a watcher).
  */
 async function addToCave(folder: string, found: Map<string, File>) {
-  const no = cannotAdd();
+  if (cannotAdd()) scans.message = 'Getting the cave ready on the CaveCAD server…';
+  const no = await waitUntilAddable();
   if (no) {
     scans.message = no;
     return;
@@ -382,7 +383,8 @@ export async function revealReal(rel: string): Promise<boolean> {
 /** Add scans: picks a folder and uploads its pages to the cave (they keep the folder's name). False if cancelled. */
 export async function addScans(): Promise<boolean> {
   const no = cannotAdd();
-  if (no) {
+  // Still being put on the server is not a reason to refuse the pick: the upload waits for it.
+  if (no && !no.startsWith('This cave is still being put')) {
     scans.message = no;
     return false;
   }

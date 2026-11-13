@@ -12,13 +12,16 @@ mod fill;
 mod library;
 mod linetype;
 mod motif;
+mod pat;
 
-pub use fill::{FillDef, Layer, fill_marks, rotated};
+pub use fill::{FillDef, Layer, MAX_DASHES, fill_marks, rotated};
 pub use library::{Library, builtin_library};
 pub use linetype::{
-    Element, Layout, LineDef, Placement, lay_out, marks as line_marks, motifs_used,
+    Element, Layout, LineDef, LineRow, MAX_ROWS, MAX_TEXT, Placement, lay_out, marks as line_marks,
+    motifs_used, offset_path,
 };
 pub use motif::Motif;
+pub use pat::{AR_SCALE, PatError, parse_pat, standard_fills};
 
 /// Why a definition was refused.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -37,11 +40,14 @@ pub enum PatternError {
     MissingMotif(String),
     /// The JSON text is not a definition.
     BadJson,
+    /// A text part that is empty, too long, or has control characters.
+    BadText,
 }
 
 impl std::fmt::Display for PatternError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            PatternError::BadText => write!(f, "A text part needs 1 to 24 characters."),
             PatternError::BadName => {
                 write!(f, "A name needs 1 to 40 letters, digits, spaces, - _ or .")
             }
@@ -52,7 +58,7 @@ impl std::fmt::Display for PatternError {
             PatternError::BadNumber(what) => write!(f, "{what} is not a usable number."),
             PatternError::NothingToDraw => write!(
                 f,
-                "The pattern draws nothing (it needs a dash, dot or motif and some length)."
+                "The pattern draws nothing (it needs a line, dot, motif or text, and some length)."
             ),
             PatternError::TooLong => write!(f, "The pattern has too many parts."),
             PatternError::MissingMotif(m) => write!(f, "The motif \"{m}\" does not exist."),

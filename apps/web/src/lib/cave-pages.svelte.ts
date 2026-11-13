@@ -3,7 +3,8 @@
 // known by its path (the path trips link it by) and fetched the first time something shows it; this browser keeps
 // a copy of each page it fetched, by its SHA-256, so it is fetched once.
 import { engine } from './engine';
-import { room, serverAccess } from './room.svelte';
+import { isSampleCave, room, serverAccess, signedIn } from './room.svelte';
+import { cave as openCave } from './cave.svelte';
 import type { ServerAccess } from './room-client';
 import { scanKind } from './scan-tree';
 
@@ -27,10 +28,30 @@ export const pages = $state({
 
 /** Why pages cannot be added to the open cave right now, or '' when they can. */
 export function cannotAdd(): string {
-  if (!engine.roomId()) return 'Sign in to add scans: they are kept with the cave on the CaveCAD server.';
+  if (!openCave.hasCave) return 'Open or start a cave first: scans are kept with a cave.';
+  if (!signedIn()) return 'Sign in to add scans: they are kept with the cave on the CaveCAD server.';
+  if (isSampleCave()) return 'Sample caves can’t keep scans. Start or open your own cave, then add them.';
   if (room.role === 'watcher') return 'You can look at this cave’s scans but not add them.';
   if (room.status === 'error') return 'This cave is not syncing, so scans cannot be added to it now.';
+  if (!engine.roomId()) {
+    if (room.status === 'offline') return 'Can’t reach the CaveCAD server, so scans can’t be added yet. Try again once it shows Synced.';
+    return 'This cave is still being put on the CaveCAD server. Try again in a moment.';
+  }
   return '';
+}
+
+/**
+ * Waits (up to `ms`) for the open cave to be on the server, when the only thing in the way is that it is still
+ * being put there. Gives back what `cannotAdd` says after waiting.
+ */
+export async function waitUntilAddable(ms = 20_000): Promise<string> {
+  const end = Date.now() + ms;
+  for (;;) {
+    const no = cannotAdd();
+    if (!no || engine.roomId() || Date.now() >= end) return no;
+    if (!signedIn() || isSampleCave() || !openCave.hasCave || room.status === 'error' || room.role === 'watcher') return no;
+    await new Promise((r) => setTimeout(r, 400));
+  }
 }
 
 const pathOf = (cave: string, path: string) => `/api/caves/${cave}/scans?path=${encodeURIComponent(path)}`;
@@ -63,7 +84,7 @@ export async function refreshPages(): Promise<void> {
  * kept; the rest are named in `pages.problem`.
  */
 export async function uploadPages(found: Map<string, File>): Promise<string[]> {
-  const no = cannotAdd();
+  const no = await waitUntilAddable();
   if (no) {
     pages.problem = no;
     return [];

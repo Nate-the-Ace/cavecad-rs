@@ -73,6 +73,7 @@ pub fn builtin_library() -> Library {
     }
     let motifs = vec![
         strokes("Tick", &[&[[0.0, -0.5], [0.0, 0.5]]]),
+        strokes("Dash", &[&[[-0.5, 0.0], [0.5, 0.0]]]),
         strokes("Tick up", &[&[[0.0, 0.0], [0.0, 1.0]]]),
         strokes("Chevron", &[&[[-0.35, 0.5], [0.0, 0.0], [-0.35, -0.5]]]),
         strokes(
@@ -88,6 +89,15 @@ pub fn builtin_library() -> Library {
         ),
         strokes("Scallop", &[&half_circle]),
         Motif::from_drawing(
+            "Dot",
+            vec![Prim::Circle {
+                c: [0.0, 0.0],
+                r: 0.5,
+                fill: true,
+            }],
+        )
+        .expect("a built-in motif is valid"),
+        Motif::from_drawing(
             "Ring",
             vec![Prim::Circle {
                 c: [0.0, 0.0],
@@ -97,7 +107,110 @@ pub fn builtin_library() -> Library {
         )
         .expect("a built-in motif is valid"),
     ];
-    let lines = vec![
+    let dash = |mm: f64| Element::Dash { mm };
+    let gap = |mm: f64| Element::Gap { mm };
+    let motif = |name: &str, size_mm: f64, turn_deg: f64, along_mm: f64| Element::Motif {
+        motif: name.into(),
+        size_mm,
+        turn_deg,
+        along_mm,
+        across_mm: 0.0,
+    };
+    // Starting points that match the line types the map draws with, to copy and adjust.
+    let like_the_map = vec![
+        LineDef {
+            name: "Presumed wall".into(),
+            elements: vec![dash(4.8), gap(1.0)],
+            rows: Vec::new(),
+        },
+        LineDef {
+            name: "Dashed".into(),
+            elements: vec![dash(2.0), gap(1.2)],
+            rows: Vec::new(),
+        },
+        LineDef {
+            name: "Underlying passage".into(),
+            elements: vec![dash(1.2), gap(3.4)],
+            rows: Vec::new(),
+        },
+        LineDef {
+            name: "Joint".into(),
+            elements: vec![dash(2.8), gap(1.2), Element::Dot, gap(1.2)],
+            rows: Vec::new(),
+        },
+        LineDef {
+            name: "Ledge".into(),
+            elements: vec![dash(3.0), motif("Tick up", 1.4, 0.0, -1.5)],
+            rows: Vec::new(),
+        },
+        LineDef {
+            name: "Pit edge".into(),
+            elements: vec![dash(3.0), motif("Tick up", 1.4, 180.0, -1.5)],
+            rows: Vec::new(),
+        },
+        LineDef {
+            name: "Unsurveyed wall".into(),
+            elements: vec![
+                dash(4.0),
+                gap(1.4),
+                Element::Text {
+                    text: "?".into(),
+                    size_mm: 2.2,
+                    turn_deg: 0.0,
+                    along_mm: 0.0,
+                    across_mm: 0.0,
+                },
+                gap(1.4),
+            ],
+            rows: Vec::new(),
+        },
+        LineDef {
+            name: "Water line".into(),
+            elements: vec![
+                dash(8.0),
+                gap(1.6),
+                Element::Text {
+                    text: "W".into(),
+                    size_mm: 2.0,
+                    turn_deg: 0.0,
+                    along_mm: 0.0,
+                    across_mm: 0.0,
+                },
+                gap(1.6),
+            ],
+            rows: Vec::new(),
+        },
+        LineDef {
+            name: "Double line".into(),
+            elements: vec![dash(10.0)],
+            rows: vec![crate::LineRow {
+                offset_mm: 0.9,
+                elements: vec![dash(10.0)],
+            }],
+        },
+        LineDef {
+            name: "Solid with dashed inside".into(),
+            elements: vec![dash(10.0)],
+            rows: vec![crate::LineRow {
+                offset_mm: -1.0,
+                elements: vec![dash(2.0), gap(1.2)],
+            }],
+        },
+        LineDef {
+            name: "Flowline".into(),
+            elements: vec![
+                motif("Dot", 0.7, 0.0, 0.0),
+                gap(1.6),
+                motif("Dot", 0.7, 0.0, 0.0),
+                gap(1.6),
+                motif("Chevron", 1.8, 0.0, 0.6),
+                gap(2.4),
+            ],
+            rows: Vec::new(),
+        },
+    ];
+    let mut lines = like_the_map;
+    lines.extend(vec![
         LineDef {
             name: "Ticked line".into(),
             elements: vec![
@@ -110,6 +223,7 @@ pub fn builtin_library() -> Library {
                     across_mm: 0.0,
                 },
             ],
+            rows: Vec::new(),
         },
         LineDef {
             name: "Chevron line".into(),
@@ -124,6 +238,7 @@ pub fn builtin_library() -> Library {
                 },
                 Element::Gap { mm: 3.0 },
             ],
+            rows: Vec::new(),
         },
         LineDef {
             name: "Scalloped line".into(),
@@ -137,9 +252,67 @@ pub fn builtin_library() -> Library {
                 },
                 Element::Gap { mm: 3.0 },
             ],
+            rows: Vec::new(),
         },
-    ];
+    ]);
     let fills = vec![
+        // Starting points like the map's own area fills, to copy and adjust.
+        FillDef {
+            name: "Sand".into(),
+            layers: vec![Layer::Tile {
+                motif: "Dot".into(),
+                size_mm: 0.3,
+                across_mm: 1.4,
+                down_mm: 1.4,
+                stagger: true,
+                turn_deg: 0.0,
+                random_turn: false,
+                size_var: 0.3,
+                jitter: 0.9,
+                skip: 0.2,
+            }],
+            tint: false,
+        },
+        FillDef {
+            name: "Pebbles".into(),
+            layers: vec![Layer::Tile {
+                motif: "Ring".into(),
+                size_mm: 1.2,
+                across_mm: 3.0,
+                down_mm: 3.0,
+                stagger: true,
+                turn_deg: 0.0,
+                random_turn: true,
+                size_var: 0.5,
+                jitter: 0.7,
+                skip: 0.2,
+            }],
+            tint: false,
+        },
+        FillDef {
+            name: "Clay".into(),
+            layers: vec![Layer::Tile {
+                motif: "Dash".into(),
+                size_mm: 1.6,
+                across_mm: 3.2,
+                down_mm: 1.6,
+                stagger: true,
+                turn_deg: 0.0,
+                random_turn: false,
+                size_var: 0.0,
+                jitter: 0.15,
+                skip: 0.0,
+            }],
+            tint: false,
+        },
+        FillDef {
+            name: "Water".into(),
+            layers: vec![Layer::Hatch {
+                angle_deg: 0.0,
+                spacing_mm: 1.8,
+            }],
+            tint: true,
+        },
         FillDef {
             name: "Cross-hatch".into(),
             layers: vec![
@@ -179,6 +352,8 @@ pub fn builtin_library() -> Library {
             tint: false,
         },
     ];
+    let mut fills = fills;
+    fills.extend(crate::standard_fills());
     Library {
         motifs,
         lines,
