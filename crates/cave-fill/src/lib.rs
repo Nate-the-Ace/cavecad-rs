@@ -297,6 +297,20 @@ fn element(name: &str) -> Vec<Prim> {
     }
 }
 
+/// Words laid along a line: centred on `at`, turned `angle` radians from the x axis of the path's own coordinates (already
+/// turned to read left to right), `height` tall.
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
+pub struct TextMark {
+    /// Where its middle is.
+    pub at: [f64; 2],
+    /// Which way its baseline runs, in radians.
+    pub angle: f64,
+    /// Its letter height.
+    pub height: f64,
+    /// The words.
+    pub text: String,
+}
+
 /// The marks of a fill, in metres.
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
 pub struct Marks {
@@ -306,6 +320,9 @@ pub struct Marks {
     pub circles: Vec<[f64; 4]>,
     /// True when the outline is also to be tinted solid (water).
     pub tint: bool,
+    /// Words (a linetype's text parts).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub texts: Vec<TextMark>,
 }
 
 /// Even-odd point in polygon (a figure of eight fills both lobes).

@@ -143,6 +143,36 @@ pub fn builtin_library() -> Library {
             elements: vec![dash(3.0), motif("Tick up", 1.4, 180.0, -1.5)],
         },
         LineDef {
+            name: "Unsurveyed wall".into(),
+            elements: vec![
+                dash(4.0),
+                gap(1.4),
+                Element::Text {
+                    text: "?".into(),
+                    size_mm: 2.2,
+                    turn_deg: 0.0,
+                    along_mm: 0.0,
+                    across_mm: 0.0,
+                },
+                gap(1.4),
+            ],
+        },
+        LineDef {
+            name: "Water line".into(),
+            elements: vec![
+                dash(8.0),
+                gap(1.6),
+                Element::Text {
+                    text: "W".into(),
+                    size_mm: 2.0,
+                    turn_deg: 0.0,
+                    along_mm: 0.0,
+                    across_mm: 0.0,
+                },
+                gap(1.6),
+            ],
+        },
+        LineDef {
             name: "Flowline".into(),
             elements: vec![
                 motif("Dot", 0.7, 0.0, 0.0),

@@ -1,6 +1,6 @@
 // Drawing the patterns a caver authored on a canvas: a custom linetype along a line, a custom fill inside an area. The engine lays
 // the marks out; this file asks for them (keeping the answers until the line, the scale or the pattern changes) and strokes them.
-import type { PatternMarks } from './patterns';
+import { drawTexts, type PatternMarks } from './patterns';
 
 /** Where the marks come from: the engine, which installs itself once it has loaded (so this file does not import it, and can be loaded without it). */
 export interface PatternSource {
@@ -70,4 +70,5 @@ export function strokeMarksPx(g: CanvasRenderingContext2D, marks: PatternMarks) 
     if (filled) g.fill();
     else g.stroke();
   }
+  drawTexts(g, marks.texts, (p) => p);
 }

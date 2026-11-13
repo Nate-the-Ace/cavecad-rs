@@ -35,7 +35,27 @@ pub enum Element {
         #[serde(default)]
         across_mm: f64,
     },
+    /// Words stood on the line where the pattern has got to, turned to read left to right. They take no room of their own: a gap
+    /// before and after sets the spacing.
+    Text {
+        /// The words (1 to 24 characters).
+        text: String,
+        /// Letter height, in millimetres on paper.
+        size_mm: f64,
+        /// How far they are turned from the line's direction, in degrees.
+        #[serde(default)]
+        turn_deg: f64,
+        /// How far they are moved along the line, in millimetres.
+        #[serde(default)]
+        along_mm: f64,
+        /// How far they are moved to the left of the direction of travel, in millimetres.
+        #[serde(default)]
+        across_mm: f64,
+    },
 }
+
+/// Most characters in a linetype's text part.
+pub const MAX_TEXT: usize = 24;
 
 /// A named repeating pattern for a line.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -95,6 +115,23 @@ impl LineDef {
                     in_range(*across_mm, -MAX_MM, MAX_MM, "A shift across the line")?;
                     draws = true;
                 }
+                Element::Text {
+                    text,
+                    size_mm,
+                    turn_deg,
+                    along_mm,
+                    across_mm,
+                } => {
+                    let n = text.trim().chars().count();
+                    if n == 0 || n > MAX_TEXT || text.chars().any(|c| c.is_control()) {
+                        return Err(PatternError::BadText);
+                    }
+                    in_range(*size_mm, 0.5, 20.0, "A text size")?;
+                    in_range(*turn_deg, -360.0, 360.0, "A turn")?;
+                    in_range(*along_mm, -MAX_MM, MAX_MM, "A shift along the line")?;
+                    in_range(*across_mm, -MAX_MM, MAX_MM, "A shift across the line")?;
+                    draws = true;
+                }
             }
         }
         // something has to move along the line, or the layout would never leave the start
@@ -125,6 +162,8 @@ pub struct Layout {
     pub dashes: Vec<Vec<[f64; 2]>>,
     /// The motifs, in order along the line.
     pub placements: Vec<Placement>,
+    /// The words, in order along the line.
+    pub texts: Vec<cave_fill::TextMark>,
 }
 
 /// The most dashes and motifs one line gets: a very long line gets nothing more rather than freezing the page.
@@ -156,7 +195,8 @@ pub fn lay_out(def: &LineDef, path: &[[f64; 2]], paper_m: f64, dot_mm: f64) -> L
     let mut s = 0.0;
     'repeat: loop {
         for e in &def.elements {
-            if s >= total || out.dashes.len() + out.placements.len() >= MAX_MARKS {
+            if s >= total || out.dashes.len() + out.placements.len() + out.texts.len() >= MAX_MARKS
+            {
                 break 'repeat;
             }
             match e {
@@ -186,6 +226,31 @@ pub fn lay_out(def: &LineDef, path: &[[f64; 2]], paper_m: f64, dot_mm: f64) -> L
                             angle: tangent + turn_deg.to_radians(),
                             size: size_mm * paper_m,
                             motif: motif.clone(),
+                        });
+                    }
+                }
+                Element::Text {
+                    text,
+                    size_mm,
+                    turn_deg,
+                    along_mm,
+                    across_mm,
+                } => {
+                    let at_s = s + along_mm * paper_m;
+                    if (0.0..=total).contains(&at_s) {
+                        let (p, tangent) = point_at(path, &cum, at_s);
+                        let (sin, cos) = tangent.sin_cos();
+                        let left = across_mm * paper_m;
+                        let mut angle = tangent + turn_deg.to_radians();
+                        // never upside down: words read left to right whichever way the line was drawn
+                        if angle.cos() < -1e-9 {
+                            angle += std::f64::consts::PI;
+                        }
+                        out.texts.push(cave_fill::TextMark {
+                            at: [p[0] - sin * left, p[1] + cos * left],
+                            angle: angle.rem_euclid(std::f64::consts::TAU),
+                            height: size_mm * paper_m,
+                            text: text.trim().to_string(),
                         });
                     }
                 }
@@ -256,6 +321,7 @@ pub fn marks(
     let lay = lay_out(def, path, paper_m, dot_mm);
     let mut m = cave_fill::Marks {
         lines: lay.dashes,
+        texts: lay.texts,
         ..Default::default()
     };
     for p in &lay.placements {
@@ -363,6 +429,50 @@ mod tests {
         let d = def(vec![Element::Dash { mm: 0.05 }, Element::Gap { mm: 0.05 }]);
         let l = lay_out(&d, &[[0.0, 0.0], [1000.0, 0.0]], MM, 0.4);
         assert_eq!(l.dashes.len(), MAX_MARKS);
+    }
+
+    #[test]
+    fn text_sits_on_the_line_and_never_reads_upside_down() {
+        let d = def(vec![
+            Element::Dash { mm: 4.0 },
+            Element::Gap { mm: 1.0 },
+            Element::Text {
+                text: "?".into(),
+                size_mm: 2.0,
+                turn_deg: 0.0,
+                along_mm: 0.0,
+                across_mm: 0.0,
+            },
+            Element::Gap { mm: 1.0 },
+        ]);
+        assert_eq!(d.validate(&all), Ok(()));
+        // drawn left to right and right to left: the words read the same way both times
+        let forward = lay_out(&d, &[[0.0, 0.0], [0.03, 0.0]], 0.001, 0.4);
+        let back = lay_out(&d, &[[0.03, 0.0], [0.0, 0.0]], 0.001, 0.4);
+        assert_eq!(forward.texts.len(), 5);
+        assert!(!back.texts.is_empty());
+        for t in forward.texts.iter().chain(&back.texts) {
+            assert!(t.angle.cos() > 0.99, "reads left to right: {}", t.angle);
+            assert!((t.height - 0.002).abs() < 1e-12 && t.text == "?");
+            assert!(t.at[1].abs() < 1e-12, "on the line");
+        }
+        let bad = |text: &str| {
+            def(vec![
+                Element::Dash { mm: 1.0 },
+                Element::Text {
+                    text: text.into(),
+                    size_mm: 2.0,
+                    turn_deg: 0.0,
+                    along_mm: 0.0,
+                    across_mm: 0.0,
+                },
+            ])
+            .validate(&all)
+        };
+        assert_eq!(bad(""), Err(PatternError::BadText));
+        assert_eq!(bad(&"x".repeat(25)), Err(PatternError::BadText));
+        assert_eq!(bad("a\nb"), Err(PatternError::BadText));
+        assert_eq!(bad("DIG"), Ok(()));
     }
 
     #[test]

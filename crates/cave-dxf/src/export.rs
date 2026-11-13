@@ -283,6 +283,31 @@ impl Geometry<'_> {
         self.w.num(40, r.max(1e-6));
     }
 
+    /// Words centred on `at`, turned `angle_deg`, on a line type's layer (with `suffix`).
+    fn text_suffixed(
+        &mut self,
+        key: &str,
+        suffix: &str,
+        at: [f64; 2],
+        height: f64,
+        angle_deg: f64,
+        s: &str,
+    ) {
+        let st = style(key);
+        let color = dxf_color(st.ink);
+        let layer = cave_style::dxf_layer(key, Some(suffix));
+        self.layers.insert(layer_name(&layer), (color, st.linetype));
+        self.entity("TEXT", &layer, Some(color), "AcDbText");
+        self.point3(10, [at[0], at[1], 0.0]);
+        self.w.num(40, height.max(1e-6));
+        self.w.tag(1, ascii_text(s));
+        self.w.num(50, angle_deg);
+        self.w.tag(72, "1"); // centred
+        self.point3(11, [at[0], at[1], 0.0]);
+        self.w.tag(100, "AcDbText");
+        self.w.tag(73, "2"); // middle
+    }
+
     /// A placed symbol as polylines on its catalogue layer (with `suffix`, as other profile
     /// linework has).
     fn symbol(&mut self, sym: &cave_symbols::Symbol, at: [f64; 2], aim: [f64; 2], suffix: &str) {
@@ -566,6 +591,16 @@ fn draw_stroke(g: &mut Geometry, doc: &Document, s: &Stroke, suffix: &str) {
         }
         for c in &marks.circles {
             g.circle_suffixed(s.kind, suffix, [c[0], c[1]], c[2]);
+        }
+        for t in &marks.texts {
+            g.text_suffixed(
+                s.kind,
+                suffix,
+                t.at,
+                t.height,
+                t.angle.to_degrees(),
+                &t.text,
+            );
         }
     } else if shape.is_none_or(|sh| !sh.hide_spine) {
         let mut line = curve.clone();

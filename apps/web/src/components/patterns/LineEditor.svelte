@@ -46,12 +46,13 @@
   /** One repeat's length on paper. Dots and motifs take no room of their own. */
   const repeatMm = $derived(work.elements.reduce((s, e) => s + (e.t === 'dash' || e.t === 'gap' ? Math.abs(e.mm) : 0), 0));
 
-  const KIND: Record<Element['t'], string> = { dash: 'Line', gap: 'Space', dot: 'Dot', motif: 'Motif' };
+  const KIND: Record<Element['t'], string> = { dash: 'Line', gap: 'Space', dot: 'Dot', motif: 'Motif', text: 'Text' };
   const KIND_HELP: Record<Element['t'], string> = {
     dash: 'A drawn stretch of line.',
     gap: 'A stretch left empty.',
     dot: 'A single dot. It takes no room: put a space either side of it.',
     motif: 'A small shape stood on the line (make your own on the Motifs tab). It takes no room: put a space either side of it.',
+    text: 'Words written along the line, always turned to read left to right. They take no room: put a space either side, about as long as the words.',
   };
 
   function add(kind: Element['t']) {
@@ -124,7 +125,7 @@
 
   // The strip: each part a block, a line or space as wide as it is long.
   const STRIP_PX_PER_MM = $derived(Math.max(8, Math.min(40, 360 / Math.max(repeatMm, 1))));
-  const blockWidth = (e: Element) => (e.t === 'dash' || e.t === 'gap' ? Math.max(14, Math.abs(e.mm) * STRIP_PX_PER_MM) : 30);
+  const blockWidth = (e: Element) => (e.t === 'dash' || e.t === 'gap' ? Math.max(14, Math.abs(e.mm) * STRIP_PX_PER_MM) : e.t === 'text' ? Math.max(30, Math.min(90, e.text.length * 9 + 12)) : 30);
 
   /** Dragging a block's right edge makes that line or space longer or shorter. */
   function grab(e: PointerEvent, i: number) {
@@ -208,13 +209,14 @@
           role="option"
           aria-selected={i === sel}
           tabindex="0"
-          title="{KIND[el.t]}{el.t === 'dash' || el.t === 'gap' ? ` · ${el.mm} mm` : el.t === 'motif' ? ` · ${el.motif}` : ''}"
+          title="{KIND[el.t]}{el.t === 'dash' || el.t === 'gap' ? ` · ${el.mm} mm` : el.t === 'motif' ? ` · ${el.motif}` : el.t === 'text' ? ` · ${el.text}` : ''}"
           onclick={() => (sel = i)}
           onkeydown={(e) => e.key === 'Enter' && (sel = i)}
         >
           {#if el.t === 'dash'}<span class="ink"></span>
           {:else if el.t === 'dot'}<span class="dot"></span>
           {:else if el.t === 'motif'}<span class="icon"><PatternCanvas draw={motifIcon(el.motif)} height={22} /></span>
+          {:else if el.t === 'text'}<span class="words">{el.text || '…'}</span>
           {/if}
           {#if !readonly && (el.t === 'dash' || el.t === 'gap')}
             <span class="grip" role="separator" aria-label="Drag to change the length" onpointerdown={(e) => grab(e, i)}></span>
@@ -230,6 +232,7 @@
         <button onclick={() => add('gap')} title={KIND_HELP.gap}>+ Space</button>
         <button onclick={() => add('dot')} title={KIND_HELP.dot}>+ Dot</button>
         <button onclick={() => add('motif')} disabled={!motifNames.length} title={KIND_HELP.motif}>+ Motif</button>
+        <button onclick={() => add('text')} title={KIND_HELP.text}>+ Text</button>
       </div>
     {/if}
   </div>
@@ -254,6 +257,26 @@
         <label class="field">Length on paper
           <input type="range" min="0.1" max="20" step="0.1" bind:value={part.mm} disabled={readonly} />
           <input type="number" step="0.1" min="0.1" bind:value={part.mm} disabled={readonly} /> mm
+        </label>
+      {:else if part.t === 'text'}
+        <label class="field">Words
+          <input class="wide" type="text" bind:value={part.text} maxlength="24" disabled={readonly} placeholder="for example ?  W  DIG" />
+        </label>
+        <label class="field">Letter height
+          <input type="range" min="0.5" max="10" step="0.1" bind:value={part.size_mm} disabled={readonly} />
+          <input type="number" step="0.1" min="0.5" bind:value={part.size_mm} disabled={readonly} /> mm
+        </label>
+        <label class="field">Rotate
+          <input type="range" min="-180" max="180" step="5" bind:value={part.turn_deg} disabled={readonly} />
+          <input type="number" step="5" bind:value={part.turn_deg} disabled={readonly} /> °
+        </label>
+        <label class="field" title="Moves the words forward (more) or back (less) along the line, without taking room">Nudge along
+          <input type="range" min="-10" max="10" step="0.1" bind:value={part.along_mm} disabled={readonly} />
+          <input type="number" step="0.1" bind:value={part.along_mm} disabled={readonly} /> mm
+        </label>
+        <label class="field" title="Moves the words off the line: more is to the left of the way the line was drawn">Nudge sideways
+          <input type="range" min="-10" max="10" step="0.1" bind:value={part.across_mm} disabled={readonly} />
+          <input type="number" step="0.1" bind:value={part.across_mm} disabled={readonly} /> mm
         </label>
       {:else if part.t === 'motif'}
         <label class="field">Motif
@@ -326,6 +349,8 @@
   .ink { display: block; height: 3px; width: calc(100% - 8px); background: var(--text); border-radius: 2px; }
   .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--text); }
   .icon { width: 26px; }
+  .words { font-size: 12px; font-weight: 600; max-width: 100%; overflow: hidden; white-space: nowrap; padding: 0 3px; }
+  .field .wide { grid-column: 2 / 5; }
   .icon :global(canvas) { border: none; background: none; }
   .grip { position: absolute; right: -4px; top: 4px; bottom: 4px; width: 8px; cursor: ew-resize; border-radius: 3px; background: var(--accent); opacity: 0; }
   .block:hover .grip, .block.sel .grip { opacity: 0.85; }
