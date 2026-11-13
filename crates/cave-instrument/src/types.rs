@@ -58,6 +58,12 @@ pub struct Reading {
     /// Laser signal quality, raw.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub quality: Option<u32>,
+    /// Taken in the instrument's scan mode (a sweep): always a splay, never part of a leg.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scan: Option<bool>,
+    /// The first shot of a sweep.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sweep_start: Option<bool>,
     /// This shot measures that wall at the station: a passage dimension, never a splay. Set where the
     /// instrument cannot say (the simulator; the surveyor's LRUD mode).
     #[serde(default, skip_serializing_if = "Option::is_none")]

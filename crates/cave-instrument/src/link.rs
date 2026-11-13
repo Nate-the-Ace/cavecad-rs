@@ -149,8 +149,10 @@ impl X1Link {
         out.push(LinkOut::Reading {
             reading: Reading {
                 roll: Some(tidy(p.roll, 3)),
-                leg: Some(p.leg),
+                leg: Some(p.leg && !p.scan),
                 mark: Some(p.mark),
+                scan: p.scan.then_some(true),
+                sweep_start: (p.scan && p.sweep_start).then_some(true),
                 error: cavway::describe_errors(&p.errors),
                 quality: p.quality,
                 ..Reading::new(

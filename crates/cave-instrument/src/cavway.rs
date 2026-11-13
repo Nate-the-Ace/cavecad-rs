@@ -154,6 +154,10 @@ pub struct Packet {
     pub calibration: bool,
     /// The mark set with the M button.
     pub mark: Mark,
+    /// Taken in scan mode (bit 6 of the flag clear), as captured from a real X1 on 2026-11-13.
+    pub scan: bool,
+    /// The first shot of a scan-mode sweep (bits 5 and 6 both clear).
+    pub sweep_start: bool,
     /// Metres.
     pub distance: f64,
     /// Degrees, 0 to 360, as measured (magnetic).
@@ -271,6 +275,8 @@ pub fn decode_packet(b: &[u8]) -> Option<Packet> {
         kind,
         flag,
         leg: flag & 0x80 == 0,
+        scan: flag & 0x40 == 0,
+        sweep_start: flag & 0x60 == 0,
         calibration: kind == 0x02,
         mark: MARKS.get(mark_bits).copied().unwrap_or(Mark::None),
         distance,

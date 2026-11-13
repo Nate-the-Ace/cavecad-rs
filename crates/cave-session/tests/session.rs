@@ -781,3 +781,66 @@ fn the_session_follows_a_real_cave_and_never_reuses_a_name() {
     assert_eq!(s.snapshot(&book).message, "");
     assert_eq!(s.snapshot(&book).log[0].label, format!("{last} to {next}"));
 }
+
+/// The packets of a capture taken from a real Cavway X1 (crates/cave-instrument/tests/captures).
+fn capture(name: &str) -> Vec<Vec<u8>> {
+    let path = format!(
+        "{}/../cave-instrument/tests/captures/{name}",
+        env!("CARGO_MANIFEST_DIR")
+    );
+    let v: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+    v["records"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|r| r["t"] == "notify")
+        .map(|r| {
+            let h = r["hex"].as_str().unwrap();
+            (0..h.len())
+                .step_by(2)
+                .map(|i| u8::from_str_radix(&h[i..i + 2], 16).unwrap())
+                .collect()
+        })
+        .collect()
+}
+
+#[test]
+fn a_real_x1_sweep_is_splays_in_two_sweeps_and_its_legs_are_still_found() {
+    use cave_instrument::link::X1Link;
+    let packets = capture("x1-2026-11-13-legs-and-two-sweeps.json");
+    // packets before index 52 are the first capture's (old memory): this test is the session after them
+    let mut book = Book::new();
+    let mut s = session(&book, true, false);
+    let mut link = X1Link::new("x1");
+    for p in &packets[52..] {
+        feed(&mut s, &mut book, link.on_frame(p, "notify"));
+    }
+    s.settle_now(&mut book);
+    // the three legs the surveyor shot before sweeping, and no leg made from a sweep
+    assert_eq!(book.legs().len(), 3, "{}", book.leg_names());
+    let sweeps: Vec<String> = book
+        .doc
+        .ids_of(cave_doc::Kind::Shot)
+        .into_iter()
+        .filter_map(
+            |id| match book.doc.entity(id)?.get(cave_doc::Field::ShotSweep) {
+                cave_doc::Value::Text(t) if !t.is_empty() => Some(t),
+                _ => None,
+            },
+        )
+        .collect();
+    let mut counts: Vec<usize> = {
+        let mut m = std::collections::BTreeMap::<String, usize>::new();
+        for t in &sweeps {
+            *m.entry(t.clone()).or_default() += 1;
+        }
+        m.into_values().collect()
+    };
+    counts.sort_unstable();
+    assert_eq!(
+        counts,
+        vec![51, 54],
+        "two sweeps, every shot of each tagged"
+    );
+}

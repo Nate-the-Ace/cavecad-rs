@@ -179,6 +179,14 @@ impl LegAssembler {
             out.push(LegEvent::Lrud { reading: shot });
             return out;
         }
+        // A sweep's shots are splays, never a leg: while sweeping, the laser rests on nearby wall points and three in
+        // a row would pass the close-shots test.
+        if shot.scan == Some(true) {
+            out.extend(self.settle());
+            self.group = None;
+            out.push(LegEvent::Splay { reading: shot });
+            return out;
+        }
         if let Some(g) = self.group.as_mut()
             && is_close(&g.shots[g.shots.len() - 1], &shot)
         {

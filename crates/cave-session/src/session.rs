@@ -209,6 +209,8 @@ pub struct Session {
     /// name: written once it has one. `None` inside is untouched, `Some(None)` a clear.
     pending: BTreeMap<(Id, String), [Option<Option<f64>>; 4]>,
     edits: u64,
+    /// The sweep being taken (an instrument's scan mode): its id (its first shot's) and the station it is at.
+    sweep: Option<(String, String)>,
 }
 
 impl Default for Session {
@@ -239,6 +241,7 @@ impl Session {
             warnings: Vec::new(),
             pending: BTreeMap::new(),
             edits: 0,
+            sweep: None,
         }
     }
 
@@ -438,8 +441,26 @@ impl Session {
             ..Measured::default()
         };
         let (doc, ids) = host.doc_and_ids();
-        let (shot, actions) =
+        let (shot, mut actions) =
             add_measured_shot(doc, ids, trip, from, to, splay, measured).map_err(describe)?;
+        // A sweep's splays carry the sweep's id: a new sweep at its first shot, at another station, or after any
+        // other shot; one sweep otherwise.
+        if splay && r.scan == Some(true) {
+            let same = self.sweep.as_ref().is_some_and(|(_, at)| at == from)
+                && r.sweep_start != Some(true);
+            if !same {
+                self.sweep = Some((shot.to_string(), from.to_string()));
+            }
+            if let Some((id, _)) = &self.sweep {
+                actions.push(Action::Set {
+                    id: shot,
+                    field: cave_doc::Field::ShotSweep,
+                    value: cave_doc::Value::Text(id.clone()),
+                });
+            }
+        } else {
+            self.sweep = None;
+        }
         self.commit_actions(host, actions)?;
         Ok(Written {
             target: Target::Shot(shot),
