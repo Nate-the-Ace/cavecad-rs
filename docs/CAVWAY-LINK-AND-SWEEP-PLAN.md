@@ -70,7 +70,14 @@ Capture: `crates/cave-instrument/tests/captures/x1-2026-11-13-reconnect-memory.j
       -27 to +75°) all have bit 6 clear (`0xbf`); the first of them also bit 5 clear (`0x9f`), perhaps "sweep start".
       Ordinary splays are `0xff`. Two `0xf3` shots (bits 2 and 3 clear) look like M-button marks. To confirm with a
       deliberate sweep.
-- [ ] Leg flag on three close shots; backsight mark; remote trigger; reconnect after sleep.
+- [x] **Scan flag CONFIRMED (second capture, `x1-2026-11-13-legs-and-two-sweeps.json`): bit 6 clear on every sweep
+      shot, and bit 5 clear as well on the FIRST shot of each sweep** (`0x9f` then `0xbf`…). Two sweeps: 51 shots in
+      32 s and 54 in 46 s (about 1.5 a second at the default speed), streamed live one by one, in order, none doubled.
+- [x] **Leg flag CONFIRMED: bit 7 clear** (`0x7f`), set on the THIRD of three close shots (and on a fourth close one);
+      the first two stay `0xff`. Three legs taken; CaveCAD found all three (A14 → A17), none from the sweeps.
+- [x] What CaveCAD does with a sweep today: every shot a plain splay. The cross-section draws a starburst of 100+
+      spokes and the walls / 3D loft go through every point, so they come out jagged. Phase 3 is needed.
+- [ ] Backsight mark; remote trigger; reconnect after sleep.
 - **Bridge note:** leaving the X1's menu dropped the link once; the page's reconnect then hung on a native connect
   that never finished. Native connect needs a timeout.
 
