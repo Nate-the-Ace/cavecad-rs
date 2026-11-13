@@ -18,7 +18,7 @@ import { withAttach } from '../line-style-text';
 import { drawStampHalo, liveWords, stampEditSpot, drawStamp, drawStationMarker, hitsLabelNote, hitsStamp, isStampKind, leaderLook, placement, withLabelSpots } from '../symbols';
 import { paintCopy } from '../copy-ghost';
 import type { ClipLine } from '../clip';
-import { drawMarks, isFillKind, marksFor } from '../fills';
+import { drawMarks, drawsALoop, isFillKind, marksFor } from '../fills';
 import { inkCurve } from '../hand-ink';
 import { handInkOn } from '../hand-ink-option';
 import { drawing, fillLength, parseStyle, patternName, styleFor } from '../line-style.svelte';
@@ -568,7 +568,7 @@ export class CaveView {
             const joined = joinFit(own, fit, pickup.atStart);
             this.onLineEdited(pickup.line.id, joined.pts, joined.widths);
           } else {
-            const loop = this.drawOptions.close || isFillKind(this.drawTool); // an area fill is always a loop
+            const loop = this.drawOptions.close || drawsALoop(this.drawTool); // an area fill or a stone outline is always a loop
             const fit = fitStroke(line.pts, line.pressure ? line.widths : null, this.drawOptions.tolerancePx / px, loop, FIT_SPACING);
             if (isFillKind(this.drawTool) && fit.pts.length < 3) {
               this.onLineDrawn([], null, false); // too small to enclose anything
