@@ -6,6 +6,7 @@
   import SelectionCycle from './components/SelectionCycle.svelte';
   import TextEditor from './components/TextEditor.svelte';
   import { checkShareLink, library, refreshLibrary } from './lib/pattern-library.svelte';
+  import { syncLayouts } from './lib/layouts.svelte';
   import { onMount, untrack } from 'svelte';
   import Ribbon from './components/Ribbon.svelte';
   import NewCave from './components/NewCave.svelte';
@@ -227,6 +228,7 @@
     if (!who || who === libraryReadFor) return;
     libraryReadFor = who;
     untrack(() => {
+      void syncLayouts(); // saved panel layouts follow the account too
       void refreshLibrary();
       void checkShareLink().then(() => {
         if (library.incoming) showPanel('patterns');

@@ -136,6 +136,14 @@ CREATE TABLE IF NOT EXISTS member_patterns (
   updated_at INTEGER NOT NULL,
   PRIMARY KEY (member_id, kind, name)
 );
+-- A member's settings that follow them to every device (saved panel layouts).
+CREATE TABLE IF NOT EXISTS member_prefs (
+  member_id TEXT NOT NULL REFERENCES members(id),
+  key TEXT NOT NULL,
+  value TEXT NOT NULL,
+  updated_at INTEGER NOT NULL,
+  PRIMARY KEY (member_id, key)
+);
 -- A snapshot of some patterns a member shared: anyone signed in with the code can add copies to their own library.
 CREATE TABLE IF NOT EXISTS pattern_shares (
   code TEXT PRIMARY KEY,

@@ -13,6 +13,7 @@ import { send, sendBadBody, readJson } from './http.ts';
 import { handleRooms } from './rooms-api.ts';
 import { handleScans, sweepScans } from './scans.ts';
 import { handlePatterns } from './patterns.ts';
+import { handlePrefs } from './prefs.ts';
 import { cancelInvited, inviteGuest, ownsAnyCave } from './rooms.ts';
 import { createSession, revokeAllFor, SESSION_MS } from './sessions.ts';
 import { redeemHandoff } from './handoff.ts';
@@ -118,6 +119,9 @@ export async function handleApi(d: ApiDeps, req: IncomingMessage, res: ServerRes
       cancelInvited(d.db, me.id, byEmail[1], byEmail[2], url.searchParams.get('email') ?? '');
       return send(res, 200, { ok: true });
     }
+    // The member's settings that follow them to every device.
+    const pref = /^\/api\/me\/prefs\/([a-z]{1,30})$/.exec(path);
+    if (pref) return await handlePrefs(d.db, me.id, req, res, pref[1], now);
     // The member's pattern library and pattern shares.
     if (path === '/api/patterns' || path.startsWith('/api/patterns/')) return await handlePatterns(d.db, me.id, req, res, path, url.searchParams, now);
     // A cave's scanned pages: kept in the scans folder (none set: the server keeps no pages).
