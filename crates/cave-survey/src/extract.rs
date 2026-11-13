@@ -50,6 +50,8 @@ pub struct Splay {
     pub offset: Vec3,
     /// Left out of the plot (and so out of the walls).
     pub exclude_from_plot: bool,
+    /// The sweep it belongs to (an instrument's scan mode), if any: an id made from the sweep's own (`ShotSweep`).
+    pub sweep: Option<Id>,
 }
 
 /// Passage dimensions measured at a station (metres). `None` means not measured, which is not
@@ -190,6 +192,9 @@ pub fn extract(doc: &Document) -> Extracted {
                     reading,
                     offset: o.v,
                     exclude_from_plot: e.flag(Field::ShotExcludeFromPlot),
+                    sweep: Some(e.text(Field::ShotSweep))
+                        .filter(|t| !t.is_empty())
+                        .map(|t| Id::from_name(&format!("sweep:{t}"))),
                 });
             }
             continue;
@@ -345,6 +350,9 @@ pub fn extract(doc: &Document) -> Extracted {
         take(first_of_trip.get(&Some(*t)).copied(), start_of(*t));
     }
 
+    // A sweep's many splays become its clean ring for everything drawn from them; LRUD it gives fills sides no
+    // tape measured.
+    let splays = crate::sweeps::ring_sweeps(splays, &legs, &mut lruds, &mut first_arrival_lruds);
     Extracted {
         legs,
         fixed,

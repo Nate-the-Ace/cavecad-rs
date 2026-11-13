@@ -12,6 +12,7 @@
 mod adjust;
 mod extract;
 mod network;
+mod sweeps;
 mod traverse;
 mod vec3;
 
