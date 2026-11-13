@@ -31,5 +31,8 @@ test('saved layouts follow the member, and an older copy never wins', () => {
   assert.deepEqual(getPref(db, owner, 'layouts')?.value, { slots: [2] });
   assert.equal(getPref(db, ana, 'layouts'), null, 'not anyone else’s');
   assert.throws(() => getPref(db, owner, 'theme'), /not-found/);
+  putPref(db, owner, 'settings', { 'cavecad.units': 'imperial' }, T, T);
+  putPref(db, owner, 'dock', { grid: {} }, T, T);
+  assert.deepEqual(getPref(db, owner, 'settings')?.value, { 'cavecad.units': 'imperial' });
   assert.throws(() => putPref(db, owner, 'layouts', 'x'.repeat(300 * 1024), T, T), /too-big/);
 });

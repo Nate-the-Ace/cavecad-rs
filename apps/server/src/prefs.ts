@@ -1,11 +1,12 @@
-// A member's settings that follow them to every device they sign in on (saved panel layouts, so far). Each is one JSON value
+// A member's settings that follow them to every device they sign in on: saved panel layouts, the panel arrangement on
+// screen, and their preferences (units, theme, drawing options and the like). Each is one JSON value
 // under a known key, with when it was last changed, so a device can tell whose copy is newer.
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Db } from './db.ts';
 import { readJson, send, sendBadBody } from './http.ts';
 
 /** The settings kept for a member, and the largest value each may be (JSON text). */
-const KEYS: Record<string, number> = { layouts: 256 * 1024 };
+const KEYS: Record<string, number> = { layouts: 256 * 1024, dock: 256 * 1024, settings: 64 * 1024 };
 
 export type Pref = { value: unknown; updatedAt: number } | null;
 

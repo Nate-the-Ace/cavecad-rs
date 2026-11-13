@@ -7,6 +7,7 @@
   import TextEditor from './components/TextEditor.svelte';
   import { checkShareLink, library, refreshLibrary } from './lib/pattern-library.svelte';
   import { syncLayouts } from './lib/layouts.svelte';
+  import { startAccountSync, syncAccountSettings } from './lib/account-sync.svelte';
   import { onMount, untrack } from 'svelte';
   import Ribbon from './components/Ribbon.svelte';
   import NewCave from './components/NewCave.svelte';
@@ -138,6 +139,7 @@
     void startAccount();
     startUpdateChecks(); // the desktop app: a newer version, offered by the bar once it is downloaded
     const stopRooms = startRooms(); // the open cave kept in step through its Private room
+    const stopSync = startAccountSync(); // preferences and the panel arrangement follow the account
     window.addEventListener('keydown', noPageSelectAll);
     window.addEventListener('copy', onCopy);
     window.addEventListener('cut', onCut);
@@ -169,6 +171,7 @@
     })();
     return () => {
       stopRooms();
+      stopSync();
       unguard();
       document.removeEventListener('visibilitychange', keepNow);
       window.removeEventListener('pagehide', keepNow);
@@ -229,6 +232,7 @@
     libraryReadFor = who;
     untrack(() => {
       void syncLayouts(); // saved panel layouts follow the account too
+      void syncAccountSettings(); // and the preferences and the panel arrangement on screen
       void refreshLibrary();
       void checkShareLink().then(() => {
         if (library.incoming) showPanel('patterns');

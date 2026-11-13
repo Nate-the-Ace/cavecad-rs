@@ -265,6 +265,28 @@ export function initWorkspace(el: HTMLElement, help?: ConstructorParameters<type
   };
 }
 
+/** The key the panel arrangement on screen is kept under on this device (account-sync.ts follows it). */
+export const DOCK_KEY = LAYOUT_KEY;
+
+/** Puts an arrangement (from the account) on screen. False when it cannot be used here. */
+export function applyDock(layout: unknown): boolean {
+  if (!api || !layout) return false;
+  const before = api.toJSON();
+  try {
+    api.fromJSON(layout as Parameters<DockviewApi['fromJSON']>[0]);
+    if (!api.panels.length || !api.panels.every((p) => p.id in PANELS)) throw new Error('unknown panels');
+    refreshOpen();
+    return true;
+  } catch {
+    try {
+      api.fromJSON(before);
+    } catch {
+      /* the dock keeps what it has */
+    }
+    return false;
+  }
+}
+
 /** Shows a hidden panel or hides a visible one. */
 export function togglePanel(id: string) {
   if (!api) return;
