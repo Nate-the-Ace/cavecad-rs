@@ -10,10 +10,13 @@
     .then(async (r) => {
       if (!r.ok || !(r.headers.get('content-type') ?? '').includes('json')) return (error = UNAVAILABLE);
       manifest = await r.json();
-      if (!choices(manifest!, mine).length) error = UNAVAILABLE;
+      if (!choices(manifest!, mine).length && !manifest!.dev) error = UNAVAILABLE;
     })
     .catch(() => (error = "Couldn't reach CaveCAD. Check your connection."));
   const list = $derived(manifest ? choices(manifest, mine) : []);
+  // admins also get the newest test build (the server sends `dev` to admins only)
+  const dev = $derived(manifest?.dev ?? null);
+  const devList = $derived(dev ? choices(dev, mine) : []);
 </script>
 
 <svelte:window onkeydown={(e) => e.key === 'Escape' && onclose()} />
@@ -28,6 +31,20 @@
       <p class="hint">{c.steps}</p>
     </div>
   {/each}
+  {#if dev && devList.length}
+    <h3>Test build {dev.version} <span class="tag">admins</span></h3>
+    <p class="hint">Work in progress, for trying things before everyone gets them. Once installed, switch Account → Updates to "Test builds" so it keeps updating.</p>
+    {#each devList.slice(0, 1) as c}
+      <div class="item">
+        <a class="btn" href={'/downloads/dev/' + encodeURIComponent(c.file)} download>{c.label} (test build)</a>
+      </div>
+    {/each}
+    {#if devList.length > 1}
+      <details><summary class="hint">Other computers</summary>
+        {#each devList.slice(1) as c}<div class="item"><a class="btn" href={'/downloads/dev/' + encodeURIComponent(c.file)} download>{c.label} (test build)</a></div>{/each}
+      </details>
+    {/if}
+  {/if}
   <div class="row"><button class="btn" onclick={onclose}>Close</button></div>
 </div>
 
@@ -40,5 +57,8 @@
   .btn.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
   .hint { margin: 0; color: var(--muted); font-size: 12px; }
   .bad { color: var(--danger); }
+  h3 { margin: 8px 0 0; font-size: 14px; color: var(--text-strong); }
+  .tag { font-size: 11px; font-weight: normal; padding: 1px 6px; border-radius: 8px; background: var(--panel-2); border: 1px solid var(--line); color: var(--muted); }
+  details .item { margin-top: 6px; }
   .row { display: flex; justify-content: flex-end; }
 </style>

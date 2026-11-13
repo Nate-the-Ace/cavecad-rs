@@ -106,6 +106,12 @@ export function mayLoadApp(db: Db, who: Identity, opts: { adminEmail: string; no
   return row ? 'removed' : 'not-invited';
 }
 
+/** Whether `email` belongs to an active admin (who may also fetch test builds of the desktop app). */
+export function isAdmin(db: Db, email: string): boolean {
+  const row = memberByEmail(db, email);
+  return !!row && row.removed_at === null && row.role === 'admin';
+}
+
 /** Whether an emailed code may be sent to this address: the same people `mayLoadApp` lets in. */
 export function mayGetIn(db: Db, email: string, opts: { adminEmail: string; now: number }): boolean {
   return mayLoadApp(db, { email, name: '', provider: null, subject: '' }, opts) === 'yes';

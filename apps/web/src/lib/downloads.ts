@@ -1,6 +1,6 @@
 // The desktop downloads offered in the web app: which computer this is, and the installers in the order to show.
 export type Platform = 'mac' | 'windows' | 'linux';
-export type Manifest = { version: string; builtAt: string; files: Record<string, string> };
+export type Manifest = { version: string; builtAt: string; files: Record<string, string>; dev?: Manifest };
 export type Choice = { platform: Platform; label: string; file: string; steps: string };
 
 export function platformOf(ua: string, uaPlatform: string, touchPoints = 0): Platform | null {

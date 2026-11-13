@@ -90,7 +90,8 @@ export type FoundUpdate = { version: string; installable: boolean };
 
 /** Asks the CaveCAD server (`base`, signed in with `token`) for a newer version of this app, and downloads and
  * verifies it when this copy can install it. `null`: up to date. */
-export const updatePrepareNative = (base: string, token: string): Promise<FoundUpdate | null> => call('update_prepare', { base, token });
+export const updatePrepareNative = (base: string, token: string, channel: 'stable' | 'dev'): Promise<FoundUpdate | null> =>
+  call('update_prepare', { base, token, channel });
 
 /** Installs the update `updatePrepareNative` kept, and restarts into it. */
 export const updateInstallNative = (): Promise<void> => call('update_install');

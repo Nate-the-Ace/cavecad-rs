@@ -5,11 +5,13 @@
   import { flush } from '../../lib/shelf.svelte';
   import DownloadsPanel from './DownloadsPanel.svelte';
   import { isDesktop } from '../../lib/desktop';
+  import { isTestBuild, setUpdateChannel, updateChannel } from '../../lib/desktop-update.svelte';
 
   const m = $derived(account.member);
   const by = $derived(m?.provider === 'google' ? 'Google' : m?.provider === 'email' ? 'an emailed code' : m?.provider === 'microsoft' ? 'Microsoft' : '');
   let error = $state('');
   let showDownloads = $state(false);
+  let channel = $state(updateChannel());
   async function save(p: { displayName?: string; colour?: string }) {
     error = '';
     try {
@@ -41,6 +43,16 @@
     <div class="row"><span class="lab">Role</span><span class="val">{m.role === 'admin' ? 'Admin' : 'Member'}</span></div>
     {#if !isDesktop() && !account.tailnet}
       <div class="row"><span class="lab">Desktop app</span><button class="btn" onclick={() => (showDownloads = true)}>Get the desktop app</button></div>
+    {/if}
+    {#if isDesktop() && (m.role === 'admin' || isTestBuild)}
+      <label class="row" title="Test builds carry work in progress (like the Cavway X1 link) before everyone gets it. Admins only.">
+        <span class="lab">Updates</span>
+        <select class="field" bind:value={channel} disabled={m.role !== 'admin'} onchange={() => setUpdateChannel(channel)}>
+          <option value="stable">Regular releases</option>
+          <option value="dev">Test builds (admins)</option>
+        </select>
+        {#if isTestBuild}<span class="hint">This copy is a test build</span>{/if}
+      </label>
     {/if}
     {#if account.phase === 'offline' || account.phase === 'offline-expired'}<p class="hint">Offline: changes here wait until you're back online.</p>{/if}
     {#if error}<p class="hint bad">{error}</p>{/if}

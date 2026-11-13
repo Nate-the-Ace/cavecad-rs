@@ -34,7 +34,9 @@ fn can_install() -> bool {
     }
 }
 
-/// Asks `base` (the account API, `https://api.cavecad.com`) for a version newer than this one. When there is one and
+/// Asks `base` (the account API, `https://api.cavecad.com`) for a version newer than this one. `channel` `"dev"`
+/// (admins' test builds) asks for the newer of the test build and the regular one; the server ignores it for
+/// anyone who is not an admin. When there is one and
 /// this copy can install it, downloads and verifies it, and keeps it until [`update_install`]. `None`: up to date.
 #[tauri::command]
 pub async fn update_prepare(
@@ -42,12 +44,18 @@ pub async fn update_prepare(
     pending: State<'_, Pending>,
     base: String,
     token: String,
+    channel: Option<String>,
 ) -> Result<Option<Found>, String> {
     if !base.starts_with("https://") && !base.starts_with("http://localhost") {
         return Err("the update address must be https".into());
     }
+    let query = if channel.as_deref() == Some("dev") {
+        "?channel=dev"
+    } else {
+        ""
+    };
     let endpoint = format!(
-        "{}/api/desktop-update/{{{{target}}}}/{{{{arch}}}}/{{{{current_version}}}}",
+        "{}/api/desktop-update/{{{{target}}}}/{{{{arch}}}}/{{{{current_version}}}}{query}",
         base.trim_end_matches('/')
     )
     .parse()
