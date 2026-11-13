@@ -73,6 +73,7 @@ pub fn builtin_library() -> Library {
     }
     let motifs = vec![
         strokes("Tick", &[&[[0.0, -0.5], [0.0, 0.5]]]),
+        strokes("Dash", &[&[[-0.5, 0.0], [0.5, 0.0]]]),
         strokes("Tick up", &[&[[0.0, 0.0], [0.0, 1.0]]]),
         strokes("Chevron", &[&[[-0.35, 0.5], [0.0, 0.0], [-0.35, -0.5]]]),
         strokes(
@@ -197,6 +198,63 @@ pub fn builtin_library() -> Library {
         },
     ]);
     let fills = vec![
+        // Starting points like the map's own area fills, to copy and adjust.
+        FillDef {
+            name: "Sand".into(),
+            layers: vec![Layer::Tile {
+                motif: "Dot".into(),
+                size_mm: 0.3,
+                across_mm: 1.4,
+                down_mm: 1.4,
+                stagger: true,
+                turn_deg: 0.0,
+                random_turn: false,
+                size_var: 0.3,
+                jitter: 0.9,
+                skip: 0.2,
+            }],
+            tint: false,
+        },
+        FillDef {
+            name: "Pebbles".into(),
+            layers: vec![Layer::Tile {
+                motif: "Ring".into(),
+                size_mm: 1.2,
+                across_mm: 3.0,
+                down_mm: 3.0,
+                stagger: true,
+                turn_deg: 0.0,
+                random_turn: true,
+                size_var: 0.5,
+                jitter: 0.7,
+                skip: 0.2,
+            }],
+            tint: false,
+        },
+        FillDef {
+            name: "Clay".into(),
+            layers: vec![Layer::Tile {
+                motif: "Dash".into(),
+                size_mm: 1.6,
+                across_mm: 3.2,
+                down_mm: 1.6,
+                stagger: true,
+                turn_deg: 0.0,
+                random_turn: false,
+                size_var: 0.0,
+                jitter: 0.15,
+                skip: 0.0,
+            }],
+            tint: false,
+        },
+        FillDef {
+            name: "Water".into(),
+            layers: vec![Layer::Hatch {
+                angle_deg: 0.0,
+                spacing_mm: 1.8,
+            }],
+            tint: true,
+        },
         FillDef {
             name: "Cross-hatch".into(),
             layers: vec![
@@ -236,6 +294,8 @@ pub fn builtin_library() -> Library {
             tint: false,
         },
     ];
+    let mut fills = fills;
+    fills.extend(crate::standard_fills());
     Library {
         motifs,
         lines,

@@ -31,16 +31,27 @@ The Patterns panel is where you look at, copy and make the linetypes, fills and 
 
 ### Fills
 
-1. Each layer is **Hatch lines**, **Dots** or **Motif tiles**. Add one with **+ Hatch**, **+ Dots** or **+ Motif tiles**.
-2. Set the angle and spacing for hatch lines, or the spacing and dot size for dots.
-3. Tick **tint the whole area** to colour the area behind the pattern.
-4. Slide **denser** to judge the pattern at other spacings. This changes only the preview.
+1. Under **Comes with CaveCAD** are starting points like the map's own fills (Sand, Pebbles, Clay, Water) and every standard AutoCAD hatch pattern: **ANSI31** to **ANSI38** and the architectural **AR-** patterns (bricks, concrete, herringbone, parquet, roofing, shakes, sand). The AR patterns are drawn at 1/16 of real size, so a brick is about 13 mm on paper.
+2. A fill is made of **layers** drawn on top of each other. Each shows as a card with its own small sample; click one to change it in the box underneath.
+3. Add a layer with **+ Hatch lines**, **+ Dots**, **+ Scattered motifs** or **+ Pattern lines**. Pattern lines work like a line of an AutoCAD pattern: an angle, a row spacing, how far each row is shifted along, a start point and a dash list (more than 0 a dash, less than 0 a gap, 0 a dot).
+4. To mix patterns, pick one under **Add a whole pattern…**: all of its layers go on top of this fill's, and each can then be changed on its own. A fill holds up to 32 layers.
+5. Tick **Shade the whole area lightly as well** to colour the area behind the pattern.
+6. Slide **Try it denser** to judge the pattern at other spacings. This changes only the preview.
+7. Once saved, press **Draw an area with it** and draw round an area, or select areas on the map and press **Use on selected areas**.
+
+#### Importing AutoCAD patterns
+
+1. On the **Fills** tab, pick the file's units: **Millimetres** for acadiso.pat and most metric files, **Inches** for AutoCAD's acad.pat. A file that says it is in inches is read as inches either way.
+2. Tick **Real-size patterns** for architectural patterns drawn at real size, so they are shrunk to 1/16.
+3. Press **Import .pat…** and pick one or more files. Every pattern in them becomes one of your fills. A name already taken gets "copy" added.
 
 ### Motifs
 
-1. Pick **Straight**, **Freehand** or **Circle** and draw in the box.
-2. Press **Close shape** to join the end of a line back to its start.
-3. Use **Undo stroke** or **Clear** to fix mistakes, then press **Save motif**.
+1. Pick **Straight**, **Freehand** or **Circle** and draw in the box. The dashed line across the middle is the line a linetype stands the motif on.
+2. For straight lines, click each corner, then press **Finish line** (or Enter, or double-click). **Close shape** joins the end back to the start.
+3. Tick **Solid** first to have closed shapes and circles filled in.
+4. **Undo stroke** takes back the last stroke; **Clear…** starts again.
+5. Under the box the motif shows at four sizes and repeated along a line. Press **Save**, then use it in a linetype or fill by adding a Motif part there.
 
 ## What can go wrong
 
@@ -49,7 +60,8 @@ The Patterns panel is where you look at, copy and make the linetypes, fills and 
 | "Open a cave to make patterns of your own. The ones that come with CaveCAD can be looked at." | No cave is open, so **+ New** is greyed out. | Open or make a cave first. |
 | The fields are greyed out and **Save** is missing | You picked a pattern that comes with CaveCAD, which cannot be changed. | Press **Make my own copy**. |
 | **Save** is greyed out | Nothing has changed yet, or the pattern has a problem. A red line under the parts says what. | Fix the part it names, or change something. |
-| **+ Motif** or **+ Motif tiles** is greyed out | The cave has no motifs yet. | Make one on the **Motifs** tab first. |
+| **+ Motif** or **+ Scattered motifs** is greyed out | The cave has no motifs yet. | Make one on the **Motifs** tab first. |
+| An imported .pat comes out tiny or huge | The file units or the real-size choice did not match the file. | Delete the imported fills and import again with the other units, or with Real-size patterns ticked. |
 | A motif shows "(missing)" | The line or fill uses a motif that no longer exists. | Pick another motif from that row's menu. |
 
 ## Related
@@ -57,3 +69,4 @@ The Patterns panel is where you look at, copy and make the linetypes, fills and 
 - [Symbols](symbols)
 - [Map](map)
 - [Profile](profile)
+

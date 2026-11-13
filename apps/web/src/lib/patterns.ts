@@ -43,7 +43,8 @@ export type Layer =
       size_var: number;
       jitter: number;
       skip: number;
-    };
+    }
+  | { t: 'patlines'; angle_deg: number; x_mm: number; y_mm: number; shift_mm: number; spacing_mm: number; dashes_mm: number[] };
 
 export interface FillDef {
   name: string;
@@ -82,6 +83,8 @@ export function newElement(kind: Element['t'], motif: string): Element {
 /** What a new layer of a fill starts as. */
 export function newLayer(kind: Layer['t'], motif: string): Layer {
   switch (kind) {
+    case 'patlines':
+      return { t: 'patlines', angle_deg: 45, x_mm: 0, y_mm: 0, shift_mm: 0, spacing_mm: 3, dashes_mm: [] };
     case 'hatch':
       return { t: 'hatch', angle_deg: 45, spacing_mm: 3 };
     case 'dots':

@@ -12,13 +12,15 @@ mod fill;
 mod library;
 mod linetype;
 mod motif;
+mod pat;
 
-pub use fill::{FillDef, Layer, fill_marks, rotated};
+pub use fill::{FillDef, Layer, MAX_DASHES, fill_marks, rotated};
 pub use library::{Library, builtin_library};
 pub use linetype::{
     Element, Layout, LineDef, Placement, lay_out, marks as line_marks, motifs_used,
 };
 pub use motif::Motif;
+pub use pat::{AR_SCALE, PatError, parse_pat, standard_fills};
 
 /// Why a definition was refused.
 #[derive(Clone, Debug, PartialEq, Eq)]

@@ -5,7 +5,7 @@
   import { cave, changed } from '../lib/cave.svelte';
   import { engine, loadEngine } from '../lib/engine';
   import { drawing } from '../lib/line-style.svelte';
-  import { drawMarks } from '../lib/patterns';
+  import { drawMarks, drawMotif } from '../lib/patterns';
   import PatternCanvas from '../components/patterns/PatternCanvas.svelte';
   import { copyName, plain, type FillDef, type LineDef, type Motif, type PatternKind, type PatternLibrary } from '../lib/patterns';
   import FillEditor from '../components/patterns/FillEditor.svelte';
@@ -51,6 +51,43 @@
     void items;
     queueMicrotask(() => listEl?.querySelector('.item.on')?.scrollIntoView({ block: 'nearest' }));
   });
+
+  let patInput = $state<HTMLInputElement>();
+  let realSize = $state(false);
+  let patUnits = $state<'mm' | 'in'>('mm');
+  /** Reads .pat files into the cave's own fills; a name already taken gets " copy". */
+  async function importPat(input: HTMLInputElement) {
+    const files = [...(input.files ?? [])];
+    input.value = '';
+    if (!files.length || !mayLeave()) return;
+    let made = 0;
+    const said: string[] = [];
+    const taken = [...names];
+    let last = '';
+    for (const f of files) {
+      let text = await f.text();
+      // a file that says it is in inches is read as inches either way; picking inches covers files that do not say
+      if (patUnits === 'in') text = ';%UNITS=INCH\n' + text.replace(/^\s*;\s*%\s*UNITS\s*=\s*INCH.*$/gim, '');
+      const got = engine.readPat(text, realSize ? 1 / 16 : 1);
+      if (typeof got === 'string') {
+        said.push(`${f.name}: ${got}`);
+        continue;
+      }
+      for (const d of got) {
+        const name = taken.includes(d.name) ? copyName(d.name, taken) : d.name;
+        const r = engine.savePattern('fill', { ...d, name });
+        if (r === 'ok') {
+          taken.push(name);
+          made++;
+          last = name;
+        } else said.push(`${d.name}: ${r.replace(/^error: /, '')}`);
+      }
+    }
+    if (made) changed();
+    pendingNew = null;
+    if (last) picked = { kind: 'fill', name: last };
+    message = [made ? `Imported ${made} pattern${made === 1 ? '' : 's'} into your fills.` : '', ...said].filter(Boolean).join(' ');
+  }
 
   /** The editor has changes not saved yet. */
   let dirty = $state(false);
@@ -120,6 +157,42 @@
     };
   }
 
+  /** A small patch of a fill for the list. */
+  function fillSwatch(def: FillDef) {
+    return (g: CanvasRenderingContext2D, w: number, h: number) => {
+      const scale = drawing.scale;
+      // zoomed so a few repeats show: the pattern's typical spacing comes out about 7 pixels
+      const sizes = def.layers
+        .map((l) => (l.t === 'tile' ? l.across_mm : l.t === 'patlines' ? Math.abs(l.spacing_mm) : l.spacing_mm))
+        .filter((v) => v > 0)
+        .sort((a, b) => a - b);
+      const typical = sizes.length ? sizes[Math.floor(sizes.length / 2)] : 3;
+      const pxPerMm = Math.max(0.3, Math.min(3.78, 7 / typical));
+      const pxPerM = (pxPerMm * 1000) / scale;
+      const hx = w / 2 / pxPerM;
+      const hy = h / 2 / pxPerM;
+      try {
+        const marks = engine.fillPatternMarks(plain(def), [[-hx, -hy], [hx, -hy], [hx, hy], [-hx, hy]], 'swatch', 1, scale);
+        g.save();
+        if (marks.tint) {
+          g.globalAlpha = 0.25;
+          g.fillRect(0, 0, w, h);
+          g.globalAlpha = 1;
+        }
+        drawMarks(g, marks, ([x, y]) => [w / 2 + x * pxPerM, h / 2 - y * pxPerM], pxPerM);
+        g.restore();
+      } catch {
+        /* a fill that cannot be laid out shows no sample */
+      }
+    };
+  }
+  /** A motif's drawing, a few times along, for the list. */
+  function motifSwatch(def: Motif) {
+    return (g: CanvasRenderingContext2D, w: number, h: number) => {
+      for (let x = h / 2 + 2; x < w - h / 2; x += h * 1.4) drawMotif(g, def.prims, x, h / 2, h * 0.7);
+    };
+  }
+
   function undo() {
     // the cave's own undo covers saves and removals; this is a pointer to it, not a second history
     changed();
@@ -140,6 +213,17 @@
   <div class="body">
     <div class="list" bind:this={listEl}>
       <button class="new" onclick={create} disabled={!cave.hasCave}>+ New</button>
+      {#if kind === 'fill'}
+        <button class="new" onclick={() => patInput?.click()} disabled={!cave.hasCave} title="Read an AutoCAD hatch pattern file (.pat) into your fills">Import .pat…</button>
+        <label class="small-check col" title="acadiso.pat and most metric files are millimetres; AutoCAD's acad.pat is inches">File units
+          <select bind:value={patUnits} aria-label="Units of the .pat file">
+            <option value="mm">Millimetres (acadiso.pat)</option>
+            <option value="in">Inches (acad.pat)</option>
+          </select>
+        </label>
+        <label class="small-check" title="Architectural patterns (bricks, boards, roofing) are drawn at their real size; this draws them at 1/16 so they suit a map"><input type="checkbox" bind:checked={realSize} /> Real-size patterns (shrink 1/16)</label>
+        <input bind:this={patInput} type="file" accept=".pat,text/plain" multiple hidden onchange={(e) => importPat(e.currentTarget)} />
+      {/if}
       {#each [true, false] as mine}
         {@const group = items.filter((it) => !!it.own === mine)}
         {#if group.length}
@@ -147,7 +231,9 @@
           {#each group as it (it.name)}
             <button class="item" class:on={picked?.kind === kind && picked.name === it.name} onclick={() => pick(it.name)} title={mine ? it.name : `${it.name}: comes with CaveCAD, copy it to change it`}>
               <span class="label">{it.name}</span>
-              {#if kind === 'line'}<span class="swatch"><PatternCanvas draw={swatch(it as LineDef)} height={18} /></span>{/if}
+              {#if kind === 'line'}<span class="swatch"><PatternCanvas draw={swatch(it as LineDef)} height={18} /></span>
+              {:else if kind === 'fill'}<span class="swatch"><PatternCanvas draw={fillSwatch(it as FillDef)} height={26} /></span>
+              {:else}<span class="swatch icon"><PatternCanvas draw={motifSwatch(it as Motif)} height={26} /></span>{/if}
             </button>
           {/each}
         {/if}
@@ -165,9 +251,9 @@
           {#if kind === 'line'}
             <LineEditor def={shown as LineDef} {lib} onsaved={saved} onremoved={removed} onduplicate={duplicate} ondirty={(d) => (dirty = d)} unsaved={!current} />
           {:else if kind === 'fill'}
-            <FillEditor def={shown as FillDef} {lib} onsaved={saved} onremoved={removed} onduplicate={duplicate} />
+            <FillEditor def={shown as FillDef} {lib} onsaved={saved} onremoved={removed} onduplicate={duplicate} ondirty={(d) => (dirty = d)} unsaved={!current} />
           {:else}
-            <MotifEditor def={shown as Motif} onsaved={saved} onremoved={removed} onduplicate={duplicate} />
+            <MotifEditor def={shown as Motif} onsaved={saved} onremoved={removed} onduplicate={duplicate} ondirty={(d) => (dirty = d)} unsaved={!current} />
           {/if}
         {/key}
       {/if}
@@ -184,6 +270,9 @@
   .body { display: flex; flex: 1; min-height: 0; gap: 10px; padding: 8px 10px 10px; }
   .list { width: 170px; flex: none; display: flex; flex-direction: column; gap: 2px; overflow: auto; }
   .saved { margin: 0 0 8px; padding: 6px 8px; font-size: 12px; border-radius: var(--radius); background: var(--accent-bg); }
+  .small-check.col { flex-direction: column; gap: 2px; }
+  .small-check select { font-size: 11px; width: 100%; }
+  .small-check { display: flex; gap: 4px; align-items: flex-start; font-size: 10px; color: var(--muted); margin: 0 2px 4px; }
   .group { margin: 6px 2px 2px; font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
   .label { display: block; }
   .swatch { display: block; margin-top: 3px; }
