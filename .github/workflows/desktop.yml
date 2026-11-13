@@ -100,7 +100,8 @@ jobs:
           releaseBody: Unsigned builds of the CaveCAD desktop app. macOS and Windows warn the first time you open one. Built from the commit this release's tag points at.
           releaseDraft: true
           prerelease: true
-          args: ${{ matrix.args }}
+          # test builds: the localhost debug bridge (src-tauri/src/bridge.rs) and a window that keeps running when covered
+          args: ${{ matrix.args }} ${{ inputs.channel == 'dev' && '--features debug-bridge --config src-tauri/tauri.testbuild.conf.json' || '' }}
           uploadUpdaterJson: false
 
   # The update list (latest.json) for every platform, once all three builds are on the release.

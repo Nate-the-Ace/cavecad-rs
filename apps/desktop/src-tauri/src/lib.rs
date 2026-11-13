@@ -3,6 +3,7 @@
 //! folder dialog gives the real path, pages are read straight from it, and Reveal opens the file
 //! manager on the real file.
 
+mod bridge;
 mod cavefolder;
 mod files;
 mod update;
@@ -211,6 +212,8 @@ pub fn run() {
             app.deep_link().on_open_url(move |event| {
                 hand_over(&handle, event.urls().into_iter().map(|u| u.to_string()))
             });
+            #[cfg(feature = "debug-bridge")]
+            bridge::start(app.handle());
             if let Ok(Some(urls)) = app.deep_link().get_current() {
                 app.state::<Links>().0.lock().unwrap().extend(
                     urls.into_iter()
@@ -224,6 +227,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(update::Pending::default())
+        .manage(bridge::Waiting::default())
         .invoke_handler(tauri::generate_handler![
             pick_folder,
             list_scans,
@@ -240,7 +244,8 @@ pub fn run() {
             read_cave,
             write_export,
             update::update_prepare,
-            update::update_install
+            update::update_install,
+            bridge::bridge_result
         ])
         .run(tauri::generate_context!())
         .expect("the CaveCAD desktop app could not start");
