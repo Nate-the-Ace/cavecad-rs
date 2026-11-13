@@ -27,6 +27,8 @@ export function setUpdateChannel(c: 'stable' | 'dev'): void {
   } catch {
     /* private window: stays stable */
   }
+  // forget an update found on the other channel (a downloaded test build must not install after switching back)
+  update.found = null;
   void checkForUpdate();
 }
 

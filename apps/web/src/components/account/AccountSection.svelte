@@ -49,7 +49,7 @@
         <span class="lab">Updates</span>
         <select class="field" bind:value={channel} disabled={m.role !== 'admin'} onchange={() => setUpdateChannel(channel)}>
           <option value="stable">Regular releases</option>
-          <option value="dev">Test builds (admins)</option>
+          <option value="dev">Test builds</option>
         </select>
         {#if isTestBuild}<span class="hint">This copy is a test build</span>{/if}
       </label>
