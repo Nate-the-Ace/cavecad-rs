@@ -413,6 +413,16 @@ pub const PALETTE: &[Style] = &[
     ),
     s("slope", "Slope", Text, 1.2, Solid, 1.0, 0.4, "CAVE-SLOPES"),
     s(
+        "flowline",
+        "Flowline (water flow)",
+        Accent,
+        1.4,
+        Solid,
+        1.0,
+        0.4,
+        "CAVE-FLOWLINES",
+    ),
+    s(
         "stone",
         "Stone (boulder outline)",
         Text,
@@ -550,6 +560,7 @@ pub const DRAW_TOOLS: &[&str] = &[
     "presumed",
     "narrow",
     "dripline",
+    "flowline",
     "glyphs",
     "joint",
     "fault",
@@ -575,7 +586,7 @@ pub const TOOL_GROUPS: &[(&str, &[&str])] = &[
     ("Annotation", &["text", "callout"]),
     (
         "Passage lines",
-        &["presumed", "narrow", "dripline", "glyphs"],
+        &["presumed", "narrow", "dripline", "flowline", "glyphs"],
     ),
     (
         "Geology and relief",

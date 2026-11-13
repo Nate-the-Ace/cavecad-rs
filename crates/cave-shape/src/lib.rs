@@ -38,6 +38,12 @@ pub enum Kind {
         /// Randomness in position (metres), rotation (degrees) and size (a fraction).
         jitter: (f64, f64, f64),
     },
+    /// A flow line: a run of dots then an arrowhead, repeated along the curve, pointing the way it
+    /// was drawn (flipped, the other way). The spine is not drawn.
+    DotArrows {
+        /// Dots before each arrow.
+        dots: usize,
+    },
 }
 
 /// One shaped style: how its ornament is laid out.
@@ -112,8 +118,20 @@ pub const SHAPES: &[Shape] = &[
     },
 ];
 
+/// The flow line: water flows the way the line was drawn.
+const FLOWLINE: Shape = Shape {
+    key: "flowline",
+    kind: Kind::DotArrows { dots: 2 },
+    spacing: 4.0 * FT,
+    size: 1.0 * FT,
+    hide_spine: true,
+};
+
 /// The shaped style for a type, if it has one.
 pub fn shape(key: &str) -> Option<&'static Shape> {
+    if key == FLOWLINE.key {
+        return Some(&FLOWLINE);
+    }
     SHAPES.iter().find(|s| s.key == key)
 }
 
@@ -257,6 +275,90 @@ pub fn fans(
             let l = if a == 0.0 { len } else { len * FAN_FLANK };
             out.push(vec![[s.x, s.y], [s.x + dx * l, s.y + dy * l]]);
         }
+    }
+    out
+}
+
+/// Points per turn of a dot's ring and spiral.
+const DOT_SIDES: usize = 12;
+/// Turns of the spiral that fills a dot.
+const DOT_TURNS: usize = 4;
+
+/// Flow-line ornament: every `spacing` along the curve, `dots` dots then an arrowhead (a short
+/// shaft and two barbs) pointing along the curve, or back along it when `reverse`. A dot is a small
+/// closed ring; `size` is the arrow's length and sets the dot size too.
+pub fn dot_arrows(
+    pts: &[[f64; 2]],
+    closed: bool,
+    spacing: f64,
+    size: f64,
+    dots: usize,
+    reverse: bool,
+) -> Vec<Vec<[f64; 2]>> {
+    if pts.len() < 2 || spacing <= 0.0 || size <= 0.0 {
+        return Vec::new();
+    }
+    let cum = cumulative(pts, closed);
+    let total = cum[cum.len() - 1];
+    if total <= 0.0 {
+        return Vec::new();
+    }
+    let n = if closed {
+        ((total / spacing).round() as usize).max(1)
+    } else {
+        ((total / spacing).floor() as usize).max(1)
+    };
+    let step = total / n as f64;
+    let dir = if reverse { -1.0 } else { 1.0 };
+    let r = size * 0.14;
+    let barb = 28f64.to_radians();
+    let mut out = Vec::new();
+    for i in 0..n {
+        let start = step * i as f64;
+        // the unit reads in the flow's direction: dots first, then the arrow
+        let slot = |k: f64| {
+            let f = (k + 0.5) / (dots as f64 + 1.0);
+            let along = if reverse { 1.0 - f } else { f };
+            start + step * along
+        };
+        for k in 0..dots {
+            let c = point_at(pts, closed, &cum, slot(k as f64));
+            // one outer ring, then a spiral in to the centre: drawn with the line's own weight it reads as
+            // a solid dot (a polyline cannot be filled)
+            let mut dot: Vec<[f64; 2]> = (0..=DOT_SIDES)
+                .map(|j| {
+                    let a = std::f64::consts::TAU * j as f64 / DOT_SIDES as f64;
+                    [c.x + r * a.cos(), c.y + r * a.sin()]
+                })
+                .collect();
+            let steps = DOT_SIDES * DOT_TURNS;
+            dot.extend((1..=steps).map(|j| {
+                let a = std::f64::consts::TAU * j as f64 / DOT_SIDES as f64;
+                let rr = r * (1.0 - j as f64 / steps as f64);
+                [c.x + rr * a.cos(), c.y + rr * a.sin()]
+            }));
+            out.push(dot);
+        }
+        let mid = slot(dots as f64);
+        let tip = point_at(pts, closed, &cum, mid + dir * size * 0.5);
+        let tail = point_at(pts, closed, &cum, mid - dir * size * 0.5);
+        let (tx, ty) = {
+            let (dx, dy) = (tip.x - tail.x, tip.y - tail.y);
+            let l = dx.hypot(dy);
+            if l > 0.0 {
+                (dx / l, dy / l)
+            } else {
+                (tip.tx * dir, tip.ty * dir)
+            }
+        };
+        out.push(vec![[tail.x, tail.y], [tip.x, tip.y]]);
+        let head = size * 0.45;
+        let back = |a: f64| {
+            let (ca, sa) = (a.cos(), a.sin());
+            let (bx, by) = (-tx * ca + ty * sa, -tx * sa - ty * ca);
+            [tip.x + bx * head, tip.y + by * head]
+        };
+        out.push(vec![back(barb), [tip.x, tip.y], back(-barb)]);
     }
     out
 }
@@ -596,6 +698,7 @@ pub fn ornament(key: &str, pts: &[[f64; 2]], closed: bool, dress: Dress) -> Vec<
         Kind::Ticks => ticks(pts, closed, s.spacing, s.size, side),
         Kind::Fans { splay_deg } => fans(pts, closed, s.spacing, s.size, side, splay_deg),
         Kind::Scallops { bulge } => scallops(pts, closed, s.spacing, bulge, side),
+        Kind::DotArrows { dots } => dot_arrows(pts, closed, s.spacing, s.size, dots, dress.flip),
         Kind::Glyphs {
             symbol,
             offset,
@@ -650,6 +753,55 @@ pub fn ornament(key: &str, pts: &[[f64; 2]], closed: bool, dress: Dress) -> Vec<
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn a_flow_line_is_dots_then_an_arrow_pointing_downstream() {
+        let line = [[0.0, 0.0], [12.0 * FT, 0.0]];
+        let parts = dot_arrows(&line, false, 4.0 * FT, FT, 2, false);
+        assert_eq!(
+            parts.len(),
+            3 * 4,
+            "three units, each two dots, a shaft and a head"
+        );
+        let unit = &parts[0..4];
+        let centre =
+            |ring: &Vec<[f64; 2]>| ring.iter().map(|p| p[0]).sum::<f64>() / ring.len() as f64;
+        let (d1, d2) = (centre(&unit[0]), centre(&unit[1]));
+        let tip = unit[3][1];
+        assert!(
+            d1 < d2 && d2 < tip[0],
+            "dots come before the arrow along the flow"
+        );
+        assert!(
+            unit[3][0][0] < tip[0] && unit[3][2][0] < tip[0],
+            "barbs sweep back from the tip"
+        );
+        let c0 = [centre(&unit[0]), 0.0];
+        assert!(
+            unit[0].iter().all(|p| dist(*p, c0) <= FT * 0.14 + 1e-3),
+            "a dot stays within its radius"
+        );
+        // Flipped, the water runs the other way: the tip is upstream of the dots.
+        let back = dot_arrows(&line, false, 4.0 * FT, FT, 2, true);
+        let (b1, tipb) = (centre(&back[0]), back[3][1]);
+        assert!(tipb[0] < b1, "flipped arrow points back along the line");
+        assert!(
+            ornament(
+                "flowline",
+                &line,
+                false,
+                Dress {
+                    flip: false,
+                    seed: 1,
+                    survey: &[]
+                }
+            )
+            .len()
+                == 12
+        );
+        assert!(shape("flowline").unwrap().hide_spine);
+    }
+
     use super::*;
 
     fn line10() -> Vec<[f64; 2]> {
