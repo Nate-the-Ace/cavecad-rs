@@ -13,10 +13,13 @@
   import FillEditor from '../components/patterns/FillEditor.svelte';
   import LineEditor from '../components/patterns/LineEditor.svelte';
   import MotifEditor from '../components/patterns/MotifEditor.svelte';
+  import { acceptShare, dropFromLibrary, keepInLibrary, library, shareLink, useInCave, type LibraryDef } from '../lib/pattern-library.svelte';
+  import { account } from '../lib/account.svelte';
 
   let ready = $state(false);
   let kind = $state<PatternKind>('line');
-  let picked = $state<{ kind: PatternKind; name: string } | null>(null);
+  /** The pattern on show: the cave's (or one that comes with CaveCAD), or one from the account library (`from`). */
+  let picked = $state<{ kind: PatternKind; name: string; from?: 'library' } | null>(null);
   let message = $state('');
   onMount(() => {
     loadEngine().then(() => (ready = true));
@@ -27,7 +30,14 @@
     return ready ? engine.patternLibrary() : { motifs: [], lines: [], fills: [] };
   });
   const items = $derived(kind === 'line' ? lib.lines : kind === 'fill' ? lib.fills : lib.motifs);
-  const current = $derived(picked && picked.kind === kind ? items.find((i) => i.name === picked!.name) : undefined);
+  const current = $derived(picked && picked.kind === kind && picked.from !== 'library' ? items.find((i) => i.name === picked!.name) : undefined);
+  /** Library patterns of this kind that are not in the cave already (a cave pattern of the same name shows instead). */
+  const libraryOnly = $derived(library.items.filter((i) => i.kind === kind && !items.some((c) => c.own && c.name === i.name)));
+  /** The library pattern on show, if one is. */
+  const libPicked = $derived(picked?.from === 'library' && picked.kind === kind ? library.items.find((i) => i.kind === kind && i.name === picked!.name) : undefined);
+  const signedIn = $derived(account.phase === 'ready' || account.phase === 'offline');
+  const mineHere = $derived(items.filter((it) => it.own));
+  const builtin = $derived(items.filter((it) => !it.own));
   const names = $derived(items.map((i) => i.name));
 
   const TITLES: Record<PatternKind, string> = { line: 'Linetypes', fill: 'Fills', motif: 'Motifs' };
@@ -79,6 +89,7 @@
         const name = taken.includes(d.name) ? copyName(d.name, taken) : d.name;
         const r = engine.savePattern('fill', { ...d, name });
         if (r === 'ok') {
+          if (signedIn) void keepInLibrary('fill', { ...d, name } as LibraryDef);
           taken.push(name);
           made++;
           last = name;
@@ -129,7 +140,11 @@
     picked = { kind, name: def.name };
   }
   let pendingNew = $state<(LineDef | FillDef | Motif) | null>(null);
-  const shown = $derived(current ?? (picked && picked.kind === kind && pendingNew && pendingNew.name === picked.name ? pendingNew : undefined));
+  const shown = $derived(
+    current ??
+      (picked && picked.kind === kind && pendingNew && pendingNew.name === picked.name && picked.from !== 'library' ? pendingNew : undefined) ??
+      (libPicked ? ({ ...(libPicked.def as object), name: libPicked.name, own: false } as LineDef | FillDef | Motif) : undefined),
+  );
 
   function duplicate() {
     if (!shown || !mayLeave()) return;
@@ -137,14 +152,65 @@
     pendingNew = copy;
     picked = { kind, name: copy.name };
   }
-  function pick(name: string) {
-    if (picked?.kind === kind && picked.name === name) return;
+  function pick(name: string, from?: 'library') {
+    if (picked?.kind === kind && picked.name === name && picked.from === from) return;
     if (!mayLeave()) return;
     message = '';
     pendingNew = null;
+    picked = from ? { kind, name, from } : { kind, name };
+  }
+  /** Puts the library pattern on show into the cave, then shows the cave's copy. */
+  function useFromLibrary() {
+    if (!libPicked) return;
+    if (!cave.hasCave) {
+      message = 'Open a cave first.';
+      return;
+    }
+    const why = useInCave(libPicked);
+    if (why) {
+      message = why;
+      return;
+    }
+    changed();
+    const name = libPicked.name;
     picked = { kind, name };
+    message = `“${name}” is in this cave now.`;
+  }
+  async function share() {
+    const name = shown?.name;
+    if (!name) return;
+    // a cave pattern not in the library yet (saved before sign-in) goes there first, so it can be shared
+    if (current?.own && !library.items.some((i) => i.kind === kind && i.name === name)) await keepInLibrary(kind, current as LibraryDef);
+    const link = await shareLink([{ kind, name }]);
+    if (!link) {
+      message = library.problem || 'The share link could not be made.';
+      return;
+    }
+    let copied = false;
+    try {
+      await navigator.clipboard.writeText(link);
+      copied = true;
+    } catch {
+      /* the link is shown to copy by hand */
+    }
+    message = `${copied ? 'Link copied' : 'Share link'}: ${link} — anyone signed in to CaveCAD who opens it can add a copy to their library.`;
+  }
+  async function removeFromLibrary() {
+    if (!libPicked || !confirm(`Take “${libPicked.name}” out of your library? Caves that use it keep their own copy.`)) return;
+    await dropFromLibrary(kind, libPicked.name);
+    picked = null;
+    message = library.problem || 'Taken out of your library.';
+  }
+  async function takeShare() {
+    const from = library.incoming?.from ?? '';
+    const n = await acceptShare();
+    message = n ? `Added ${n} pattern${n === 1 ? '' : 's'} from ${from} to your library. Pick one under My library, then Use in this cave.` : library.problem || 'Nothing was added.';
   }
   function saved(name: string) {
+    // every pattern saved in a cave is kept in the account library too
+    const now = engine.patternLibrary();
+    const def = (kind === 'line' ? now.lines : kind === 'fill' ? now.fills : now.motifs).find((d) => d.name === name);
+    if (def && signedIn) void keepInLibrary(kind, def as LibraryDef);
     pendingNew = null;
     picked = { kind, name };
     dirty = false;
@@ -241,36 +307,60 @@
         <label class="small-check" title="Architectural patterns (bricks, boards, roofing) are drawn at their real size; this draws them at 1/16 so they suit a map"><input type="checkbox" bind:checked={realSize} /> Real-size patterns (shrink 1/16)</label>
         <input bind:this={patInput} type="file" accept=".pat,text/plain" multiple hidden onchange={(e) => importPat(e.currentTarget)} />
       {/if}
-      {#each [true, false] as mine}
-        {@const group = items.filter((it) => !!it.own === mine)}
-        {#if group.length}
-          <div class="group">{mine ? 'Yours' : 'Comes with CaveCAD'}</div>
-          {#each group as it (it.name)}
-            <button class="item" class:on={picked?.kind === kind && picked.name === it.name} onclick={() => pick(it.name)} title={mine ? it.name : `${it.name}: comes with CaveCAD, copy it to change it`}>
-              <span class="label">{it.name}</span>
-              {#if kind === 'line'}<span class="swatch"><PatternCanvas draw={swatch(it as LineDef)} height={18} /></span>
-              {:else if kind === 'fill'}<span class="swatch"><PatternCanvas draw={fillSwatch(it as FillDef)} height={26} /></span>
-              {:else}<span class="swatch icon"><PatternCanvas draw={motifSwatch(it as Motif)} height={26} /></span>{/if}
-            </button>
-          {/each}
-        {/if}
-      {/each}
-      {#if pendingNew && picked && picked.kind === kind && !current}
+      {#snippet entry(it: LineDef | FillDef | Motif, from: 'library' | undefined, title: string)}
+        <button class="item" class:on={picked?.kind === kind && picked.name === it.name && picked.from === from} onclick={() => pick(it.name, from)} {title}>
+          <span class="label">{it.name}</span>
+          {#if kind === 'line'}<span class="swatch"><PatternCanvas draw={swatch(it as LineDef)} height={18} /></span>
+          {:else if kind === 'fill'}<span class="swatch"><PatternCanvas draw={fillSwatch(it as FillDef)} height={26} /></span>
+          {:else}<span class="swatch icon"><PatternCanvas draw={motifSwatch(it as Motif)} height={26} /></span>{/if}
+        </button>
+      {/snippet}
+      {#if mineHere.length}
+        <div class="group">In this cave</div>
+        {#each mineHere as it (it.name)}{@render entry(it, undefined, it.name)}{/each}
+      {/if}
+      <div class="group">My library</div>
+      {#if !signedIn}
+        <p class="note">Sign in to keep your patterns in your account, for every cave.</p>
+      {:else if !libraryOnly.length}
+        <p class="note">{library.loaded ? 'Patterns you save are kept here too, for every cave.' : 'Reading your library…'}</p>
+      {:else}
+        {#each libraryOnly as li (li.name)}{@render entry({ ...(li.def as object), name: li.name } as LineDef | FillDef | Motif, 'library', `${li.name}: in your library`)}{/each}
+      {/if}
+      {#if builtin.length}
+        <div class="group">Comes with CaveCAD</div>
+        {#each builtin as it (it.name)}{@render entry(it, undefined, `${it.name}: comes with CaveCAD, copy it to change it`)}{/each}
+      {/if}
+      {#if pendingNew && picked && picked.kind === kind && !current && picked.from !== 'library'}
         <button class="item on">{pendingNew.name}<small>not saved</small></button>
       {/if}
     </div>
     <div class="edit">
+      {#if library.incoming}
+        <div class="incoming" role="status">
+          <span><b>{library.incoming.from}</b> shared {library.incoming.items.length} pattern{library.incoming.items.length === 1 ? '' : 's'} with you: {library.incoming.items.map((i) => i.name).join(', ')}.</span>
+          <button class="primary" onclick={takeShare}>Add to my library</button>
+          <button onclick={() => (library.incoming = null)}>Not now</button>
+        </div>
+      {/if}
       {#if message}<p class="saved" role="status">{message}</p>{/if}
+      {#if shown && signedIn && (current?.own || libPicked)}
+        <div class="libbar">
+          {#if libPicked}<span class="muted">In your library{items.some((c) => c.own && c.name === libPicked.name) ? '' : ', not in this cave yet'}.</span>{:else}<span class="muted">In this cave, and kept in your library.</span>{/if}
+          <button onclick={share} title="Make a link that lets other CaveCAD users add a copy of this pattern to their library">Share…</button>
+          {#if libPicked}<button class="danger" onclick={removeFromLibrary}>Remove from my library…</button>{/if}
+        </div>
+      {/if}
       {#if !shown}
         <p class="help">Pick one to look at it, or press New.</p>
       {:else}
-        {#key `${kind}:${shown.name}:${current ? 'saved' : 'new'}`}
+        {#key `${kind}:${shown.name}:${current ? 'saved' : libPicked ? 'library' : 'new'}`}
           {#if kind === 'line'}
-            <LineEditor def={shown as LineDef} {lib} onsaved={saved} onremoved={removed} onduplicate={duplicate} ondirty={(d) => (dirty = d)} unsaved={!current} />
+            <LineEditor def={shown as LineDef} {lib} onsaved={saved} onremoved={removed} onduplicate={libPicked ? useFromLibrary : duplicate} ondirty={(d) => (dirty = d)} unsaved={!current && !libPicked} fromLibrary={!!libPicked} />
           {:else if kind === 'fill'}
-            <FillEditor def={shown as FillDef} {lib} onsaved={saved} onremoved={removed} onduplicate={duplicate} ondirty={(d) => (dirty = d)} unsaved={!current} />
+            <FillEditor def={shown as FillDef} {lib} onsaved={saved} onremoved={removed} onduplicate={libPicked ? useFromLibrary : duplicate} ondirty={(d) => (dirty = d)} unsaved={!current && !libPicked} fromLibrary={!!libPicked} />
           {:else}
-            <MotifEditor def={shown as Motif} onsaved={saved} onremoved={removed} onduplicate={duplicate} ondirty={(d) => (dirty = d)} unsaved={!current} />
+            <MotifEditor def={shown as Motif} onsaved={saved} onremoved={removed} onduplicate={libPicked ? useFromLibrary : duplicate} ondirty={(d) => (dirty = d)} unsaved={!current && !libPicked} fromLibrary={!!libPicked} />
           {/if}
         {/key}
       {/if}
@@ -290,6 +380,14 @@
   .small-check.col { flex-direction: column; gap: 2px; }
   .small-check select { font-size: 11px; width: 100%; }
   .small-check { display: flex; gap: 4px; align-items: flex-start; font-size: 10px; color: var(--muted); margin: 0 2px 4px; }
+  .note { margin: 0 2px 4px; font-size: 11px; color: var(--muted); }
+  .incoming { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin: 0 0 8px; padding: 8px; border: 1px solid var(--accent); border-radius: var(--radius); background: var(--accent-bg); font-size: 12px; }
+  .incoming span { flex: 1; min-width: 180px; }
+  .libbar { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin: 0 0 8px; font-size: 12px; }
+  .libbar .muted { color: var(--muted); flex: 1; }
+  .incoming button, .libbar button { font: inherit; padding: 3px 8px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel-2); color: var(--text); cursor: pointer; }
+  .incoming .primary { background: var(--accent-bg); border-color: var(--accent); }
+  .libbar .danger { color: var(--danger, #c0392b); }
   .group { margin: 6px 2px 2px; font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
   .label { display: block; }
   .swatch { display: block; margin-top: 3px; }

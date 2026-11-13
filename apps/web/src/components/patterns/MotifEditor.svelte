@@ -14,6 +14,7 @@
     onduplicate,
     ondirty,
     unsaved = false,
+    fromLibrary = false,
   }: {
     def: Motif;
     onsaved: (name: string) => void;
@@ -22,6 +23,8 @@
     ondirty?: (dirty: boolean) => void;
     /** A new motif or a copy not saved yet: Save is on from the start. */
     unsaved?: boolean;
+    /** Shown from the account library, not in this cave yet: the banner offers Use in this cave. */
+    fromLibrary?: boolean;
   } = $props();
 
   const PAD = 280;
@@ -294,8 +297,13 @@
 <div class="editor">
   {#if readonly}
     <div class="builtin">
-      <span><b>{def.name}</b> comes with CaveCAD and can’t be changed. Make your own copy to change it.</span>
-      <button class="primary" onclick={onduplicate}>Make my own copy</button>
+      {#if fromLibrary}
+        <span><b>{def.name}</b> is in your library. Put it in this cave to use it or change it.</span>
+        <button class="primary" onclick={onduplicate}>Use in this cave</button>
+      {:else}
+        <span><b>{def.name}</b> comes with CaveCAD and can’t be changed. Make your own copy to change it.</span>
+        <button class="primary" onclick={onduplicate}>Make my own copy</button>
+      {/if}
     </div>
   {:else}
     <label class="row name">Name <input type="text" bind:value={name} maxlength="40" /></label>

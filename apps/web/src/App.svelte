@@ -5,12 +5,13 @@
   import ContextMenu from './components/ContextMenu.svelte';
   import SelectionCycle from './components/SelectionCycle.svelte';
   import TextEditor from './components/TextEditor.svelte';
+  import { checkShareLink, library, refreshLibrary } from './lib/pattern-library.svelte';
   import { onMount, untrack } from 'svelte';
   import Ribbon from './components/Ribbon.svelte';
   import NewCave from './components/NewCave.svelte';
   import SurfaceData from './components/SurfaceData.svelte';
   import { recomputeLayers, resetEntrancePick, surface, surfaceKey, syncSurface } from './lib/surface.svelte';
-  import { initWorkspace } from './lib/workspace.svelte';
+  import { initWorkspace, showPanel } from './lib/workspace.svelte';
   import { catalog } from './handbook/bundle';
   import { openHandbook } from './lib/handbook-open';
   import { engine, loadEngine, loadBuildInfo, type BuildInfo } from './lib/engine';
@@ -217,6 +218,20 @@
   // signing in (or the sign-in coming back from storage) is when the first update check can be asked
   $effect(() => {
     if (account.phase === 'ready') untrack(() => void checkForUpdate());
+  });
+
+  // and when the pattern library is read, and a pattern share link in the address is opened
+  let libraryReadFor = '';
+  $effect(() => {
+    const who = account.phase === 'ready' ? (account.member?.id ?? '') : '';
+    if (!who || who === libraryReadFor) return;
+    libraryReadFor = who;
+    untrack(() => {
+      void refreshLibrary();
+      void checkShareLink().then(() => {
+        if (library.incoming) showPanel('patterns');
+      });
+    });
   });
 
   const built = $derived(info?.builtAt ? new Date(info.builtAt).toLocaleTimeString() : '');

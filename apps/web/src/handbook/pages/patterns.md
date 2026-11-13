@@ -54,6 +54,14 @@ The Patterns panel is where you look at, copy and make the linetypes, fills and 
 4. **Undo stroke** takes back the last stroke; **Clear…** starts again.
 5. Under the box the motif shows at four sizes and repeated along a line. Press **Save**, then use it in a linetype or fill by adding a Motif part there.
 
+### Your library and sharing
+
+1. When you are signed in, every pattern you save is also kept in your CaveCAD account, so it is there in every cave and on every device.
+2. The list has three groups: **In this cave** (the cave's own patterns, which everyone who opens the cave sees), **My library** (your patterns not in this cave yet) and **Comes with CaveCAD**.
+3. Pick one under **My library**, then press **Use in this cave** to put it in the open cave.
+4. To share a pattern, pick it and press **Share…**. A link is copied (and shown) for you to send. Anyone signed in to CaveCAD who opens it is asked whether to add a copy to their library; your later changes do not reach their copy. A linetype or fill is shared with the motifs it uses.
+5. **Remove from my library…** takes a pattern out of your library. Caves that use it keep their own copy.
+
 ### From a line or area on the map
 
 Select one line or area, then press **Edit pattern…** beside its linetype or fill in the ribbon, or right-click it and pick **Edit pattern…**. The Patterns panel opens on the pattern it uses. A line or area that does not use one of your patterns shows **Make a pattern…** instead: the panel opens on the matching starting point (a Presumed line opens **Presumed wall**, Sand opens **Sand**) for you to copy.
@@ -67,6 +75,7 @@ Select one line or area, then press **Edit pattern…** beside its linetype or f
 | **Save** is greyed out | Nothing has changed yet, or the pattern has a problem. A red line under the parts says what. | Fix the part it names, or change something. |
 | **+ Motif** or **+ Scattered motifs** is greyed out | The cave has no motifs yet. | Make one on the **Motifs** tab first. |
 | An imported .pat comes out tiny or huge | The file units or the real-size choice did not match the file. | Delete the imported fills and import again with the other units, or with Real-size patterns ticked. |
+| "Sign in to keep your patterns in your account" under My library | You are not signed in. | Sign in; patterns you save from then on are kept in your library. |
 | A motif shows "(missing)" | The line or fill uses a motif that no longer exists. | Pick another motif from that row's menu. |
 
 ## Related
