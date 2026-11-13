@@ -174,7 +174,7 @@
 <div class="editor">
   <label class="row">Name <input type="text" bind:value={name} maxlength="40" disabled={readonly} /></label>
   {#if readonly}
-    <p class="note">This one comes with CaveCAD. <button onclick={onduplicate}>Duplicate to change it</button></p>
+    <p class="note">This one comes with CaveCAD. <button onclick={onduplicate}>Make my own copy</button></p>
   {:else}
     <div class="row">
       <button class:on={tool === 'line'} onclick={() => { finish(); tool = 'line'; }}>Straight</button>

@@ -90,7 +90,7 @@
     <label>denser <input type="range" min="0.5" max="3" step="0.1" bind:value={amount} /></label>
   </div>
   {#if readonly}
-    <p class="note">This one comes with CaveCAD. <button onclick={onduplicate}>Duplicate to change it</button></p>
+    <p class="note">This one comes with CaveCAD. <button onclick={onduplicate}>Make my own copy</button></p>
   {/if}
   <ol class="parts">
     {#each work.layers as l, i}
