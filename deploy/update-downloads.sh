@@ -4,11 +4,16 @@
 # latest.json: per platform the update file and its signature, which the app checks before installing).
 # Run on the Mac after desktop.yml succeeds: deploy/update-downloads.sh
 # Away from home, reach the server through Tailscale: CAVECAD_SSH_JUMP=nathan@media-vm deploy/update-downloads.sh
+# Test builds (desktop.yml run with channel=dev, release desktop-dev): deploy/update-downloads.sh --dev puts them in
+# /var/lib/cavecad/downloads-dev, which only admins can download from or update to.
 set -euo pipefail
+TAG=desktop-latest
+DEST=/var/lib/cavecad/downloads
+if [ "${1:-}" = "--dev" ]; then TAG=desktop-dev; DEST=/var/lib/cavecad/downloads-dev; fi
 JUMP=(${CAVECAD_SSH_JUMP:+-J "$CAVECAD_SSH_JUMP"})
 REPO=Nate-the-Ace/cavecad-rs
 WORK=$(mktemp -d)
-gh release download desktop-latest -R "$REPO" -D "$WORK" --pattern '*.dmg' --pattern '*-setup.exe' --pattern '*.msi' --pattern '*.AppImage' --pattern '*.deb' --pattern '*.rpm' --pattern '*.app.tar.gz' --pattern 'latest.json'
+gh release download "$TAG" -R "$REPO" -D "$WORK" --pattern '*.dmg' --pattern '*-setup.exe' --pattern '*.msi' --pattern '*.AppImage' --pattern '*.deb' --pattern '*.rpm' --pattern '*.app.tar.gz' --pattern 'latest.json'
 cd "$WORK"
 if [ -f latest.json ]; then
   python3 - <<'PY'
@@ -39,6 +44,6 @@ cat > downloads.json <<JSON
 JSON
 COPYFILE_DISABLE=1 tar -czf /tmp/cavecad-downloads.tgz .
 scp -q ${JUMP[@]+"${JUMP[@]}"} /tmp/cavecad-downloads.tgz root@192.168.86.10:/tmp/
-ssh ${JUMP[@]+"${JUMP[@]}"} root@192.168.86.10 'pct push 209 /tmp/cavecad-downloads.tgz /tmp/d.tgz && rm /tmp/cavecad-downloads.tgz && pct exec 209 -- bash -c "mkdir -p /var/lib/cavecad/downloads.new && tar -xzf /tmp/d.tgz -C /var/lib/cavecad/downloads.new 2>/dev/null && rm /tmp/d.tgz && rm -rf /var/lib/cavecad/downloads.old && { [ -d /var/lib/cavecad/downloads ] && mv /var/lib/cavecad/downloads /var/lib/cavecad/downloads.old || true; } && mv /var/lib/cavecad/downloads.new /var/lib/cavecad/downloads && chown -R cavecad:cavecad /var/lib/cavecad/downloads"'
+ssh ${JUMP[@]+"${JUMP[@]}"} root@192.168.86.10 "pct push 209 /tmp/cavecad-downloads.tgz /tmp/d.tgz && rm /tmp/cavecad-downloads.tgz && pct exec 209 -- bash -c 'D=$DEST && mkdir -p \$D.new && tar -xzf /tmp/d.tgz -C \$D.new 2>/dev/null && rm /tmp/d.tgz && rm -rf \$D.old && { [ -d \$D ] && mv \$D \$D.old || true; } && mv \$D.new \$D && chown -R cavecad:cavecad \$D'"
 rm -rf "$WORK" /tmp/cavecad-downloads.tgz
-echo "downloads: $VERSION"
+echo "downloads ($TAG -> $DEST): $VERSION"

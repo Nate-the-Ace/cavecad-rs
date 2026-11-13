@@ -8,6 +8,30 @@ import { desktopBearer } from './desktop-signin';
 import { storeOpenCave } from './shelf.svelte';
 
 const BASE = (import.meta.env?.VITE_ACCOUNT_BASE as string | undefined) ?? '';
+const CHANNEL_KEY = 'cavecad.updateChannel';
+
+/** Test builds ("dev"): admins may switch this copy to them in Account; the server ignores it for anyone else.
+ *  Kept on this device only (a laptop on test builds, the field iPad on regular ones). */
+export function updateChannel(): 'stable' | 'dev' {
+  try {
+    return localStorage.getItem(CHANNEL_KEY) === 'dev' ? 'dev' : 'stable';
+  } catch {
+    return 'stable';
+  }
+}
+
+export function setUpdateChannel(c: 'stable' | 'dev'): void {
+  try {
+    if (c === 'dev') localStorage.setItem(CHANNEL_KEY, 'dev');
+    else localStorage.removeItem(CHANNEL_KEY);
+  } catch {
+    /* private window: stays stable */
+  }
+  void checkForUpdate();
+}
+
+/** Whether this copy is a test build (set by desktop.yml for the dev channel). */
+export const isTestBuild = (import.meta.env?.VITE_UPDATE_CHANNEL as string | undefined) === 'dev';
 const EVERY = 6 * 60 * 60 * 1000;
 
 export const update = $state<{ found: FoundUpdate | null; hidden: boolean; installing: boolean; problem: string }>({
@@ -25,7 +49,7 @@ export async function checkForUpdate(): Promise<void> {
   if (!isDesktop() || !BASE || !token || checking || update.found?.installable) return;
   checking = true;
   try {
-    const found = await updatePrepareNative(BASE, token);
+    const found = await updatePrepareNative(BASE, token, updateChannel());
     if (found && found.version !== update.found?.version) {
       update.found = found;
       update.hidden = false;

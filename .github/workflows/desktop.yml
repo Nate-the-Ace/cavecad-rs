@@ -3,6 +3,9 @@
 # until the draft is published from the Releases page).
 #
 # Run it by hand: Actions > desktop > Run workflow, or `gh workflow run desktop.yml`.
+# Test builds for admins (the "dev" update channel): `gh workflow run desktop.yml --ref <branch> -f channel=dev`
+# puts them on the draft release "desktop-dev" instead; then `deploy/update-downloads.sh --dev` offers them to
+# admins only. Both channels share the run number, so versions never go backwards across them.
 # The apps are not code-signed yet: macOS and Windows will warn the first time one is opened.
 # Each build is versioned 0.1.<run number> and its updates are signed with the CaveCAD update key (secrets
 # TAURI_SIGNING_PRIVATE_KEY and TAURI_SIGNING_PRIVATE_KEY_PASSWORD; spec 2026-11-09-desktop-self-update-design).
@@ -10,6 +13,15 @@ name: desktop
 
 on:
   workflow_dispatch:
+    inputs:
+      channel:
+        description: 'stable = everyone; dev = test build for admins only'
+        type: choice
+        options: [stable, dev]
+        default: stable
+
+env:
+  RELEASE_TAG: ${{ inputs.channel == 'dev' && 'desktop-dev' || 'desktop-latest' }}
 
 jobs:
   build:
@@ -79,11 +91,13 @@ jobs:
           VITE_PASS_PUBLIC_KEY: ${{ vars.PASS_PUBLIC_KEY }}
           VITE_SIGNIN_URL: ${{ vars.SIGNIN_URL }}
           VITE_ACCOUNT_BASE: ${{ vars.ACCOUNT_BASE }}
+          # a test build says so in Account
+          VITE_UPDATE_CHANNEL: ${{ inputs.channel }}
         with:
           projectPath: apps/desktop
-          tagName: desktop-latest
-          releaseName: CaveCAD desktop (latest build)
-          releaseBody: Unsigned builds of the CaveCAD desktop app. macOS and Windows warn the first time you open one. Built from the commit this release's tag points at on main.
+          tagName: ${{ env.RELEASE_TAG }}
+          releaseName: ${{ inputs.channel == 'dev' && 'CaveCAD desktop (test build, admins)' || 'CaveCAD desktop (latest build)' }}
+          releaseBody: Unsigned builds of the CaveCAD desktop app. macOS and Windows warn the first time you open one. Built from the commit this release's tag points at.
           releaseDraft: true
           prerelease: true
           args: ${{ matrix.args }}
@@ -103,12 +117,12 @@ jobs:
           VERSION: 0.1.${{ github.run_number }}
         run: |
           mkdir sigs && cd sigs
-          gh release download desktop-latest --repo "$GITHUB_REPOSITORY" \
+          gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
             -p 'CaveCAD_universal.app.tar.gz.sig' \
             -p "CaveCAD_${VERSION}_amd64.AppImage.sig" -p "CaveCAD_${VERSION}_amd64.deb.sig" -p "CaveCAD-${VERSION}-1.x86_64.rpm.sig" \
             -p "CaveCAD_${VERSION}_x64-setup.exe.sig" -p "CaveCAD_${VERSION}_x64_en-US.msi.sig"
           python3 ../deploy/make-latest-json.py "$VERSION" \
-            "Unsigned builds of the CaveCAD desktop app. macOS and Windows warn the first time you open one. Built from the commit this release's tag points at on main." \
-            "https://github.com/$GITHUB_REPOSITORY/releases/download/desktop-latest" > latest.json
+            "Unsigned builds of the CaveCAD desktop app. macOS and Windows warn the first time you open one. Built from the commit this release's tag points at." \
+            "https://github.com/$GITHUB_REPOSITORY/releases/download/$RELEASE_TAG" > latest.json
           python3 -c "import json; p=json.load(open('latest.json'))['platforms']; assert len(p) == 11, p; print(sorted(p))"
-          gh release upload desktop-latest latest.json --clobber --repo "$GITHUB_REPOSITORY"
+          gh release upload "$RELEASE_TAG" latest.json --clobber --repo "$GITHUB_REPOSITORY"
