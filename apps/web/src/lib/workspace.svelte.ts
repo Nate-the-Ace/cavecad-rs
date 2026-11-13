@@ -3,7 +3,7 @@
 // current panels is discarded rather than trusted.
 // The all-in-one bundle is used on purpose: it is the only build that carries dockview's styles.
 import { createDockview, themeDark, themeLight } from 'dockview-core/dist/dockview-core.js';
-import { columnsFirst, snapEdge, type Grid } from './dock-tidy';
+import { snapEdge, transpose, type Grid } from './dock-tidy';
 import type { DockviewApi } from 'dockview-core';
 import type { Component } from 'svelte';
 import { GroupActions, SveltePanel } from './dock-parts';
@@ -97,21 +97,13 @@ function restore(a: DockviewApi): boolean {
   }
 }
 
-/** The layout's arrangement without its sizes, to tell a moved panel from a dragged edge. */
-function gridShape(a: DockviewApi): string {
-  const walk = (n: { type: string; data: unknown }): string =>
-    n.type === 'branch' ? `(${(n.data as { type: string; data: unknown }[]).map(walk).join(',')})` : 'g';
-  const g = a.toJSON().grid as unknown as Grid;
-  return g.orientation + walk(g.root as { type: string; data: unknown });
-}
-
 /**
- * Rebuilds a grid of panels made row first as columns, so the edge between two panels in one column slides
- * without dragging the column beside it (see dock-tidy.ts). True when it changed anything.
+ * Flips a plain grid of panels the other way round (rows to columns, or columns to rows; see dock-tidy.ts), so the
+ * edge that ran right across it is split into one edge per row or column. True when it did.
  */
-function tidy(a: DockviewApi): boolean {
+function flip(a: DockviewApi): boolean {
   const json = a.toJSON();
-  const grid = columnsFirst(json.grid as unknown as Grid);
+  const grid = transpose(json.grid as unknown as Grid);
   if (!grid) return false;
   try {
     a.fromJSON({ ...json, grid: grid as unknown as typeof json.grid });
@@ -154,9 +146,32 @@ function snapEdges(el: HTMLElement, a: DockviewApi): () => void {
     if (drag.across) Object.assign(guide.style, { left: `${box.left}px`, width: `${box.width}px`, top: `${t.to - 1}px`, height: '2px' });
     else Object.assign(guide.style, { top: `${box.top}px`, height: `${box.height}px`, left: `${t.to - 1}px`, width: '2px' });
   };
+  let handing = false;
   const down = (e: PointerEvent) => {
-    const sash = (e.target as HTMLElement | null)?.closest?.('.dv-sash') as HTMLElement | null;
-    if (!sash || !el.contains(sash)) return;
+    if (handing) return;
+    let sash = (e.target as HTMLElement | null)?.closest?.('.dv-sash') as HTMLElement | null;
+    if (!sash || !el.contains(sash) || e.button !== 0) return;
+    // An edge running right across a grid of panels (the outermost split's) would drag every row or column with it:
+    // flip the grid so this spot has an edge of its own, and hand the drag to that edge.
+    const outer = sash.closest('.dv-split-view-container');
+    if (outer && outer.parentElement?.closest('.dv-split-view-container, .dv-grid-view')?.classList.contains('dv-grid-view') && el.contains(outer) && transpose(a.toJSON().grid as unknown as Grid)) {
+      const { clientX: x, clientY: y } = e;
+      e.stopPropagation();
+      e.preventDefault();
+      if (!flip(a)) return;
+      const fresh = [...el.querySelectorAll<HTMLElement>('.dv-sash')].find((s) => {
+        const r = s.getBoundingClientRect();
+        return x >= r.left - 3 && x <= r.right + 3 && y >= r.top - 3 && y <= r.bottom + 3;
+      });
+      if (!fresh) return;
+      sash = fresh;
+      handing = true;
+      try {
+        fresh.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true, clientX: x, clientY: y, button: 0, buttons: 1, pointerId: e.pointerId, pointerType: e.pointerType, isPrimary: true }));
+      } finally {
+        handing = false;
+      }
+    }
     drag = { sash, across: !sash.closest('.dv-split-view-container')?.classList.contains('dv-horizontal') };
   };
   const move = () => drag && requestAnimationFrame(show);
@@ -199,7 +214,6 @@ export function initWorkspace(el: HTMLElement, help?: ConstructorParameters<type
   const a = api;
   if (import.meta.env.DEV) (window as unknown as { __dock: DockviewApi }).__dock = a; // for tests and debugging
   if (!restore(a)) defaultLayout(a);
-  tidy(a);
   refreshOpen();
   const offSnap = snapEdges(el, a);
   // Saved layouts read the arrangement from this dock and put one back into it.
@@ -218,26 +232,14 @@ export function initWorkspace(el: HTMLElement, help?: ConstructorParameters<type
         }
         return false;
       }
-      tidy(a);
       refreshOpen();
       return true;
     },
   });
 
   let timer: ReturnType<typeof setTimeout>;
-  let tidyTimer: ReturnType<typeof setTimeout>;
-  let shape = gridShape(a);
   const layoutSub = a.onDidLayoutChange(() => {
     refreshOpen();
-    // A panel dropped somewhere new may leave a grid built row first: rebuild it column first, once the drop is done.
-    const now = gridShape(a);
-    if (now !== shape) {
-      shape = now;
-      clearTimeout(tidyTimer);
-      tidyTimer = setTimeout(() => {
-        if (tidy(a)) shape = gridShape(a);
-      }, 250);
-    }
     clearTimeout(timer);
     timer = setTimeout(() => {
       try {
@@ -254,7 +256,6 @@ export function initWorkspace(el: HTMLElement, help?: ConstructorParameters<type
   return () => {
     setLayoutHost(null);
     clearTimeout(timer);
-    clearTimeout(tidyTimer);
     offSnap();
     layoutSub.dispose();
     offTheme();

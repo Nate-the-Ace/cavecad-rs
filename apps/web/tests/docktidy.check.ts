@@ -1,6 +1,6 @@
 // Run: npm run test:docktidy
 import assert from 'node:assert/strict';
-import { columnsFirst, snapEdge, type Grid } from '../src/lib/dock-tidy.ts';
+import { columnsFirst, snapEdge, transpose, type Grid } from '../src/lib/dock-tidy.ts';
 
 const leaf = (id: string, size: number) => ({ type: 'leaf' as const, data: { id }, size });
 
@@ -14,7 +14,7 @@ const rows: Grid = {
     size: 1000,
     data: [
       { type: 'branch', size: 350, data: [leaf('map', 560), leaf('profile', 440)] },
-      { type: 'branch', size: 250, data: [leaf('notebook', 570), leaf('scans', 430)] },
+      { type: 'branch', size: 250, data: [leaf('notebook', 560), leaf('scans', 440)] },
     ],
   },
 };
@@ -27,8 +27,9 @@ assert.deepEqual([left.size, right.size], [560, 440]);
 assert.deepEqual(left.data.map((c) => [c.data.id, c.size]), [['map', 350], ['notebook', 250]]);
 assert.deepEqual(right.data.map((c) => [c.data.id, c.size]), [['profile', 350], ['scans', 250]]);
 
-// Already column first: left alone.
+// Already column first: left alone by columnsFirst, but it can be turned back into rows exactly.
 assert.equal(columnsFirst(cols), null);
+assert.deepEqual(transpose(cols), rows);
 // Rows whose panels do not line up: no columns to make.
 const crooked = structuredClone(rows);
 (crooked.root as { data: { data: { size: number }[] }[] }).data[1].data[0].size = 300;
