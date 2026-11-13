@@ -78,8 +78,13 @@
     canvas.setPointerCapture(e.pointerId);
     canvas.focus();
     const p = at(e);
+    edited = true;
     if (tool === 'circle') live = { kind: 'circle', c: snapPt(p), r: 0, fill: solid };
-    else if (tool === 'free') live = { kind: 'poly', pts: [p], closed: false, fill: false };
+    else if (tool === 'free') {
+      // a freehand line stays open between drags: a new drag carries on from where the last one stopped
+      if (live && live.kind === 'poly') live.pts.push(p);
+      else live = { kind: 'poly', pts: [p], closed: false, fill: false };
+    }
     else if (live && live.kind === 'poly') live.pts.push(snapPt(p));
     else live = { kind: 'poly', pts: [snapPt(p), snapPt(p)], closed: false, fill: false };
   }
@@ -95,26 +100,31 @@
     if (tool === 'circle') {
       if (live.kind === 'circle' && live.r > 2) keep(live);
       live = null;
-    } else if (tool === 'free') {
-      if (live.kind === 'poly' && live.pts.length > 2) keep({ kind: 'poly', pts: simplify(live.pts, 2.5), closed: false, fill: false });
-      live = null;
     }
   }
-  /** Ends the line being clicked out: the corners so far, without the one following the pointer. */
+  /** The points of the open line: clicked corners without the one following the pointer, or a freehand trace tidied. */
+  function openPoints(): [number, number][] {
+    if (!live || live.kind !== 'poly') return [];
+    return tool === 'line' ? live.pts.slice(0, -1) : simplify(live.pts, 2.5);
+  }
+  /** Ends the open line where it is. */
   function finish() {
-    if (live && live.kind === 'poly' && tool === 'line') {
-      const pts = live.pts.slice(0, -1);
+    if (live && live.kind === 'poly') {
+      const pts = openPoints();
       if (pts.length >= 2) keep({ kind: 'poly', pts, closed: false, fill: false });
       live = null;
     }
   }
+  /** Ends the open line by joining it back to its start. */
   function close() {
-    if (live && live.kind === 'poly' && tool === 'line') {
-      const pts = live.pts.slice(0, -1);
+    if (live && live.kind === 'poly') {
+      const pts = openPoints();
       if (pts.length >= 3) keep({ kind: 'poly', pts, closed: true, fill: solid });
       live = null;
     }
   }
+  /** A line is open (being clicked out or traced) and can be finished or closed. */
+  const lineOpen = $derived(!!live && live.kind === 'poly');
   function key(e: KeyboardEvent) {
     if (e.key === 'Enter') finish();
     else if (e.key === 'Escape') live = null;
@@ -227,6 +237,7 @@
   });
 
   function save() {
+    finish(); // a line still open is part of the drawing
     if (typeof result === 'string') return;
     const r = engine.savePattern('motif', plain(result));
     message = r === 'ok' ? '' : r.replace(/^error: /, '');
@@ -254,7 +265,7 @@
 
   const HINT = {
     line: 'Click each corner. Press Finish line (or Enter, or double-click) to end it, or Close shape to join it back to the start.',
-    free: 'Drag to draw. It is tidied into a few straight pieces when you let go.',
+    free: 'Drag to draw. Let go and drag again to carry on the same line. Press Finish line (or Enter) to end it, or Close shape to join it back to the start; it is tidied into a few straight pieces then.',
     circle: 'Press at the middle and drag outward.',
   };
 </script>
@@ -283,8 +294,8 @@
     <canvas bind:this={canvas} style="width:{PAD}px;height:{PAD}px" tabindex="0" aria-label="Motif drawing pad" onpointerdown={down} onpointermove={move} onpointerup={up} ondblclick={finish} onkeydown={key}></canvas>
     {#if !readonly}
       <div class="side">
-        <button onclick={finish} disabled={!live || tool !== 'line'} title="End the line here (Enter)">Finish line</button>
-        <button onclick={close} disabled={!live || tool !== 'line'} title="Join the end back to the start">Close shape</button>
+        <button onclick={finish} disabled={!lineOpen} title="End the line here (Enter)">Finish line</button>
+        <button onclick={close} disabled={!lineOpen} title="Join the end back to the start">Close shape</button>
         <button onclick={undoStroke} disabled={!live && !strokes.length} title="Take back the last stroke (Backspace)">Undo stroke</button>
         <button onclick={clearAll} disabled={!strokes.length}>Clear…</button>
         <p class="muted">The dashed line is the line a linetype stands the motif on.</p>
@@ -301,7 +312,7 @@
     {#if message}<p class="problem">{message}</p>{/if}
     {#if !readonly}
       <div class="row actions">
-        <button class="primary" onclick={save} disabled={typeof result === 'string' || !dirty}>Save</button>
+        <button class="primary" onclick={save} disabled={(typeof result === 'string' && !lineOpen) || !dirty}>Save</button>
         <button onclick={revert} disabled={!dirty || unsaved} title="Go back to how it was last saved">Undo changes</button>
         {#if dirty}<span class="unsaved">Not saved yet</span>{/if}
         {#if !unsaved}<button class="danger" onclick={remove}>Delete…</button>{/if}
