@@ -3,6 +3,7 @@
 // current panels is discarded rather than trusted.
 // The all-in-one bundle is used on purpose: it is the only build that carries dockview's styles.
 import { createDockview, themeDark, themeLight } from 'dockview-core/dist/dockview-core.js';
+import { columnsFirst, snapEdge, type Grid } from './dock-tidy';
 import type { DockviewApi } from 'dockview-core';
 import type { Component } from 'svelte';
 import { GroupActions, SveltePanel } from './dock-parts';
@@ -96,6 +97,98 @@ function restore(a: DockviewApi): boolean {
   }
 }
 
+/** The layout's arrangement without its sizes, to tell a moved panel from a dragged edge. */
+function gridShape(a: DockviewApi): string {
+  const walk = (n: { type: string; data: unknown }): string =>
+    n.type === 'branch' ? `(${(n.data as { type: string; data: unknown }[]).map(walk).join(',')})` : 'g';
+  const g = a.toJSON().grid as unknown as Grid;
+  return g.orientation + walk(g.root as { type: string; data: unknown });
+}
+
+/**
+ * Rebuilds a grid of panels made row first as columns, so the edge between two panels in one column slides
+ * without dragging the column beside it (see dock-tidy.ts). True when it changed anything.
+ */
+function tidy(a: DockviewApi): boolean {
+  const json = a.toJSON();
+  const grid = columnsFirst(json.grid as unknown as Grid);
+  if (!grid) return false;
+  try {
+    a.fromJSON({ ...json, grid: grid as unknown as typeof json.grid });
+    return true;
+  } catch {
+    try {
+      a.fromJSON(json);
+    } catch {
+      /* the dock keeps what it has */
+    }
+    return false;
+  }
+}
+
+/**
+ * Edge snapping: while an edge between panels is dragged, a line shows when it comes near another panel edge
+ * running the same way (in the column beside it, or the window's own edge); let go there and it lines up exactly.
+ */
+function snapEdges(el: HTMLElement, a: DockviewApi): () => void {
+  const guide = document.createElement('div');
+  guide.style.cssText = 'position:fixed;pointer-events:none;z-index:50;background:var(--dv-active-sash-color,#0a84ff);display:none;';
+  document.body.appendChild(guide);
+  let drag: { sash: HTMLElement; across: boolean } | null = null; // across: the edge runs left-right and moves up-down
+  const centre = (r: DOMRect, across: boolean) => (across ? r.top + r.height / 2 : r.left + r.width / 2);
+  const target = (): { at: number; to: number; rect: DOMRect } | null => {
+    if (!drag) return null;
+    const rect = drag.sash.getBoundingClientRect();
+    const at = centre(rect, drag.across);
+    const others = [...el.querySelectorAll<HTMLElement>('.dv-sash')]
+      .filter((s) => s !== drag!.sash && s.closest('.dv-split-view-container')?.classList.contains('dv-horizontal') === !drag!.across)
+      .map((s) => centre(s.getBoundingClientRect(), drag!.across));
+    const to = snapEdge(at, others);
+    return { at, to, rect };
+  };
+  const show = () => {
+    const t = target();
+    if (!t || t.to === t.at || !drag) return void (guide.style.display = 'none');
+    const box = el.getBoundingClientRect();
+    guide.style.display = 'block';
+    if (drag.across) Object.assign(guide.style, { left: `${box.left}px`, width: `${box.width}px`, top: `${t.to - 1}px`, height: '2px' });
+    else Object.assign(guide.style, { top: `${box.top}px`, height: `${box.height}px`, left: `${t.to - 1}px`, width: '2px' });
+  };
+  const down = (e: PointerEvent) => {
+    const sash = (e.target as HTMLElement | null)?.closest?.('.dv-sash') as HTMLElement | null;
+    if (!sash || !el.contains(sash)) return;
+    drag = { sash, across: !sash.closest('.dv-split-view-container')?.classList.contains('dv-horizontal') };
+  };
+  const move = () => drag && requestAnimationFrame(show);
+  const up = () => {
+    const t = target();
+    const was = drag;
+    drag = null;
+    guide.style.display = 'none';
+    if (!t || !was || t.to === t.at) return;
+    const delta = t.to - t.at;
+    // The panel just before the edge (above it, or left of it) grows or shrinks by the snap.
+    const before = a.groups.find((g) => {
+      const r = g.element.getBoundingClientRect();
+      return was.across
+        ? Math.abs(r.bottom - t.rect.top - t.rect.height / 2) <= 4 && r.left < t.rect.right && r.right > t.rect.left
+        : Math.abs(r.right - t.rect.left - t.rect.width / 2) <= 4 && r.top < t.rect.bottom && r.bottom > t.rect.top;
+    });
+    if (!before) return;
+    const r = before.element.getBoundingClientRect();
+    before.api.setSize(was.across ? { height: r.height + delta } : { width: r.width + delta });
+  };
+  el.addEventListener('pointerdown', down, true);
+  window.addEventListener('pointermove', move, true);
+  window.addEventListener('pointerup', up, true);
+  return () => {
+    el.removeEventListener('pointerdown', down, true);
+    window.removeEventListener('pointermove', move, true);
+    window.removeEventListener('pointerup', up, true);
+    guide.remove();
+  };
+}
+
 /** Builds the workspace inside `el`. Returns a function that tears it down. */
 export function initWorkspace(el: HTMLElement, help?: ConstructorParameters<typeof GroupActions>[0]): () => void {
   api = createDockview(el, {
@@ -106,7 +199,9 @@ export function initWorkspace(el: HTMLElement, help?: ConstructorParameters<type
   const a = api;
   if (import.meta.env.DEV) (window as unknown as { __dock: DockviewApi }).__dock = a; // for tests and debugging
   if (!restore(a)) defaultLayout(a);
+  tidy(a);
   refreshOpen();
+  const offSnap = snapEdges(el, a);
   // Saved layouts read the arrangement from this dock and put one back into it.
   setLayoutHost({
     capture: () => a.toJSON(),
@@ -123,14 +218,26 @@ export function initWorkspace(el: HTMLElement, help?: ConstructorParameters<type
         }
         return false;
       }
+      tidy(a);
       refreshOpen();
       return true;
     },
   });
 
   let timer: ReturnType<typeof setTimeout>;
+  let tidyTimer: ReturnType<typeof setTimeout>;
+  let shape = gridShape(a);
   const layoutSub = a.onDidLayoutChange(() => {
     refreshOpen();
+    // A panel dropped somewhere new may leave a grid built row first: rebuild it column first, once the drop is done.
+    const now = gridShape(a);
+    if (now !== shape) {
+      shape = now;
+      clearTimeout(tidyTimer);
+      tidyTimer = setTimeout(() => {
+        if (tidy(a)) shape = gridShape(a);
+      }, 250);
+    }
     clearTimeout(timer);
     timer = setTimeout(() => {
       try {
@@ -147,6 +254,8 @@ export function initWorkspace(el: HTMLElement, help?: ConstructorParameters<type
   return () => {
     setLayoutHost(null);
     clearTimeout(timer);
+    clearTimeout(tidyTimer);
+    offSnap();
     layoutSub.dispose();
     offTheme();
     activeSub.dispose();
