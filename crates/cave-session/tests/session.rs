@@ -1005,3 +1005,17 @@ fn previous_station_steps_back_along_the_page() {
     s.next_station(&book);
     assert_eq!(s.state().from, "A2");
 }
+
+#[test]
+fn accuracy_complaints_are_said_in_plain_words() {
+    let m = cave_session::rules::accuracy_advice("accuracy error: absM, dip");
+    assert!(m.contains("magnetic") && m.contains("MagSafe"), "{m}");
+    assert!(m.contains("calibrate"), "{m}");
+    let g = cave_session::rules::accuracy_advice("accuracy error: absG");
+    assert!(
+        g.contains("hold it still") && !g.contains("magnetic"),
+        "{g}"
+    );
+    let a = cave_session::rules::accuracy_advice("accuracy error: angle");
+    assert!(a.contains("disagree"), "{a}");
+}
