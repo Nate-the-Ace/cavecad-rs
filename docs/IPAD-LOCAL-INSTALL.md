@@ -22,7 +22,13 @@ non-profit fee waiver (see `IN-CAVE-ROADMAP.md`), removes those limits.
 2. **Settings → Privacy & Security → Developer Mode** on (the iPad restarts). The switch shows up after Xcode has
    seen the iPad once (step 2 below).
 
-## Install (and every 7 days)
+## Install (and every 7 days), the quick way
+
+With the iPad plugged in and unlocked: `tools/ipad-install.sh <team-id>` builds, signs, installs and launches.
+It builds with the same settings as the desktop test builds; a build without the account address cannot finish a
+sign-in ("Sign-in didn't finish" after Google), which is what the first hand build did.
+
+## Install by hand in Xcode
 
 1. `cd apps/desktop && npx tauri ios open` opens the project in Xcode.
 2. Top bar: pick your iPad as the run destination.
