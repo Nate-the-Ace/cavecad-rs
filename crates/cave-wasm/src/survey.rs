@@ -7,6 +7,7 @@
 use crate::{DOC, record_edit};
 use cave_doc::{Action, Document};
 use cave_id::IdSource;
+use cave_instrument::calibrate::{Guide, GuideView};
 use cave_instrument::identify::{NAMES, identify};
 use cave_instrument::link::{BricKind, BricLink, LegLink, LinkOut, Sap5Link, X1Link};
 use cave_instrument::sim::{
@@ -30,6 +31,8 @@ thread_local! {
     static SESSION: RefCell<Session> = RefCell::new(Session::new());
     static LINK: RefCell<Option<Link>> = const { RefCell::new(None) };
     static SIM: RefCell<Option<Simulator>> = const { RefCell::new(None) };
+    /// The calibration guide, while it is open.
+    static GUIDE: RefCell<Option<Guide>> = const { RefCell::new(None) };
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -95,6 +98,8 @@ struct Step {
     sim_left: bool,
     /// What the simulator is pretending, for the panel's note.
     sim_note: Option<String>,
+    /// The calibration guide, while it is open.
+    calibration: Option<GuideView>,
 }
 
 /// Runs `f` on the session and the open cave, and answers with the step it filled in.
@@ -103,6 +108,8 @@ fn with_session(f: impl FnOnce(&mut Session, &mut WasmHost, &mut Step)) -> Strin
         ok: true,
         ..Step::default()
     };
+    // calibration has nothing to do with the cave: the guide shows with no cave open too
+    step.calibration = GUIDE.with(|g| g.borrow().as_ref().map(Guide::view));
     DOC.with(|d| {
         let mut slot = d.borrow_mut();
         let Some(doc) = slot.as_mut() else {
@@ -145,6 +152,14 @@ fn route(outs: Vec<LinkOut>, session: &mut Session, host: &mut WasmHost, step: &
             LinkOut::Frame { hex, from } => step.frames.push(FrameLine { hex, from }),
             LinkOut::Send { bytes } => step.sends.push(bytes),
             LinkOut::Reading { reading } => session.reading(host, reading),
+            LinkOut::Calibration {
+                azimuth,
+                inclination,
+            } => GUIDE.with(|g| {
+                if let Some(g) = g.borrow_mut().as_mut() {
+                    g.shot(azimuth, inclination);
+                }
+            }),
         }
     }
 }
@@ -440,6 +455,62 @@ pub fn survey_sim_shot() -> String {
         });
         route(outs, s, host, step);
     })
+}
+
+// ---- guided calibration ----
+
+/// Opens the calibration guide (fresh): the instrument's calibration shots are followed from now on.
+#[wasm_bindgen]
+pub fn survey_calibration_start() -> String {
+    GUIDE.with(|g| *g.borrow_mut() = Some(Guide::new()));
+    with_session(|_, _, _| {})
+}
+
+/// Closes the calibration guide.
+#[wasm_bindgen]
+pub fn survey_calibration_stop() -> String {
+    GUIDE.with(|g| *g.borrow_mut() = None);
+    with_session(|_, _, _| {})
+}
+
+/// The group being taken was reset on the instrument (the X1's > button): forget its shots.
+#[wasm_bindgen]
+pub fn survey_calibration_reset_group() -> String {
+    GUIDE.with(|g| {
+        if let Some(g) = g.borrow_mut().as_mut() {
+            g.reset_group();
+        }
+    });
+    with_session(|_, _, _| {})
+}
+
+thread_local!(static SIM_CAL: RefCell<u32> = const { RefCell::new(0) });
+
+/// A simulated calibration shot, aimed (as a surveyor following the guide would) at the next direction it asks
+/// for, a little off as a hand is, so the guide can be tried with no instrument.
+#[wasm_bindgen]
+pub fn survey_sim_calibration_shot() -> String {
+    let n = SIM_CAL.with(|c| {
+        let mut c = c.borrow_mut();
+        *c += 1;
+        *c
+    });
+    GUIDE.with(|g| {
+        if let Some(g) = g.borrow_mut().as_mut() {
+            let v = g.view();
+            // a finished group stays aimed until the next target is asked for
+            let aim = if v.current_shots > 0 && v.current_shots < 4 {
+                v.current.map(|c| (c.azimuth, c.inclination))
+            } else {
+                v.next.map(|t| (t.azimuth, t.inclination))
+            };
+            if let Some((az, inc)) = aim.or(Some((n as f64 * 37.0 % 360.0, 10.0))) {
+                let wobble = ((n as f64 * 12.9898).sin() * 43758.545).fract() - 0.5;
+                g.shot(az + wobble * 1.5, (inc + wobble).clamp(-90.0, 90.0));
+            }
+        }
+    });
+    with_session(|_, _, _| {})
 }
 
 /// Settle what is waiting as splays now, without waiting for the pause.

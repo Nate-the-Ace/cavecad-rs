@@ -7,6 +7,9 @@
   import { untrack } from 'svelte';
   import { Check, ChevronLeft, ChevronRight, Crosshair, Flashlight, FlashlightOff, Pause, Play, Radar, ScanLine, SkipForward, X } from '@lucide/svelte';
   import SweepDial from '../components/SweepDial.svelte';
+  import QuickRef from '../components/QuickRef.svelte';
+  import CalibrationGuide from '../components/CalibrationGuide.svelte';
+  import { BookOpen } from '@lucide/svelte';
   import SurveyOptions from '../components/SurveyOptions.svelte';
   import { Bluetooth, FlaskConical, Unplug } from '@lucide/svelte';
   import { phone } from '../lib/phone.svelte';
@@ -74,6 +77,7 @@
   const dist = (m: number) => formatLength(m, units, 2);
   const sweep = $derived(survey.sweep);
   const lastSweep = $derived(survey.lastSweep);
+  let quickRef = $state(false);
   const manual = $derived(survey.standard === 'manual');
   // The shot button says where the shot goes, so there is no doubt which station it lands on in the map.
   // LRUD and sweeps are taken at one station, facing on along the survey: only that station is named
@@ -163,10 +167,15 @@
     <section class="device" aria-label="Device control">
       <div class="devhead">
         <h4>Device control</h4>
+        
         <div class="seg" role="radiogroup" aria-label="Survey standard">
           <button role="radio" aria-checked={manual} class:on={manual} onclick={() => live.setStandard('manual')} title="Mostly sketched by hand: LRUD needs only the four walls, room outlines are rough">Manual</button>
           <button role="radio" aria-checked={!manual} class:on={!manual} onclick={() => live.setStandard('digital')} title="The Cavway captures the detail: dense rings at every station, full room outlines">Digital</button>
         </div>
+      </div>
+      <div class="tools">
+        <button class="qr" onclick={() => (quickRef = true)} title="The Cavway X1's controls and calibration, as on the card in its case"><BookOpen size={16} /> X1 quick reference</button>
+        {#if live.aimsFirst() && !survey.calibration}<button class="qr" onclick={live.startCalibration} title="Follow the X1's calibration shots and say where to point next">Guided calibration</button>{/if}
       </div>
       <p class="hint">{manual ? 'Manual: you sketch the detail. LRUD is four aimed shots, one to each wall: left, right, up, down. CaveCAD says which wall is next.' : 'Digital: the Cavway captures the detail. Sweep every station to 100% covered: a ring across the passage, rooms all the way round.'}</p>
       <label class="acc">Accuracy check
@@ -181,7 +190,9 @@
         <button onclick={() => live.laser(true)} disabled={!survey.canLaser} title="Laser on, for aiming (the X1)"><Flashlight size={18} /> Laser on</button>
         <button onclick={() => live.laser(false)} disabled={!survey.canLaser} title="Laser off (the X1)"><FlashlightOff size={18} /> Laser off</button>
       </div>
-      {#if survey.waitingForDevice && !sweep}
+      {#if survey.calibration}
+        <CalibrationGuide guide={survey.calibration} />
+      {:else if survey.waitingForDevice && !sweep}
         <div class="sweep waiting" role="status">
           <div class="sweepinfo">
             <p class="sweephead"><b>{KIND_NAME[survey.waitingForDevice]}</b> at {survey.standing}: ready</p>
@@ -359,6 +370,7 @@
     </div>
   </footer>
 </div>
+{#if quickRef}<QuickRef page="cavway-x1" onclose={() => (quickRef = false)} />{/if}
 
 <style>
   .panel { display: flex; flex-direction: column; height: 100%; background: var(--panel); color: var(--text); font-size: 14px; outline: none; }
@@ -418,6 +430,8 @@
   .link .opts { height: 64px; }
   .devhead { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
   .devhead h4 { margin: 0; }
+  .tools { display: flex; flex-wrap: wrap; gap: 8px; }
+  button.qr { min-height: 36px; padding: 4px 10px; font-size: 13px; flex: 1; }
   .seg { display: inline-flex; border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
   .seg button { border: 0; border-radius: 0; min-height: 36px; padding: 4px 14px; background: var(--panel-2); color: var(--muted); }
   .seg button.on { background: var(--accent); color: var(--on-accent, #fff); font-weight: 600; }

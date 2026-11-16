@@ -278,10 +278,12 @@ fn bric_indications() {
 
 fn outs_json(outs: &[LinkOut]) -> Vec<Value> {
     outs.iter()
-        .map(|o| match o {
-            LinkOut::Frame { hex, from } => json!({"k": "frame", "hex": hex, "from": from}),
-            LinkOut::Reading { reading } => json!({"k": "reading", "reading": reading}),
-            LinkOut::Send { bytes } => json!({"k": "send", "hex": hex(bytes)}),
+        .filter_map(|o| match o {
+            LinkOut::Frame { hex, from } => Some(json!({"k": "frame", "hex": hex, "from": from})),
+            LinkOut::Reading { reading } => Some(json!({"k": "reading", "reading": reading})),
+            LinkOut::Send { bytes } => Some(json!({"k": "send", "hex": hex(bytes)})),
+            // the old code had no calibration guide: nothing to compare
+            LinkOut::Calibration { .. } => None,
         })
         .collect()
 }

@@ -80,5 +80,10 @@
     "group": "Panels",
     "title": "Survey",
     "panel": "survey"
+  },
+  {
+    "id": "cavway-x1",
+    "group": "Instruments",
+    "title": "Cavway X1 quick reference"
   }
 ]

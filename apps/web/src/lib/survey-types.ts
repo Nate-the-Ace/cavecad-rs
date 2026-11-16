@@ -132,6 +132,31 @@ export interface Step {
   settle_ms: number | null;
   sim_left: boolean;
   sim_note: string | null;
+  /** The calibration guide, while it is open. */
+  calibration: CalibrationView | null;
+}
+
+/** A direction (degrees: magnetic azimuth, clino up positive). */
+export interface CalibrationDir {
+  azimuth: number;
+  inclination: number;
+}
+/** One of the fourteen directions a calibration should cover. */
+export interface CalibrationTarget extends CalibrationDir {
+  label: string;
+  covered: boolean;
+}
+/** The calibration guide (cave-instrument calibrate.rs GuideView). */
+export interface CalibrationView {
+  targets: CalibrationTarget[];
+  groups: CalibrationDir[];
+  current_shots: number;
+  current: CalibrationDir | null;
+  next: CalibrationTarget | null;
+  covered: number;
+  can_compute: boolean;
+  done: boolean;
+  say: string;
 }
 
 export interface Quirk {

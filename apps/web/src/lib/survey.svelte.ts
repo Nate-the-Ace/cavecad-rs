@@ -7,7 +7,7 @@
 import { cave, changed, focusStation } from './cave.svelte';
 import { engine, loadEngine } from './engine';
 import { WebBleInstrument } from './instrument/webble';
-import type { Catalog, Device, HeldView, Instrument, LinkBridge, LinkEvents, LinkStatus, LogEntry, Reading, SessionState, Snapshot, Step, StandingWalls, SurveyStandard, SweepKind, SweepView } from './survey-types';
+import type { Catalog, Device, HeldView, Instrument, LinkBridge, LinkEvents, LinkStatus, LogEntry, Reading, SessionState, Snapshot, Step, StandingWalls, SurveyStandard, CalibrationView, SweepKind, SweepView } from './survey-types';
 
 export type { LogEntry } from './survey-types';
 /** `auto`: any supported instrument (Cavway X1, SAP5, SAP6, BRIC4, BRIC5), told apart by its name; `capture`: any device, frames logged; `simulator`: a pretend instrument. */
@@ -101,6 +101,8 @@ export const survey = $state({
   aiming: '' as '' | ShotKind,
   /** Shots of a station-to-station burst still to fire. */
   burst: 0,
+  /** The calibration guide, while it is open. */
+  calibration: null as CalibrationView | null,
 });
 
 let instrument: Instrument | null = null;
@@ -184,6 +186,7 @@ function watchDeviceSweep() {
 export function apply(step: Step): boolean {
   for (const f of step.frames) survey.frames = [...survey.frames, `${f.from.length > 8 ? f.from.slice(0, 8) : f.from}  ${f.hex}`].slice(-300);
   if (step.error) survey.message = step.error;
+  if ('calibration' in step) survey.calibration = step.calibration ?? null;
   if (step.snapshot) {
     mirror(step.snapshot);
     if (step.snapshot.edits !== edits) {
@@ -496,3 +499,14 @@ export function setAccuracy(level: AccuracyCheck) {
   }
   apply(engine.surveySetAccuracy(level));
 }
+
+// ---- guided calibration ----
+
+/** Opens the calibration guide, fresh: the X1's calibration shots are followed from now on. */
+export const startCalibration = () => void apply(engine.surveyCalibrationStart());
+/** Closes the calibration guide. */
+export const stopCalibration = () => void apply(engine.surveyCalibrationStop());
+/** The group being taken was reset on the X1 (its > button). */
+export const resetCalibrationGroup = () => void apply(engine.surveyCalibrationResetGroup());
+/** A simulated calibration shot, aimed where the guide asks. */
+export const simCalibrationShot = () => void apply(engine.surveySimCalibrationShot());

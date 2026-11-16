@@ -25,6 +25,13 @@ pub enum LinkOut {
         /// The shot.
         reading: Reading,
     },
+    /// A calibration shot (for the calibration guide; never surveyed): where the instrument pointed.
+    Calibration {
+        /// Degrees.
+        azimuth: f64,
+        /// Degrees, up positive.
+        inclination: f64,
+    },
     /// Bytes to write back to the instrument (an acknowledgement).
     Send {
         /// The message, already framed.
@@ -151,6 +158,10 @@ impl X1Link {
                 "(calibration shot: acknowledged, not surveyed)",
                 from,
             ));
+            out.push(LinkOut::Calibration {
+                azimuth: tidy(p.azimuth, 3),
+                inclination: tidy(p.inclination, 3),
+            });
             return out;
         }
         out.push(LinkOut::Reading {

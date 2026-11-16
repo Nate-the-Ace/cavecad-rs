@@ -56,10 +56,13 @@ To check on the real X1 next time it is in hand:
 - [x] **X1 cheat sheet for the hard case:** `docs/print/x1-cheat-sheet.pdf` (6 x 4 in, double-sided; source
       `x1-cheat-sheet.html`, from the X1 manual Rev. C). Found doing it: the X1's accuracy limits CAN be loosened on
       the X1 itself (M > Advan. Menu > Shot Options: angle up to 1.0 deg, ABS up to 3.0 %, dip up to 3.0 deg).
-- [ ] **Guided calibration in CaveCAD:** the X1 already shows its coverage on screen (two circles), and it sends
-      calibration shots over Bluetooth (flag bit 0; CaveCAD acknowledges and drops them today). CaveCAD could show the
-      covered directions on a sphere and say where to point next ("steeply down, facing west"), group by group.
-      Feasible; not built.
+- [x] **Guided calibration in CaveCAD** (Capture > Guided calibration; engine `cave-instrument/src/calibrate.rs`):
+      follows the X1's calibration shots, groups them as the X1 does (4 shots, rolled 90 degrees), covers 14 target
+      directions and says the next one in words, with the two circles and a checklist. Tried with the simulator.
+      **To check on the real X1:** does it send calibration shots over Bluetooth as they are taken, in Calibration
+      mode? (Packets with flag bit 0 have been seen; live sending in Calibration mode has not.)
+- [x] **X1 quick reference in the app:** Handbook page `cavway-x1`, and Capture > X1 quick reference (full screen on
+      a phone).
 - [ ] **X1 firmware:** download the X1 firmware source and see what changing it for CaveCAD would take (e.g. a
       remote scan-mode start, looser accuracy limits, sleep behaviour).
 - [ ] **Line colours by type,** so what is on screen is easy to tell apart at a glance.

@@ -12,6 +12,7 @@
 //! - [`sim`]: a pretend instrument, for every device and its quirks, driven by a seed.
 
 pub mod bric;
+pub mod calibrate;
 pub mod caveble;
 pub mod cavway;
 pub mod identify;
