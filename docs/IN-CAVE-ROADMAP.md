@@ -53,8 +53,13 @@ To check on the real X1 next time it is in hand:
 
 ## To do (Nathan, 2026-11-16)
 
-- [ ] **X1 cheat sheet for the hard case:** a small printed card of the X1's controls and screens, with a step list
-      for calibration. Also: can CaveCAD guide calibration (tell the surveyor which direction to point next)?
+- [x] **X1 cheat sheet for the hard case:** `docs/print/x1-cheat-sheet.pdf` (6 x 4 in, double-sided; source
+      `x1-cheat-sheet.html`, from the X1 manual Rev. C). Found doing it: the X1's accuracy limits CAN be loosened on
+      the X1 itself (M > Advan. Menu > Shot Options: angle up to 1.0 deg, ABS up to 3.0 %, dip up to 3.0 deg).
+- [ ] **Guided calibration in CaveCAD:** the X1 already shows its coverage on screen (two circles), and it sends
+      calibration shots over Bluetooth (flag bit 0; CaveCAD acknowledges and drops them today). CaveCAD could show the
+      covered directions on a sphere and say where to point next ("steeply down, facing west"), group by group.
+      Feasible; not built.
 - [ ] **X1 firmware:** download the X1 firmware source and see what changing it for CaveCAD would take (e.g. a
       remote scan-mode start, looser accuracy limits, sleep behaviour).
 - [ ] **Line colours by type,** so what is on screen is easy to tell apart at a glance.
