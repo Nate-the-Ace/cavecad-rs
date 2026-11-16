@@ -102,3 +102,44 @@ gimbal step by step and fires the X1 at each stop, so a sweep is even and comple
   the X1 turned 90° in the clamp); the compass reading next to the gimbal's motors (magnets near the X1 can pull the
   compass: test with a known bearing before trusting it, and calibrate the X1 in the clamp if needed).
 - **Where it fits**: after the X1 checks above pass and the iPad app runs, as its own project.
+
+### Research (2026-11-16): who else is doing this
+
+**Driving an Osmo Mobile from your own code: yes, people have.** DJI publishes nothing for current models (only the
+Osmo Mobile 2 still works with the old official Mobile SDK), but the Bluetooth protocol has been worked out by several
+people. It is DJI's "DUML" message format sent over Bluetooth: service `fff0`, notify `fff4`, write `fff5`.
+
+| Project | What it does | Models | Notes |
+|---|---|---|---|
+| [alkersan/om-research](https://github.com/alkersan/om-research) | Python driver (connect, send, notifications), DUML parser, rotate example, a Web Bluetooth prototype | tested OM2, OM3, OM4 | MIT; the base the others build on |
+| [shaun-xenon/osmo-remote](https://github.com/shaun-xenon/osmo-remote) | Speed control (pan/tilt), recenter, follow / lock / FPV modes; a sniff command to capture the app's traffic | verified on a real OM7P | MIT; Python + Electron |
+| [PhantYT/OMMotionStudio](https://github.com/PhantYT/OMMotionStudio) | iPhone app (SwiftUI + CoreBluetooth): joystick, modes, a **motion timeline with keyframes**, 25 Hz command loop | OM7P | the closest to "record a move and repeat it"; not validated on hardware by its author; no licence stated |
+| [PANDAJSR/OSMO-Remote](https://github.com/PANDAJSR/OSMO-Remote) | Python keyboard control, protocol notes | OM6, not yet validated | no licence stated |
+| [yigitkonur/lib-osmo-ble](https://github.com/yigitkonur/lib-osmo-ble) ([protocol](https://github.com/yigitkonur/lib-osmo-ble/blob/main/PROTOCOL.md)) | **Absolute angle** commands (go to pitch/roll/yaw, optionally over a duration), speed control, and the gimbal's **own angle readings pushed ~20 times a second** | Osmo Pocket 3 (a camera, same DUML family) | the commands we want most; untested on an Osmo Mobile |
+
+**Record and replay: nobody has it working.** DJI's Mimo app doesn't keep motion paths (Motionlapse points must be set
+again every time). OMMotionStudio's keyframe timeline is the only attempt, unproven. So CaveCAD's version would be new.
+
+**Measuring rooms with a motorised laser: the idea is proven.** Leica's 3D Disto is exactly this: a motorised laser
+distance meter that measures a whole room from one station, automatically (angles from encoders, 1 mm at 10 m by
+Leica's figure). DIY builds put a LIDAR-Lite on a pan-tilt head for the same thing. In caving, the
+[Poor Man's Laser Scanner](https://poormanslaserscanner.github.io/test_md/paper.pdf) builds 3D cave models from
+hand-shot DistoX splays, and the [Caveatron](http://www.caveatron.com/documents/Caveatron_Paper_Proceedings_ICS_2017.pdf)
+is a combined survey and LIDAR instrument. **No one found motorises a DistoX, BRIC or Cavway on a gimbal.**
+
+**What this means for CaveCAD's plan:**
+
+1. **Model first.** Which Osmo Mobile Nathan has decides which project to start from (OM7P: osmo-remote's packets are
+   proven; OM4 or older: om-research).
+2. **Speed control is proven, absolute angles are not.** Plan both: try the Pocket 3's absolute-angle command (it may
+   work, same message family); if not, steer by speed.
+3. **The X1 closes the loop, so the gimbal's own angles aren't essential.** Every shot already says where the laser
+   pointed (compass and clino). CaveCAD can turn the gimbal, take a shot, see where it landed, and aim the next one at
+   the biggest gap the sweep check reports. The gimbal's angle readings, if the Osmo sends them, become a cross-check
+   on the X1's compass (useful, since the gimbal's motor magnets may pull the compass).
+4. **Repeatable sweeps = replaying aim points, not a recorded hand motion.** A sweep pattern (e.g. a ring every 15°
+   across the passage) is a list of directions; replaying it at the next station is what makes sweeps even and
+   comparable. CaveCAD already knows the passage direction at the station to orient the pattern.
+5. **First bench test at home:** connect from the Mac with osmo-remote or om-research, confirm speed control, try the
+   absolute-angle and angle-readback commands, and watch the X1's compass while the motors run.
+
