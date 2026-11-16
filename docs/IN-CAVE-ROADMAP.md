@@ -51,6 +51,16 @@ To check on the real X1 next time it is in hand:
 - [ ] Old memory on connect still lands as splays at the current station (from first contact): must be offered,
       not written. Fix before field use.
 
+## To do (Nathan, 2026-11-16)
+
+- [ ] **X1 cheat sheet for the hard case:** a small printed card of the X1's controls and screens, with a step list
+      for calibration. Also: can CaveCAD guide calibration (tell the surveyor which direction to point next)?
+- [ ] **X1 firmware:** download the X1 firmware source and see what changing it for CaveCAD would take (e.g. a
+      remote scan-mode start, looser accuracy limits, sleep behaviour).
+- [ ] **Line colours by type,** so what is on screen is easy to tell apart at a glance.
+- Learned 2026-11-16: the X1's accuracy limits are tight and an office of steel shelving trips them on every shot;
+  CaveCAD now judges the figures itself (Accuracy check: Strict / Normal / Relaxed, Normal by default).
+
 ## iPad: direct device support (iPad, iPad Air, iPad mini)
 
 Target screens, landscape, in points: iPad mini 1133×744, iPad 1180×820, iPad Air 11" 1180×820, iPad Air 13"
