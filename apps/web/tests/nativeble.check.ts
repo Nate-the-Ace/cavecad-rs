@@ -1,6 +1,6 @@
 // Run: npm run test:nativeble
 import assert from 'node:assert/strict';
-import { fits, fullUuid, NativeDevice } from '../src/lib/native-bluetooth.ts';
+import { fits, fullUuid, limits, NativeDevice } from '../src/lib/native-bluetooth.ts';
 
 assert.equal(fullUuid(0x58d0), '000058d0-0000-1000-8000-00805f9b34fb');
 assert.equal(fullUuid('180F'), '0000180f-0000-1000-8000-00805f9b34fb');
@@ -43,5 +43,25 @@ assert.equal(fits({ ...x1, name: null }, req), false, 'no name, no service: not 
   };
   await assert.rejects(() => e.gatt.connect());
   assert.equal(e.id, 'old');
+}
+// ---- a native connect that never answers (seen on an iPhone) fails after the limit, so the retrying goes on ----
+{
+  limits.connectMs = 30;
+  const g = globalThis as unknown as { __TAURI_INTERNALS__: { invoke: (c: string, a?: Record<string, unknown>) => Promise<unknown> } };
+  let tries = 0;
+  g.__TAURI_INTERNALS__.invoke = async (cmd) => {
+    if (cmd === 'ble_connect') {
+      tries += 1;
+      if (tries === 1) return new Promise(() => {}); // hangs for ever
+      return [];
+    }
+    if (cmd === 'ble_scan') return [];
+    return null;
+  };
+  const d = new NativeDevice('x', 'CavwayX1-0312');
+  await assert.rejects(() => d.gatt.connect(), /did not answer in time/);
+  await d.gatt.connect();
+  assert.ok(d.gatt.connected, 'the next try connects');
+  limits.connectMs = 20_000;
 }
 console.log('nativeble: ok');

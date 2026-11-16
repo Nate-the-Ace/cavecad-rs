@@ -37,6 +37,18 @@ export function fullUuid(u: string | number): string {
   return s;
 }
 
+/** How long one connect may take before it counts as failed (so a native call that never answers cannot stall the
+ * reconnecting: seen on an iPhone, 2026-11-16). Tests shorten it. */
+export const limits = { connectMs: 20_000 };
+
+/** `p`, or a failure with `message` once `ms` have passed. */
+function within<T>(p: Promise<T>, ms: number, message: string): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error(message)), ms);
+    p.then((v) => (clearTimeout(t), resolve(v)), (e) => (clearTimeout(t), reject(e)));
+  });
+}
+
 type Found = { id: string; name: string | null; services: string[]; rssi: number | null };
 type Service = { uuid: string; chars: { uuid: string; props: string[] }[] };
 type Filter = { namePrefix?: string; name?: string; services?: (string | number)[] };
@@ -136,14 +148,14 @@ class NativeGatt {
     dlog(`connect ${this.device.name ?? '?'} id=${this.device.id}`);
     let list: Service[];
     try {
-      list = await call<Service[]>('ble_connect', { id: this.device.id });
+      list = await within(call<Service[]>('ble_connect', { id: this.device.id }), limits.connectMs, 'The instrument did not answer in time.');
     } catch (e) {
       dlog(`connect failed: ${e instanceof Error ? e.message : String(e)}`);
       // An instrument switched off and on again can come back under a new identity (the X1's "sleep" is a power-off):
       // look for it by its name and use whatever identity it has now.
       const now = await this.device.refind();
       if (!now) throw e;
-      list = await call<Service[]>('ble_connect', { id: this.device.id });
+      list = await within(call<Service[]>('ble_connect', { id: this.device.id }), limits.connectMs, 'The instrument did not answer in time.');
     }
     dlog(`connected ${this.device.name ?? '?'} id=${this.device.id}`);
     // a reconnect gets fresh characteristics: the old ones' notifications go to the new ones

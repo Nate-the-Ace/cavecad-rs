@@ -26,6 +26,8 @@ pub struct Ble {
     seen: Mutex<HashMap<String, Peripheral>>,
     /// Devices whose notifications are already being passed to the page.
     listening: Mutex<HashSet<String>>,
+    /// Devices whose connection dropped (not by the page): closed properly before they are connected again.
+    dropped: Mutex<HashSet<String>>,
 }
 
 /// A device found by a scan.
@@ -120,6 +122,7 @@ async fn adapter<'a>(app: &AppHandle, ble: &'a Ble) -> Result<&'a Adapter, Strin
                     if let CentralEvent::DeviceDisconnected(id) = event {
                         let id = id.to_string();
                         app.state::<Ble>().listening.lock().unwrap().remove(&id);
+                        app.state::<Ble>().dropped.lock().unwrap().insert(id.clone());
                         tell(&app, serde_json::json!({ "t": "gone", "id": id }));
                     }
                 }
@@ -194,22 +197,29 @@ pub async fn ble_scan(app: AppHandle, ble: State<'_, Ble>, ms: u64) -> Result<Ve
 pub async fn ble_connect(app: AppHandle, ble: State<'_, Ble>, id: String) -> Result<Vec<Service>, String> {
     adapter(&app, &ble).await?;
     let p = device(&ble, &id).inspect_err(|e| trace(&app, format!("connect id={id}: {e}")))?;
-    let was = p.is_connected().await.unwrap_or(false);
-    trace(&app, format!("connect id={id} (already connected: {was})"));
-    // a device that went out of range can leave a connect waiting for ever: give up after a while (the page tries again)
-    let wait = Duration::from_secs(10);
-    if !p.is_connected().await.unwrap_or(false) {
-        tokio::time::timeout(wait, p.connect())
-            .await
-            .map_err(|_| "The instrument did not answer. Is it on and close by?".to_string())
-            .inspect_err(|e| trace(&app, format!("connect id={id}: {e}")))?
-            .map_err(|e| format!("Could not connect: {e}"))
-            .inspect_err(|e| trace(&app, format!("connect id={id}: {e}")))?;
+    let fail = |e: String| {
+        trace(&app, format!("connect id={id}: {e}"));
+        e
+    };
+    // After a drop, close what the last connection left behind before a fresh connect (as TopoDroid does: closeGatt,
+    // then connectGatt). No "is it connected?" question first: on iOS that call once never answered, and the page's
+    // reconnecting stopped with it. Every step has a time limit, so a stuck call can only cost one try.
+    let dropped = ble.dropped.lock().unwrap().remove(&id);
+    if dropped {
+        trace(&app, format!("connect id={id}: closing the old connection first"));
+        let _ = tokio::time::timeout(Duration::from_secs(3), p.disconnect()).await;
     }
+    trace(&app, format!("connect id={id}: connecting"));
+    let wait = Duration::from_secs(10);
+    tokio::time::timeout(wait, p.connect())
+        .await
+        .map_err(|_| fail("The instrument did not answer. Is it on and close by?".into()))?
+        .map_err(|e| fail(format!("Could not connect: {e}")))?;
+    trace(&app, format!("connect id={id}: connected, listing services"));
     tokio::time::timeout(wait, p.discover_services())
         .await
-        .map_err(|_| "The instrument did not list its services in time.".to_string())?
-        .map_err(|e| format!("Could not read the instrument's services: {e}"))?;
+        .map_err(|_| fail("The instrument did not list its services in time.".into()))?
+        .map_err(|e| fail(format!("Could not read the instrument's services: {e}")))?;
     if ble.listening.lock().unwrap().insert(id.clone()) {
         let mut stream = p
             .notifications()
@@ -226,6 +236,7 @@ pub async fn ble_connect(app: AppHandle, ble: State<'_, Ble>, id: String) -> Res
             }
         });
     }
+    trace(&app, format!("connect id={id}: ready"));
     Ok(p.services()
         .into_iter()
         .map(|s| Service {
