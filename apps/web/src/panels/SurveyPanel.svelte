@@ -232,7 +232,6 @@
           <button class="sweepbtn" onclick={() => live.startSweep('lrud')} disabled={!linked} title="A slow ring across the passage at this station: the cross-section and its left, right, up and down"><ScanLine size={20} /> {manual ? 'LRUD' : 'LRUD ring'}<small>{manual ? 'one shot to each wall' : 'dense ring across the passage'}</small></button>
           <button class="sweepbtn" onclick={() => live.startSweep('room')} disabled={!linked} title="The laser about level, turned right round: the outline of a room"><Radar size={20} /> {manual ? 'Room outline' : 'Room sweep'}<small>{manual ? 'rough, eight ways round' : 'level, all the way round'}</small></button>
         </div>
-        {#if !manual && !live.usesDeviceScan()}<label class="chk"><input type="checkbox" bind:checked={survey.autoFire} /> CaveCAD fires the laser during a sweep (every 1.5 s, stops when the sweep is complete)</label>{/if}
         <p class="hint">Or hold DIST+M on the X1 for its own scan mode: CaveCAD checks it as
           <select value={survey.sweepKind} onchange={(e) => live.setSweepKind(e.currentTarget.value as 'lrud' | 'room')} aria-label="Check the X1's own sweeps as">
             <option value="lrud">an LRUD ring</option>
