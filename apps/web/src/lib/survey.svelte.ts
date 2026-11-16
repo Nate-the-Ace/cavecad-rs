@@ -83,6 +83,10 @@ export const survey = $state({
   canLaser: false,
   /** Digital with an X1: waiting for the surveyor to start the scan on the X1 (this kind of sweep). */
   waitingForDevice: null as SweepKind | null,
+  /** A shot button's first press turned the laser on: which one ('' when not aiming); its next press fires. */
+  aiming: '' as '' | ShotKind,
+  /** Shots of a station-to-station burst still to fire. */
+  burst: 0,
 });
 
 let instrument: Instrument | null = null;
@@ -103,6 +107,16 @@ queueMicrotask(() =>
 );
 
 function mirror(s: Snapshot) {
+  // a shot arrived (the second press, or the X1's own button): the aim is over
+  const arrived = !!s.last && JSON.stringify(s.last) !== JSON.stringify(survey.last);
+  if (arrived && survey.aiming) stopAiming();
+  // a station-to-station burst: each shot fires once the one before it has come back
+  if (arrived && survey.burst > 0) queueMicrotask(nextInBurst);
+  // a Single shot is a splay: no need to wait to see whether two more make a leg
+  if (arrived && singlePending) {
+    singlePending = false;
+    if (s.waiting > 0) queueMicrotask(settleNow);
+  }
   survey.state = s.state;
   survey.instruction = s.instruction;
   survey.standing = s.standing;
@@ -235,6 +249,9 @@ export async function connect(kind: LinkKind, given: { services?: string[]; anyD
 }
 
 export function disconnect() {
+  stopAiming();
+  survey.burst = 0;
+  clearTimeout(burstTimer);
   setFiring(false);
   clearTimeout(idleTimer);
   clearTimeout(settleTimer);
@@ -251,6 +268,74 @@ export function disconnect() {
 }
 
 /** Fires a shot from the screen (the instrument must support it). */
+/** How long the laser stays on for aiming before the button forgets the first press. */
+const AIM_MS = 60_000;
+let aimTimer: ReturnType<typeof setTimeout> | undefined;
+
+function stopAiming() {
+  survey.aiming = '';
+  clearTimeout(aimTimer);
+}
+
+/** Single shot (one shot: a splay, or a wall in LRUD) or station to station (three close shots: the leg). */
+export type ShotKind = 'single' | 'leg';
+/** The X1 makes a leg of three close shots. */
+const LEG_SHOTS = 3;
+/** Pause between the shots of a burst, and how long one may take to come back before the burst gives up. */
+const BURST_GAP_MS = 250;
+const BURST_WAIT_MS = 5000;
+let burstTimer: ReturnType<typeof setTimeout> | undefined;
+/** A Single shot was fired and has not come back yet. */
+let singlePending = false;
+
+function fireInBurst() {
+  clearTimeout(burstTimer);
+  burstTimer = setTimeout(() => {
+    if (survey.burst > 0) {
+      survey.burst = 0;
+      survey.message = 'A shot of the leg did not come back: hold steady and press Station to station again.';
+    }
+  }, BURST_WAIT_MS);
+  takeShot();
+}
+
+function nextInBurst() {
+  if (survey.burst <= 0) return;
+  survey.burst -= 1;
+  clearTimeout(burstTimer);
+  if (survey.burst === 0) return; // the last one is in
+  setTimeout(fireInBurst, BURST_GAP_MS);
+}
+
+/** The instrument's laser can be turned on from here, so a shot is aimed first (an X1, or the simulator being one). */
+export const aimsFirst = () => survey.canLaser || (survey.kind === 'simulator' && survey.status === 'connected' && survey.sim.device === 'x1'); // read from state, so the screen follows it
+
+/**
+ * The shot button: with an X1, the first press turns the laser on to aim, the second takes the shot (as on the
+ * instrument). Other instruments, and CaveCAD's own sweep firing, shoot at once.
+ */
+export function pressShot(kind: ShotKind = 'single') {
+  if (!aimsFirst() || survey.firing) return takeShot();
+  if (survey.burst > 0) return; // a leg is being shot
+  if (survey.aiming !== kind) {
+    laser(true);
+    survey.aiming = kind;
+    clearTimeout(aimTimer);
+    aimTimer = setTimeout(stopAiming, AIM_MS);
+    return;
+  }
+  stopAiming();
+  if (kind === 'single') {
+    singlePending = true;
+    if (simulator) return void apply(engine.surveySimShot());
+    return takeShot();
+  }
+  // station to station: the simulator shoots its whole next station; a real X1 three close shots in a row
+  if (simulator) return takeShot();
+  survey.burst = LEG_SHOTS;
+  fireInBurst();
+}
+
 export function takeShot() {
   // The simulator shoots a whole station (leg, backsight, splays and passage) for one press; a real instrument fires one shot.
   // the simulated surveyor aims a Manual LRUD shot at the wall asked for, and sweeps round otherwise
@@ -295,6 +380,7 @@ export const setStandingWall = (side: 'left' | 'right' | 'up' | 'down', value: n
 
 /** Switches the X1's laser on or off (it stays on, for aiming, until switched off or a shot is taken). */
 export function laser(on: boolean) {
+  if (!on) stopAiming();
   instrument?.laser?.(on);
 }
 

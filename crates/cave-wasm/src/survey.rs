@@ -409,6 +409,20 @@ pub fn survey_previous_station() -> String {
     with_session(|s, host, step| step.ok = s.previous_station(host))
 }
 
+/// The simulator fires one shot (the next of its script), as one press of a real instrument's button does.
+#[wasm_bindgen]
+pub fn survey_sim_shot() -> String {
+    with_session(|s, host, step| {
+        let outs = SIM.with(|m| {
+            m.borrow_mut()
+                .as_mut()
+                .map(|sim| sim.take_shot())
+                .unwrap_or_default()
+        });
+        route(outs, s, host, step);
+    })
+}
+
 /// Settle what is waiting as splays now, without waiting for the pause.
 #[wasm_bindgen]
 pub fn survey_settle_now() -> String {

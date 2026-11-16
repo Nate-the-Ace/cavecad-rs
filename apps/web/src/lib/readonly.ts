@@ -40,6 +40,7 @@ export const WRITES: readonly string[] = [
   'surveySetStandingWall',
   'surveyStartSweep',
   'surveySimSweepShot',
+  'surveySimShot',
   'scanLink',
   'scanUnlink',
   'scanAddAnchor',

@@ -78,6 +78,18 @@
   // The shot button says where the shot goes, so there is no doubt which station it lands on in the map.
   // LRUD and sweeps are taken at one station, facing on along the survey: only that station is named
   const atOnly = $derived(!survey.state.awaiting && (survey.state.mode === 'lrud' || !!survey.sweep || !!survey.waitingForDevice));
+  // the X1's two shot buttons: one shot where you stand, and the leg to the next station
+  const singleWhere = $derived.by(() => {
+    const from = survey.state.from.trim() || '?';
+    if (survey.sweep || survey.waitingForDevice) return `Sweep at ${survey.sweep?.station ?? from}`;
+    return survey.state.mode === 'lrud' ? `LRUD at ${from}` : `Splay from ${from}`;
+  });
+  const legWhere = $derived.by(() => {
+    const st = survey.state;
+    const from = st.from.trim() || '?';
+    const to = st.to.trim() || '?';
+    return st.awaiting ? `Backsight ${to} → ${from}` : `${from} → ${to}`;
+  });
   const shotWhere = $derived.by(() => {
     const st = survey.state;
     const from = st.from.trim();
@@ -101,7 +113,7 @@
     else if (e.key === 'Escape') live.discard();
     else if (e.key === ' ' && survey.canTakeShot) {
       e.preventDefault();
-      live.takeShot();
+      live.pressShot();
     } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z') {
       e.preventDefault();
       if (e.shiftKey ? engine.redo('notebook') : engine.undo('notebook')) changed();
@@ -303,7 +315,33 @@
   </div>
 
   <footer class="dock" aria-label="Actions">
-    <button class="shoot" onclick={live.takeShot} disabled={!survey.canTakeShot}><Crosshair size={22} /> <span class="where">{survey.kind === 'simulator' && !survey.sweep ? shotWhere.replace('Take shot', 'Shoot station') : shotWhere}</span></button>
+    {#if live.aimsFirst()}
+      <!-- an X1: press once to turn the laser on and aim, press again to shoot -->
+      <div class="shots">
+        <button class="shoot" class:armed={survey.aiming === 'single'} onclick={() => live.pressShot('single')} disabled={!survey.canTakeShot || survey.burst > 0 || !!survey.state.awaiting}>
+          <Crosshair size={20} />
+          <span class="lines">
+            <span class="where">{singleWhere}</span>
+            <small>{survey.aiming === 'single' ? 'Laser on: press to shoot' : 'Single shot'}</small>
+          </span>
+        </button>
+        <button class="shoot" class:armed={survey.aiming === 'leg'} onclick={() => live.pressShot('leg')} disabled={!survey.canTakeShot || survey.burst > 0 || (!survey.state.awaiting && (atOnly || !survey.state.to.trim()))}>
+          <Crosshair size={20} />
+          <span class="lines">
+            <span class="where">{legWhere}</span>
+            <small>{survey.burst > 0 ? `Shooting the leg: ${3 - survey.burst + 1} of 3…` : survey.aiming === 'leg' ? 'Laser on: press for 3 shots' : 'Station to station'}</small>
+          </span>
+        </button>
+      </div>
+    {:else}
+    <button class="shoot"  onclick={() => live.pressShot()} disabled={!survey.canTakeShot}>
+      <Crosshair size={22} />
+      <span class="lines">
+        <span class="where">{survey.kind === 'simulator' && !survey.sweep && !live.aimsFirst() ? shotWhere.replace('Take shot', 'Shoot station') : shotWhere}</span>
+        {#if survey.aiming}<small>Laser on: aim, then press again to shoot</small>{:else if live.aimsFirst() && !survey.firing}<small>Press to aim the laser</small>{/if}
+      </span>
+    </button>
+    {/if}
     <div class="slots">
       <button onclick={live.previousStation} disabled={survey.state.awaiting !== null} title="Step back to the station before this one (undo is in the bar above)"><ChevronLeft size={18} /> Previous station</button>
       {#if survey.state.awaiting}
@@ -329,6 +367,11 @@
   button.go, button.shoot { background: var(--accent); border-color: var(--accent); color: var(--on-accent, #fff); }
   button.no { color: var(--danger); }
   button.shoot { font-size: 17px; font-weight: 600; min-height: 56px; width: 100%; }
+  .shots { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .shots button.shoot { font-size: 16px; padding: 8px 6px; }
+  button.shoot .lines { display: flex; flex-direction: column; align-items: center; min-width: 0; line-height: 1.2; }
+  button.shoot small { font-size: 12px; font-weight: 500; opacity: 0.9; }
+  button.shoot.armed { background: var(--danger, #e4572e); border-color: var(--danger, #e4572e); }
   button.shoot .where { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-variant-numeric: tabular-nums; }
   .simnote { margin: 0; padding: 6px 10px; border: 1px dashed var(--line); border-radius: var(--radius); color: var(--muted); font-size: 12px; }
   .banner { margin: 0; padding: 8px 10px; border: 1px solid var(--warn); border-radius: var(--radius); font-size: 13px; }
