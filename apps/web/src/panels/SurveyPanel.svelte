@@ -76,11 +76,14 @@
   const lastSweep = $derived(survey.lastSweep);
   const manual = $derived(survey.standard === 'manual');
   // The shot button says where the shot goes, so there is no doubt which station it lands on in the map.
+  // LRUD and sweeps are taken at one station, facing on along the survey: only that station is named
+  const atOnly = $derived(!survey.state.awaiting && (survey.state.mode === 'lrud' || !!survey.sweep || !!survey.waitingForDevice));
   const shotWhere = $derived.by(() => {
     const st = survey.state;
     const from = st.from.trim();
     const to = st.to.trim();
     if (survey.sweep) return `Sweep at ${survey.sweep.station}`;
+    if (survey.waitingForDevice) return `Sweep at ${from || '?'}`;
     if (st.awaiting) return `Backsight ${to || '?'} → ${from || '?'}`;
     if (!from) return 'Take shot';
     if (st.mode === 'splay') return `Splay from ${from}`;
@@ -246,11 +249,13 @@
 
     <section class="where" aria-label="Where you are">
       <div class="names">
-        <label>From <input class="name" value={survey.state.from} oninput={(e) => live.setNames(e.currentTarget.value, survey.state.to)} maxlength="40" aria-label="Station you are at" onkeydown={enter} disabled={survey.state.awaiting !== null} /></label>
+        <label>{atOnly ? 'At' : 'From'} <input class="name" value={survey.state.from} oninput={(e) => live.setNames(e.currentTarget.value, survey.state.to)} maxlength="40" aria-label="Station you are at" onkeydown={enter} disabled={survey.state.awaiting !== null} /></label>
+        {#if !atOnly}
         <span aria-hidden="true">→</span>
         <label>To <input class="name" value={survey.state.to} oninput={(e) => live.setNames(survey.state.from, e.currentTarget.value)} maxlength="40" aria-label="Station the next shot goes to" onkeydown={enter} disabled={survey.state.mode === 'splay' || survey.state.awaiting !== null} /></label>
+        {/if}
       </div>
-      <p class="next" role="status">{survey.instruction}</p>
+      <p class="next" role="status">{survey.sweep || survey.waitingForDevice ? `Sweeping at ${survey.sweep?.station ?? survey.state.from}.` : survey.instruction}</p>
       {#if survey.groupsLegs && survey.waiting > 0}
         <p class="wait" role="status">{survey.waiting} close shot{survey.waiting === 1 ? '' : 's'} so far: {survey.waiting === 1 ? 'two more make' : 'one more makes'} a leg. A pause of a few seconds makes {survey.waiting === 1 ? 'it a splay' : 'them splays'}. <button class="link" onclick={live.settleNow}>Splays now</button></p>
       {:else}

@@ -7,7 +7,7 @@
   import { openHandbook } from '../lib/handbook-open';
   import { cave, changed } from '../lib/cave.svelte';
   import { engine, type GeoStatus } from '../lib/engine';
-  import { fetchSurface, surface } from '../lib/surface.svelte';
+  import { fetchSurface, pickEntrance, surface } from '../lib/surface.svelte';
   import { FOOT, inUnits, metresPer, formatLength } from '../lib/units';
   import LengthField from './LengthField.svelte';
   import LocationPicker from './LocationPicker.svelte';
@@ -43,7 +43,7 @@
 
   const label = (id: string) => status?.stations.find((s) => s.id === id)?.label ?? id;
   const coord = (p: { lat: number; lon: number }) => `${p.lat.toFixed(6)}, ${p.lon.toFixed(6)}`;
-  const SOURCES: Record<string, string> = { import: 'from the imported survey', map: 'picked on the map', typed: 'typed in', pick: 'picked on the surface', 'surface-pick': 'picked on the surface' };
+  const SOURCES: Record<string, string> = { import: 'from the imported survey', map: 'picked on the map', typed: 'typed in', pick: 'picked on the surface', 'surface-pick': 'picked on the surface', device: "this device's location" };
 
   /** Stores the contour spacing when it changed (metres, rounded to 3 decimals in the display unit). */
   function applyInterval() {
@@ -101,12 +101,34 @@
     picker = { start: start ? { lat: start.lat, lon: start.lon } : null, station, thenDownload: false };
   }
 
-  async function picked(p: { lat: number; lon: number; station: string; source: 'map' | 'typed' }) {
+  async function picked(p: { lat: number; lon: number; station: string; source: 'map' | 'typed' | 'device'; accuracy?: number }) {
     const then = picker?.thenDownload;
     picker = null;
     if (!setLocation(p)) return;
+    // From the device: the ground round it is needed straight away, to find the likely entrance near where you are
+    if (p.source === 'device') return void findNear(p.accuracy ?? 20);
     if (then) await download();
     else lines = ['The location changed. Download to fetch the surface for it.'];
+  }
+
+  /**
+   * The device's location is only roughly the entrance (GPS is off by metres, more under trees): download the ground
+   * there, then move the entrance to the lowest ground within the GPS's uncertainty, as Pick entrance does with a
+   * circle dragged on the Map. The circle is at least 10 m and at most 60 m across from the centre.
+   */
+  async function findNear(accuracyM: number) {
+    await download();
+    if (!surface.tiff) {
+      lines = [...lines, 'Without the ground elevation the entrance stays at your location. Download it to look for the likely entrance nearby.'];
+      return;
+    }
+    const xyz = engine.geoEntranceXyz(cave.adjusted);
+    if (xyz.length < 2) return;
+    const r = Math.min(60, Math.max(10, accuracyM * 1.5));
+    lines = [...lines, `Looking for the likely entrance within ${formatLength(r, cave.units, 0)} of your location…`];
+    const said = await pickEntrance(xyz[0], xyz[1], r);
+    lines = [...lines.slice(0, -1), said, 'Not right? Pick entrance on the Map, or Change location.'];
+    refresh(); // the entrance line above shows where it moved to
   }
 
   const close = () => {

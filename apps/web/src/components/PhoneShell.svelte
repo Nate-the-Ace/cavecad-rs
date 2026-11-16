@@ -5,7 +5,8 @@
   // so switching back finds it as it was. The ribbon is not shown: what the survey needs from it (connecting an
   // instrument, the shot settings) is in the Capture panel on a phone.
   import type { Component } from 'svelte';
-  import { Activity, BookOpen, Crosshair, Library, Map as MapIcon, Scissors, Table2 } from '@lucide/svelte';
+  import { Activity, BookOpen, Crosshair, Library, Map as MapIcon, Mountain, Scissors, Table2 } from '@lucide/svelte';
+  import { surface } from '../lib/surface.svelte';
   import MapPanel from '../panels/MapPanel.svelte';
   import ProfilePanel from '../panels/ProfilePanel.svelte';
   import SectionPanel from '../panels/SectionPanel.svelte';
@@ -40,6 +41,7 @@
   <header class="top">
     <button class="caves" onclick={() => (shelf.open = true)} aria-label="Caves: open, start or switch a cave"><Library size={18} /> Caves</button>
     <span class="name" title={cave.name}>{cave.hasCave ? cave.name || 'Untitled cave' : 'No cave open'}{#if dirty}<span class="dot" title="Unsaved changes"> •</span>{/if}</span>
+    {#if cave.hasCave}<button class="caves icon" onclick={() => (surface.dialog = true)} aria-label="Surface Data: where the cave is, aerial photo and ground"><Mountain size={18} /></button>{/if}
     <span class="chip" class:on={linked} role="status">{linked ? survey.device || 'Connected' : 'No instrument'}</span>
   </header>
 
@@ -74,6 +76,7 @@
   }
   .caves { display: inline-flex; align-items: center; gap: 6px; font: inherit; font-size: 13px; padding: 6px 10px; min-height: 36px;
     border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel-2); color: var(--text); }
+  .caves.icon { padding: 6px 8px; }
   .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; font-size: 14px; color: var(--text); }
   .dot { color: var(--warn); }
   .chip { padding: 3px 10px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); font-size: 12px; white-space: nowrap; max-width: 40%; overflow: hidden; text-overflow: ellipsis; }

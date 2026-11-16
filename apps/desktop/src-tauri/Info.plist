@@ -4,5 +4,9 @@
 <dict>
   <key>NSBluetoothAlwaysUsageDescription</key>
   <string>CaveCAD connects to your surveying instrument (Cavway X1, DistoX, SAP, BRIC) to take shots straight into the notebook.</string>
+  <key>NSLocationUsageDescription</key>
+  <string>CaveCAD uses your location to place the cave entrance on the map and find the likely entrance nearby.</string>
+  <key>NSLocationWhenInUseUsageDescription</key>
+  <string>CaveCAD uses your location to place the cave entrance on the map and find the likely entrance nearby.</string>
 </dict>
 </plist>
