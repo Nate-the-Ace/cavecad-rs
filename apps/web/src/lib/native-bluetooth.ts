@@ -13,6 +13,22 @@ const call = <T>(cmd: string, args?: Record<string, unknown>): Promise<T> => {
   return f(cmd, args) as Promise<T>;
 };
 
+// ---- the diagnostic log: Bluetooth events written to a file in the app's own folder (cavecad-debug.log), so a
+// problem on a phone can be read afterwards (xcrun devicectl ... copy from the app's data container) ----
+let pendingLog: string[] = [];
+let logTimer: ReturnType<typeof setTimeout> | undefined;
+/** Notes a line in the diagnostic log (kept in the app's folder; nothing leaves the device). */
+export function dlog(line: string) {
+  if (!invoke()) return;
+  pendingLog.push(`${new Date().toISOString()} page ${line}`);
+  clearTimeout(logTimer);
+  logTimer = setTimeout(() => {
+    const lines = pendingLog;
+    pendingLog = [];
+    void call('debug_log', { lines }).catch(() => undefined);
+  }, 500);
+}
+
 /** A Bluetooth uuid as the full lowercase 128-bit form (a 16-bit one, as a number or 4 hex digits, is expanded). */
 export function fullUuid(u: string | number): string {
   const s = typeof u === 'number' ? u.toString(16) : u.toLowerCase().replace(/^0x/, '');
@@ -117,7 +133,19 @@ class NativeGatt {
     this.device = device;
   }
   async connect() {
-    const list = await call<Service[]>('ble_connect', { id: this.device.id });
+    dlog(`connect ${this.device.name ?? '?'} id=${this.device.id}`);
+    let list: Service[];
+    try {
+      list = await call<Service[]>('ble_connect', { id: this.device.id });
+    } catch (e) {
+      dlog(`connect failed: ${e instanceof Error ? e.message : String(e)}`);
+      // An instrument switched off and on again can come back under a new identity (the X1's "sleep" is a power-off):
+      // look for it by its name and use whatever identity it has now.
+      const now = await this.device.refind();
+      if (!now) throw e;
+      list = await call<Service[]>('ble_connect', { id: this.device.id });
+    }
+    dlog(`connected ${this.device.name ?? '?'} id=${this.device.id}`);
     // a reconnect gets fresh characteristics: the old ones' notifications go to the new ones
     this.services = list.map((s) => new NativeService(s.uuid, s.chars.map((c) => new NativeCharacteristic(this.device.id, s.uuid, c.uuid, c.props))));
     this.connected = true;
@@ -138,10 +166,12 @@ class NativeGatt {
   }
 }
 
-class NativeDevice {
+/** Exported for tests. */
+export class NativeDevice {
   readonly gatt: NativeGatt;
   private gone: (() => void)[] = [];
-  readonly id: string;
+  /** Its identity on this phone or computer: it can change when the instrument is switched off and on again. */
+  id: string;
   readonly name: string | undefined;
   constructor(id: string, name: string | undefined) {
     this.id = id;
@@ -153,8 +183,25 @@ class NativeDevice {
   }
   /** The native side says the connection dropped. */
   lost() {
+    dlog(`gone ${this.name ?? '?'} id=${this.id}`);
     this.gatt.connected = false;
     for (const l of this.gone) l();
+  }
+  /** Looks for this instrument by its name (3 s scan) and takes its identity now. True when found under a new one. */
+  async refind(): Promise<boolean> {
+    if (!this.name) return false;
+    try {
+      const found = (await call<Found[]>('ble_scan', { ms: 3000 })).find((d) => d.name === this.name);
+      dlog(`refind ${this.name}: ${found ? `seen id=${found.id}` : 'not seen'}`);
+      if (!found || found.id === this.id) return false;
+      devices.delete(this.id);
+      this.id = found.id;
+      devices.set(this.id, this);
+      return true;
+    } catch (e) {
+      dlog(`refind failed: ${e instanceof Error ? e.message : String(e)}`);
+      return false;
+    }
   }
 }
 
@@ -237,5 +284,6 @@ const nativeBluetooth = {
 export function installNativeBluetooth(): void {
   if (!invoke() || 'bluetooth' in navigator) return;
   (window as unknown as { __cavecadBle?: typeof fromNative }).__cavecadBle = fromNative;
+  (globalThis as { __cavecadDlog?: (s: string) => void }).__cavecadDlog = dlog;
   Object.defineProperty(navigator, 'bluetooth', { value: nativeBluetooth, configurable: true });
 }

@@ -353,8 +353,9 @@ export class WebBleInstrument implements Instrument {
         try {
           await this.attach();
           return;
-        } catch {
+        } catch (e) {
           tries += 1;
+          (globalThis as { __cavecadDlog?: (s: string) => void }).__cavecadDlog?.(`reconnect try ${tries} failed: ${e instanceof Error ? e.message : String(e)}`);
         }
       }
     } finally {

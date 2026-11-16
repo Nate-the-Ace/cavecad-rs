@@ -51,6 +51,39 @@ pub struct Service {
     chars: Vec<Char>,
 }
 
+/// Appends lines to the diagnostic log, `cavecad-debug.log` in the app's data folder (kept under 2 MB: the older
+/// half goes). Read off an iPhone with `xcrun devicectl device copy from --domain-type appDataContainer`.
+pub fn debug_append(app: &AppHandle, lines: &[String]) {
+    let Ok(dir) = app.path().app_data_dir() else { return };
+    let _ = std::fs::create_dir_all(&dir);
+    let path = dir.join("cavecad-debug.log");
+    let mut text = std::fs::read_to_string(&path).unwrap_or_default();
+    for l in lines {
+        text.push_str(l);
+        text.push('\n');
+    }
+    if text.len() > 2_000_000 {
+        let cut = text.len() / 2;
+        let at = text[cut..].find('\n').map_or(cut, |i| cut + i + 1);
+        text = text[at..].to_string();
+    }
+    let _ = std::fs::write(&path, text);
+}
+
+fn trace(app: &AppHandle, line: String) {
+    let t = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    debug_append(app, &[format!("{t} native {line}")]);
+}
+
+/// Lines from the page for the diagnostic log.
+#[tauri::command]
+pub fn debug_log(app: AppHandle, lines: Vec<String>) {
+    debug_append(&app, &lines);
+}
+
 /// Sends a message to the page.
 fn tell(app: &AppHandle, msg: serde_json::Value) {
     if let Some(w) = app.get_webview_window("main") {
@@ -79,6 +112,11 @@ async fn adapter<'a>(app: &AppHandle, ble: &'a Ble) -> Result<&'a Adapter, Strin
             let app = app.clone();
             tauri::async_runtime::spawn(async move {
                 while let Some(event) = events.next().await {
+                    match &event {
+                        CentralEvent::DeviceConnected(id) => trace(&app, format!("event connected id={id}")),
+                        CentralEvent::DeviceDisconnected(id) => trace(&app, format!("event disconnected id={id}")),
+                        _ => {}
+                    }
                     if let CentralEvent::DeviceDisconnected(id) = event {
                         let id = id.to_string();
                         app.state::<Ble>().listening.lock().unwrap().remove(&id);
@@ -155,14 +193,18 @@ pub async fn ble_scan(app: AppHandle, ble: State<'_, Ble>, ms: u64) -> Result<Ve
 #[tauri::command]
 pub async fn ble_connect(app: AppHandle, ble: State<'_, Ble>, id: String) -> Result<Vec<Service>, String> {
     adapter(&app, &ble).await?;
-    let p = device(&ble, &id)?;
+    let p = device(&ble, &id).inspect_err(|e| trace(&app, format!("connect id={id}: {e}")))?;
+    let was = p.is_connected().await.unwrap_or(false);
+    trace(&app, format!("connect id={id} (already connected: {was})"));
     // a device that went out of range can leave a connect waiting for ever: give up after a while (the page tries again)
     let wait = Duration::from_secs(10);
     if !p.is_connected().await.unwrap_or(false) {
         tokio::time::timeout(wait, p.connect())
             .await
-            .map_err(|_| "The instrument did not answer. Is it on and close by?".to_string())?
-            .map_err(|e| format!("Could not connect: {e}"))?;
+            .map_err(|_| "The instrument did not answer. Is it on and close by?".to_string())
+            .inspect_err(|e| trace(&app, format!("connect id={id}: {e}")))?
+            .map_err(|e| format!("Could not connect: {e}"))
+            .inspect_err(|e| trace(&app, format!("connect id={id}: {e}")))?;
     }
     tokio::time::timeout(wait, p.discover_services())
         .await

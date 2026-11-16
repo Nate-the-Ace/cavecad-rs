@@ -284,6 +284,7 @@ pub fn run() {
             update::update_install,
             bridge::bridge_result,
             ble::ble_scan,
+            ble::debug_log,
             ble::ble_connect,
             ble::ble_disconnect,
             ble::ble_read,
