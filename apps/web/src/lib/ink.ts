@@ -9,6 +9,9 @@ import { inkCss } from './ink-colors';
 
 let palette = new Map<string, TypeStyle>();
 
+/** The theme's five colours on white paper (a printed sheet, whatever the screen's theme). */
+const PAPER_THEME = { text: '#111111', muted: '#6b6b6b', accent: '#1565c0', warn: '#c26a00', danger: '#c62828' };
+
 /** Remembers the palette the engine sent (call once the engine has loaded). */
 export function setInkPalette(styles: TypeStyle[]) {
   palette = new Map(styles.map((s) => [s.key, s]));
@@ -32,11 +35,12 @@ export interface Look {
  * `pxPerM` (how many pixels one metre of ground is where the line is) and the drawing's scale; `paper` says instead how many pixels a
  * paper millimetre is (a printed sheet), whatever the ground.
  */
-export function looks(paper?: { pxPerMm: number }): (kind: string, style?: string, pxPerM?: number) => Look {
+export function looks(paper?: { pxPerMm: number }, onWhite = false): (kind: string, style?: string, pxPerM?: number) => Look {
   const css = getComputedStyle(document.documentElement);
   const v = (n: string) => css.getPropertyValue(n).trim();
-  const theme = { text: v('--text'), muted: v('--muted'), accent: v('--accent'), warn: v('--warn'), danger: v('--danger') };
-  const dark = isDark();
+  // a sheet is white paper whatever the theme: its colours are the light ones
+  const theme = onWhite ? PAPER_THEME : { text: v('--text'), muted: v('--muted'), accent: v('--accent'), warn: v('--warn'), danger: v('--danger') };
+  const dark = onWhite ? false : isDark();
   const ink = (role: TypeStyle['ink']) => inkCss(role, dark, theme);
   return (kind, style, pxPerM) => {
     const st = palette.get(kind);

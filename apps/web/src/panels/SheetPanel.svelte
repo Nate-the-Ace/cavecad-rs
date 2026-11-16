@@ -6,7 +6,7 @@
   import { cave, option } from '../lib/cave.svelte';
   import { engine, loadEngine } from '../lib/engine';
   import { looks } from '../lib/ink';
-  import { followUnits, scaleText, sheet } from '../lib/sheet.svelte';
+  import { followUnits, scaleText, sheet, sheetInk } from '../lib/sheet.svelte';
   import { drawSheet, drawStoredSheet, overflows } from '../lib/sheet-draw';
   import type { SheetDef } from '../lib/engine';
   import { vf, pickFrame } from '../lib/viewframe.svelte';
@@ -214,7 +214,7 @@
     if (!g) return;
     const dpr = window.devicePixelRatio || 1;
     g.setTransform(dpr, 0, 0, dpr, 0, 0);
-    drawStoredSheet(g, r, scene, lines, shown.k, looks(), vf.frame);
+    drawStoredSheet(g, r, scene, lines, shown.k, looks(undefined, true), vf.frame, sheetInk.colour);
     drawPicked(g, new Map(def.frames.map((f) => [f.id, f.rect])));
   }
 
@@ -306,7 +306,7 @@
       if (!sg) return;
       sg.setTransform(dpr, 0, 0, dpr, 0, 0);
       shown = { k, h: rendered.h };
-      drawStoredSheet(sg, rendered, scene, lines, k, looks(), vf.sheet === chosen ? vf.frame : '');
+      drawStoredSheet(sg, rendered, scene, lines, k, looks(undefined, true), vf.sheet === chosen ? vf.frame : '', sheetInk.colour);
       drawPicked(sg, new Map(rendered.frames.map((f) => [f.id, f.rect])));
       note = rendered.warnings.join(' ') || `${rendered.frames.length} viewframe${rendered.frames.length === 1 ? '' : 's'}`;
       return;
@@ -322,7 +322,7 @@
     const g = canvas.getContext('2d');
     if (!g) return;
     g.setTransform(dpr, 0, 0, dpr, 0, 0);
-    drawSheet(g, plan, scene, lines, k, looks());
+    drawSheet(g, plan, scene, lines, k, looks(undefined, true), sheetInk.colour);
     const per = plan.feet_per_inch;
     note = overflows(plan, scene.bounds) ? 'The cave does not fit this paper at this scale: pick a bigger sheet or a smaller scale.' : sheet.feetPerInch === 0 && !plan.fits ? 'No scale fits this cave on this paper.' : `Plotted at ${scaleText(per, cave.units)}`;
   }
@@ -342,6 +342,7 @@
     void sheet.title;
     void sheet.bar;
     void sheet.north;
+    void sheetInk.colour;
     void option('handInk', false); // Ink style redraws every line
     shownSheet.id = chosen; // Print and PNG save the sheet shown here
     void vf.frame;

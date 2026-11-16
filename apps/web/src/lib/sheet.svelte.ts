@@ -70,3 +70,27 @@ export function setSheet(patch: Partial<SheetSetup>) {
     // not remembered
   }
 }
+
+// Colour or black: kept apart from the sheet's other settings, which go to the engine.
+const INK_KEY = 'cavecad.sheet.colour';
+
+/** Print the sheet in colour (each kind of thing in its map colour) or in black. Black by default. */
+export const sheetInk = $state({
+  colour: (() => {
+    try {
+      return localStorage.getItem(INK_KEY) === '1';
+    } catch {
+      return false;
+    }
+  })(),
+});
+
+/** Chooses colour or black for the sheet, and remembers it. */
+export function setSheetColour(colour: boolean) {
+  sheetInk.colour = colour;
+  try {
+    localStorage.setItem(INK_KEY, colour ? '1' : '0');
+  } catch {
+    // remembered for this visit
+  }
+}

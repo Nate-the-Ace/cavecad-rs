@@ -1,6 +1,7 @@
 // Draws a laid-out sheet on a canvas: white paper, the furniture the engine made, and the map (the
 // passage walls, the survey legs and everything drawn on the map) at the sheet's scale. The same
-// function draws the screen preview and the exported picture, so what you see is what you print.
+// function draws the screen preview and the exported picture, so what you see is what you print. In black (the
+// default) everything is one ink; in colour each kind keeps its map colour, the light ones, as the paper is white.
 
 import type { Scene, SheetPlan, ProfileSketch3d, RenderedSheet, PlacedFrame, SheetShape } from './engine';
 import { drawStrokes } from './section-glyph';
@@ -26,7 +27,7 @@ export function overflows(plan: SheetPlan, bounds: [number, number, number, numb
 }
 
 /** Paints the sheet at `px` pixels per inch of paper onto a canvas already sized to the paper. */
-export function drawSheet(g: CanvasRenderingContext2D, plan: SheetPlan, scene: Scene | null, lines: ProfileSketch3d[], px: number, look: (kind: string, style?: string, pxPerM?: number) => Look): void {
+export function drawSheet(g: CanvasRenderingContext2D, plan: SheetPlan, scene: Scene | null, lines: ProfileSketch3d[], px: number, look: (kind: string, style?: string, pxPerM?: number) => Look, colour = false): void {
   const H = plan.h * px;
   const P = (p: [number, number]): [number, number] => [p[0] * px, H - p[1] * px];
   g.save();
@@ -47,6 +48,7 @@ export function drawSheet(g: CanvasRenderingContext2D, plan: SheetPlan, scene: S
   const w = Math.max(1, px / 60);
   if (scene) {
     g.lineWidth = w * 1.4;
+    g.strokeStyle = colour ? look('passage-wall').color : ink;
     for (const wall of scene.walls) {
       g.beginPath();
       wall.forEach((p, i) => {
@@ -58,6 +60,7 @@ export function drawSheet(g: CanvasRenderingContext2D, plan: SheetPlan, scene: S
     }
     g.lineWidth = w * 0.6;
     g.globalAlpha = 0.55;
+    g.strokeStyle = colour ? look('centerline').color : ink;
     for (const l of scene.legs) {
       const [a, b] = [toPx(l.from[0], l.from[1]), toPx(l.to[0], l.to[1])];
       g.beginPath();
@@ -66,8 +69,9 @@ export function drawSheet(g: CanvasRenderingContext2D, plan: SheetPlan, scene: S
       g.stroke();
     }
     g.globalAlpha = 1;
+    g.strokeStyle = ink;
   }
-  const printLook = (kind: string, style?: string, pxPerM?: number): Look => ({ ...look(kind, style, pxPerM), color: ink });
+  const printLook = colour ? look : (kind: string, style?: string, pxPerM?: number): Look => ({ ...look(kind, style, pxPerM), color: ink });
   drawStrokes(
     g,
     lines.map((l) => ({ id: l.id, kind: l.kind, points: l.points.map((p) => [p[0], p[1]] as [number, number]), widths: l.widths, closed: l.closed, text: l.text })),
@@ -103,7 +107,7 @@ export function frameTransform(f: PlacedFrame): (x: number, y: number) => [numbe
  * at the frame's own scale and turn, with Ink style, fills and everything drawn on the map), then the
  * furniture. `px` is pixels per inch of paper. `chosen` outlines one frame (the one being worked on).
  */
-export function drawStoredSheet(g: CanvasRenderingContext2D, sheet: RenderedSheet, scene: Scene | null, lines: ProfileSketch3d[], px: number, look: (kind: string, style?: string, pxPerM?: number) => Look, chosen = ''): void {
+export function drawStoredSheet(g: CanvasRenderingContext2D, sheet: RenderedSheet, scene: Scene | null, lines: ProfileSketch3d[], px: number, look: (kind: string, style?: string, pxPerM?: number) => Look, chosen = '', colour = false): void {
   const H = sheet.h * px;
   const P = (p: [number, number]): [number, number] => [p[0] * px, H - p[1] * px];
   g.save();
@@ -114,7 +118,7 @@ export function drawStoredSheet(g: CanvasRenderingContext2D, sheet: RenderedShee
   g.fillStyle = ink;
   g.lineCap = 'round';
   g.lineJoin = 'round';
-  const printLook = (kind: string, style?: string, pxPerM?: number): Look => ({ ...look(kind, style, pxPerM), color: ink });
+  const printLook = colour ? look : (kind: string, style?: string, pxPerM?: number): Look => ({ ...look(kind, style, pxPerM), color: ink });
   for (const f of sheet.frames) {
     const to = frameTransform(f);
     const toPx = (x: number, y: number) => P(to(x, y));
@@ -134,6 +138,7 @@ export function drawStoredSheet(g: CanvasRenderingContext2D, sheet: RenderedShee
     if (scene) {
       if (!hidden.has('passage-wall')) {
         g.lineWidth = w * 1.4;
+        g.strokeStyle = colour ? look('passage-wall').color : ink;
         for (const wall of scene.walls) {
           g.beginPath();
           wall.forEach((p, i) => (i === 0 ? g.moveTo(...toPx(p[0], p[1])) : g.lineTo(...toPx(p[0], p[1]))));
@@ -143,6 +148,7 @@ export function drawStoredSheet(g: CanvasRenderingContext2D, sheet: RenderedShee
       if (!hidden.has('centerline')) {
         g.lineWidth = w * 0.6;
         g.globalAlpha = 0.55;
+        g.strokeStyle = colour ? look('centerline').color : ink;
         for (const l of scene.legs) {
           g.beginPath();
           g.moveTo(...toPx(l.from[0], l.from[1]));
@@ -151,6 +157,7 @@ export function drawStoredSheet(g: CanvasRenderingContext2D, sheet: RenderedShee
         }
         g.globalAlpha = 1;
       }
+      g.strokeStyle = ink;
     }
     drawStrokes(
       g,

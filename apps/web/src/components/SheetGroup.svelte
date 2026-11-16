@@ -4,7 +4,7 @@
   import { Download, Printer, FileImage } from '@lucide/svelte';
   import { cave } from '../lib/cave.svelte';
   import { engine, loadEngine, type SheetOptions } from '../lib/engine';
-  import { choosePaper, followUnits, orderedScales, sheet, setSheet } from '../lib/sheet.svelte';
+  import { choosePaper, followUnits, orderedScales, sheet, setSheet, sheetInk, setSheetColour } from '../lib/sheet.svelte';
   import { downloadSheet, printSheet } from '../lib/sheet-export';
   import { showPanel } from '../lib/workspace.svelte';
 
@@ -55,6 +55,10 @@
   </div>
 {:else}
   <div class="btns">
+    <div class="ink" role="group" aria-label="Print in">
+      <button class="pick" class:on={!sheetInk.colour} aria-pressed={!sheetInk.colour} onclick={() => setSheetColour(false)}>Black</button>
+      <button class="pick" class:on={sheetInk.colour} aria-pressed={sheetInk.colour} onclick={() => setSheetColour(true)}>Colour</button>
+    </div>
     <button class="tool" onclick={() => tell(downloadSheet())}><FileImage size={22} strokeWidth={1.6} /><span>PNG</span></button>
     <button class="tool" onclick={() => tell(printSheet())}><Printer size={22} strokeWidth={1.6} /><span>Print</span></button>
   </div>
@@ -66,6 +70,9 @@
   .row { display: flex; align-items: center; gap: 6px; height: 22px; color: var(--text); white-space: nowrap; }
   .name { min-width: 44px; }
   select, input[type='text'] { flex: 1; min-width: 0; height: 22px; box-sizing: border-box; padding: 0 6px; background: var(--panel-2); color: var(--text); border: 1px solid var(--line); border-radius: var(--radius); font: inherit; }
+  .ink { display: flex; flex-direction: column; justify-content: center; gap: 3px; padding: 0 6px; }
+  .pick { height: 22px; min-width: 64px; padding: 0 8px; font: inherit; font-size: 12px; color: var(--text); background: var(--panel-2); border: 1px solid var(--line); border-radius: var(--radius); cursor: pointer; }
+  .pick.on { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 22%, var(--panel-2)); }
   .btns { display: flex; gap: 4px; align-items: center; height: 100%; }
   .tool { display: flex; flex-direction: column; align-items: center; gap: 4px; min-width: 58px; box-sizing: border-box; height: calc(var(--ribbon-body) - 1px); justify-content: center; overflow: hidden; padding: 4px 8px; background: none; border: 0; border-radius: var(--radius); cursor: pointer; font-size: 12px; color: var(--text); }
   .tool:hover { background: var(--panel-2); }
