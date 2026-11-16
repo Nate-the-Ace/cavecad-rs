@@ -7,6 +7,9 @@
   import { untrack } from 'svelte';
   import { Check, Crosshair, Flashlight, FlashlightOff, Pause, Play, Radar, ScanLine, SkipForward, Undo2, X } from '@lucide/svelte';
   import SweepDial from '../components/SweepDial.svelte';
+  import SurveyOptions from '../components/SurveyOptions.svelte';
+  import { Bluetooth, FlaskConical, Unplug } from '@lucide/svelte';
+  import { phone } from '../lib/phone.svelte';
   import LengthField from '../components/LengthField.svelte';
   import PanelUndo from '../components/PanelUndo.svelte';
   import { cave, changed } from '../lib/cave.svelte';
@@ -115,6 +118,21 @@
       <p class="banner">This browser has no Web Bluetooth. On an iPad, open CaveCAD in the <b>Bluefy</b> browser to connect an instrument. The simulator works anywhere.</p>
     {/if}
 
+    {#if phone.on}
+      <!-- the phone has no ribbon: connecting and the shot settings are here -->
+      <section class="link" aria-label="Instrument">
+        <div class="row">
+          {#if linked}
+            <button onclick={live.disconnect}><Unplug size={18} /> Disconnect</button>
+          {:else}
+            <button class="go" onclick={() => void live.connect('auto')}><Bluetooth size={18} /> Connect</button>
+            <button onclick={() => void live.connect('simulator')}><FlaskConical size={18} /> Simulator</button>
+          {/if}
+        </div>
+        <div class="opts"><SurveyOptions /></div>
+      </section>
+    {/if}
+
     <section class="device" aria-label="Device control">
       <div class="devhead">
         <h4>Device control</h4>
@@ -190,7 +208,7 @@
         <div class="big"><b>{angleText(+survey.last.azimuth.toFixed(1))}°</b><small>compass</small></div>
         <div class="big"><b>{angleText(+survey.last.inclination.toFixed(1))}°</b><small>clino</small></div>
       {:else}
-        <p class="idle">{linked ? 'Waiting for a shot…' : 'Connect an instrument in the Survey tab, or try the simulator.'}</p>
+        <p class="idle">{linked ? 'Waiting for a shot…' : phone.on ? 'Connect an instrument above, or try the simulator.' : 'Connect an instrument in the Survey tab, or try the simulator.'}</p>
       {/if}
     </section>
 
@@ -328,6 +346,8 @@
   .log .entry { display: flex; justify-content: space-between; gap: 10px; padding: 4px 0; border-bottom: 1px solid var(--line); font-size: 13px; }
   .log .entry span { color: var(--muted); font-variant-numeric: tabular-nums; }
   .log .entry.flag b { color: var(--warn); }
+  .link { display: flex; flex-direction: column; gap: 8px; }
+  .link .opts { height: 64px; }
   .devhead { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
   .devhead h4 { margin: 0; }
   .seg { display: inline-flex; border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }

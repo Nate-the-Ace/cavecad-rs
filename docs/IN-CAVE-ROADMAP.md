@@ -103,6 +103,15 @@ gimbal step by step and fires the X1 at each stop, so a sweep is even and comple
   compass: test with a known bearing before trusting it, and calibrate the X1 in the clamp if needed).
 - **Where it fits**: after the X1 checks above pass and the iPad app runs, as its own project.
 
+### Decided (Nathan, 2026-11-16)
+
+- **The moves live in CaveCAD, not the gimbal.** The Osmo stores nothing: CaveCAD sends every move as it goes.
+- **Only three things:** an automated **LRUD** sweep, an automated **room sweep**, and a **manual position** control to
+  aim precisely at a station (target) before a shot. No recording or replaying of hand-made moves, no motion control
+  beyond that.
+- So from the research below, what matters is: steering commands (speed, and absolute angle if the Osmo takes it),
+  recenter, and if possible its angle readings. The keyframe / record-replay projects are not needed.
+
 ### Research (2026-11-16): who else is doing this
 
 **Driving an Osmo Mobile from your own code: yes, people have.** DJI publishes nothing for current models (only the

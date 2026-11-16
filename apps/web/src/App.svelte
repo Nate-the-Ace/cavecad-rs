@@ -21,6 +21,8 @@
   import { guardUnload } from './lib/files';
   import { installDiagnostics } from './lib/diagnostics';
   import CaveShelf from './components/CaveShelf.svelte';
+  import PhoneShell from './components/PhoneShell.svelte';
+  import { phone } from './lib/phone.svelte';
   import UpdateBar from './components/UpdateBar.svelte';
   import { checkForUpdate, startUpdateChecks } from './lib/desktop-update.svelte';
   import MovedPage from './components/MovedPage.svelte';
@@ -37,7 +39,7 @@
   let version = $state('loading engine…');
   let info = $state<BuildInfo | null>(null);
   let failed = $state<string | null>(null);
-  let host: HTMLDivElement;
+  let host = $state<HTMLDivElement | null>(null);
   /** Opened from an old live, class or join link: say where those went (MovedPage.svelte). */
   let moved = $state(isOldLiveLink(location.search));
 
@@ -144,7 +146,6 @@
     window.addEventListener('copy', onCopy);
     window.addEventListener('cut', onCut);
     window.addEventListener('paste', onPaste);
-    const teardown = initWorkspace(host, { pageFor: (id) => { const p = catalog.forPanel(id); return p?.text ? p.id : null; }, open: openHandbook });
     installDiagnostics();
     listenForLinks((url) => {
       void handleAuthLink(url).then((signIn) => { if (!signIn && isOldJoinUrl(url)) moved = true; });
@@ -179,8 +180,15 @@
       window.removeEventListener('copy', onCopy);
       window.removeEventListener('cut', onCut);
       window.removeEventListener('paste', onPaste);
-      teardown();
     };
+  });
+
+  // The dock of panels, on anything bigger than a phone (a phone shows one panel at a time: PhoneShell). Turning a
+  // phone or resizing a window across the line swaps one for the other.
+  $effect(() => {
+    if (!host || phone.on) return;
+    const el = host;
+    return untrack(() => initWorkspace(el, { pageFor: (id) => { const p = catalog.forPanel(id); return p?.text ? p.id : null; }, open: openHandbook }));
   });
 
   // Edits are kept on the shelf a moment after they are made.
@@ -243,9 +251,9 @@
   const built = $derived(info?.builtAt ? new Date(info.builtAt).toLocaleTimeString() : '');
 </script>
 
-<div class="shell" inert={!open}>
+<div class="shell" class:docked={!phone.on} inert={!open}>
   <UpdateBar />
-  <Ribbon />
+  {#if !phone.on}<Ribbon />{/if}
   <SnapMenu />
   <NewCave />
   <SurfaceData />
@@ -258,10 +266,14 @@
     <div class="banner">Rust build failed. The page is showing the last good build.<pre>{info.error}</pre></div>
   {/if}
   {#if failed}<p class="err">Engine failed to load: {failed}</p>{/if}
-  <div class="body">
-    <div class="workspace" bind:this={host}></div>
-  </div>
-  <footer>
+  {#if phone.on}
+    <div class="body phone"><PhoneShell /></div>
+  {:else}
+    <div class="body">
+      <div class="workspace" bind:this={host}></div>
+    </div>
+  {/if}
+  <footer class:gone={phone.on}>
     <span>{version}</span>
     {#if dirty}<span class="unsaved" title="Changes since the cave was opened or last saved. Save with Ctrl/Cmd+S.">Unsaved changes</span>{/if}
     {#if info}<span>build {info.git}{info.dirty ? '+' : ''} · {built}</span>{/if}
@@ -271,12 +283,16 @@
 
 <style>
   .shell { display: flex; flex-direction: column; height: 100%; }
+  /* an iPad (the page reaches under the status bar and home bar): keep the dock clear of them; the phone layout pads itself */
+  .shell.docked { padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); box-sizing: border-box; }
   .body { flex: 1; min-height: 0; display: flex; border-top: 1px solid var(--line); }
   .workspace { flex: 1; min-width: 0; min-height: 0; }
   .err, .banner { color: var(--danger); margin: 0; }
   .banner { background: var(--accent-bg); padding: 8px 12px; }
   .banner pre { margin: 4px 0 0; font-family: var(--mono); font-size: 12px; white-space: pre-wrap; }
   .unsaved { color: var(--warn); font-weight: 600; }
+  .body.phone { border-top: 0; }
+  footer.gone { display: none; }
   footer { display: flex; gap: 16px; padding: 4px 12px; font-size: 12px; color: var(--muted);
     border-top: 1px solid var(--line); background: var(--panel); }
 </style>

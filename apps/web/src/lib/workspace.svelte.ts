@@ -24,6 +24,7 @@ import PatternsPanel from '../panels/PatternsPanel.svelte';
 import RoomsPanel from '../panels/RoomsPanel.svelte';
 import HandbookPanel from '../panels/HandbookPanel.svelte';
 import { showInstruments } from './features';
+import { phone, showPhoneTab } from './phone.svelte';
 
 const LAYOUT_KEY = 'cavecad.layout.v1';
 
@@ -305,6 +306,7 @@ export function togglePanel(id: string) {
 
 /** Brings a panel to the front, opening it first if it is closed. */
 export function showPanel(id: string) {
+  if (phone.on && showPhoneTab(id)) return; // the phone shows one panel at a time
   if (!api) return;
   const existing = api.getPanel(id);
   if (existing) existing.api.setActive();
