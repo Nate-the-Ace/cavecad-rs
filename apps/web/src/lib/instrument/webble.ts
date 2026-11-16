@@ -136,6 +136,15 @@ export class WebBleInstrument implements Instrument {
     else if (this.kind === 'bric') this.write(Uint8Array.from(c.bric.takeShot));
   }
 
+  /** The X1's laser on or off (other instruments have no such command known). */
+  get canLaser() {
+    return this.kind === 'x1' && this.canTakeShot;
+  }
+
+  laser(on: boolean) {
+    if (this.kind === 'x1') this.write(Uint8Array.from(on ? this.cat.x1.laserOn : this.cat.x1.laserOff));
+  }
+
   /** What the browser's device chooser is asked to show: the known instruments by their names, or everything. */
   private chooser(): unknown {
     const reach = [...allServices(this.cat), ...(this.opts.services ?? [])];

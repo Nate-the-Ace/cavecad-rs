@@ -47,7 +47,7 @@ export const PANELS: Record<string, PanelDef> = {
   stations: { title: 'Stations', component: StationsPanel, height: 260 },
   notebook: { title: 'Notebook', component: NotebookPanel, height: 320 },
   // instrument work is not ready yet: a saved layout that holds the Survey panel is dropped for the default
-  ...(showInstruments ? { survey: { title: 'Survey', component: SurveyPanel, width: 380 } } : {}),
+  ...(showInstruments ? { survey: { title: 'Device Capture', component: SurveyPanel, width: 380 } } : {}),
   scans: { title: 'Scans', component: ScansPanel, width: 520 },
   sheet: { title: 'Sheet', component: SheetPanel, width: 520 },
   patterns: { title: 'Patterns', component: PatternsPanel, width: 560 },
@@ -345,24 +345,35 @@ export function workLayout() {
 }
 
 /**
- * The arrangement for surveying in the cave, made for a tablet held landscape: the Survey panel on the
- * left (with the Notebook behind it as a tab), the Map in plan in the middle, and the Profile over the
- * Cross Section on the right, so each shot shows in all three views as it is taken.
+ * The In-Cave Survey arrangement, made for an iPad (mini, Air or the plain iPad) held landscape. Front and centre,
+ * side by side: the live Map on the left and the Device Capture panel (the instrument, its controls and sweeps) on
+ * the right, full height so its buttons never scroll away. Under the map, smaller: the Cross Section (where a
+ * sweep's ring shows), with the Profile, Notebook and Stations behind it as tabs. The map is locked so it cannot
+ * turn under a gloved finger.
  */
 export function surveyLayout() {
   if (!api || !showInstruments) return;
   const a = api;
+  const w = el0Width();
+  const h = el0Height();
   a.clear();
-  a.addPanel({ id: 'survey', component: 'survey', title: PANELS.survey.title });
-  a.addPanel({ id: 'notebook', component: 'notebook', title: PANELS.notebook.title, position: { referencePanel: 'survey', direction: 'within' } });
-  a.addPanel({ id: 'map', component: 'map', title: PANELS.map.title, position: { referencePanel: 'survey', direction: 'right' } });
-  a.addPanel({ id: 'profile', component: 'profile', title: PANELS.profile.title, position: { referencePanel: 'map', direction: 'right' } });
-  a.addPanel({ id: 'section', component: 'section', title: PANELS.section.title, position: { referencePanel: 'profile', direction: 'below' } });
-  a.panels.find((p) => p.id === 'survey')?.api.setActive();
-  a.getPanel('survey')?.api.setSize({ width: Math.max(340, Math.round(el0Width() * 0.3)) });
-  setOption('mapLock', true); // sketching in the cave: the map must not turn under the pen
-  a.getPanel('profile')?.api.setSize({ width: Math.round(el0Width() * 0.3) });
+  a.addPanel({ id: 'map', component: 'map', title: PANELS.map.title });
+  a.addPanel({ id: 'survey', component: 'survey', title: PANELS.survey.title, position: { referencePanel: 'map', direction: 'right' } });
+  a.addPanel({ id: 'section', component: 'section', title: PANELS.section.title, position: { referencePanel: 'map', direction: 'below' } });
+  for (const id of ['profile', 'notebook', 'stations']) a.addPanel({ id, component: id, title: PANELS[id].title, position: { referencePanel: 'section', direction: 'within' } });
+  a.getPanel('section')?.api.setActive();
+  a.getPanel('map')?.api.setActive();
+  a.getPanel('survey')?.api.setActive();
+  // the capture panel needs about 360 px for its buttons; the map takes the rest
+  a.getPanel('survey')?.api.setSize({ width: Math.max(360, Math.round(w * 0.42)) });
+  a.getPanel('section')?.api.setSize({ height: Math.round(h * 0.32) });
+  setOption('mapLock', true); // surveying in the cave: the map must not turn under the pen or a gloved finger
   refreshOpen();
+}
+
+/** The height of the workspace, for sizing panels as a share of it. */
+function el0Height(): number {
+  return document.querySelector('.workspace')?.clientHeight ?? window.innerHeight;
 }
 
 /** The width of the workspace, for sizing panels as a share of it. */

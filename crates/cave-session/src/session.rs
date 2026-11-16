@@ -19,6 +19,7 @@ use cave_notebook::{
     EditError, Measured, Reading as Cell, add_measured_shot, remove_shot, set_readings,
     set_station_wall, set_station_walls, station_walls, stations_in_use,
 };
+use cave_sweep::{Check, Kind as SweepKind, Standard, splay_vector};
 use serde::Serialize;
 use std::collections::{BTreeMap, HashSet};
 
@@ -151,6 +152,35 @@ pub struct Snapshot {
     pub standing_walls: Option<StandingWalls>,
     /// How many edits the session has made to the cave: the screen refreshes when it grows.
     pub edits: u64,
+    /// The sweep being taken, with its live check.
+    pub sweep: Option<SweepView>,
+    /// The sweep finished last, with how it ended up.
+    pub last_sweep: Option<SweepView>,
+    /// What a sweep the instrument starts on its own is checked as (the surveyor's choice).
+    pub sweep_kind: SweepKind,
+    /// How much a sweep is asked for: Manual (mostly sketched, four walls do) or Digital (the instrument's detail).
+    pub standard: Standard,
+}
+
+/// A sweep as the screen shows it.
+#[derive(Clone, Debug, Serialize)]
+pub struct SweepView {
+    /// The station it is shot at.
+    pub station: String,
+    /// Started from the screen (every shot until Finish is a sweep shot), not by the instrument's scan mode.
+    pub armed: bool,
+    /// How it stands.
+    pub check: Check,
+}
+
+/// A sweep being taken.
+#[derive(Clone, Debug)]
+struct SweepPlan {
+    kind: SweepKind,
+    station: String,
+    armed: bool,
+    /// The shots so far, as vectors from the station (metres; compass as the instrument gave it).
+    vectors: Vec<[f64; 3]>,
 }
 
 fn describe(e: EditError) -> String {
@@ -211,6 +241,16 @@ pub struct Session {
     edits: u64,
     /// The sweep being taken (an instrument's scan mode): its id (its first shot's) and the station it is at.
     sweep: Option<(String, String)>,
+    /// The sweep being checked, if one is under way.
+    plan: Option<SweepPlan>,
+    /// The sweep finished last.
+    last_sweep: Option<SweepView>,
+    /// What a sweep the instrument starts is checked as.
+    sweep_kind: SweepKind,
+    /// How much a sweep is asked for.
+    standard: Standard,
+    /// The last leg written: the station it arrives at and its direction (for which way the passage runs there).
+    passage: Option<(String, [f64; 3])>,
 }
 
 impl Default for Session {
@@ -242,6 +282,11 @@ impl Session {
             pending: BTreeMap::new(),
             edits: 0,
             sweep: None,
+            plan: None,
+            last_sweep: None,
+            sweep_kind: SweepKind::Lrud,
+            standard: Standard::Digital,
+            passage: None,
         }
     }
 
@@ -462,6 +507,12 @@ impl Session {
             self.sweep = None;
         }
         self.commit_actions(host, actions)?;
+        if !splay {
+            self.passage = Some((
+                to.to_string(),
+                splay_vector(r.distance, r.azimuth, r.inclination),
+            ));
+        }
         Ok(Written {
             target: Target::Shot(shot),
             label: if splay {
@@ -611,7 +662,8 @@ impl Session {
     }
 
     /// A shot arrived from the instrument.
-    pub fn reading(&mut self, host: &mut dyn Host, reading: Reading) {
+    pub fn reading(&mut self, host: &mut dyn Host, mut reading: Reading) {
+        self.tag_sweep(&mut reading);
         self.last = Some(reading.clone());
         if !self.groups_legs {
             self.handle(host, Incoming::Single(reading));
@@ -712,6 +764,119 @@ impl Session {
             },
             &Self::names(host),
         );
+    }
+
+    // ---- sweeps ----
+
+    /// Starts a sweep from the screen: every shot from now until [`Self::finish_sweep`] is a sweep shot at the
+    /// standing station (a splay, never part of a leg), checked as `kind`. Whatever the grouping was holding is
+    /// settled first.
+    pub fn start_sweep(&mut self, host: &mut dyn Host, kind: SweepKind) {
+        self.settle_now(host);
+        self.close_sweep();
+        self.sweep_kind = kind;
+        self.plan = Some(SweepPlan {
+            kind,
+            station: standing(&self.state),
+            armed: true,
+            vectors: Vec::new(),
+        });
+    }
+
+    /// Ends the sweep under way (it is kept as the last sweep, with its check).
+    pub fn finish_sweep(&mut self) {
+        self.close_sweep();
+    }
+
+    /// What a sweep the instrument starts on its own (the X1's scan mode) is checked as.
+    pub fn set_sweep_kind(&mut self, kind: SweepKind) {
+        self.sweep_kind = kind;
+        if let Some(p) = self.plan.as_mut().filter(|p| p.vectors.is_empty()) {
+            p.kind = kind;
+        }
+    }
+
+    /// How much a sweep is asked for (the Manual / Digital switch). Applies to the sweep under way too.
+    pub fn set_standard(&mut self, standard: Standard) {
+        self.standard = standard;
+    }
+
+    fn close_sweep(&mut self) {
+        if let Some(p) = self.plan.take()
+            && !p.vectors.is_empty()
+        {
+            self.last_sweep = Some(self.view(&p));
+        }
+    }
+
+    fn view(&self, p: &SweepPlan) -> SweepView {
+        let passage = self
+            .passage
+            .as_ref()
+            .filter(|(at, _)| *at == p.station)
+            .map(|(_, v)| *v);
+        SweepView {
+            station: p.station.clone(),
+            armed: p.armed,
+            check: cave_sweep::check(p.kind, self.standard, &p.vectors, passage),
+        }
+    }
+
+    /// Follows sweeps as readings come in: a sweep started from the screen marks every shot as a sweep shot; the
+    /// instrument's own scan shots start one (or a new one at another station, or at its sweep-start flag); any
+    /// other shot ends one the instrument started.
+    fn tag_sweep(&mut self, r: &mut Reading) {
+        if r.lrud.is_some() {
+            return;
+        }
+        let here = standing(&self.state);
+        // Manual LRUD: four aimed shots, called left, right, up, down; each is written as that wall's dimension at
+        // the station (what a hand-sketched survey uses), not as a splay
+        if let Some(p) = self
+            .plan
+            .as_ref()
+            .filter(|p| p.armed && p.kind == SweepKind::Lrud && self.standard == Standard::Manual)
+            && let Some(aim) = self.view(p).check.aim
+        {
+            r.lrud = Some(side_at(aim.angle));
+            let v = splay_vector(r.distance, r.azimuth, r.inclination);
+            if let Some(p) = self.plan.as_mut() {
+                p.vectors.push(v);
+            }
+            return;
+        }
+        if let Some(p) = self.plan.as_ref().filter(|p| p.armed) {
+            let first = p.vectors.is_empty();
+            r.scan = Some(true);
+            if first {
+                r.sweep_start = Some(true);
+            } else {
+                r.sweep_start = None; // one sweep until Finish, whatever the instrument says
+            }
+        } else if r.scan == Some(true) {
+            let fresh = match &self.plan {
+                None => true,
+                Some(p) => {
+                    p.station != here || (r.sweep_start == Some(true) && !p.vectors.is_empty())
+                }
+            };
+            if fresh {
+                self.close_sweep();
+                self.plan = Some(SweepPlan {
+                    kind: self.sweep_kind,
+                    station: here,
+                    armed: false,
+                    vectors: Vec::new(),
+                });
+            }
+        } else {
+            self.close_sweep();
+            return;
+        }
+        if let Some(p) = self.plan.as_mut() {
+            p.vectors
+                .push(splay_vector(r.distance, r.azimuth, r.inclination));
+        }
     }
 
     /// The passage dimensions at the standing station, or `None` before the page has a line for it.
@@ -821,7 +986,21 @@ impl Session {
             warnings: self.warnings.clone(),
             standing_walls: self.standing_walls(host),
             edits: self.edits,
+            sweep: self.plan.as_ref().map(|p| self.view(p)),
+            last_sweep: self.last_sweep.clone(),
+            sweep_kind: self.sweep_kind,
+            standard: self.standard,
         }
+    }
+}
+
+/// The wall at a place round an LRUD ring (0 right, 90 ceiling, 180 left, 270 floor).
+fn side_at(angle: f64) -> Side {
+    match ((angle.rem_euclid(360.0) + 45.0) / 90.0) as u32 % 4 {
+        0 => Side::Right,
+        1 => Side::Up,
+        2 => Side::Left,
+        _ => Side::Down,
     }
 }
 

@@ -844,3 +844,133 @@ fn a_real_x1_sweep_is_splays_in_two_sweeps_and_its_legs_are_still_found() {
         "two sweeps, every shot of each tagged"
     );
 }
+
+#[test]
+fn the_real_x1_sweeps_are_checked_as_they_come() {
+    use cave_instrument::link::X1Link;
+    let packets = capture("x1-2026-11-13-legs-and-two-sweeps.json");
+    let mut book = Book::new();
+    let mut s = session(&book, true, false);
+    let mut link = X1Link::new("x1");
+    let mut seen = 0;
+    for p in &packets[52..] {
+        feed(&mut s, &mut book, link.on_frame(p, "notify"));
+        if let Some(w) = s.snapshot(&book).sweep {
+            seen = seen.max(w.check.shots);
+            assert!(!w.armed, "started by the instrument");
+        }
+    }
+    assert_eq!(seen, 54, "the longer sweep, counted live");
+    s.finish_sweep();
+    let last = s.snapshot(&book).last_sweep.expect("a last sweep");
+    assert_eq!(last.check.shots, 54);
+    assert!(s.snapshot(&book).sweep.is_none());
+}
+
+/// A ring of `n` shots across a passage running north, half-width 2 m, half-height 1 m.
+fn ring_readings(n: usize) -> Vec<Reading> {
+    (0..n)
+        .map(|i| {
+            let a = (i as f64 / n as f64 * 360.0).to_radians();
+            let (x, z) = (2.0 * a.cos(), a.sin());
+            let d = x.hypot(z);
+            r(
+                d,
+                if x >= 0.0 { 90.0 } else { 270.0 },
+                z.atan2(x.abs()).to_degrees(),
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn a_sweep_started_from_the_screen_never_makes_a_leg_and_says_when_it_is_done() {
+    let mut book = Book::new();
+    let mut s = session(&book, true, false);
+    // a leg first, so the passage direction is known at A2
+    for _ in 0..3 {
+        s.reading(&mut book, r(5.0, 0.0, 0.0));
+    }
+    s.settle_now(&mut book);
+    assert_eq!(book.leg_names(), "A1-A2");
+    s.start_sweep(&mut book, cave_session::SweepKind::Lrud);
+    // three identical close shots: would be a leg outside a sweep
+    for _ in 0..3 {
+        s.reading(&mut book, r(2.0, 90.0, 0.0));
+    }
+    let w = s.snapshot(&book).sweep.expect("sweep under way");
+    assert!(w.armed);
+    assert_eq!(w.station, "A2");
+    assert!(!w.check.complete);
+    for reading in ring_readings(24) {
+        s.reading(&mut book, reading);
+    }
+    let w = s.snapshot(&book).sweep.unwrap();
+    assert!(w.check.complete, "{:?}", w.check.todo);
+    assert_eq!(w.check.shots, 27);
+    s.finish_sweep();
+    assert_eq!(book.leg_names(), "A1-A2", "no leg from the sweep");
+    assert_eq!(book.splays().len(), 27);
+    assert!(book.splays().iter().all(|st| st == "A2"));
+    let last = s.snapshot(&book).last_sweep.unwrap();
+    assert!(last.check.complete);
+    // the next close shots are a leg again
+    for _ in 0..3 {
+        s.reading(&mut book, r(4.0, 10.0, 0.0));
+    }
+    s.settle_now(&mut book);
+    assert_eq!(book.leg_names(), "A1-A2 A2-A3");
+}
+
+#[test]
+fn manual_standard_finishes_a_ring_on_the_four_walls() {
+    let mut book = Book::new();
+    let mut s = session(&book, false, false);
+    // a leg north, A1 to A2: the passage runs north at A2
+    s.reading(&mut book, r(5.0, 0.0, 0.0));
+    s.set_standard(cave_session::Standard::Manual);
+    s.start_sweep(&mut book, cave_session::SweepKind::Lrud);
+    assert_eq!(
+        s.snapshot(&book).sweep.unwrap().check.aim.unwrap().wall,
+        "the left wall"
+    );
+    // aimed as called: left (west), right (east), up
+    for (d, az, inc) in [(1.8, 270.0, 0.0), (2.2, 90.0, 0.0), (1.2, 0.0, 89.0)] {
+        s.reading(&mut book, r(d, az, inc));
+    }
+    let w = s.snapshot(&book).sweep.unwrap();
+    assert!(!w.check.complete);
+    assert_eq!(w.check.aim.unwrap().wall, "the floor");
+    s.reading(&mut book, r(0.9, 0.0, -89.0));
+    let w = s.snapshot(&book).sweep.unwrap();
+    assert!(w.check.complete, "{:?}", w.check.todo);
+    // written as the station's LRUD, in order, not as splays
+    let walls = s.snapshot(&book).standing_walls.expect("walls at A2");
+    assert_eq!(walls.station, "A2");
+    assert!(
+        near(walls.left, 1.8, 0.01) && near(walls.right, 2.2, 0.01),
+        "{walls:?}"
+    );
+    assert!(
+        near(walls.up, 1.2, 0.01) && near(walls.down, 0.9, 0.01),
+        "{walls:?}"
+    );
+    assert!(book.splays().is_empty(), "{:?}", book.splays());
+    // the same four shots are not enough for Digital
+    s.set_standard(cave_session::Standard::Digital);
+    assert!(!s.snapshot(&book).sweep.unwrap().check.complete);
+}
+
+#[test]
+fn a_screen_sweep_with_an_instrument_that_does_not_group_writes_splays_not_legs() {
+    let mut book = Book::new();
+    let mut s = session(&book, false, false);
+    s.start_sweep(&mut book, cave_session::SweepKind::Room);
+    for i in 0..30 {
+        s.reading(&mut book, r(6.0, i as f64 * 12.0, 2.0));
+    }
+    let w = s.snapshot(&book).sweep.unwrap();
+    assert!(w.check.complete, "{:?}", w.check.todo);
+    assert_eq!(book.legs().len(), 0);
+    assert_eq!(book.splays().len(), 30);
+}

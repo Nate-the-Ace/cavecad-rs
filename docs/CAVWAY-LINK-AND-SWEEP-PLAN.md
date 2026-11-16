@@ -147,6 +147,10 @@ That captures the passage shape at that station far better than four LRUD shots.
   admins only, like test builds). Needs an Apple developer account ($99 a year) and offline sign-in, since there's
   no signal in a cave. The offline pass already covers this.
 
+## Next: see `IN-CAVE-ROADMAP.md` (2026-11-16)
+
+The In-Cave Survey layout, Device control, sweeps with live checks, Manual / Digital, the iPad and gimbal plans.
+
 ## Questions for Nathan (product, not code)
 
 1. How will you sweep: one slow ring across the passage at each station, or spray the whole room? The first gives

@@ -228,6 +228,7 @@ dependencies = [
  "cave-id",
  "cave-instrument",
  "cave-notebook",
+ "cave-sweep",
  "serde",
  "serde_json",
 ]

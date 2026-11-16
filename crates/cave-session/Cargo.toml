@@ -13,6 +13,7 @@ cave-doc = { path = "../cave-doc" }
 cave-draw = { path = "../cave-draw" }
 cave-instrument = { path = "../cave-instrument" }
 cave-notebook = { path = "../cave-notebook" }
+cave-sweep = { path = "../cave-sweep" }
 serde = { version = "1", features = ["derive"] }
 
 [dev-dependencies]

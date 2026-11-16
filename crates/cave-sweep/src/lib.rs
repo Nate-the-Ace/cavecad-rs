@@ -17,6 +17,9 @@
 
 use serde::Serialize;
 
+pub mod check;
+pub use check::{Check, Kind, Rules, Standard, check};
+
 /// Directions round the station the outline is kept in.
 pub const BINS: usize = 32;
 

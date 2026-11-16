@@ -341,7 +341,9 @@ fn lrud_plan(
 /// Decides what a reading is: the next leg, a splay, a wall dimension, or the backsight being waited for.
 pub fn decide(state: &SessionState, reading: &Reading) -> Decision {
     let lrud = state.mode == Mode::Lrud || reading.lrud.is_some();
-    let splay = (state.mode == Mode::Splay && state.awaiting.is_none()) || lrud;
+    // a sweep shot is always a splay at the station the surveyor stands at
+    let sweep = reading.scan == Some(true) && !lrud;
+    let splay = (state.mode == Mode::Splay && state.awaiting.is_none()) || lrud || sweep;
     let mut warnings = match check_reading(reading, splay) {
         Ok(w) => w,
         Err(why) => return Decision::reject(why, Vec::new()),
@@ -349,6 +351,19 @@ pub fn decide(state: &SessionState, reading: &Reading) -> Decision {
     if lrud {
         let heading = state.last.as_ref().map(|l| l.reading.azimuth);
         return lrud_plan(&standing(state), reading, heading, warnings);
+    }
+    if sweep {
+        let here = standing(state);
+        if here.trim().is_empty() {
+            return Decision::reject("Say which station you are standing at.", warnings);
+        }
+        return Decision::plan(
+            Plan::Splay {
+                from: here.trim().into(),
+                reading: reading.clone(),
+            },
+            warnings,
+        );
     }
     if let Some(a) = &state.awaiting {
         warnings.extend(backsight_warnings(&a.reading, reading));
@@ -557,7 +572,9 @@ pub fn decide_event(
         }
     };
     let as_wall = matches!(event, LegEvent::Lrud { .. })
-        || (matches!(event, LegEvent::Splay { .. }) && state.mode == Mode::Lrud);
+        || (matches!(event, LegEvent::Splay { .. })
+            && state.mode == Mode::Lrud
+            && reading.scan != Some(true));
     let mut warnings = match check_reading(reading, !is_leg || as_wall) {
         Ok(w) => w,
         Err(why) => return (state.clone(), Decision::reject(why, Vec::new())),

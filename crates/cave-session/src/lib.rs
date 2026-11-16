@@ -6,7 +6,8 @@
 pub mod rules;
 mod session;
 
+pub use cave_sweep::{Kind as SweepKind, Standard};
 pub use rules::{Mode, Plan, PlanKind, SessionState};
 pub use session::{
-    Entry, EntryView, HeldView, Host, Incoming, Session, Snapshot, StandingWalls, Target,
+    Entry, EntryView, HeldView, Host, Incoming, Session, Snapshot, StandingWalls, SweepView, Target,
 };

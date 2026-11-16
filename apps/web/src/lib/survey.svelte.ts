@@ -4,10 +4,10 @@
 // transport to write back, and a snapshot of the session. This file keeps the connection (the transport or the
 // simulator), the three timers the engine cannot keep (it has no clock), and a copy of the snapshot for Svelte.
 
-import { cave, changed } from './cave.svelte';
+import { cave, changed, focusStation } from './cave.svelte';
 import { engine, loadEngine } from './engine';
 import { WebBleInstrument } from './instrument/webble';
-import type { Catalog, Device, HeldView, Instrument, LinkBridge, LinkEvents, LinkStatus, LogEntry, Reading, SessionState, Snapshot, Step, StandingWalls } from './survey-types';
+import type { Catalog, Device, HeldView, Instrument, LinkBridge, LinkEvents, LinkStatus, LogEntry, Reading, SessionState, Snapshot, Step, StandingWalls, SurveyStandard, SweepKind, SweepView } from './survey-types';
 
 export type { LogEntry } from './survey-types';
 /** `auto`: any supported instrument (Cavway X1, SAP5, SAP6, BRIC4, BRIC5), told apart by its name; `capture`: any device, frames logged; `simulator`: a pretend instrument. */
@@ -17,10 +17,26 @@ export type LinkKind = 'auto' | 'capture' | 'simulator';
 const IDLE_FLUSH_MS = 8000;
 /** How often the simulator shoots a station when it runs on its own. */
 const RUN_EVERY_MS = 1200;
+/** How often CaveCAD fires the laser during a sweep it runs itself (the X1's own scan mode manages about 1.5 a second). */
+const SWEEP_EVERY_MS = 1500;
+/** The X1's own scan mode stops at 200 shots: CaveCAD's firing does too. */
+const SWEEP_MAX_SHOTS = 200;
 
 const EMPTY_STATE: SessionState = { mode: 'leg', backsights: false, from: '', to: '', awaiting: null, last: null };
 
+const STANDARD_KEY = 'cavecad.surveyStandard';
+
+function loadStandard(): SurveyStandard {
+  try {
+    return localStorage.getItem(STANDARD_KEY) === 'manual' ? 'manual' : 'digital';
+  } catch {
+    return 'digital';
+  }
+}
+
 export const survey = $state({
+  /** Manual (mostly sketched: LRUD needs the four walls) or Digital (the instrument captures the detail). Kept on this device. */
+  standard: loadStandard(),
   status: 'idle' as LinkStatus,
   /** Which kind of link is up (or was asked for), so the ribbon can show it pressed. */
   kind: '' as LinkKind | '',
@@ -55,6 +71,18 @@ export const survey = $state({
   message: '',
   warnings: [] as string[],
   standingWalls: null as StandingWalls | null,
+  /** The sweep being taken, with its live check, and the one finished last. */
+  sweep: null as SweepView | null,
+  lastSweep: null as SweepView | null,
+  sweepKind: 'lrud' as SweepKind,
+  /** During a sweep started here, CaveCAD fires the laser itself (otherwise the surveyor uses the X1's scan mode or its button). */
+  autoFire: true,
+  /** CaveCAD is firing the laser for a sweep right now. */
+  firing: false,
+  /** The laser can be switched from the screen (an X1). */
+  canLaser: false,
+  /** Digital with an X1: waiting for the surveyor to start the scan on the X1 (this kind of sweep). */
+  waitingForDevice: null as SweepKind | null,
 });
 
 let instrument: Instrument | null = null;
@@ -87,6 +115,41 @@ function mirror(s: Snapshot) {
   survey.message = s.message;
   survey.warnings = s.warnings;
   survey.standingWalls = s.standing_walls;
+  survey.sweep = s.sweep ?? null;
+  survey.lastSweep = s.last_sweep ?? null;
+  survey.sweepKind = s.sweep_kind ?? survey.sweepKind;
+  // the switch is kept on this device: the engine (fresh on every load, and deaf until a cave is open) follows it
+  if (s.standard && s.standard !== survey.standard) queueMicrotask(() => apply(engine.surveySetStandard(survey.standard)));
+  // CaveCAD's own firing stops once the sweep has what it needs (the surveyor can still add shots, or Finish)
+  if (survey.firing && survey.sweep && (survey.sweep.check.complete || survey.sweep.check.shots >= SWEEP_MAX_SHOTS)) setFiring(false);
+  watchDeviceSweep();
+}
+
+// ---- a sweep run on the X1 itself (its scan mode) ----
+/** The X1 streams about 1.5 scan shots a second: this long with none means the surveyor ended the scan on the X1. */
+const DEVICE_SWEEP_IDLE_MS = 8000;
+let deviceIdle: ReturnType<typeof setTimeout> | undefined;
+let lastDeviceShots = 0;
+
+/**
+ * Follows a sweep the X1 is running in its own scan mode: the first scan shot ends the wait, and the sweep is
+ * finished here when the X1's scan ends: its next ordinary shot (the engine closes the sweep then), the scan
+ * stream going quiet, or the X1's 200-shot limit.
+ */
+function watchDeviceSweep() {
+  const w = survey.sweep;
+  if (w && !w.armed) {
+    survey.waitingForDevice = null;
+    if (w.check.shots !== lastDeviceShots) {
+      lastDeviceShots = w.check.shots;
+      clearTimeout(deviceIdle);
+      if (w.check.shots >= SWEEP_MAX_SHOTS) queueMicrotask(finishSweep);
+      else deviceIdle = setTimeout(finishSweep, DEVICE_SWEEP_IDLE_MS);
+    }
+  } else if (!w) {
+    clearTimeout(deviceIdle);
+    lastDeviceShots = 0;
+  }
 }
 
 /** Takes in what the engine answered: its log lines, its snapshot, the timers it wants. */
@@ -135,6 +198,7 @@ const events: LinkEvents = {
     survey.detail = detail;
     survey.device = instrument && status === 'connected' ? instrument.name : survey.device;
     survey.canTakeShot = !!instrument?.canTakeShot && status === 'connected';
+    survey.canLaser = !!instrument?.canLaser && status === 'connected';
     if (status === 'idle' || status === 'error' || status === 'unsupported') apply(engine.surveyLinkDown());
   },
   frame(hex, from) {
@@ -169,6 +233,7 @@ export async function connect(kind: LinkKind, given: { services?: string[]; anyD
 }
 
 export function disconnect() {
+  setFiring(false);
   clearTimeout(idleTimer);
   clearTimeout(settleTimer);
   setRunning(false);
@@ -178,6 +243,7 @@ export function disconnect() {
   simulator = false;
   survey.status = 'idle';
   survey.canTakeShot = false;
+  survey.canLaser = false;
   survey.kind = '';
   survey.simNote = '';
 }
@@ -185,7 +251,10 @@ export function disconnect() {
 /** Fires a shot from the screen (the instrument must support it). */
 export function takeShot() {
   // The simulator shoots a whole station (leg, backsight, splays and passage) for one press; a real instrument fires one shot.
-  if (simulator) apply(engine.surveySimStation(survey.randomPassage));
+  // the simulated surveyor aims a Manual LRUD shot at the wall asked for, and sweeps round otherwise
+  const aim = survey.standard === 'manual' ? (survey.sweep?.check.aim?.angle ?? -1) : -1;
+  const sweeping = survey.sweep?.check.kind ?? survey.waitingForDevice;
+  if (simulator) apply(sweeping ? engine.surveySimSweepShot(sweeping, aim) : engine.surveySimStation(survey.randomPassage));
   else instrument?.takeShot();
 }
 
@@ -218,3 +287,97 @@ export const settleNow = () => void apply(engine.surveySettleNow());
 export const undoLast = () => apply(engine.surveyUndoLast());
 /** Writes one dimension at the standing station. */
 export const setStandingWall = (side: 'left' | 'right' | 'up' | 'down', value: number | null) => apply(engine.surveySetStandingWall(side, value));
+
+// ---- the instrument's modes ----
+
+/** Switches the X1's laser on or off (it stays on, for aiming, until switched off or a shot is taken). */
+export function laser(on: boolean) {
+  instrument?.laser?.(on);
+}
+
+let sweepTimer: ReturnType<typeof setInterval> | undefined;
+let laserForSweep = false;
+
+function setFiring(on: boolean) {
+  survey.firing = on;
+  clearInterval(sweepTimer);
+  sweepTimer = on ? setInterval(takeShot, SWEEP_EVERY_MS) : undefined;
+}
+
+/**
+ * Starts a sweep at the standing station: every shot until Finish is a sweep shot (a splay, never part of a leg),
+ * checked live as `kind`. With Auto-fire on and an instrument that can be fired from here, CaveCAD fires the laser
+ * every 1.5 s until the check passes; otherwise the surveyor shoots (or uses the X1's own scan mode).
+ */
+export function startSweep(kind: SweepKind) {
+  // Digital with an X1: the sweep is the X1's own scan mode, started and ended on the X1; CaveCAD follows it
+  if (survey.standard === 'digital' && usesDeviceScan()) {
+    setSweepKind(kind);
+    survey.waitingForDevice = kind;
+    showStation(survey.standing);
+    if (simulator) setFiring(true); // the simulated X1 scans as soon as asked
+    return;
+  }
+  if (!apply(engine.surveyStartSweep(kind))) return;
+  if (survey.sweep) showStation(survey.sweep.station);
+  laserForSweep = false;
+  // Manual is four aimed shots (or a rough outline): the surveyor fires each one; Digital can fire on its own
+  if (survey.standard === 'digital' && survey.autoFire && survey.canTakeShot) {
+    if (survey.canLaser) {
+      laser(true);
+      laserForSweep = true;
+    }
+    setFiring(true);
+  }
+}
+
+/** Pauses or carries on CaveCAD's firing during a sweep. */
+export function toggleFiring() {
+  if (survey.sweep && survey.canTakeShot) setFiring(!survey.firing);
+}
+
+/** Ends the sweep under way (kept, with its check, as the last sweep). */
+export function finishSweep() {
+  setFiring(false);
+  survey.waitingForDevice = null;
+  clearTimeout(deviceIdle);
+  if (laserForSweep) laser(false);
+  laserForSweep = false;
+  apply(engine.surveyFinishSweep());
+}
+
+/** What a sweep the instrument starts on its own (the X1's scan mode) is checked as. */
+export function setSweepKind(kind: SweepKind) {
+  survey.sweepKind = kind;
+  apply(engine.surveySetSweepKind(kind));
+}
+
+/** Brings the Map to a station and cuts the Cross Section there (a sweep's ring shows in it as it fills). */
+function showStation(label: string) {
+  const found = engine.sectionStations(false, true).filter((st) => st.label === label).pop();
+  if (!found) return;
+  cave.station = found.id;
+  focusStation(found.id);
+}
+
+/** Switches between Manual (mostly sketched: an LRUD ring needs one shot on each of the four walls) and Digital (the instrument captures the detail: dense rings, full room outlines). */
+export function setStandard(standard: SurveyStandard) {
+  survey.standard = standard;
+  try {
+    localStorage.setItem(STANDARD_KEY, standard);
+  } catch {
+    /* kept for this visit only */
+  }
+  apply(engine.surveySetStandard(standard));
+}
+
+/** The instrument has a scan mode CaveCAD can follow: a Cavway X1 (or the simulator pretending to be one). */
+export function usesDeviceScan(): boolean {
+  return survey.status === 'connected' && (survey.canLaser || (simulator && survey.sim.device === 'x1'));
+}
+
+/** Stops waiting for the X1 to start its scan. */
+export function cancelDeviceSweep() {
+  setFiring(false);
+  survey.waitingForDevice = null;
+}

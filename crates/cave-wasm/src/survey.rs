@@ -317,6 +317,92 @@ pub fn survey_sim_station(walls: bool) -> String {
     })
 }
 
+// ---- sweeps ----
+
+/// Starts a sweep from the screen (`lrud` or `room`): every shot until Finish is a sweep shot at the standing station.
+#[wasm_bindgen]
+pub fn survey_start_sweep(kind: &str) -> String {
+    let kind = cave_session::SweepKind::parse(kind).unwrap_or_default();
+    with_session(move |s, host, _| s.start_sweep(host, kind))
+}
+
+/// Ends the sweep under way.
+#[wasm_bindgen]
+pub fn survey_finish_sweep() -> String {
+    with_session(|s, _, _| s.finish_sweep())
+}
+
+/// What a sweep the instrument starts on its own (the X1's scan mode) is checked as: `lrud` or `room`.
+#[wasm_bindgen]
+pub fn survey_set_sweep_kind(kind: &str) -> String {
+    let kind = cave_session::SweepKind::parse(kind).unwrap_or_default();
+    with_session(move |s, _, _| s.set_sweep_kind(kind))
+}
+
+/// How much a sweep is asked for: `manual` (mostly sketched: the four walls do) or `digital` (the instrument's detail).
+#[wasm_bindgen]
+pub fn survey_set_standard(standard: &str) -> String {
+    let standard = cave_session::Standard::parse(standard).unwrap_or_default();
+    with_session(move |s, _, _| s.set_standard(standard))
+}
+
+thread_local!(static SIM_SWEEP: RefCell<u32> = const { RefCell::new(0) });
+
+/// One simulated sweep shot (`kind` `lrud`: a ring across a passage 4 m wide and 2 m high, going round; `room`: about
+/// level, round a room 5 to 8 m across), so a sweep and its checks can be tried with no instrument. Shots go round
+/// in order, so the check has gaps to name until the sweep comes all the way round. `aim` (degrees round the ring,
+/// 0 right wall, 90 ceiling, 180 left wall, 270 floor) points a ring shot at one wall, as a surveyor aiming does;
+/// negative goes round.
+#[wasm_bindgen]
+pub fn survey_sim_sweep_shot(kind: &str, aim: f64) -> String {
+    let room = kind == "room";
+    let n = SIM_SWEEP.with(|c| {
+        let mut c = c.borrow_mut();
+        *c += 1;
+        *c
+    });
+    with_session(move |s, host, _| {
+        let heading = s
+            .state()
+            .last
+            .as_ref()
+            .map(|l| l.reading.azimuth)
+            .unwrap_or(0.0);
+        let wobble = ((n as f64 * 12.9898).sin() * 43758.545).fract(); // 0..1, repeatable
+        let (d, az, inc) = if room {
+            let a = (n as f64 * 13.0 + wobble * 6.0).rem_euclid(360.0);
+            let rad = 5.0 + 3.0 * (0.5 + 0.5 * (a.to_radians() * 2.0).cos());
+            (rad, a, (wobble - 0.5) * 10.0)
+        } else {
+            // round the ring by 14 degrees a shot, looking along the passage: right wall first, then up
+            let t = if aim >= 0.0 {
+                aim + (wobble - 0.5) * 10.0
+            } else {
+                n as f64 * 14.0 + wobble * 5.0
+            }
+            .to_radians();
+            let (w, h) = (2.0 + 0.2 * wobble, 1.0 + 0.1 * wobble);
+            let (x, z) = (w * t.cos(), h * t.sin());
+            let right = (heading + 90.0).to_radians();
+            let v = [x * right.sin(), x * right.cos(), z];
+            let flat = v[0].hypot(v[1]);
+            (
+                flat.hypot(v[2]),
+                v[0].atan2(v[1]).to_degrees().rem_euclid(360.0),
+                v[2].atan2(flat).to_degrees(),
+            )
+        };
+        let mut r = cave_instrument::Reading::new(
+            (d * 1000.0).round() / 1000.0,
+            (az * 10.0).round() / 10.0,
+            (inc * 10.0).round() / 10.0,
+            "simulator",
+        );
+        r.scan = Some(true);
+        s.reading(host, r);
+    })
+}
+
 /// Settle what is waiting as splays now, without waiting for the pause.
 #[wasm_bindgen]
 pub fn survey_settle_now() -> String {
@@ -409,7 +495,7 @@ pub fn instrument_catalog() -> String {
     let catalog = serde_json::json!({
         "devices": devices(),
         "names": NAMES.iter().map(|n| serde_json::json!({"prefix": n.prefix, "kind": n.kind, "label": n.label})).collect::<Vec<_>>(),
-        "x1": {"service": cavway::SERVICE, "write": cavway::WRITE, "notify": cavway::NOTIFY, "takeShot": cavway::command(cavway::CMD_TRIGGER)},
+        "x1": {"service": cavway::SERVICE, "write": cavway::WRITE, "notify": cavway::NOTIFY, "takeShot": cavway::command(cavway::CMD_TRIGGER), "laserOn": cavway::command(cavway::CMD_LASER_ON), "laserOff": cavway::command(cavway::CMD_LASER_OFF)},
         "sap5": {"service": sap5::SERVICE, "write": sap5::WRITE, "notify": sap5::NOTIFY},
         "sap6": {"service": caveble::SERVICE, "name": caveble::NAME_CHARACTERISTIC, "command": caveble::COMMAND_CHARACTERISTIC, "leg": caveble::LEG_CHARACTERISTIC, "takeShot": [caveble::CMD_TAKE_SHOT]},
         "bric": {

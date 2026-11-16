@@ -34,6 +34,6 @@ export function surveyGroups(options: { inCave?: () => void } = {}): Group[] {
       ],
     },
   ];
-  if (options.inCave) groups.push({ name: 'Layout', items: [{ label: 'In cave', icon: Tent, run: options.inCave }] });
+  if (options.inCave) groups.push({ name: 'Layout', items: [{ label: 'In-Cave Survey', icon: Tent, run: options.inCave }] });
   return groups;
 }

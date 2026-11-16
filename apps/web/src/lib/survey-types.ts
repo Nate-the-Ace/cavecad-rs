@@ -76,6 +76,46 @@ export interface Snapshot {
   warnings: string[];
   standing_walls: StandingWalls | null;
   edits: number;
+  /** The sweep being taken, with its live check. */
+  sweep: SweepView | null;
+  /** The sweep finished last. */
+  last_sweep: SweepView | null;
+  /** What a sweep the instrument starts on its own is checked as. */
+  sweep_kind: SweepKind;
+  /** How much a sweep is asked for. */
+  standard: SurveyStandard;
+}
+
+/** Manual: mostly sketched by hand, LRUD needs only the four walls. Digital: the instrument captures the detail. */
+export type SurveyStandard = 'manual' | 'digital';
+
+/** What a sweep is meant to capture: a ring across the passage (cross-section and LRUD), or level all the way round a room. */
+export type SweepKind = 'lrud' | 'room';
+
+/** How a sweep stands (cave-sweep's `Check`). */
+export interface SweepCheck {
+  kind: SweepKind;
+  standard: SurveyStandard;
+  shots: number;
+  usable: number;
+  wanted: number;
+  /** Shots in each of 12 sectors. LRUD: from the right wall, anticlockwise looking along the passage. Room: from north, clockwise. */
+  sectors: number[];
+  widest_gap: number;
+  complete: boolean;
+  todo: string[];
+  notes: string[];
+  /** Left, right, up, down (metres) off the ring so far. */
+  lrud: [number, number, number, number] | null;
+  /** LRUD: the next wall still wanted (left, right, up, down order), to aim at. */
+  aim: { wall: string; angle: number } | null;
+}
+
+export interface SweepView {
+  station: string;
+  /** Started from the screen (every shot until Finish is a sweep shot), not by the instrument's scan mode. */
+  armed: boolean;
+  check: SweepCheck;
 }
 
 /** What every call into the survey engine answers. */
@@ -113,7 +153,7 @@ export interface Identified {
 export interface Catalog {
   devices: Device[];
   names: { prefix: string; kind: InstrumentKind; label: string }[];
-  x1: { service: string; write: string; notify: string; takeShot: number[] };
+  x1: { service: string; write: string; notify: string; takeShot: number[]; laserOn: number[]; laserOff: number[] };
   sap5: { service: string; write: string; notify: string };
   sap6: { service: string; name: string; command: string; leg: string; takeShot: number[] };
   bric: { measureService: string; primary: string; meta: string; errors: string; controlService: string; control: string; takeShot: number[]; batteryService: string; deviceInfoService: string; settleMs: number };
@@ -144,4 +184,7 @@ export interface Instrument {
   connect(): Promise<void>;
   disconnect(): void;
   takeShot(): void;
+  /** The laser can be switched on and off from the screen. */
+  readonly canLaser?: boolean;
+  laser?(on: boolean): void;
 }
