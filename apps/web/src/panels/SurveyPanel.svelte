@@ -5,7 +5,7 @@
   // surveyed. Everything here is sized for a tablet held in a glove: big targets, one thing to do next.
   // The rules (what a reading is, where the surveyor stands next) are Rust: crates/cave-session, tested there.
   import { untrack } from 'svelte';
-  import { Check, Crosshair, Flashlight, FlashlightOff, Pause, Play, Radar, ScanLine, SkipForward, Undo2, X } from '@lucide/svelte';
+  import { Check, ChevronLeft, ChevronRight, Crosshair, Flashlight, FlashlightOff, Pause, Play, Radar, ScanLine, SkipForward, X } from '@lucide/svelte';
   import SweepDial from '../components/SweepDial.svelte';
   import SurveyOptions from '../components/SurveyOptions.svelte';
   import { Bluetooth, FlaskConical, Unplug } from '@lucide/svelte';
@@ -288,11 +288,11 @@
   <footer class="dock" aria-label="Actions">
     <button class="shoot" onclick={live.takeShot} disabled={!survey.canTakeShot}><Crosshair size={22} /> {survey.kind === 'simulator' ? 'Shoot station' : 'Take shot'}</button>
     <div class="slots">
-      <button onclick={live.undoLast} disabled={survey.log.length === 0}><Undo2 size={18} /> Undo last shot</button>
+      <button onclick={live.previousStation} disabled={survey.state.awaiting !== null} title="Step back to the station before this one (undo is in the bar above)"><ChevronLeft size={18} /> Previous station</button>
       {#if survey.state.awaiting}
         <button onclick={live.skipBacksight}><SkipForward size={18} /> No backsight</button>
       {:else}
-        <button onclick={live.nextStation} disabled={survey.state.mode === 'splay'} title="Move on to the next station without a shot">Next station</button>
+        <button onclick={live.nextStation} disabled={survey.state.mode === 'splay'} title="Move on to the next station without a shot">Next station <ChevronRight size={18} /></button>
       {/if}
     </div>
   </footer>

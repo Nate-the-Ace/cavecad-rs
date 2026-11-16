@@ -403,6 +403,12 @@ pub fn survey_sim_sweep_shot(kind: &str, aim: f64) -> String {
     })
 }
 
+/// Steps back to the station before the standing one (the Previous station button).
+#[wasm_bindgen]
+pub fn survey_previous_station() -> String {
+    with_session(|s, host, step| step.ok = s.previous_station(host))
+}
+
 /// Settle what is waiting as splays now, without waiting for the pause.
 #[wasm_bindgen]
 pub fn survey_settle_now() -> String {

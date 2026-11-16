@@ -879,6 +879,48 @@ impl Session {
         }
     }
 
+    /// Steps back to the station before the one the surveyor stands at, in the order of the page (the Previous
+    /// station button): standing there, with the next leg going to the station that was being stood at. From a
+    /// station not on the page yet (the next one, before its leg is shot) it goes back to the last one that is.
+    /// False when there is nothing before it.
+    pub fn previous_station(&mut self, host: &dyn Host) -> bool {
+        let Some(trip) = self.trip else {
+            return false;
+        };
+        let Some(page) = cave_notebook::page(host.doc(), trip) else {
+            return false;
+        };
+        let mut order: Vec<String> = Vec::new();
+        for r in &page.rows {
+            if r.kind == cave_notebook::RowKind::Station
+                && !r.label.is_empty()
+                && order.last() != Some(&r.label)
+            {
+                order.push(r.label.clone());
+            }
+        }
+        let here = self.state.from.trim().to_string();
+        let back = match order.iter().position(|l| *l == here) {
+            Some(0) => None,
+            Some(i) => Some(order[i - 1].clone()),
+            None => order.last().filter(|l| **l != here).cloned(),
+        };
+        let Some(back) = back else {
+            return false;
+        };
+        self.state = SessionState {
+            to: if order.contains(&here) {
+                here
+            } else {
+                self.state.to.clone()
+            },
+            from: back,
+            awaiting: None,
+            ..self.state.clone()
+        };
+        true
+    }
+
     /// The passage dimensions at the standing station, or `None` before the page has a line for it.
     pub fn standing_walls(&self, host: &dyn Host) -> Option<StandingWalls> {
         let trip = self.trip?;

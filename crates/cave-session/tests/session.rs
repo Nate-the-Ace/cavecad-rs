@@ -974,3 +974,34 @@ fn a_screen_sweep_with_an_instrument_that_does_not_group_writes_splays_not_legs(
     assert_eq!(book.legs().len(), 0);
     assert_eq!(book.splays().len(), 30);
 }
+
+#[test]
+fn previous_station_steps_back_along_the_page() {
+    let mut book = Book::new();
+    let mut s = session(&book, false, false);
+    for az in [0.0, 10.0, 20.0] {
+        s.reading(&mut book, r(5.0, az, 0.0));
+    }
+    assert_eq!(book.leg_names(), "A1-A2 A2-A3 A3-A4");
+    assert_eq!(
+        (s.state().from.as_str(), s.state().to.as_str()),
+        ("A4", "A5")
+    );
+    assert!(s.previous_station(&book));
+    assert_eq!(
+        (s.state().from.as_str(), s.state().to.as_str()),
+        ("A3", "A4")
+    );
+    assert!(s.previous_station(&book));
+    assert!(s.previous_station(&book));
+    assert_eq!(
+        (s.state().from.as_str(), s.state().to.as_str()),
+        ("A1", "A2")
+    );
+    assert!(
+        !s.previous_station(&book),
+        "nothing before the first station"
+    );
+    s.next_station(&book);
+    assert_eq!(s.state().from, "A2");
+}

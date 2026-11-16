@@ -280,6 +280,7 @@ export const setBacksights = (on: boolean) => void apply(engine.surveySetBacksig
 export const setAuto = (auto: boolean) => void apply(engine.surveySetAuto(auto));
 export const skipBacksight = () => void apply(engine.surveySkipBacksight());
 export const nextStation = () => void apply(engine.surveyNextStation());
+export const previousStation = () => void apply(engine.surveyPreviousStation());
 export const setNames = (from: string, to: string) => void apply(engine.surveySetNames(from, to));
 export const accept = () => void apply(engine.surveyAccept());
 export const discard = () => void apply(engine.surveyDiscard());

@@ -140,6 +140,7 @@ export const READS: readonly string[] = [
   'surveySetAuto',
   'surveySkipBacksight',
   'surveyNextStation',
+  'surveyPreviousStation',
   'surveySetNames',
   'surveyDiscard',
   'surveyFinishSweep',
