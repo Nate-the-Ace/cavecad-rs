@@ -526,7 +526,7 @@ impl Session {
     /// Writes one thing to the notebook. Returns true when it was written (or an earlier leg was refined).
     pub fn commit(&mut self, host: &mut dyn Host, incoming: &Incoming) -> bool {
         let Some(trip) = self.trip else {
-            return self.fail("Open a cave first.");
+            return self.fail("No trip to write to: choose one in the Notebook.");
         };
         if let Incoming::Event(LegEvent::LegUpdate { group, reading, .. }) = incoming {
             return self.refine(host, trip, *group, reading);
@@ -707,7 +707,7 @@ impl Session {
         let result: Result<(), String> = match &entry.target {
             Target::Wall { station, side } => match trip {
                 Some(t) => self.set_wall(host, t, station, *side, None),
-                None => Err("Open a cave first.".into()),
+                None => Err("No trip to write to: choose one in the Notebook.".into()),
             },
             Target::Shot(shot) if entry.kind == PlanKind::Back => set_readings(
                 host.doc(),
@@ -901,7 +901,7 @@ impl Session {
         value: Option<f64>,
     ) -> bool {
         let Some(trip) = self.trip else {
-            return self.fail("Open a cave first.");
+            return self.fail("No trip to write to: choose one in the Notebook.");
         };
         let station = standing(&self.state);
         let planned = match set_station_wall(host.doc(), trip, &station, nb_side(side), value) {

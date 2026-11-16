@@ -179,6 +179,8 @@ export function apply(step: Step): boolean {
  * keeping the surveyor's mode and backsight choice. Called when the trip changes, not on every edit.
  */
 export function syncToTrip() {
+  // the Notebook's rule, here too: a phone shows the Capture panel without the Notebook ever having opened to choose
+  if (cave.hasCave && !engine.notebookTrips().some((t) => t.id === cave.trip)) cave.trip = engine.notebookTrips()[0]?.id ?? '';
   if (!cave.trip) return;
   apply(engine.surveySyncTrip(cave.trip));
 }
