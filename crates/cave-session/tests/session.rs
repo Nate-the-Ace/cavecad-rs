@@ -1016,6 +1016,8 @@ fn accuracy_complaints_are_said_in_plain_words() {
         g.contains("hold it still") && !g.contains("magnetic"),
         "{g}"
     );
+    let n = cave_session::rules::accuracy_advice("accuracy error: absM 6.1 %, dip 7.0°");
+    assert!(n.contains("magnetic") && n.contains("6.1 %"), "{n}");
     let a = cave_session::rules::accuracy_advice("accuracy error: angle");
     assert!(a.contains("disagree"), "{a}");
 }

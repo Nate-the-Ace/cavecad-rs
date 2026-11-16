@@ -169,6 +169,13 @@
         </div>
       </div>
       <p class="hint">{manual ? 'Manual: you sketch the detail. LRUD is four aimed shots, one to each wall: left, right, up, down. CaveCAD says which wall is next.' : 'Digital: the Cavway captures the detail. Sweep every station to 100% covered: a ring across the passage, rooms all the way round.'}</p>
+      <label class="acc">Accuracy check
+        <select value={survey.accuracy} onchange={(e) => live.setAccuracy(e.currentTarget.value as 'strict' | 'normal' | 'relaxed')} aria-label="How touchy to be about the instrument's accuracy complaints">
+          <option value="strict">Strict: every X1 complaint</option>
+          <option value="normal">Normal: 2% gravity, 5% magnetic, 5° dip, 2° angle</option>
+          <option value="relaxed">Relaxed: twice Normal</option>
+        </select>
+      </label>
       {#if sweepDue}<p class="due" role="status">Sweep {survey.standing} before moving on.</p>{/if}
       <div class="row">
         <button onclick={() => live.laser(true)} disabled={!survey.canLaser} title="Laser on, for aiming (the X1)"><Flashlight size={18} /> Laser on</button>
@@ -417,6 +424,8 @@
   .sweep.waiting { border-style: dashed; }
   .grow { flex: 1 1 100%; margin: 0; }
   .aim { font-size: 17px; font-weight: 700; color: var(--warn); }
+  .acc { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); }
+  .acc select { flex: 1; min-width: 0; font: inherit; font-size: 13px; padding: 6px; background: var(--panel-2); color: var(--text); border: 1px solid var(--line); border-radius: var(--radius); }
   .due { margin: 0; color: var(--warn); font-weight: 600; }
   .device { display: flex; flex-direction: column; gap: 8px; }
   .device select { font: inherit; font-size: 12px; padding: 2px 4px; background: var(--panel-2); color: var(--text); border: 1px solid var(--line); border-radius: var(--radius); }

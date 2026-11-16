@@ -183,7 +183,11 @@ pub fn survey_connect(kind: &str, options: &str) -> String {
         SIM.with(|m| *m.borrow_mut() = None);
         let groups = kind != "capture";
         match kind.as_str() {
-            "x1" => LINK.with(|l| *l.borrow_mut() = Some(Link::X1(X1Link::new("x1")))),
+            "x1" => LINK.with(|l| {
+                let mut link = X1Link::new("x1");
+                link.set_tolerance(TOLERANCE.with(|t| *t.borrow()));
+                *l.borrow_mut() = Some(Link::X1(link));
+            }),
             "sap6" => LINK.with(|l| *l.borrow_mut() = Some(Link::Sap6(LegLink::new("sap6")))),
             "sap5" => LINK.with(|l| *l.borrow_mut() = Some(Link::Sap5(Sap5Link::new("sap5")))),
             "bric" => LINK.with(|l| *l.borrow_mut() = Some(Link::Bric(BricLink::new("bric")))),
@@ -344,6 +348,21 @@ pub fn survey_set_sweep_kind(kind: &str) -> String {
 pub fn survey_set_standard(standard: &str) -> String {
     let standard = cave_session::Standard::parse(standard).unwrap_or_default();
     with_session(move |s, _, _| s.set_standard(standard))
+}
+
+thread_local!(static TOLERANCE: RefCell<cavway::Tolerance> = RefCell::new(cavway::Tolerance::default()));
+
+/// How touchy to be about the X1's accuracy complaints: `strict` (every one), `normal`, `relaxed`.
+#[wasm_bindgen]
+pub fn survey_set_accuracy(level: &str) -> String {
+    let t = cavway::Tolerance::parse(level).unwrap_or_default();
+    TOLERANCE.with(|v| *v.borrow_mut() = t);
+    LINK.with(|l| {
+        if let Some(Link::X1(link)) = l.borrow_mut().as_mut() {
+            link.set_tolerance(t);
+        }
+    });
+    with_session(|_, _, _| {})
 }
 
 thread_local!(static SIM_SWEEP: RefCell<u32> = const { RefCell::new(0) });

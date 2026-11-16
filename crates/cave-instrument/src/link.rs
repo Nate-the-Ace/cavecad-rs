@@ -103,6 +103,7 @@ const RECENT: usize = 8;
 pub struct X1Link {
     recent: Vec<String>,
     source: String,
+    tolerance: cavway::Tolerance,
 }
 
 impl X1Link {
@@ -111,7 +112,13 @@ impl X1Link {
         X1Link {
             recent: Vec::new(),
             source: source.into(),
+            tolerance: cavway::Tolerance::default(),
         }
+    }
+
+    /// How touchy to be about the X1's accuracy complaints (see [`cavway::Tolerance`]).
+    pub fn set_tolerance(&mut self, t: cavway::Tolerance) {
+        self.tolerance = t;
     }
 
     /// A notification arrived on the X1's read characteristic.
@@ -153,7 +160,7 @@ impl X1Link {
                 mark: Some(p.mark),
                 scan: p.scan.then_some(true),
                 sweep_start: (p.scan && p.sweep_start).then_some(true),
-                error: cavway::describe_errors(&p.errors),
+                error: cavway::describe_errors(&cavway::beyond(&p.errors, self.tolerance)),
                 quality: p.quality,
                 ..Reading::new(
                     tidy(p.distance, 4),

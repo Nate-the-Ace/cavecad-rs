@@ -697,7 +697,7 @@ pub fn accuracy_advice(error: &str) -> String {
         .next()
         .unwrap_or("")
         .split(',')
-        .map(str::trim)
+        .map(|c| c.split_whitespace().next().unwrap_or(""))
         .filter(|c| !c.is_empty())
         .collect();
     let has = |c: &str| codes.iter().any(|x| x.eq_ignore_ascii_case(c));

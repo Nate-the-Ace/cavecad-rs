@@ -25,6 +25,18 @@ const SWEEP_MAX_SHOTS = 200;
 const EMPTY_STATE: SessionState = { mode: 'leg', backsights: false, from: '', to: '', awaiting: null, last: null };
 
 const STANDARD_KEY = 'cavecad.surveyStandard';
+const ACCURACY_KEY = 'cavecad.accuracyCheck';
+/** How touchy CaveCAD is about the X1's accuracy complaints (its own limits are tight and cannot be changed). */
+export type AccuracyCheck = 'strict' | 'normal' | 'relaxed';
+
+function loadAccuracy(): AccuracyCheck {
+  try {
+    const v = localStorage.getItem(ACCURACY_KEY);
+    return v === 'strict' || v === 'relaxed' ? v : 'normal';
+  } catch {
+    return 'normal';
+  }
+}
 
 function loadStandard(): SurveyStandard {
   try {
@@ -37,6 +49,8 @@ function loadStandard(): SurveyStandard {
 export const survey = $state({
   /** Manual (mostly sketched: LRUD needs the four walls) or Digital (the instrument captures the detail). Kept on this device. */
   standard: loadStandard(),
+  /** How touchy CaveCAD is about the X1's accuracy complaints. Kept on this device. */
+  accuracy: loadAccuracy(),
   status: 'idle' as LinkStatus,
   /** Which kind of link is up (or was asked for), so the ribbon can show it pressed. */
   kind: '' as LinkKind | '',
@@ -244,6 +258,7 @@ export async function connect(kind: LinkKind, given: { services?: string[]; anyD
   simulator = false;
   survey.simNote = '';
   survey.message = '';
+  engine.surveySetAccuracy(survey.accuracy); // the link made on connect takes it
   instrument = new WebBleInstrument(events, bridge, { mode: kind === 'capture' ? 'capture' : 'auto', services: options.services, anyDevice: options.anyDevice });
   await instrument.connect();
 }
@@ -469,4 +484,15 @@ export function usesDeviceScan(): boolean {
 export function cancelDeviceSweep() {
   setFiring(false);
   survey.waitingForDevice = null;
+}
+
+/** Sets how touchy CaveCAD is about the X1's accuracy complaints (Strict: every one the X1 makes). */
+export function setAccuracy(level: AccuracyCheck) {
+  survey.accuracy = level;
+  try {
+    localStorage.setItem(ACCURACY_KEY, level);
+  } catch {
+    /* kept for this visit only */
+  }
+  apply(engine.surveySetAccuracy(level));
 }

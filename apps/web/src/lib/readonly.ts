@@ -147,6 +147,7 @@ export const READS: readonly string[] = [
   'surveyFinishSweep',
   'surveySetSweepKind',
   'surveySetStandard',
+  'surveySetAccuracy',
   'readPat',
   'brushOutlines',
   'instrumentCatalog',

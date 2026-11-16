@@ -546,7 +546,12 @@ impl Simulator {
             kind: opts.kind,
             quirks,
             shots,
-            x1: X1Link::new("sim"),
+            x1: {
+                // the pretend X1 passes on every accuracy complaint, so its accuracy quirk always shows
+                let mut l = X1Link::new("sim");
+                l.set_tolerance(crate::cavway::Tolerance::Strict);
+                l
+            },
             sap6: LegLink::new("sim"),
             sap5: Sap5Link::new("sim"),
             bric: BricLink::new("sim"),

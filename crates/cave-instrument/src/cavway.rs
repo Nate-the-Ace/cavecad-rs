@@ -239,11 +239,83 @@ pub fn parse_errors(b: &[u8]) -> Vec<AccuracyError> {
     out
 }
 
-/// One line for the log: "accuracy error: absG, dip", or `None` for none.
+/// How far off a complaint says the shot is: a fraction (gravity, magnetic strength: 0.046 is 4.6 % off the
+/// calibrated strength) or degrees (dip, angle), the worse of the two sensors.
+pub fn deviation(e: &AccuracyError) -> f64 {
+    match e.kind {
+        ErrorKind::AbsG | ErrorKind::AbsM => {
+            (e.a - 1.0).abs().max(e.b.map_or(0.0, |b| (b - 1.0).abs()))
+        }
+        ErrorKind::Dip => e.a.abs().max(e.b.map_or(0.0, f64::abs)),
+        ErrorKind::Angle => e.a.abs(),
+    }
+}
+
+/// How touchy CaveCAD is about the X1's accuracy complaints. The X1's own limits are tight (it flags a magnetic
+/// field 1.5 % off, or 0.8 degrees between its sensor sets) and cannot be changed from outside, so CaveCAD judges
+/// the figures it sends instead.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum Tolerance {
+    /// Every complaint the X1 makes.
+    Strict,
+    /// Past 2 % gravity, 5 % magnetic strength, 5 degrees dip or 2 degrees between sensors.
+    #[default]
+    Normal,
+    /// Twice the Normal limits.
+    Relaxed,
+}
+
+impl Tolerance {
+    /// From the word the screen uses.
+    pub fn parse(s: &str) -> Option<Tolerance> {
+        match s {
+            "strict" => Some(Tolerance::Strict),
+            "normal" => Some(Tolerance::Normal),
+            "relaxed" => Some(Tolerance::Relaxed),
+            _ => None,
+        }
+    }
+
+    /// The largest deviation let through for each kind: gravity and magnetic as fractions, dip and angle in degrees.
+    fn limit(self, kind: ErrorKind) -> f64 {
+        let normal = match kind {
+            ErrorKind::AbsG => 0.02,
+            ErrorKind::AbsM => 0.05,
+            ErrorKind::Dip => 5.0,
+            ErrorKind::Angle => 2.0,
+        };
+        match self {
+            Tolerance::Strict => 0.0,
+            Tolerance::Normal => normal,
+            Tolerance::Relaxed => normal * 2.0,
+        }
+    }
+}
+
+/// The complaints worth telling the surveyor about at this tolerance.
+pub fn beyond(errors: &[AccuracyError], t: Tolerance) -> Vec<AccuracyError> {
+    errors
+        .iter()
+        .copied()
+        .filter(|e| t == Tolerance::Strict || deviation(e) > t.limit(e.kind))
+        .collect()
+}
+
+/// One line for the log: "accuracy error: absM 4.6 %, dip 2.1°", or `None` for none.
 pub fn describe_errors(errors: &[AccuracyError]) -> Option<String> {
     (!errors.is_empty()).then(|| {
-        let names: Vec<&str> = errors.iter().map(|e| e.kind.name()).collect();
-        format!("accuracy error: {}", names.join(", "))
+        let parts: Vec<String> = errors
+            .iter()
+            .map(|e| match e.kind {
+                ErrorKind::AbsG | ErrorKind::AbsM => {
+                    format!("{} {:.1} %", e.kind.name(), deviation(e) * 100.0)
+                }
+                ErrorKind::Dip | ErrorKind::Angle => {
+                    format!("{} {:.1}°", e.kind.name(), deviation(e))
+                }
+            })
+            .collect();
+        format!("accuracy error: {}", parts.join(", "))
     })
 }
 
@@ -371,4 +443,40 @@ pub fn encode_packet(p: &PacketSpec) -> Vec<u8> {
         out.truncate(SHORT_PACKET_BYTES);
     }
     out
+}
+
+#[cfg(test)]
+mod tolerance_tests {
+    use super::*;
+
+    fn e(kind: ErrorKind, a: f64, b: Option<f64>) -> AccuracyError {
+        AccuracyError { kind, a, b }
+    }
+
+    #[test]
+    fn normal_lets_the_x1s_small_complaints_through_and_keeps_the_big_ones() {
+        // figures from the real X1 on 2026-11-13
+        let small = [
+            e(ErrorKind::AbsM, 0.9875, Some(0.9838)), // 1.6 % off
+            e(ErrorKind::Dip, -1.38, Some(-1.02)),
+            e(ErrorKind::Angle, 1.48, None),
+        ];
+        assert!(beyond(&small, Tolerance::Normal).is_empty());
+        assert_eq!(beyond(&small, Tolerance::Strict).len(), 3);
+        let big = [
+            e(ErrorKind::AbsG, 0.9144, Some(0.9177)),
+            e(ErrorKind::Dip, -6.27, Some(-4.8)),
+        ];
+        let kept = beyond(&big, Tolerance::Normal);
+        assert_eq!(kept.len(), 2);
+        assert_eq!(
+            describe_errors(&kept).unwrap(),
+            "accuracy error: absG 8.6 %, dip 6.3°"
+        );
+        assert_eq!(
+            beyond(&big[1..], Tolerance::Relaxed).len(),
+            0,
+            "6.3 degrees is under Relaxed's 10"
+        );
+    }
 }
