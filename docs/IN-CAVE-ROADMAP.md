@@ -32,9 +32,10 @@ the scan flag, sweeps as rings) and `CAVWAY-X1.md` (the wire format).
     up, down): CaveCAD names the next wall, and each shot is written as that wall's dimension at the station, not as
     a splay. A room outline needs a rough eight-way sweep (8 level shots, no gap over 90°). CaveCAD never fires on
     its own in Manual.
-  - **Digital**: the Cavway captures the detail. A dense ring at every station (12+ shots, 2 per wall, no gap over
-    60°), rooms all the way round (24+ level shots, no gap over 45°). The panel reminds the surveyor to sweep each
-    new station before moving on.
+  - **Digital**: the Cavway captures the detail. Shown as **percent covered**, never a shot count (to the surveyor
+    a sweep is continuous, not button presses): 100% when no gap round the ring is over 60° (every wall reached),
+    or round a room no level gap over 30°. Missing places are named ("Nothing towards the south-west"). The panel
+    reminds the surveyor to sweep each new station before moving on.
 - Simulator: sweeps work against the simulator (Survey tab → Simulator), so all of this can be tried with no X1.
 
 To check on the real X1 next time it is in hand:

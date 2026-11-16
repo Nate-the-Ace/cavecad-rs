@@ -123,7 +123,7 @@
           <button role="radio" aria-checked={!manual} class:on={!manual} onclick={() => live.setStandard('digital')} title="The Cavway captures the detail: dense rings at every station, full room outlines">Digital</button>
         </div>
       </div>
-      <p class="hint">{manual ? 'Manual: you sketch the detail. LRUD is four aimed shots, one to each wall: left, right, up, down. CaveCAD says which wall is next.' : 'Digital: the Cavway captures the detail. Sweep every station: a dense ring (12+ shots, no gap over 60°), rooms all the way round.'}</p>
+      <p class="hint">{manual ? 'Manual: you sketch the detail. LRUD is four aimed shots, one to each wall: left, right, up, down. CaveCAD says which wall is next.' : 'Digital: the Cavway captures the detail. Sweep every station to 100% covered: a ring across the passage, rooms all the way round.'}</p>
       {#if sweepDue}<p class="due" role="status">Sweep {survey.standing} before moving on.</p>{/if}
       <div class="row">
         <button onclick={() => live.laser(true)} disabled={!survey.canLaser} title="Laser on, for aiming (the X1)"><Flashlight size={18} /> Laser on</button>
@@ -142,7 +142,7 @@
         <div class="sweep" class:done={sweep.check.complete} role="status" aria-live="polite">
           <SweepDial check={sweep.check} />
           <div class="sweepinfo">
-            <p class="sweephead"><b>{KIND_NAME[sweep.check.kind]}</b> at {sweep.station} · {sweep.check.shots} shot{sweep.check.shots === 1 ? '' : 's'}</p>
+            <p class="sweephead"><b>{KIND_NAME[sweep.check.kind]}</b> at {sweep.station} · {manual ? `${sweep.check.shots} shot${sweep.check.shots === 1 ? '' : 's'}` : `${Math.floor(sweep.check.coverage)}% covered`}</p>
             {#if sweep.check.complete}
               <p class="ok"><Check size={16} /> Complete: everything it needs is there.</p>
             {:else if manual && sweep.check.aim}
@@ -177,7 +177,7 @@
           </select>.
         </p>
         {#if lastSweep}
-          <p class="hint" class:warnline={!lastSweep.check.complete}>Last sweep: {KIND_NAME[lastSweep.check.kind]} at {lastSweep.station}, {lastSweep.check.shots} shots, {lastSweep.check.complete ? 'complete' : `not complete (${lastSweep.check.todo[0] ?? ''})`}</p>
+          <p class="hint" class:warnline={!lastSweep.check.complete}>Last sweep: {KIND_NAME[lastSweep.check.kind]} at {lastSweep.station}, {lastSweep.check.standard === 'digital' ? `${Math.floor(lastSweep.check.coverage)}% covered` : `${lastSweep.check.shots} shots`}, {lastSweep.check.complete ? 'complete' : `not complete (${lastSweep.check.todo[0] ?? ''})`}</p>
         {/if}
       {/if}
     </section>

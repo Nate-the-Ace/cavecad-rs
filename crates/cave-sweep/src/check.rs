@@ -70,6 +70,7 @@ impl Standard {
                 lrud_max_gap: LRUD_MAX_GAP,
                 room_min_shots: ROOM_MIN_SHOTS,
                 room_max_gap: ROOM_MAX_GAP,
+                by_count: false,
             },
             Standard::Manual => Rules {
                 lrud_min_shots: 4,
@@ -77,6 +78,7 @@ impl Standard {
                 lrud_max_gap: 360.0, // no gap check: the four walls are all that is wanted
                 room_min_shots: 8,
                 room_max_gap: 90.0,
+                by_count: true,
             },
         }
     }
@@ -95,20 +97,23 @@ pub struct Rules {
     pub room_min_shots: usize,
     /// The widest gap round a room that still passes, degrees.
     pub room_max_gap: f64,
+    /// Ask for shots by count ("2 more shots wanted"). Off for Digital: there the shots are continuous, and what is
+    /// missing is said as a place and a coverage percentage.
+    pub by_count: bool,
 }
 
 /// Sectors round the dial the screen draws (30 degrees each).
 pub const SECTORS: usize = 12;
 /// Fewest usable shots for an LRUD ring.
-pub const LRUD_MIN_SHOTS: usize = 12;
+pub const LRUD_MIN_SHOTS: usize = 6;
 /// Fewest shots on each of the four walls of an LRUD ring.
-pub const LRUD_MIN_PER_WALL: usize = 2;
+pub const LRUD_MIN_PER_WALL: usize = 1;
 /// The widest gap round an LRUD ring that still passes, degrees.
 pub const LRUD_MAX_GAP: f64 = 60.0;
 /// Fewest usable (level) shots for a room sweep.
-pub const ROOM_MIN_SHOTS: usize = 24;
+pub const ROOM_MIN_SHOTS: usize = 8;
 /// The widest gap round a room sweep that still passes, degrees.
-pub const ROOM_MAX_GAP: f64 = 45.0;
+pub const ROOM_MAX_GAP: f64 = 30.0;
 /// How far up or down a room-sweep shot may point and still count as level, degrees.
 pub const ROOM_LEVEL: f64 = 20.0;
 /// How far along the passage an LRUD shot may point and still count as across it, degrees.
@@ -132,6 +137,10 @@ pub struct Check {
     pub sectors: Vec<usize>,
     /// The widest gap with no shot, degrees (360 with nothing yet).
     pub widest_gap: f64,
+    /// How much of the way round is covered, percent: every gap wider than the standard allows counts as uncovered
+    /// beyond that width. 100 exactly when no gap is too wide. What a Digital sweep shows instead of a shot count:
+    /// to the surveyor its shots are continuous.
+    pub coverage: f64,
     /// All the checks pass.
     pub complete: bool,
     /// What is still missing, in plain words, most important first. Empty when complete.
@@ -152,6 +161,20 @@ pub struct Aim {
     /// Where it is round the ring, degrees (0 right wall, 90 ceiling, 180 left wall, 270 floor, looking along the
     /// passage).
     pub angle: f64,
+}
+
+/// Percent of the way round with no gap wider than `allowed` (degrees) between shots.
+fn coverage(angles: &[f64], allowed: f64) -> f64 {
+    if angles.is_empty() {
+        return 0.0;
+    }
+    let mut a = angles.to_vec();
+    a.sort_by(f64::total_cmp);
+    let mut missing = (a[0] + 360.0 - a[a.len() - 1] - allowed).max(0.0);
+    for w in a.windows(2) {
+        missing += (w[1] - w[0] - allowed).max(0.0);
+    }
+    ((360.0 - missing) / 360.0 * 100.0).clamp(0.0, 100.0)
 }
 
 fn widest_gap(angles: &mut [f64]) -> f64 {
@@ -257,8 +280,10 @@ fn check_room(splays: &[V], rules: Rules) -> Check {
     }
     let mut sorted = level.clone();
     let gap = widest_gap(&mut sorted);
+    let covered = coverage(&level, rules.room_max_gap.min(360.0));
+    let enough = level.len() >= rules.room_min_shots;
     let mut todo = Vec::new();
-    if level.len() < rules.room_min_shots {
+    if rules.by_count && level.len() < rules.room_min_shots {
         todo.push(format!(
             "{} more level shot{} wanted ({} of {want}).",
             rules.room_min_shots - level.len(),
@@ -300,7 +325,8 @@ fn check_room(splays: &[V], rules: Rules) -> Check {
         wanted: rules.room_min_shots,
         sectors,
         widest_gap: gap,
-        complete: todo.is_empty(),
+        coverage: covered,
+        complete: todo.is_empty() && enough,
         todo,
         notes,
         lrud: None,
@@ -355,7 +381,7 @@ fn check_lrud(splays: &[V], passage: Option<V>, rules: Rules) -> Check {
         }
     }
     let usable = across.len();
-    if usable < rules.lrud_min_shots {
+    if rules.by_count && usable < rules.lrud_min_shots {
         todo.push(format!(
             "{} more shot{} across the passage wanted ({usable} of {want}).",
             rules.lrud_min_shots - usable,
@@ -394,6 +420,8 @@ fn check_lrud(splays: &[V], passage: Option<V>, rules: Rules) -> Check {
     }
     let mut sorted = across.clone();
     let gap = widest_gap(&mut sorted);
+    let covered = coverage(&across, rules.lrud_max_gap.min(360.0));
+    let enough = usable >= rules.lrud_min_shots;
     if usable >= 2 && gap > rules.lrud_max_gap {
         let at = gap_middle(&sorted)
             .map(ring_word)
@@ -430,7 +458,8 @@ fn check_lrud(splays: &[V], passage: Option<V>, rules: Rules) -> Check {
         wanted: rules.lrud_min_shots,
         sectors,
         widest_gap: gap,
-        complete: todo.is_empty(),
+        coverage: covered,
+        complete: todo.is_empty() && enough,
         todo,
         notes,
         lrud: made.map(|r| r.lrud),
@@ -509,17 +538,39 @@ mod tests {
 
     #[test]
     fn too_few_shots_asks_for_more() {
-        let c = check(
-            Kind::Lrud,
-            Standard::Digital,
-            &ring_shots(8, 2.0, 1.0, None),
-            Some([0.0, 1.0, 0.0]),
-        );
+        let s = [[2.0, 0.0, 0.0], [-1.8, 0.0, 0.0]];
+        let c = check(Kind::Lrud, Standard::Manual, &s, Some([0.0, 1.0, 0.0]));
         assert!(!c.complete);
         assert_eq!(
             c.todo[0],
-            "4 more shots across the passage wanted (8 of 12)."
+            "2 more shots across the passage wanted (2 of 4)."
         );
+    }
+
+    #[test]
+    fn coverage_is_a_percentage_round() {
+        let none = check(Kind::Lrud, Standard::Digital, &[], None);
+        assert_eq!(none.coverage, 0.0);
+        let full = check(
+            Kind::Lrud,
+            Standard::Digital,
+            &ring_shots(24, 2.0, 1.0, None),
+            Some([0.0, 1.0, 0.0]),
+        );
+        assert_eq!(full.coverage, 100.0);
+        // the ceiling missing (40-140 skipped on a 2 x 1 m ellipse): one wide gap, about a quarter uncovered
+        let part = check(
+            Kind::Lrud,
+            Standard::Digital,
+            &ring_shots(36, 2.0, 1.0, Some((40.0, 140.0))),
+            Some([0.0, 1.0, 0.0]),
+        );
+        assert!(
+            part.coverage > 70.0 && part.coverage < 90.0,
+            "{}",
+            part.coverage
+        );
+        assert!(!part.complete);
     }
 
     #[test]

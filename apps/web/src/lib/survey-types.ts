@@ -102,6 +102,8 @@ export interface SweepCheck {
   /** Shots in each of 12 sectors. LRUD: from the right wall, anticlockwise looking along the passage. Room: from north, clockwise. */
   sectors: number[];
   widest_gap: number;
+  /** Percent of the way round covered (no gap wider than the standard allows). Digital shows this, not a shot count. */
+  coverage: number;
   complete: boolean;
   todo: string[];
   notes: string[];

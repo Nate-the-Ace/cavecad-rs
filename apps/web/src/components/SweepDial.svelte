@@ -46,12 +46,17 @@
   );
 </script>
 
-<svg viewBox="-4 -4 128 128" width={size} height={size} role="img" aria-label="Sweep coverage: {check.sectors.filter((s) => s > 0).length} of {n} directions reached">
+<svg viewBox="-4 -4 128 128" width={size} height={size} role="img" aria-label="Sweep coverage: {Math.floor(check.coverage)} percent">
   {#each check.sectors as count, k (k)}
     <path d={wedge(k)} class:hit={count > 0} style:opacity={count > 0 ? 0.45 + 0.55 * (count / most) : 1} />
   {/each}
-  <text x={c} y={c - 2} class="num">{check.usable}</text>
-  <text x={c} y={c + 12} class="of">of {check.wanted}</text>
+  {#if check.standard === 'digital'}
+    <text x={c} y={c - 2} class="num">{Math.floor(check.coverage)}%</text>
+    <text x={c} y={c + 12} class="of">covered</text>
+  {:else}
+    <text x={c} y={c - 2} class="num">{check.usable}</text>
+    <text x={c} y={c + 12} class="of">of {check.wanted}</text>
+  {/if}
   {#each labels as l (l.t)}
     <text x={l.x} y={l.y} class="lab">{l.t}</text>
   {/each}
