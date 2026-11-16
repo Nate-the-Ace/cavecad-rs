@@ -1,0 +1,490 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		155A05127282F51928CA4827 /* QuartzCore.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = E9E3B813B284BDB14E045FF0 /* QuartzCore.framework */; };
+		4C560F599E60C002A5EFC742 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 902A8F31C26F6EE726638EE6 /* Assets.xcassets */; };
+		51D9A3E07E444A1E6756EAEC /* CoreBluetooth.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 85D342254C692053DB61140D /* CoreBluetooth.framework */; };
+		783D840CC6EF4169BD04B5F6 /* Security.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = EFB8E36D5584EEFF29BB3012 /* Security.framework */; };
+		9D2F4DB13927FD56B10A8D68 /* Metal.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 2A292389E5E96B694D9CE66F /* Metal.framework */; };
+		B8D61DD24CCFB05447CE71F7 /* libapp.a in Frameworks */ = {isa = PBXBuildFile; fileRef = BE57F5C2FF4B90991CC98E09 /* libapp.a */; };
+		BD471434AE7BB077089EFBCA /* assets in Resources */ = {isa = PBXBuildFile; fileRef = 46504A6D40FF3897C2A41875 /* assets */; };
+		BF9DA85AD53F680A599BACDC /* main.mm in Sources */ = {isa = PBXBuildFile; fileRef = C9B48E942DBAB3AA9867D4F2 /* main.mm */; };
+		C9363EC9F4ABDE152BCF5C0F /* UIKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 37D7824086E2062AC8FCB379 /* UIKit.framework */; };
+		D9380D06EE677E6D5DC373CF /* WebKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = ED6DD03DFADFF51DD1376C94 /* WebKit.framework */; };
+		F2F5FB73EB87F25362B34586 /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = CE94175E072380837BEB7CF3 /* LaunchScreen.storyboard */; };
+		F3032084648C05B45F6B0EF4 /* MetalKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = B439B3223FA9EA6A474D8A7A /* MetalKit.framework */; };
+		F4006A8BD9A795D0CB0C2D41 /* CoreGraphics.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 02DCC3EE765EE2E3916E79F5 /* CoreGraphics.framework */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		02DCC3EE765EE2E3916E79F5 /* CoreGraphics.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreGraphics.framework; path = System/Library/Frameworks/CoreGraphics.framework; sourceTree = SDKROOT; };
+		1AFF23035449452454E3AB00 /* bindings.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = bindings.h; sourceTree = "<group>"; };
+		1EAB8133FEB7988C7E1C3E46 /* ble.rs */ = {isa = PBXFileReference; path = ble.rs; sourceTree = "<group>"; };
+		226FAE8FADE9FBCBC7A1B4BB /* update_mobile.rs */ = {isa = PBXFileReference; path = update_mobile.rs; sourceTree = "<group>"; };
+		2A292389E5E96B694D9CE66F /* Metal.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Metal.framework; path = System/Library/Frameworks/Metal.framework; sourceTree = SDKROOT; };
+		37D7824086E2062AC8FCB379 /* UIKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = UIKit.framework; path = System/Library/Frameworks/UIKit.framework; sourceTree = SDKROOT; };
+		46504A6D40FF3897C2A41875 /* assets */ = {isa = PBXFileReference; lastKnownFileType = folder; path = assets; sourceTree = SOURCE_ROOT; };
+		79EFE297A576F24BB99E12D4 /* cavecad-desktop_iOS.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = "cavecad-desktop_iOS.entitlements"; sourceTree = "<group>"; };
+		7ED66059421FBF5121A55DBC /* lib.rs */ = {isa = PBXFileReference; path = lib.rs; sourceTree = "<group>"; };
+		85D342254C692053DB61140D /* CoreBluetooth.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreBluetooth.framework; path = System/Library/Frameworks/CoreBluetooth.framework; sourceTree = SDKROOT; };
+		902A8F31C26F6EE726638EE6 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		9D5E50C6CD1AE561C79B7A70 /* update.rs */ = {isa = PBXFileReference; path = update.rs; sourceTree = "<group>"; };
+		AA5426011B68982D2B32DAB0 /* main.rs */ = {isa = PBXFileReference; path = main.rs; sourceTree = "<group>"; };
+		B439B3223FA9EA6A474D8A7A /* MetalKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = MetalKit.framework; path = System/Library/Frameworks/MetalKit.framework; sourceTree = SDKROOT; };
+		B4DCC9D3C8A9CEEDA8D20870 /* cavecad-desktop_iOS.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = "cavecad-desktop_iOS.app"; sourceTree = BUILT_PRODUCTS_DIR; };
+		B696103CB28CA330057E1C2C /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		BE57F5C2FF4B90991CC98E09 /* libapp.a */ = {isa = PBXFileReference; lastKnownFileType = archive.ar; path = libapp.a; sourceTree = "<group>"; };
+		C4A6C974973C210EBEDD1A7D /* bridge.rs */ = {isa = PBXFileReference; path = bridge.rs; sourceTree = "<group>"; };
+		C9B48E942DBAB3AA9867D4F2 /* main.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; path = main.mm; sourceTree = "<group>"; };
+		CE94175E072380837BEB7CF3 /* LaunchScreen.storyboard */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; path = LaunchScreen.storyboard; sourceTree = "<group>"; };
+		E3462CCCD35A06A22C895911 /* cavefolder.rs */ = {isa = PBXFileReference; path = cavefolder.rs; sourceTree = "<group>"; };
+		E9E3B813B284BDB14E045FF0 /* QuartzCore.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = QuartzCore.framework; path = System/Library/Frameworks/QuartzCore.framework; sourceTree = SDKROOT; };
+		EB7618AAE22E4F8A51DFF78C /* files.rs */ = {isa = PBXFileReference; path = files.rs; sourceTree = "<group>"; };
+		ED6DD03DFADFF51DD1376C94 /* WebKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = WebKit.framework; path = System/Library/Frameworks/WebKit.framework; sourceTree = SDKROOT; };
+		EFB8E36D5584EEFF29BB3012 /* Security.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Security.framework; path = System/Library/Frameworks/Security.framework; sourceTree = SDKROOT; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		51A8B61118DD9511162CE9C3 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				B8D61DD24CCFB05447CE71F7 /* libapp.a in Frameworks */,
+				51D9A3E07E444A1E6756EAEC /* CoreBluetooth.framework in Frameworks */,
+				F4006A8BD9A795D0CB0C2D41 /* CoreGraphics.framework in Frameworks */,
+				9D2F4DB13927FD56B10A8D68 /* Metal.framework in Frameworks */,
+				F3032084648C05B45F6B0EF4 /* MetalKit.framework in Frameworks */,
+				155A05127282F51928CA4827 /* QuartzCore.framework in Frameworks */,
+				783D840CC6EF4169BD04B5F6 /* Security.framework in Frameworks */,
+				C9363EC9F4ABDE152BCF5C0F /* UIKit.framework in Frameworks */,
+				D9380D06EE677E6D5DC373CF /* WebKit.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		0BB8B34E60AD5D446B6BAD2D /* bindings */ = {
+			isa = PBXGroup;
+			children = (
+				1AFF23035449452454E3AB00 /* bindings.h */,
+			);
+			path = bindings;
+			sourceTree = "<group>";
+		};
+		6F9EABBBB816ADAEF72642D1 /* cavecad-desktop_iOS */ = {
+			isa = PBXGroup;
+			children = (
+				79EFE297A576F24BB99E12D4 /* cavecad-desktop_iOS.entitlements */,
+				B696103CB28CA330057E1C2C /* Info.plist */,
+			);
+			path = "cavecad-desktop_iOS";
+			sourceTree = "<group>";
+		};
+		7B8D0D2A35DC34ED5CFFEEAA /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				B4DCC9D3C8A9CEEDA8D20870 /* cavecad-desktop_iOS.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		81A33D823FA519BC9AE5BF02 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				85D342254C692053DB61140D /* CoreBluetooth.framework */,
+				02DCC3EE765EE2E3916E79F5 /* CoreGraphics.framework */,
+				BE57F5C2FF4B90991CC98E09 /* libapp.a */,
+				2A292389E5E96B694D9CE66F /* Metal.framework */,
+				B439B3223FA9EA6A474D8A7A /* MetalKit.framework */,
+				E9E3B813B284BDB14E045FF0 /* QuartzCore.framework */,
+				EFB8E36D5584EEFF29BB3012 /* Security.framework */,
+				37D7824086E2062AC8FCB379 /* UIKit.framework */,
+				ED6DD03DFADFF51DD1376C94 /* WebKit.framework */,
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
+		C1ACC37E15A97A2694020D0E /* Sources */ = {
+			isa = PBXGroup;
+			children = (
+				EAE8AC8E5AB19F2377073B77 /* cavecad-desktop */,
+			);
+			path = Sources;
+			sourceTree = "<group>";
+		};
+		CABC13D3FEC51C2A4CF7998F /* src */ = {
+			isa = PBXGroup;
+			children = (
+				1EAB8133FEB7988C7E1C3E46 /* ble.rs */,
+				C4A6C974973C210EBEDD1A7D /* bridge.rs */,
+				E3462CCCD35A06A22C895911 /* cavefolder.rs */,
+				EB7618AAE22E4F8A51DFF78C /* files.rs */,
+				7ED66059421FBF5121A55DBC /* lib.rs */,
+				AA5426011B68982D2B32DAB0 /* main.rs */,
+				226FAE8FADE9FBCBC7A1B4BB /* update_mobile.rs */,
+				9D5E50C6CD1AE561C79B7A70 /* update.rs */,
+			);
+			name = src;
+			path = ../../src;
+			sourceTree = "<group>";
+		};
+		D861BF3F8DC6D6600DD8427D = {
+			isa = PBXGroup;
+			children = (
+				46504A6D40FF3897C2A41875 /* assets */,
+				902A8F31C26F6EE726638EE6 /* Assets.xcassets */,
+				CE94175E072380837BEB7CF3 /* LaunchScreen.storyboard */,
+				6F9EABBBB816ADAEF72642D1 /* cavecad-desktop_iOS */,
+				EDA7C46A6D543CD971993C2D /* Externals */,
+				C1ACC37E15A97A2694020D0E /* Sources */,
+				CABC13D3FEC51C2A4CF7998F /* src */,
+				81A33D823FA519BC9AE5BF02 /* Frameworks */,
+				7B8D0D2A35DC34ED5CFFEEAA /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		EAE8AC8E5AB19F2377073B77 /* cavecad-desktop */ = {
+			isa = PBXGroup;
+			children = (
+				C9B48E942DBAB3AA9867D4F2 /* main.mm */,
+				0BB8B34E60AD5D446B6BAD2D /* bindings */,
+			);
+			path = "cavecad-desktop";
+			sourceTree = "<group>";
+		};
+		EDA7C46A6D543CD971993C2D /* Externals */ = {
+			isa = PBXGroup;
+			children = (
+			);
+			path = Externals;
+			sourceTree = "<group>";
+		};
+		"TEMP_33FF9E6C-9037-4571-9790-7158BCA4BCFD" /* arm64 */ = {
+			isa = PBXGroup;
+			children = (
+			);
+			path = arm64;
+			sourceTree = "<group>";
+		};
+		"TEMP_43C0DA64-3B88-4F1E-A862-81020D2814B2" /* x86_64 */ = {
+			isa = PBXGroup;
+			children = (
+			);
+			path = x86_64;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		C1339E821C85AD36EE17A97D /* cavecad-desktop_iOS */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 3FD515F720A71D889CE6CEF7 /* Build configuration list for PBXNativeTarget "cavecad-desktop_iOS" */;
+			buildPhases = (
+				D60A36ABF951F3F1A02EB431 /* Build Rust Code */,
+				B22701BC15A4D70EE81DD71B /* Sources */,
+				AAF882FAA5815196243E4007 /* Resources */,
+				51A8B61118DD9511162CE9C3 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = "cavecad-desktop_iOS";
+			packageProductDependencies = (
+			);
+			productName = "cavecad-desktop_iOS";
+			productReference = B4DCC9D3C8A9CEEDA8D20870 /* cavecad-desktop_iOS.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		3EB0A435DA5F3AFB8F82ACE3 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1430;
+				TargetAttributes = {
+				};
+			};
+			buildConfigurationList = 83ABD14F4C9CF54D1D3A00CB /* Build configuration list for PBXProject "cavecad-desktop" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = D861BF3F8DC6D6600DD8427D;
+			minimizedProjectReferenceProxies = 1;
+			preferredProjectObjectVersion = 77;
+			productRefGroup = 7B8D0D2A35DC34ED5CFFEEAA /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				C1339E821C85AD36EE17A97D /* cavecad-desktop_iOS */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		AAF882FAA5815196243E4007 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				4C560F599E60C002A5EFC742 /* Assets.xcassets in Resources */,
+				F2F5FB73EB87F25362B34586 /* LaunchScreen.storyboard in Resources */,
+				BD471434AE7BB077089EFBCA /* assets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		D60A36ABF951F3F1A02EB431 /* Build Rust Code */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Build Rust Code";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+				"$(SRCROOT)/Externals/x86_64/${CONFIGURATION}/libapp.a",
+				"$(SRCROOT)/Externals/arm64/${CONFIGURATION}/libapp.a",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "npm run -- tauri ios xcode-script -v --platform \"${PLATFORM_DISPLAY_NAME:?}\" --sdk-root \"${SDKROOT:?}\" --framework-search-paths \"${FRAMEWORK_SEARCH_PATHS:?}\" --header-search-paths \"${HEADER_SEARCH_PATHS:?}\" --gcc-preprocessor-definitions \"${GCC_PREPROCESSOR_DEFINITIONS:-}\" --configuration \"${CONFIGURATION:?}\" ${FORCE_COLOR} ${ARCHS:?}\n";
+		};
+/* End PBXShellScriptBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		B22701BC15A4D70EE81DD71B /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				BF9DA85AD53F680A599BACDC /* main.mm in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		59FD6AD1A9F64DFDEF15F1B8 /* debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+			};
+			name = debug;
+		};
+		A069E2C4EE8EEDB3B6F76A41 /* debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES = YES;
+				ARCHS = (
+					arm64,
+				);
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = "cavecad-desktop_iOS/cavecad-desktop_iOS.entitlements";
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				ENABLE_BITCODE = NO;
+				"EXCLUDED_ARCHS[sdk=iphoneos*]" = x86_64;
+				FRAMEWORK_SEARCH_PATHS = (
+					"$(inherited)",
+					"\".\"",
+				);
+				INFOPLIST_FILE = "cavecad-desktop_iOS/Info.plist";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				"LIBRARY_SEARCH_PATHS[arch=arm64]" = "$(inherited) $(PROJECT_DIR)/Externals/arm64/$(CONFIGURATION) $(SDKROOT)/usr/lib/swift $(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/$(PLATFORM_NAME) $(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift-5.0/$(PLATFORM_NAME)";
+				"LIBRARY_SEARCH_PATHS[arch=x86_64]" = "$(inherited) $(PROJECT_DIR)/Externals/x86_64/$(CONFIGURATION) $(SDKROOT)/usr/lib/swift $(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/$(PLATFORM_NAME) $(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift-5.0/$(PLATFORM_NAME)";
+				PRODUCT_BUNDLE_IDENTIFIER = app.cavecad.desktop;
+				PRODUCT_NAME = "CaveCAD";
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				VALID_ARCHS = arm64;
+			};
+			name = debug;
+		};
+		AF57916E14C56C9613DD4A8B /* release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 5.0;
+			};
+			name = release;
+		};
+		C78148F359EBEFAB400D3774 /* release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES = YES;
+				ARCHS = (
+					arm64,
+				);
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = "cavecad-desktop_iOS/cavecad-desktop_iOS.entitlements";
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				ENABLE_BITCODE = NO;
+				"EXCLUDED_ARCHS[sdk=iphoneos*]" = x86_64;
+				FRAMEWORK_SEARCH_PATHS = (
+					"$(inherited)",
+					"\".\"",
+				);
+				INFOPLIST_FILE = "cavecad-desktop_iOS/Info.plist";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				"LIBRARY_SEARCH_PATHS[arch=arm64]" = "$(inherited) $(PROJECT_DIR)/Externals/arm64/$(CONFIGURATION) $(SDKROOT)/usr/lib/swift $(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/$(PLATFORM_NAME) $(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift-5.0/$(PLATFORM_NAME)";
+				"LIBRARY_SEARCH_PATHS[arch=x86_64]" = "$(inherited) $(PROJECT_DIR)/Externals/x86_64/$(CONFIGURATION) $(SDKROOT)/usr/lib/swift $(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/$(PLATFORM_NAME) $(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift-5.0/$(PLATFORM_NAME)";
+				PRODUCT_BUNDLE_IDENTIFIER = app.cavecad.desktop;
+				PRODUCT_NAME = "CaveCAD";
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				VALID_ARCHS = arm64;
+			};
+			name = release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		3FD515F720A71D889CE6CEF7 /* Build configuration list for PBXNativeTarget "cavecad-desktop_iOS" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A069E2C4EE8EEDB3B6F76A41 /* debug */,
+				C78148F359EBEFAB400D3774 /* release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = debug;
+		};
+		83ABD14F4C9CF54D1D3A00CB /* Build configuration list for PBXProject "cavecad-desktop" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				59FD6AD1A9F64DFDEF15F1B8 /* debug */,
+				AF57916E14C56C9613DD4A8B /* release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = debug;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 3EB0A435DA5F3AFB8F82ACE3 /* Project object */;
+}

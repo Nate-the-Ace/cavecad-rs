@@ -7,6 +7,11 @@ mod ble;
 mod bridge;
 mod cavefolder;
 mod files;
+// The app updating itself is desktop only: on the iPad, Xcode (or later the App Store) installs updates.
+#[cfg(desktop)]
+mod update;
+#[cfg(mobile)]
+#[path = "update_mobile.rs"]
 mod update;
 
 use std::path::PathBuf;
@@ -43,6 +48,7 @@ fn hand_over(app: &AppHandle, urls: impl IntoIterator<Item = String>) {
         .unwrap()
         .extend(urls.iter().cloned());
     if let Some(window) = app.get_webview_window("main") {
+        #[cfg(desktop)]
         let _ = window.unminimize();
         let _ = window.set_focus();
         for url in &urls {
@@ -57,12 +63,30 @@ fn hand_over(app: &AppHandle, urls: impl IntoIterator<Item = String>) {
 /// Asks which folder to use, and gives back its real path (`None` if the person cancelled).
 #[tauri::command]
 async fn pick_folder(app: tauri::AppHandle) -> Option<String> {
-    app.dialog()
-        .file()
-        .set_title("Choose the folder your scans are in")
+    folder_from(
+        app.dialog()
+            .file()
+            .set_title("Choose the folder your scans are in"),
+    )
+}
+
+/// Shows a folder dialog and gives back the real path. The iPad has no folder dialog (each app keeps its own
+/// files): there it is always "cancelled" and the page uses the app's own documents folder instead.
+#[cfg(desktop)]
+fn folder_from<R: tauri::Runtime>(
+    dialog: tauri_plugin_dialog::FileDialogBuilder<R>,
+) -> Option<String> {
+    dialog
         .blocking_pick_folder()
         .and_then(|p| p.into_path().ok())
         .map(|p| p.to_string_lossy().into_owned())
+}
+
+#[cfg(mobile)]
+fn folder_from<R: tauri::Runtime>(
+    _dialog: tauri_plugin_dialog::FileDialogBuilder<R>,
+) -> Option<String> {
+    None
 }
 
 /// The pictures and PDFs under a folder, with sizes.
@@ -113,10 +137,15 @@ async fn pick_cave_place(app: AppHandle, start: Option<String>) -> Option<String
     if let Some(dir) = start {
         dialog = dialog.set_directory(dir);
     }
-    dialog
-        .blocking_pick_folder()
-        .and_then(|p| p.into_path().ok())
-        .map(|p| p.to_string_lossy().into_owned())
+    // the iPad: no folder dialog, so a new cave goes in the app's own documents folder
+    if cfg!(mobile) {
+        return app
+            .path()
+            .document_dir()
+            .ok()
+            .map(|p| p.to_string_lossy().into_owned());
+    }
+    folder_from(dialog)
 }
 
 /// What the folder for a cave named `name` under `parent` would be, and what is there already.
@@ -188,14 +217,19 @@ fn write_export(request: Request) -> Result<String, String> {
 
 /// Opens an address in the system browser (the desktop sign-in). Only https addresses.
 #[tauri::command]
-fn open_url(url: String) -> Result<(), String> {
+fn open_url(app: AppHandle, url: String) -> Result<(), String> {
     if !url.starts_with("https://") {
         return Err("only https addresses open".into());
     }
-    tauri_plugin_opener::open_url(url, None::<&str>).map_err(|e| e.to_string())
+    // through the plugin's handle: the free function is desktop only, this also opens Safari on the iPad
+    use tauri_plugin_opener::OpenerExt;
+    app.opener()
+        .open_url(url, None::<&str>)
+        .map_err(|e| e.to_string())
 }
 
-/// Starts the app.
+/// Starts the app (the desktop app's `main`, or the iPad app's entry point).
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let builder = tauri::Builder::default();
     // A second launch (a link clicked while the app is open) hands its link to the app already running and goes away.
@@ -203,6 +237,8 @@ pub fn run() {
     let builder = builder.plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
         hand_over(app, args)
     }));
+    #[cfg(desktop)]
+    let builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
     builder
         .manage(Links::default())
         .plugin(tauri_plugin_deep_link::init())
@@ -226,7 +262,6 @@ pub fn run() {
         })
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
-        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(update::Pending::default())
         .manage(ble::Ble::default())
         .manage(bridge::Waiting::default())
