@@ -13,6 +13,8 @@ import type { EraseResult } from './erase';
 import type { StationRow } from './station-table';
 import type { Lrud, NotebookPage, TripChoice } from './notebook';
 import type { Catalog, Identified, Step } from './survey-types';
+import type { InkRole } from './ink-colors';
+export type { InkRole } from './ink-colors';
 import type { Anchored, Mark, SketchSource, SketchViews } from './sketch-types';
 import type { SnapAcquired, SnapCatalog, SnapGuide, SnapMode, SnapOutcome, SnapResult, SnapScene, SnapSession, SnapSettings, V3 } from './snap-types';
 
@@ -56,6 +58,9 @@ export interface Scene {
   shading: {
     splays_over: number[][];
     splays_under: number[][];
+    /** Sweep shots (an instrument's scan mode), split the same way. */
+    sweeps_over: number[][];
+    sweeps_under: number[][];
     walls_over: number[][];
     walls_under: number[][];
     legs_over: number[][];
@@ -282,7 +287,7 @@ export interface PassageBuffers {
 export interface TypeStyle {
   key: string;
   label: string;
-  ink: 'text' | 'muted' | 'accent' | 'warn' | 'danger' | 'station' | 'geology';
+  ink: InkRole;
   weight: number;
   linetype: 'solid' | 'dashed' | 'longdash' | 'sparse' | 'dashdot';
   /** The same pattern on paper in millimetres (a dash positive, a gap negative, a dot zero). */

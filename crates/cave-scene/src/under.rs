@@ -30,6 +30,10 @@ pub struct Shading {
     pub splays_over: Vec<[f64; 6]>,
     /// Splay pieces under another passage.
     pub splays_under: Vec<[f64; 6]>,
+    /// Sweep-shot pieces (an instrument's scan mode) in the open.
+    pub sweeps_over: Vec<[f64; 6]>,
+    /// Sweep-shot pieces under another passage.
+    pub sweeps_under: Vec<[f64; 6]>,
     /// Wall pieces in the open.
     pub walls_over: Vec<[f64; 6]>,
     /// Wall pieces under another passage.

@@ -312,7 +312,8 @@ impl Geometry<'_> {
     /// linework has).
     fn symbol(&mut self, sym: &cave_symbols::Symbol, at: [f64; 2], aim: [f64; 2], suffix: &str) {
         let layer = format!("{}-{suffix}", sym.layer);
-        let color = dxf_color(cave_style::Ink::Text);
+        // the colour of its family of lines (a pit symbol the brown of pit lines): cave_style::symbol_ink
+        let color = dxf_color(cave_style::symbol_ink(&sym.category));
         self.layers
             .insert(layer_name(&layer), (color, cave_style::Linetype::Solid));
         for (mut pts, closed) in sym.placed(at, aim) {
@@ -357,7 +358,12 @@ fn draw_scene(g: &mut Geometry, doc: &Document, scene: &Scene) {
         g.tags(&shot_tags(doc, &l.shot));
     }
     for (n, s) in scene.splays.iter().enumerate() {
-        g.line("splay", [s[0], s[1], s[2]], [s[3], s[4], s[5]]);
+        let key = if scene.splay_sweep.get(n).copied().unwrap_or(false) {
+            "sweep"
+        } else {
+            "splay"
+        };
+        g.line(key, [s[0], s[1], s[2]], [s[3], s[4], s[5]]);
         let mut tags = scene
             .splay_shots
             .get(n)
@@ -368,7 +374,7 @@ fn draw_scene(g: &mut Geometry, doc: &Document, scene: &Scene) {
     }
     for run in &scene.walls {
         if run.len() >= 2 {
-            g.polyline3d("wall", run);
+            g.polyline3d("passage-wall", run); // built from the survey, not drawn: its own colour and layer
         }
     }
     for (seq, st) in scene.stations.iter().enumerate() {

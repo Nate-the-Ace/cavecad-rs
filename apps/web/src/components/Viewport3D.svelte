@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { looks } from '../lib/ink';
   import { onMount, untrack } from 'svelte';
   import { Home, Maximize, Box, Square, Palette, Eye, Library, Lock, LockOpen, History } from '@lucide/svelte';
   import PanelUndo from './PanelUndo.svelte';
@@ -49,7 +50,12 @@
   let palette = $state<TypeStyle[]>([]);
   let showMenu = $state(false);
   /** Palette entries the cave has something of, in palette order. */
-  const listed = $derived(palette.filter((p) => scene?.types.includes(p.key)));
+  const listed = $derived(palette.filter((p) => scene?.types.includes(p.key) && !isSymbolKind(p.key)));
+  /** Each type's colour now, for the swatches that make the Show menu the map's key (read again when it opens). */
+  const swatch = $derived.by(() => {
+    void showMenu;
+    return looks();
+  });
   /** The symbols the cave has, each listed under its own name. */
   const symbolTypes = $derived((scene?.types ?? []).filter(isSymbolKind).map((key) => ({ key, label: symbolDef(key)?.name ?? key })).sort((a, b) => a.label.localeCompare(b.label)));
 
@@ -663,12 +669,12 @@
           {/if}
           <h4>Types</h4>
           {#each listed as t}
-            <label><input type="checkbox" checked={!filter.hiddenTypes.includes(t.key)} onchange={(e) => (setShown('types', t.key, e.currentTarget.checked), refresh())} /> {t.label}</label>
+            <label><input type="checkbox" checked={!filter.hiddenTypes.includes(t.key)} onchange={(e) => (setShown('types', t.key, e.currentTarget.checked), refresh())} /> <span class="sw" style:background={swatch(t.key).color}></span>{t.label}</label>
           {/each}
           {#if symbolTypes.length > 0}
             <h4>Symbols</h4>
             {#each symbolTypes as t}
-              <label><input type="checkbox" checked={!filter.hiddenTypes.includes(t.key)} onchange={(e) => (setShown('types', t.key, e.currentTarget.checked), refresh())} /> {t.label}</label>
+              <label><input type="checkbox" checked={!filter.hiddenTypes.includes(t.key)} onchange={(e) => (setShown('types', t.key, e.currentTarget.checked), refresh())} /> <span class="sw" style:background={swatch(t.key).color}></span>{t.label}</label>
             {/each}
           {/if}
           {#if scene && scene.trips.length > 0}
@@ -713,6 +719,7 @@
 </div>
 
 <style>
+  .sw { display: inline-block; width: 14px; height: 4px; border-radius: 2px; margin: 0 6px 2px 2px; vertical-align: middle; }
   .vp { outline: none; position: relative; height: 100%; overflow: hidden; background: var(--panel-2); }
   canvas { position: absolute; inset: 0; display: block; touch-action: none; }
   .overlay { pointer-events: none; }

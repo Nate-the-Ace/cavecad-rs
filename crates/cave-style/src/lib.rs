@@ -29,6 +29,26 @@ pub enum Ink {
     Station,
     /// Geology (joints, faults, bedding): a magenta, as on the UIS list.
     Geology,
+    /// Survey legs: red, so the measured line stands out from everything drawn.
+    Survey,
+    /// Single splays: orange.
+    Splay,
+    /// Sweep shots (an instrument's scan mode): teal.
+    Sweep,
+    /// Passage walls built from the survey (LRUD, splays, sweeps): slate blue, measured rather than drawn.
+    Passage,
+    /// Floor and relief features (ledges, pits, slopes, boulders): brown.
+    Relief,
+    /// Water (flow, lakes, sumps, ice): blue.
+    Water,
+    /// Formations (flowstone, rimstone, moonmilk): gold.
+    Formation,
+    /// Living things and their deposits (bats, roots, guano): green.
+    Biology,
+    /// Archaeology and palaeontology (bones, human traces): olive.
+    Archaeology,
+    /// Rigging and equipment (ropes, bolts, ladders, camps): purple.
+    Rigging,
 }
 
 /// How a line is broken up.
@@ -147,12 +167,21 @@ use Linetype::*;
 /// The palette. Order is the order filters list them in.
 pub const PALETTE: &[Style] = &[
     s("wall", "Wall", Text, 2.4, Solid, 1.0, 0.4, "CAVE-WALLS"),
-    s("ledge", "Ledge", Text, 1.6, Dashed, 1.0, 0.4, "CAVE-LEDGES"),
-    s("pit", "Pit", Text, 2.0, Solid, 1.0, 0.4, "CAVE-PITS"),
+    s(
+        "ledge",
+        "Ledge",
+        Relief,
+        1.6,
+        Dashed,
+        1.0,
+        0.4,
+        "CAVE-LEDGES",
+    ),
+    s("pit", "Pit", Relief, 2.0, Solid, 1.0, 0.4, "CAVE-PITS"),
     s(
         "fill-blocks",
         "Blocks",
-        Muted,
+        Relief,
         1.0,
         Solid,
         0.9,
@@ -162,7 +191,7 @@ pub const PALETTE: &[Style] = &[
     s(
         "fill-debris",
         "Debris",
-        Muted,
+        Relief,
         1.0,
         Solid,
         0.9,
@@ -172,7 +201,7 @@ pub const PALETTE: &[Style] = &[
     s(
         "fill-pebbles",
         "Pebbles",
-        Muted,
+        Relief,
         1.0,
         Solid,
         0.9,
@@ -182,7 +211,7 @@ pub const PALETTE: &[Style] = &[
     s(
         "fill-sand",
         "Sand",
-        Muted,
+        Relief,
         1.0,
         Solid,
         0.9,
@@ -192,7 +221,7 @@ pub const PALETTE: &[Style] = &[
     s(
         "fill-clay",
         "Clay / silt",
-        Muted,
+        Relief,
         1.0,
         Solid,
         0.9,
@@ -202,7 +231,7 @@ pub const PALETTE: &[Style] = &[
     s(
         "fill-bedrock",
         "Bedrock",
-        Muted,
+        Relief,
         1.0,
         Solid,
         0.9,
@@ -212,7 +241,7 @@ pub const PALETTE: &[Style] = &[
     s(
         "fill-water",
         "Water / lake",
-        Accent,
+        Water,
         1.0,
         Solid,
         0.9,
@@ -222,7 +251,7 @@ pub const PALETTE: &[Style] = &[
     s(
         "fill-sump",
         "Sump",
-        Accent,
+        Water,
         1.0,
         Solid,
         0.9,
@@ -232,7 +261,7 @@ pub const PALETTE: &[Style] = &[
     s(
         "fill-flowstone",
         "Flowstone",
-        Muted,
+        Formation,
         1.0,
         Solid,
         0.9,
@@ -242,7 +271,7 @@ pub const PALETTE: &[Style] = &[
     s(
         "fill-moonmilk",
         "Moonmilk",
-        Muted,
+        Formation,
         1.0,
         Solid,
         0.9,
@@ -252,7 +281,7 @@ pub const PALETTE: &[Style] = &[
     s(
         "fill-guano",
         "Guano",
-        Muted,
+        Biology,
         1.0,
         Solid,
         0.9,
@@ -262,7 +291,7 @@ pub const PALETTE: &[Style] = &[
     s(
         "fill-ice",
         "Ice / snow",
-        Accent,
+        Water,
         1.0,
         Solid,
         0.9,
@@ -272,7 +301,7 @@ pub const PALETTE: &[Style] = &[
     s(
         "fill-bones",
         "Bones",
-        Muted,
+        Archaeology,
         1.0,
         Solid,
         0.9,
@@ -394,7 +423,7 @@ pub const PALETTE: &[Style] = &[
     s(
         "flowstone",
         "Flowstone",
-        Muted,
+        Formation,
         1.4,
         Solid,
         1.0,
@@ -404,18 +433,27 @@ pub const PALETTE: &[Style] = &[
     s(
         "rimstone",
         "Rimstone",
-        Muted,
+        Formation,
         1.4,
         Solid,
         1.0,
         0.4,
         "CAVE-RIMSTONE",
     ),
-    s("slope", "Slope", Text, 1.2, Solid, 1.0, 0.4, "CAVE-SLOPES"),
+    s(
+        "slope",
+        "Slope",
+        Relief,
+        1.2,
+        Solid,
+        1.0,
+        0.4,
+        "CAVE-SLOPES",
+    ),
     s(
         "flowline",
         "Flowline (water flow)",
-        Accent,
+        Water,
         1.4,
         Solid,
         1.0,
@@ -425,7 +463,7 @@ pub const PALETTE: &[Style] = &[
     s(
         "stone",
         "Stone (boulder outline)",
-        Text,
+        Relief,
         1.4,
         Solid,
         1.0,
@@ -435,7 +473,7 @@ pub const PALETTE: &[Style] = &[
     s(
         "centerline",
         "Survey line",
-        Text,
+        Survey,
         2.2,
         Solid,
         1.0,
@@ -445,7 +483,7 @@ pub const PALETTE: &[Style] = &[
     s(
         "centerline-behind",
         "Survey line (behind walls)",
-        Muted,
+        Survey,
         1.4,
         Solid,
         1.0,
@@ -455,12 +493,32 @@ pub const PALETTE: &[Style] = &[
     s(
         "splay",
         "Splay",
-        Muted,
+        Splay,
         1.0,
         Solid,
-        0.45,
-        0.2,
+        0.6,
+        0.25,
         "CAVE-SPLAYS",
+    ),
+    s(
+        "sweep",
+        "Sweep shot",
+        Sweep,
+        1.0,
+        Solid,
+        0.8,
+        0.3,
+        "CAVE-SWEEPS",
+    ),
+    s(
+        "passage-wall",
+        "Passage walls (from survey)",
+        Passage,
+        2.4,
+        Solid,
+        1.0,
+        0.4,
+        "CAVE-PASSAGE-WALLS",
     ),
     s(
         "station",
@@ -525,7 +583,7 @@ pub const PALETTE: &[Style] = &[
     s(
         "profile-wall",
         "Profile wall",
-        Muted,
+        Passage,
         1.4,
         Solid,
         1.0,
@@ -622,6 +680,33 @@ pub fn dxf_color(ink: Ink) -> i32 {
         Danger => 1,
         Station => 3,
         Geology => 6,
+        Survey => 1,
+        Splay => 30,
+        Sweep => 4,
+        Passage => 150,
+        Relief => 32,
+        Water => 140,
+        Formation => 42,
+        Biology => 3,
+        Archaeology => 52,
+        Rigging => 200,
+    }
+}
+
+/// The colour role of a point symbol, by its category (cave-symbols), so a symbol takes the colour of its family of
+/// lines: a pit symbol the brown of pit lines, a waterfall the blue of water.
+pub fn symbol_ink(category: &str) -> Ink {
+    match category {
+        "Survey" => Survey,
+        "Floor" | "Structure" => Relief,
+        "Water" => Water,
+        "Formations" => Formation,
+        "Geology" => Geology,
+        "Biology" => Biology,
+        "Archaeology" => Archaeology,
+        "Rigging" => Rigging,
+        "Hazards" => Warn,
+        _ => Text, // Annotation, Passage ends, Sheet
     }
 }
 

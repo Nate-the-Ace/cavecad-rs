@@ -583,7 +583,7 @@ fn layer_look(text: &str, layer: &str) -> (String, String) {
 #[test]
 fn layers_get_their_colour_and_linetype_from_the_type_palette() {
     let text = export(&load("PitfallCave.json"), &ExportOptions::default());
-    for key in ["wall", "centerline", "splay", "closure", "tie"] {
+    for key in ["passage-wall", "centerline", "splay", "sweep", "closure", "tie"] {
         let st = cave_style::style(key);
         if !text.contains(st.layer) {
             continue; // this cave has none of that type
@@ -592,7 +592,8 @@ fn layers_get_their_colour_and_linetype_from_the_type_palette() {
         assert_eq!(color, cave_style::dxf_color(st.ink).to_string(), "{key}");
         assert_eq!(lt, st.linetype.dxf_name(), "{key}");
     }
-    assert!(text.contains("CAVE-WALLS"), "Pitfall has walls");
+    // the walls built from the survey have their own layer (and colour), apart from drawn walls
+    assert!(text.contains("CAVE-PASSAGE-WALLS"), "Pitfall has walls");
 }
 
 /// A cave just started (one empty trip, nothing else) saves and opens again.

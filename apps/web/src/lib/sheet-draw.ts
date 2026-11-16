@@ -132,7 +132,7 @@ export function drawStoredSheet(g: CanvasRenderingContext2D, sheet: RenderedShee
     const w = Math.max(1, px / 60);
     const hidden = new Set(f.hidden);
     if (scene) {
-      if (!hidden.has('wall')) {
+      if (!hidden.has('passage-wall')) {
         g.lineWidth = w * 1.4;
         for (const wall of scene.walls) {
           g.beginPath();
