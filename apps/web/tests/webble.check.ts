@@ -312,5 +312,33 @@ const char = (d: FakeDevice, service: string, uuid: string) => d.services.find((
   ok(r.frames.includes('01 02 ff') && r.bridge.frames.length === 0, 'every frame it sends is logged as hex and none goes to be decoded');
 }
 
+// ---- a sleeping X1 comes back by itself ----
+{
+  WebBleInstrument.retryMs = 1;
+  const dev = x1();
+  let dropped: (() => void) | null = null;
+  dev.addEventListener = ((_t: string, l: () => void) => { dropped = l; }) as typeof dev.addEventListener;
+  const r = rig();
+  install(dev);
+  await r.inst.connect();
+  ok(r.statuses.at(-1)?.s === 'connected', 'connected to begin with');
+  // it goes to sleep: the next six connects fail (the old code gave up after four), then it wakes
+  let asleep = 6;
+  const real = dev.gatt.connect;
+  dev.gatt.connect = async () => { if (asleep > 0) { asleep -= 1; throw new Error('no answer'); } return real(); };
+  dropped!();
+  await sleep(200);
+  ok(asleep === 0 && r.statuses.at(-1)?.s === 'connected', 'it keeps trying while the instrument sleeps and reconnects when it wakes, with no new pairing');
+  ok(r.statuses.some((x) => x.s === 'lost' && /wake it/.test(x.d)), 'while waiting it says to wake the instrument');
+  // Disconnect stops the trying
+  dev.gatt.connect = async () => { throw new Error('asleep'); };
+  dropped!();
+  r.inst.disconnect();
+  const before = r.statuses.length;
+  await sleep(50);
+  ok(r.statuses.slice(before).every((x) => x.s !== 'connected'), 'after Disconnect it stops trying');
+  WebBleInstrument.retryMs = 500;
+}
+
 if (bad) process.exit(1);
 console.log('webble ok');

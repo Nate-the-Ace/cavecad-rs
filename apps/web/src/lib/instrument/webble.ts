@@ -83,7 +83,11 @@ export class WebBleInstrument implements Instrument {
   private readonly bridge: LinkBridge;
   private readonly opts: WebBleOptions;
   private readonly cat: Catalog;
+  /** The first reconnect wait (ms); it doubles up to eight times this. Tests make it short. */
+  static retryMs = 500;
   private wanted = false;
+  /** A reconnect loop is running (one at a time). */
+  private retrying = false;
   /** The engine has been told which instrument this is (once per connection: a reconnect keeps the link). */
   private linked = false;
   private settle: ReturnType<typeof setTimeout> | undefined;
@@ -330,21 +334,31 @@ export class WebBleInstrument implements Instrument {
     }
   }
 
-  /** The link dropped (the instrument went out of range, or into a pocket): try again a few times, quietly. */
+  /**
+   * The link dropped: the instrument went to sleep, out of range, or into a pocket. Keep trying, every few seconds,
+   * for as long as the surveyor has not pressed Disconnect: an X1 asleep for ten minutes comes back by itself the
+   * moment it is woken, with no new pairing. (It used to give up after about 14 seconds, so a sleeping X1 meant
+   * Disconnect and pick it again.)
+   */
   private async lost() {
     this.writer = null;
-    if (!this.wanted) return;
-    this.events.status('lost', 'Reconnecting…');
-    for (const wait of [500, 1500, 4000, 8000]) {
-      await new Promise((r) => setTimeout(r, wait));
-      if (!this.wanted) return;
-      try {
-        await this.attach();
-        return;
-      } catch {
-        /* try the next wait */
+    if (!this.wanted || this.retrying) return;
+    this.retrying = true;
+    let tries = 0;
+    try {
+      while (this.wanted) {
+        this.events.status('lost', tries < 3 ? 'Reconnecting…' : 'Waiting for the instrument: wake it (press any button) and it reconnects by itself.');
+        await new Promise((r) => setTimeout(r, Math.min(WebBleInstrument.retryMs * 2 ** tries, WebBleInstrument.retryMs * 8)));
+        if (!this.wanted) return;
+        try {
+          await this.attach();
+          return;
+        } catch {
+          tries += 1;
+        }
       }
+    } finally {
+      this.retrying = false;
     }
-    this.events.status('lost', 'Connection lost. Press Connect to try again.');
   }
 }
