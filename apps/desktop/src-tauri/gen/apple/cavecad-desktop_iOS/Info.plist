@@ -53,5 +53,9 @@
 			<string>cavecad</string>
 		</dict>
 	</array>
+	<key>NSLocationUsageDescription</key>
+	<string>CaveCAD uses your location to place the cave entrance on the map and find the likely entrance nearby.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>CaveCAD uses your location to place the cave entrance on the map and find the likely entrance nearby.</string>
 </dict>
 </plist>

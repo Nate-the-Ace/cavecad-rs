@@ -68,12 +68,29 @@
     return true;
   }
 
-  async function download() {
+  async function download(): Promise<boolean> {
     lines = ['Downloading…'];
     const r = await fetchSurface({ photo, elevation });
     lines = r.lines;
     refresh();
+    return r.ok;
   }
+
+  /** How far off a location taken from the device may be (metres), from its stored source (`device:18`), or null. */
+  const deviceAccuracy = (source: string | undefined): number | null => {
+    if (!source?.startsWith('device')) return null;
+    const n = Number(source.split(':')[1]);
+    return Number.isFinite(n) && n > 0 ? n : 20;
+  };
+  const sourceText = (source: string) => {
+    const acc = deviceAccuracy(source);
+    return acc !== null ? `this device's location, within about ${acc} m` : (SOURCES[source] ?? source);
+  };
+  /** The ground has been downloaded for where the entrance is now (not for an older spot). */
+  const groundHere = () => {
+    const st = status;
+    return !!(st?.location && st.surface?.elevation && st.surface.for_at.lat === st.location.lat && st.surface.for_at.lon === st.location.lon);
+  };
 
   async function ok() {
     problem = '';
@@ -104,9 +121,11 @@
   async function picked(p: { lat: number; lon: number; station: string; source: 'map' | 'typed' | 'device'; accuracy?: number }) {
     const then = picker?.thenDownload;
     picker = null;
-    if (!setLocation(p)) return;
-    // From the device: the ground round it is needed straight away, to find the likely entrance near where you are
-    if (p.source === 'device') return void findNear(p.accuracy ?? 20);
+    // From the device, the accuracy is kept with it (`device:18`), so the entrance can still be looked for later: GPS
+    // works with no signal (at the cave), the ground download needs one (back out)
+    const acc = p.source === 'device' ? Math.round(p.accuracy ?? 20) : null;
+    if (!setLocation({ ...p, source: acc !== null ? `device:${acc}` : p.source })) return;
+    if (acc !== null) return void findNear(acc);
     if (then) await download();
     else lines = ['The location changed. Download to fetch the surface for it.'];
   }
@@ -117,9 +136,10 @@
    * circle dragged on the Map. The circle is at least 10 m and at most 60 m across from the centre.
    */
   async function findNear(accuracyM: number) {
+    elevation = true;
     await download();
-    if (!surface.tiff) {
-      lines = [...lines, 'Without the ground elevation the entrance stays at your location. Download it to look for the likely entrance nearby.'];
+    if (!surface.tiff || !groundHere()) {
+      lines = [...lines, `Your location is saved as the entrance (within about ${accuracyM} m). The ground elevation could not be downloaded here, so the likely entrance has not been looked for yet: when you have a connection, open Surface Data and press Find the likely entrance.`];
       return;
     }
     const xyz = engine.geoEntranceXyz(cave.adjusted);
@@ -148,7 +168,10 @@
       {#if status}
         <section class="where">
           {#if status.location}
-            <div><b>Entrance:</b> station {label(status.location.station)}, {coord(status.location)} <span class="muted">({SOURCES[status.location.source] ?? status.location.source})</span></div>
+            <div><b>Entrance:</b> station {label(status.location.station)}, {coord(status.location)} <span class="muted">({sourceText(status.location.source)})</span></div>
+            {#if deviceAccuracy(status.location.source) !== null}
+              <div><button class="find" onclick={() => findNear(deviceAccuracy(status?.location?.source) ?? 20)}>Find the likely entrance</button> <span class="muted">near this location (needs a connection for the ground elevation)</span></div>
+            {/if}
             {#if status.location.ground_m !== undefined && Number.isFinite(status.location.ground_m)}<div><b>Ground at the entrance:</b> {formatLength(status.location.ground_m, cave.units, 1)} (NAVD88)</div>{/if}
           {:else if status.candidate.kind === 'imported'}
             <div><b>Entrance:</b> the imported survey fixes station {label(status.candidate.station)} at {coord(status.candidate)}. It will be used when you download.</div>
@@ -192,6 +215,7 @@
 
 <style>
   .veil { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.5); display: grid; place-items: center; z-index: 50; }
+  .find { font: inherit; padding: 6px 12px; min-height: 36px; border: 1px solid var(--accent); border-radius: var(--radius); background: var(--panel-2); color: var(--text); cursor: pointer; }
   .box { width: min(480px, 92vw); max-height: 92vh; overflow: auto; background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 10px; padding: 18px 20px; display: flex; flex-direction: column; gap: 12px; outline: none; box-sizing: border-box; }
   h2 { margin: 0; font-size: 17px; }
   .where { display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
