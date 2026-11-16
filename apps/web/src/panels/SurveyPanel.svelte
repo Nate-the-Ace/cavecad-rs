@@ -75,6 +75,18 @@
   const sweep = $derived(survey.sweep);
   const lastSweep = $derived(survey.lastSweep);
   const manual = $derived(survey.standard === 'manual');
+  // The shot button says where the shot goes, so there is no doubt which station it lands on in the map.
+  const shotWhere = $derived.by(() => {
+    const st = survey.state;
+    const from = st.from.trim();
+    const to = st.to.trim();
+    if (survey.sweep) return `Sweep at ${survey.sweep.station}`;
+    if (st.awaiting) return `Backsight ${to || '?'} → ${from || '?'}`;
+    if (!from) return 'Take shot';
+    if (st.mode === 'splay') return `Splay from ${from}`;
+    if (st.mode === 'lrud') return `LRUD at ${from}`;
+    return to ? `Take shot ${from} → ${to}` : `Take shot from ${from}`;
+  });
   const KIND_NAME = $derived(manual ? { lrud: 'LRUD', room: 'Room outline' } : { lrud: 'LRUD ring', room: 'Room sweep' });
   // Digital: every station gets a sweep; say so while the standing station has none yet
   const sweepDue = $derived(!manual && linked && !survey.sweep && survey.standing !== '' && survey.lastSweep?.station !== survey.standing && survey.log.length > 0);
@@ -286,7 +298,7 @@
   </div>
 
   <footer class="dock" aria-label="Actions">
-    <button class="shoot" onclick={live.takeShot} disabled={!survey.canTakeShot}><Crosshair size={22} /> {survey.kind === 'simulator' ? 'Shoot station' : 'Take shot'}</button>
+    <button class="shoot" onclick={live.takeShot} disabled={!survey.canTakeShot}><Crosshair size={22} /> <span class="where">{survey.kind === 'simulator' && !survey.sweep ? shotWhere.replace('Take shot', 'Shoot station') : shotWhere}</span></button>
     <div class="slots">
       <button onclick={live.previousStation} disabled={survey.state.awaiting !== null} title="Step back to the station before this one (undo is in the bar above)"><ChevronLeft size={18} /> Previous station</button>
       {#if survey.state.awaiting}
@@ -312,6 +324,7 @@
   button.go, button.shoot { background: var(--accent); border-color: var(--accent); color: var(--on-accent, #fff); }
   button.no { color: var(--danger); }
   button.shoot { font-size: 17px; font-weight: 600; min-height: 56px; width: 100%; }
+  button.shoot .where { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-variant-numeric: tabular-nums; }
   .simnote { margin: 0; padding: 6px 10px; border: 1px dashed var(--line); border-radius: var(--radius); color: var(--muted); font-size: 12px; }
   .banner { margin: 0; padding: 8px 10px; border: 1px solid var(--warn); border-radius: var(--radius); font-size: 13px; }
   .reading { display: flex; flex-wrap: wrap; gap: 8px; min-height: 72px; align-items: stretch; }
