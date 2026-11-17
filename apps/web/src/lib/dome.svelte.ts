@@ -52,6 +52,14 @@ export const dome = $state({
   name: '',
   /** Spacing of the shots (°). */
   step: 10,
+  /** Which scan the Start button runs. */
+  kind: ((): 'ring' | 'dome' => {
+    try {
+      return localStorage.getItem('cavecad.gimbal.scan') === 'dome' ? 'dome' : 'ring';
+    } catch {
+      return 'ring';
+    }
+  })(),
   running: false,
   phase: '',
   done: 0,
@@ -111,8 +119,15 @@ export function estimate(step: number, kind: 'ring' | 'dome' = 'ring') {
   const home = homeNow().home ?? NOMINAL_HOME;
   const dirs = kind === 'dome' ? domeDirections(step) : ringDirections(0, step, RING_LOWEST);
   const p = plan(dirs, home);
+  const miss = new Set(p.unreachable);
   // each move waits for a report (~1 s) and usually one trim (~2 s more)
-  return { shots: p.steps.length, missed: p.unreachable.length, secs: p.steps.length * (SHOT_S + 3) + p.travel / RATE };
+  return {
+    shots: p.steps.length,
+    missed: p.unreachable.length,
+    secs: p.steps.length * (SHOT_S + 3) + p.travel / RATE,
+    /** every direction asked for, and whether the gimbal can reach it (for the preview) */
+    points: dirs.map((d) => ({ ...d, ok: !miss.has(d) })),
+  };
 }
 
 export async function connectGimbal() {
@@ -391,6 +406,14 @@ export async function aimReset() {
 let stopRequested = false;
 export function stopDome() {
   stopRequested = true;
+}
+export function setScanKind(k: 'ring' | 'dome') {
+  dome.kind = k;
+  try {
+    localStorage.setItem('cavecad.gimbal.scan', k);
+  } catch {
+    /* not kept: fine */
+  }
 }
 /** Ring scan: the cross-section square to the passage (the gimbal set down facing the forward station), both walls
  * from straight up to 20° below level. */
