@@ -106,6 +106,8 @@ export const aim = $state({
 });
 
 const pause = (ms: number) => new Promise((r) => setTimeout(r, ms));
+/** Into the app's debug log (pulled off the phone to see what a scan did). */
+const dlog = (m: string) => (globalThis as { __cavecadDlog?: (s: string) => void }).__cavecadDlog?.(m);
 
 /** The front-facing, upright home for the latest report, or why there is none. */
 function homeNow(): { home: Att | null; why: string } {
@@ -219,10 +221,11 @@ let listId = 0x30;
 /** Into target mode and home (target 0/0); returns the sag and heading measured there. */
 async function targetsHome(): Promise<{ sag: number; heading: number }> {
   await gimbal.targetsEnter();
-  await pause(300);
+  await pause(1500);
   const id = (listId = ((listId + 1) & 0x7f) | 0x30);
   await gimbal.targetsUpload([{ yaw: 0, roll: 0 }], id);
   const r = await gimbal.targetsArrived(0, id, 6000);
+  dlog(`gimbal home: ${r} (status ${JSON.stringify(gimbal.targets)})`);
   if (r !== 'arrived') throw new Error(r === 'aborted' ? 'The gimbal would not take its targets (let it settle upright and try again)' : 'The gimbal did not answer');
   await pause(400);
   const a = await fresh();
@@ -238,12 +241,12 @@ async function playTargets(lists: ProgramStep[][], onArrive: (st: ProgramStep) =
   for (const [li, list] of lists.entries()) {
     for (let attempt = 0; ; attempt++) {
       if (stopRequested) return;
-      if (li > 0 || attempt > 0) {
-        await gimbal.targetsLeave();
-        await pause(300);
-        await gimbal.targetsEnter(true);
-        await pause(300);
-      }
+      // every list (the first too: getting ready left the home list loaded) goes in fresh: leave, enter again (at
+      // home: no move), give the gimbal a moment to settle into target mode, send
+      await gimbal.targetsLeave();
+      await pause(400);
+      await gimbal.targetsEnter(true);
+      await pause(1500);
       const id = (listId = ((listId + 1) & 0x7f) | 0x30);
       if (list[0].shot !== undefined) laser(true);
       await gimbal.targetsUpload(list.map((st) => st.t), id);
@@ -254,7 +257,9 @@ async function playTargets(lists: ProgramStep[][], onArrive: (st: ProgramStep) =
           if (list[k].shot !== undefined) laser(true);
           await gimbal.targetsGo(k);
         }
-        if ((await gimbal.targetsArrived(k, id, 5000)) !== 'arrived') break;
+        const r = await gimbal.targetsArrived(k, id, 5000);
+        dlog(`gimbal list ${li + 1}/${lists.length} target ${k + 1}/${list.length} yaw ${list[k].t.yaw.toFixed(1)} roll ${list[k].t.roll.toFixed(1)}: ${r} (status ${JSON.stringify(gimbal.targets)})`);
+        if (r !== 'arrived') break;
         await onArrive(list[k]);
       }
       if (k === list.length) break;
@@ -440,6 +445,7 @@ async function startScan(kind: 'ring' | 'dome') {
     dome.current = '';
   } catch (e) {
     dome.error = e instanceof Error ? e.message : String(e);
+    dlog(`gimbal scan stopped: ${dome.error}`);
   } finally {
     await gimbal.targetsExit().catch(() => {});
     laser(false);

@@ -367,6 +367,7 @@
                 {/each}
               </div>
               <small>{#if dome.running}{dome.done} of {dome.total} shots{:else}{est.shots} shots · {t(est.secs)}{#if est.missed} · {est.missed} out of reach{/if}{/if}</small>
+              {#if dome.error}<p class="hint warn" role="alert">{dome.error}</p>{/if}
               {#if dome.running}
                 <div class="grow1">
                   <span class="gname" role="status">{dome.phase} · {dome.done}/{dome.total}</span>
@@ -400,8 +401,9 @@
             <button onclick={() => live.laser(true)} disabled={!survey.canLaser || dome.running}><Flashlight size={18} /> Laser</button>
             <button class="go" onclick={() => { live.laser(true); setTimeout(() => live.takeShot(), 400); }} disabled={!survey.canTakeShot || dome.running} title="Fire the X1 where the gimbal is pointing"><Crosshair size={18} /> Shoot</button>
           </div>
+        {:else if dome.error}
+          <p class="hint warn" role="alert">{dome.error}</p>
         {/if}
-        {#if dome.error}<p class="hint warn">{dome.error}</p>{/if}
       </div>
     </section>
     {:else}
