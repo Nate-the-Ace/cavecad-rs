@@ -129,6 +129,32 @@
     }
   }
 
+  // The panel's sections as tabs (it got too long for a phone); the choice is kept on this device.
+  type Tab = 'shoot' | 'sweep' | 'gimbal' | 'device';
+  const TABS: { id: Tab; label: string; busy: () => boolean }[] = [
+    { id: 'shoot', label: 'Shoot', busy: () => survey.held.length > 0 || survey.stored.length > 0 },
+    { id: 'sweep', label: 'Sweep', busy: () => !!survey.sweep || !!survey.waitingForDevice },
+    { id: 'gimbal', label: 'Gimbal', busy: () => dome.running },
+    { id: 'device', label: 'Device', busy: () => !!survey.calibration },
+  ];
+  let tab = $state<Tab>((() => {
+    try {
+      const t = localStorage.getItem('cavecad.captureTab');
+      if (t === 'shoot' || t === 'sweep' || t === 'gimbal' || t === 'device') return t;
+    } catch {
+      /* private window */
+    }
+    return 'shoot';
+  })());
+  function setTab(t: Tab) {
+    tab = t;
+    try {
+      localStorage.setItem('cavecad.captureTab', t);
+    } catch {
+      /* not kept: fine */
+    }
+  }
+
   let featurePicker = $state(false);
   const symbolName = (key: string) => symbolDef(key)?.name ?? key.replace(/^sym-/, '').replace(/-/g, ' ');
   const enter = (e: KeyboardEvent) => e.key === 'Enter' && (e.currentTarget as HTMLInputElement).blur();
@@ -158,159 +184,13 @@
       <p class="banner">This browser has no Web Bluetooth. On an iPad, open CaveCAD in the <b>Bluefy</b> browser to connect an instrument. The simulator works anywhere.</p>
     {/if}
 
-    {#if phone.on}
-      <!-- the phone has no ribbon: connecting and the shot settings are here -->
-      <section class="link" aria-label="Instrument">
-        <div class="row">
-          {#if linked}
-            <button onclick={live.disconnect}><Unplug size={18} /> Disconnect</button>
-          {:else}
-            <button class="go" onclick={() => void live.connect('auto')}><Bluetooth size={18} /> Connect</button>
-            <button onclick={() => void live.connect('simulator')}><FlaskConical size={18} /> Simulator</button>
-          {/if}
-        </div>
-        <div class="opts"><SurveyOptions /></div>
-      </section>
-    {/if}
+    <div class="tabs" role="tablist" aria-label="Capture sections">
+      {#each TABS as t}
+        <button role="tab" aria-selected={tab === t.id} class:on={tab === t.id} onclick={() => setTab(t.id)}>{t.label}{#if t.busy()}<span class="busy" aria-label="running"></span>{/if}</button>
+      {/each}
+    </div>
 
-    <section class="device" aria-label="Device control">
-      <div class="devhead">
-        <h4>Device control</h4>
-        
-        <div class="seg" role="radiogroup" aria-label="Survey standard">
-          <button role="radio" aria-checked={manual} class:on={manual} onclick={() => live.setStandard('manual')} title="Mostly sketched by hand: LRUD needs only the four walls, room outlines are rough">Manual</button>
-          <button role="radio" aria-checked={!manual} class:on={!manual} onclick={() => live.setStandard('digital')} title="The Cavway captures the detail: dense rings at every station, full room outlines">Digital</button>
-        </div>
-      </div>
-      <div class="tools">
-        <button class="qr" onclick={() => (quickRef = true)} title="The Cavway X1's controls and calibration, as on the card in its case"><BookOpen size={16} /> X1 quick reference</button>
-        {#if live.aimsFirst() && !survey.calibration}<button class="qr" onclick={live.startCalibration} title="Follow the X1's calibration shots and say where to point next">Guided calibration</button>{/if}
-      </div>
-      <p class="hint">{manual ? 'Manual: you sketch the detail. LRUD is four aimed shots, one to each wall: left, right, up, down. CaveCAD says which wall is next.' : 'Digital: the Cavway captures the detail. Sweep every station to 100% covered: a ring across the passage, rooms all the way round.'}</p>
-      <label class="acc">Accuracy check
-        <select value={survey.accuracy} onchange={(e) => live.setAccuracy(e.currentTarget.value as 'strict' | 'normal' | 'relaxed')} aria-label="How touchy to be about the instrument's accuracy complaints">
-          <option value="strict">Strict: every X1 complaint</option>
-          <option value="normal">Normal: 2% gravity, 5% magnetic, 5° dip, 2° angle</option>
-          <option value="relaxed">Relaxed: twice Normal</option>
-        </select>
-      </label>
-      <X1Marks />
-      {#if sweepDue}<p class="due" role="status">Sweep {survey.standing} before moving on.</p>{/if}
-      <div class="row">
-        <button onclick={() => live.laser(true)} disabled={!survey.canLaser} title="Laser on, for aiming (the X1)"><Flashlight size={18} /> Laser on</button>
-        <button onclick={() => live.laser(false)} disabled={!survey.canLaser} title="Laser off (the X1)"><FlashlightOff size={18} /> Laser off</button>
-      </div>
-      <div class="gimbal" aria-label="Gimbal dome scan">
-        <div class="row">
-          {#if dome.connected}
-            <span class="gname">Gimbal: {dome.name}</span>
-            <button onclick={disconnectGimbal} disabled={dome.running}>Disconnect</button>
-          {:else}
-            <button onclick={connectGimbal} title="An Osmo Mobile gimbal carrying the X1 (laser out of the clamp's top)">Connect gimbal</button>
-          {/if}
-        </div>
-        {#if dome.connected}
-          {@const ringEst = domeEstimate(dome.step, 'ring')}
-          {@const domeEst = domeEstimate(dome.step, 'dome')}
-          {@const mins = (sec: number) => `${Math.floor(sec / 60) ? `${Math.floor(sec / 60)} min ` : ''}${Math.round(sec % 60)} s`}
-          <label class="acc">Ring spacing <strong>{dome.step}°</strong>
-            <input type="range" min="2" max="30" step="1" bind:value={dome.step} disabled={dome.running} aria-label="Spacing of the shots round the ring, degrees" />
-          </label>
-          <p class="hint">Ring: {ringEst.shots} shots, about {mins(ringEst.secs)} · Dome: {domeEst.shots} shots, about {mins(domeEst.secs)}. Gimbal upright (rotate button), its front facing a wall, X1 connected.</p>
-          <div class="row">
-            {#if dome.running}
-              <button onclick={stopDome}>Stop</button>
-              <span class="gname" role="status">{dome.phase} · {dome.done}/{dome.total}</span>
-            {:else}
-              <button class="sweepbtn" onclick={startRing} disabled={!survey.canTakeShot || !survey.standing} title="A ring across the passage at this station: the cross-section, its walls, roof and as far down as the gimbal reaches"><ScanLine size={20} /> Ring scan</button>
-              <button class="sweepbtn" onclick={startDome} disabled={!survey.canTakeShot || !survey.standing} title="The half-sphere above the horizon at this station, meridian by meridian (about 90° behind the gimbal is out of its reach)"><Radar size={20} /> Dome scan</button>
-              {#if dome.phase}<span class="gname">{dome.phase}</span>{/if}
-            {/if}
-          </div>
-          <div class="aim" aria-label="Aim the gimbal by hand">
-            <div class="aimhead"><strong>Aim</strong>
-              <div class="seg" role="radiogroup" aria-label="Aiming speed">
-                {#each Object.keys(AIM_SPEEDS) as sp}
-                  <button role="radio" aria-checked={aim.speed === sp} class:on={aim.speed === sp} onclick={() => (aim.speed = sp as keyof typeof AIM_SPEEDS)}>{sp} {AIM_SPEEDS[sp as keyof typeof AIM_SPEEDS]}°/s</button>
-                {/each}
-              </div>
-            </div>
-            <Joystick onmove={aimStick} disabled={dome.running} />
-            <div class="pad">
-              {#each [['tilt', 1, '▲ Tilt'], ['tilt', -1, 'Tilt ▼']] as [axis, sign, label]}
-                <button class="hold" disabled={dome.running}
-                  onpointerdown={(e) => { e.currentTarget.setPointerCapture(e.pointerId); aimHold(axis as 'pan' | 'roll' | 'tilt', sign as 1 | -1); }}
-                  onpointerup={aimRelease} onpointercancel={aimRelease} onlostpointercapture={aimRelease}
-                  oncontextmenu={(e) => e.preventDefault()}>{label}</button>
-              {/each}
-            </div>
-            <p class="hint aimpos" role="status">pan {Math.round(aim.pan)}° · roll {Math.round(aim.roll)}° · tilt {Math.round(aim.tilt)}°{#if aim.atLimit}<strong class="warn"> · at the {aim.atLimit} limit</strong>{/if}{#if !aim.longRoll} · roll held to ±35° until a scan or a deep shot shows the long side{/if}
-              <button class="link" onclick={aimCentred} title="Tap after setting the gimbal back to its centre by hand">It's centred</button></p>
-            <div class="row">
-              <button onclick={aimReset} disabled={dome.running || aim.resetting} title="Back to the centre: pan and tilt by the estimate, roll by the X1's own reading">{aim.resetting ? 'Resetting…' : 'Reset'}</button>
-              <button onclick={() => live.laser(true)} disabled={!survey.canLaser || dome.running}><Flashlight size={18} /> Laser on</button>
-              <button onclick={() => { live.laser(true); setTimeout(() => live.takeShot(), 400); }} disabled={!survey.canTakeShot || dome.running} title="Fire the X1 where the gimbal is pointing"><Crosshair size={18} /> Shoot</button>
-            </div>
-            <p class="hint">Push the stick: left/right pans, up/down rolls (swings the laser across the passage). Further = faster. Let go to stop.</p>
-          </div>
-          <p class="hint warn">The gimbal's magnet upsets the X1's compass: bearings of these shots are off; distances and angles up or down are good.</p>
-        {/if}
-        {#if dome.error}<p class="hint warn">{dome.error}</p>{/if}
-      </div>
-      {#if survey.calibration}
-        <CalibrationGuide guide={survey.calibration} />
-      {:else if survey.waitingForDevice && !sweep}
-        <div class="sweep waiting" role="status">
-          <div class="sweepinfo">
-            <p class="sweephead"><b>{KIND_NAME[survey.waitingForDevice]}</b> at {survey.standing}: ready</p>
-            <p class="aim">Hold DIST+M on the X1 to start its scan.</p>
-            <p class="hint">{survey.waitingForDevice === 'room' ? 'Keep the laser about level and turn right round.' : 'Sweep a slow ring across the passage.'} End the scan on the X1 (CLR) when the check here says complete: CaveCAD finishes the sweep by itself.</p>
-          </div>
-        </div>
-        <div class="row"><button onclick={live.cancelDeviceSweep}><X size={18} /> Cancel</button></div>
-      {:else if sweep}
-        <div class="sweep" class:done={sweep.check.complete} role="status" aria-live="polite">
-          <SweepDial check={sweep.check} />
-          <div class="sweepinfo">
-            <p class="sweephead"><b>{KIND_NAME[sweep.check.kind]}</b> at {sweep.station} · {manual ? `${sweep.check.shots} shot${sweep.check.shots === 1 ? '' : 's'}` : `${Math.floor(sweep.check.coverage)}% covered`}</p>
-            {#if sweep.check.complete}
-              <p class="ok"><Check size={16} /> Complete: everything it needs is there.</p>
-            {:else if manual && sweep.check.aim}
-              <p class="aim">Aim at {sweep.check.aim.wall} and shoot.</p>
-            {:else}
-              {#each sweep.check.todo as t}<p class="todo">{t}</p>{/each}
-            {/if}
-            {#each sweep.check.notes as t}<p class="hint">{t}</p>{/each}
-            {#if sweep.check.lrud}
-              {@const [l, r, u, d] = sweep.check.lrud}
-              <p class="hint">From the ring: L {dist(l)} · R {dist(r)} · U {dist(u)} · D {dist(d)} (fills only the sides no tape measured)</p>
-            {/if}
-          </div>
-        </div>
-        <div class="row">
-          {#if !sweep.armed}<p class="hint grow">Running on the X1: end the scan there (CLR), or finish here.</p>{/if}
-          {#if sweep.armed && survey.canTakeShot && !manual}
-            <button onclick={live.toggleFiring}>{#if survey.firing}<Pause size={18} /> Pause firing{:else}<Play size={18} /> Fire on its own{/if}</button>
-          {/if}
-          <button class="go" onclick={live.finishSweep}><Check size={18} /> Finish sweep</button>
-        </div>
-      {:else}
-        <div class="row">
-          <button class="sweepbtn" onclick={() => live.startSweep('lrud')} disabled={!linked} title="A slow ring across the passage at this station: the cross-section and its left, right, up and down"><ScanLine size={20} /> {manual ? 'LRUD' : 'LRUD ring'}<small>{manual ? 'one shot to each wall' : 'dense ring across the passage'}</small></button>
-          <button class="sweepbtn" onclick={() => live.startSweep('room')} disabled={!linked} title="The laser about level, turned right round: the outline of a room"><Radar size={20} /> {manual ? 'Room outline' : 'Room sweep'}<small>{manual ? 'rough, eight ways round' : 'level, all the way round'}</small></button>
-        </div>
-        <p class="hint">Or hold DIST+M on the X1 for its own scan mode: CaveCAD checks it as
-          <select value={survey.sweepKind} onchange={(e) => live.setSweepKind(e.currentTarget.value as 'lrud' | 'room')} aria-label="Check the X1's own sweeps as">
-            <option value="lrud">an LRUD ring</option>
-            <option value="room">a room sweep</option>
-          </select>.
-        </p>
-        {#if lastSweep}
-          <p class="hint" class:warnline={!lastSweep.check.complete}>Last sweep: {KIND_NAME[lastSweep.check.kind]} at {lastSweep.station}, {lastSweep.check.standard === 'digital' ? `${Math.floor(lastSweep.check.coverage)}% covered` : `${lastSweep.check.shots} shots`}, {lastSweep.check.complete ? 'complete' : `not complete (${lastSweep.check.todo[0] ?? ''})`}</p>
-        {/if}
-      {/if}
-    </section>
-
+    {#if tab === 'shoot'}
     {#if survey.simNote}<p class="simnote" role="status">Simulating: {survey.simNote}</p>{/if}
 
     <section class="reading" aria-label="Latest reading">
@@ -397,6 +277,165 @@
         <p class="idle">Nothing yet.</p>
       {/each}
     </section>
+    {:else if tab === 'sweep'}
+    <section class="device" aria-label="Sweeps">
+      {#if sweepDue}<p class="due" role="status">Sweep {survey.standing} before moving on.</p>{/if}
+      {#if survey.calibration}
+        <p class="hint">Calibration under way: see the Device tab.</p>
+      {:else if survey.waitingForDevice && !sweep}
+        <div class="sweep waiting" role="status">
+          <div class="sweepinfo">
+            <p class="sweephead"><b>{KIND_NAME[survey.waitingForDevice]}</b> at {survey.standing}: ready</p>
+            <p class="aim">Hold DIST+M on the X1 to start its scan.</p>
+            <p class="hint">{survey.waitingForDevice === 'room' ? 'Keep the laser about level and turn right round.' : 'Sweep a slow ring across the passage.'} End the scan on the X1 (CLR) when the check here says complete: CaveCAD finishes the sweep by itself.</p>
+          </div>
+        </div>
+        <div class="row"><button onclick={live.cancelDeviceSweep}><X size={18} /> Cancel</button></div>
+      {:else if sweep}
+        <div class="sweep" class:done={sweep.check.complete} role="status" aria-live="polite">
+          <SweepDial check={sweep.check} />
+          <div class="sweepinfo">
+            <p class="sweephead"><b>{KIND_NAME[sweep.check.kind]}</b> at {sweep.station} · {manual ? `${sweep.check.shots} shot${sweep.check.shots === 1 ? '' : 's'}` : `${Math.floor(sweep.check.coverage)}% covered`}</p>
+            {#if sweep.check.complete}
+              <p class="ok"><Check size={16} /> Complete: everything it needs is there.</p>
+            {:else if manual && sweep.check.aim}
+              <p class="aim">Aim at {sweep.check.aim.wall} and shoot.</p>
+            {:else}
+              {#each sweep.check.todo as t}<p class="todo">{t}</p>{/each}
+            {/if}
+            {#each sweep.check.notes as t}<p class="hint">{t}</p>{/each}
+            {#if sweep.check.lrud}
+              {@const [l, r, u, d] = sweep.check.lrud}
+              <p class="hint">From the ring: L {dist(l)} · R {dist(r)} · U {dist(u)} · D {dist(d)} (fills only the sides no tape measured)</p>
+            {/if}
+          </div>
+        </div>
+        <div class="row">
+          {#if !sweep.armed}<p class="hint grow">Running on the X1: end the scan there (CLR), or finish here.</p>{/if}
+          {#if sweep.armed && survey.canTakeShot && !manual}
+            <button onclick={live.toggleFiring}>{#if survey.firing}<Pause size={18} /> Pause firing{:else}<Play size={18} /> Fire on its own{/if}</button>
+          {/if}
+          <button class="go" onclick={live.finishSweep}><Check size={18} /> Finish sweep</button>
+        </div>
+      {:else}
+        <div class="row">
+          <button class="sweepbtn" onclick={() => live.startSweep('lrud')} disabled={!linked} title="A slow ring across the passage at this station: the cross-section and its left, right, up and down"><ScanLine size={20} /> {manual ? 'LRUD' : 'LRUD ring'}<small>{manual ? 'one shot to each wall' : 'dense ring across the passage'}</small></button>
+          <button class="sweepbtn" onclick={() => live.startSweep('room')} disabled={!linked} title="The laser about level, turned right round: the outline of a room"><Radar size={20} /> {manual ? 'Room outline' : 'Room sweep'}<small>{manual ? 'rough, eight ways round' : 'level, all the way round'}</small></button>
+        </div>
+        <p class="hint">Or hold DIST+M on the X1 for its own scan mode: CaveCAD checks it as
+          <select value={survey.sweepKind} onchange={(e) => live.setSweepKind(e.currentTarget.value as 'lrud' | 'room')} aria-label="Check the X1's own sweeps as">
+            <option value="lrud">an LRUD ring</option>
+            <option value="room">a room sweep</option>
+          </select>.
+        </p>
+        {#if lastSweep}
+          <p class="hint" class:warnline={!lastSweep.check.complete}>Last sweep: {KIND_NAME[lastSweep.check.kind]} at {lastSweep.station}, {lastSweep.check.standard === 'digital' ? `${Math.floor(lastSweep.check.coverage)}% covered` : `${lastSweep.check.shots} shots`}, {lastSweep.check.complete ? 'complete' : `not complete (${lastSweep.check.todo[0] ?? ''})`}</p>
+        {/if}
+      {/if}
+    </section>
+    {:else if tab === 'gimbal'}
+    <section class="device" aria-label="Gimbal">
+      <div class="gimbal" aria-label="Gimbal dome scan">
+        <div class="row">
+          {#if dome.connected}
+            <span class="gname">Gimbal: {dome.name}</span>
+            <button onclick={disconnectGimbal} disabled={dome.running}>Disconnect</button>
+          {:else}
+            <button onclick={connectGimbal} title="An Osmo Mobile gimbal carrying the X1 (laser out of the clamp's top)">Connect gimbal</button>
+          {/if}
+        </div>
+        {#if dome.connected}
+          {@const ringEst = domeEstimate(dome.step, 'ring')}
+          {@const domeEst = domeEstimate(dome.step, 'dome')}
+          {@const mins = (sec: number) => `${Math.floor(sec / 60) ? `${Math.floor(sec / 60)} min ` : ''}${Math.round(sec % 60)} s`}
+          <label class="acc">Ring spacing <strong>{dome.step}°</strong>
+            <input type="range" min="2" max="30" step="1" bind:value={dome.step} disabled={dome.running} aria-label="Spacing of the shots round the ring, degrees" />
+          </label>
+          <p class="hint">Ring: {ringEst.shots} shots, about {mins(ringEst.secs)} · Dome: {domeEst.shots} shots, about {mins(domeEst.secs)}. Gimbal upright (rotate button), its front facing a wall, X1 connected.</p>
+          <div class="row">
+            {#if dome.running}
+              <button onclick={stopDome}>Stop</button>
+              <span class="gname" role="status">{dome.phase} · {dome.done}/{dome.total}</span>
+            {:else}
+              <button class="sweepbtn" onclick={startRing} disabled={!survey.canTakeShot || !survey.standing} title="A ring across the passage at this station: the cross-section, its walls, roof and as far down as the gimbal reaches"><ScanLine size={20} /> Ring scan</button>
+              <button class="sweepbtn" onclick={startDome} disabled={!survey.canTakeShot || !survey.standing} title="The half-sphere above the horizon at this station, meridian by meridian (about 90° behind the gimbal is out of its reach)"><Radar size={20} /> Dome scan</button>
+              {#if dome.phase}<span class="gname">{dome.phase}</span>{/if}
+            {/if}
+          </div>
+          <div class="aim" aria-label="Aim the gimbal by hand">
+            <div class="aimhead"><strong>Aim</strong>
+              <div class="seg" role="radiogroup" aria-label="Aiming speed">
+                {#each Object.keys(AIM_SPEEDS) as sp}
+                  <button role="radio" aria-checked={aim.speed === sp} class:on={aim.speed === sp} onclick={() => (aim.speed = sp as keyof typeof AIM_SPEEDS)}>{sp} {AIM_SPEEDS[sp as keyof typeof AIM_SPEEDS]}°/s</button>
+                {/each}
+              </div>
+            </div>
+            <Joystick onmove={aimStick} disabled={dome.running} />
+            <div class="pad">
+              {#each [['tilt', 1, '▲ Tilt'], ['tilt', -1, 'Tilt ▼']] as [axis, sign, label]}
+                <button class="hold" disabled={dome.running}
+                  onpointerdown={(e) => { e.currentTarget.setPointerCapture(e.pointerId); aimHold(axis as 'pan' | 'roll' | 'tilt', sign as 1 | -1); }}
+                  onpointerup={aimRelease} onpointercancel={aimRelease} onlostpointercapture={aimRelease}
+                  oncontextmenu={(e) => e.preventDefault()}>{label}</button>
+              {/each}
+            </div>
+            <p class="hint aimpos" role="status">pan {Math.round(aim.pan)}° · roll {Math.round(aim.roll)}° · tilt {Math.round(aim.tilt)}°{#if aim.atLimit}<strong class="warn"> · at the {aim.atLimit} limit</strong>{/if}{#if !aim.longRoll} · roll held to ±35° until a scan or a deep shot shows the long side{/if}
+              <button class="link" onclick={aimCentred} title="Tap after setting the gimbal back to its centre by hand">It's centred</button></p>
+            <div class="row">
+              <button onclick={aimReset} disabled={dome.running || aim.resetting} title="Back to the centre: pan and tilt by the estimate, roll by the X1's own reading">{aim.resetting ? 'Resetting…' : 'Reset'}</button>
+              <button onclick={() => live.laser(true)} disabled={!survey.canLaser || dome.running}><Flashlight size={18} /> Laser on</button>
+              <button onclick={() => { live.laser(true); setTimeout(() => live.takeShot(), 400); }} disabled={!survey.canTakeShot || dome.running} title="Fire the X1 where the gimbal is pointing"><Crosshair size={18} /> Shoot</button>
+            </div>
+            <p class="hint">Push the stick: left/right pans, up/down rolls (swings the laser across the passage). Further = faster. Let go to stop.</p>
+          </div>
+          <p class="hint warn">The gimbal's magnet upsets the X1's compass: bearings of these shots are off; distances and angles up or down are good.</p>
+        {/if}
+        {#if dome.error}<p class="hint warn">{dome.error}</p>{/if}
+      </div>
+    </section>
+    {:else}
+    {#if phone.on}
+      <!-- the phone has no ribbon: connecting and the shot settings are here -->
+      <section class="link" aria-label="Instrument">
+        <div class="row">
+          {#if linked}
+            <button onclick={live.disconnect}><Unplug size={18} /> Disconnect</button>
+          {:else}
+            <button class="go" onclick={() => void live.connect('auto')}><Bluetooth size={18} /> Connect</button>
+            <button onclick={() => void live.connect('simulator')}><FlaskConical size={18} /> Simulator</button>
+          {/if}
+        </div>
+        <div class="opts"><SurveyOptions /></div>
+      </section>
+    {/if}
+    <section class="device" aria-label="Device control">
+      <div class="devhead">
+        <h4>Device control</h4>
+        
+        <div class="seg" role="radiogroup" aria-label="Survey standard">
+          <button role="radio" aria-checked={manual} class:on={manual} onclick={() => live.setStandard('manual')} title="Mostly sketched by hand: LRUD needs only the four walls, room outlines are rough">Manual</button>
+          <button role="radio" aria-checked={!manual} class:on={!manual} onclick={() => live.setStandard('digital')} title="The Cavway captures the detail: dense rings at every station, full room outlines">Digital</button>
+        </div>
+      </div>
+      <div class="tools">
+        <button class="qr" onclick={() => (quickRef = true)} title="The Cavway X1's controls and calibration, as on the card in its case"><BookOpen size={16} /> X1 quick reference</button>
+        {#if live.aimsFirst() && !survey.calibration}<button class="qr" onclick={live.startCalibration} title="Follow the X1's calibration shots and say where to point next">Guided calibration</button>{/if}
+      </div>
+      <p class="hint">{manual ? 'Manual: you sketch the detail. LRUD is four aimed shots, one to each wall: left, right, up, down. CaveCAD says which wall is next.' : 'Digital: the Cavway captures the detail. Sweep every station to 100% covered: a ring across the passage, rooms all the way round.'}</p>
+      <label class="acc">Accuracy check
+        <select value={survey.accuracy} onchange={(e) => live.setAccuracy(e.currentTarget.value as 'strict' | 'normal' | 'relaxed')} aria-label="How touchy to be about the instrument's accuracy complaints">
+          <option value="strict">Strict: every X1 complaint</option>
+          <option value="normal">Normal: 2% gravity, 5% magnetic, 5° dip, 2° angle</option>
+          <option value="relaxed">Relaxed: twice Normal</option>
+        </select>
+      </label>
+      <X1Marks />
+      <div class="row">
+        <button onclick={() => live.laser(true)} disabled={!survey.canLaser} title="Laser on, for aiming (the X1)"><Flashlight size={18} /> Laser on</button>
+        <button onclick={() => live.laser(false)} disabled={!survey.canLaser} title="Laser off (the X1)"><FlashlightOff size={18} /> Laser off</button>
+      </div>
+      {#if survey.calibration}<CalibrationGuide guide={survey.calibration} />{/if}
+    </section>
 
     <details class="capture" bind:open={showCapture}>
       <summary>Instrument log, and capture for an instrument that is not supported yet</summary>
@@ -410,6 +449,7 @@
       </div>
       <pre aria-label="Frames received">{survey.frames.join('\n') || 'No frames yet.'}</pre>
     </details>
+    {/if}
   </div>
 
   <footer class="dock" aria-label="Actions">
@@ -568,4 +608,10 @@
   .aim .hold { min-height: 44px; touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
   .aimpos .warn { color: var(--warn, #b26a00); }
   .aimpos .link { background: none; border: 0; padding: 0 4px; color: var(--accent, #2b7de9); text-decoration: underline; font: inherit; }
+  .tabs { position: sticky; top: 0; z-index: 2; display: grid; grid-template-columns: repeat(4, 1fr); gap: 2px; margin: 0 0 8px;
+    padding: 4px 0; background: var(--panel-bg, var(--bg, Canvas)); }
+  .tabs button { position: relative; padding: 8px 4px; min-height: 40px; border: 1px solid var(--border, #8884); border-radius: 8px;
+    background: transparent; color: inherit; font: inherit; font-weight: 600; }
+  .tabs button.on { background: var(--accent, #2b7de9); border-color: var(--accent, #2b7de9); color: #fff; }
+  .tabs .busy { position: absolute; top: 5px; right: 6px; width: 7px; height: 7px; border-radius: 50%; background: #e8a33d; }
 </style>
