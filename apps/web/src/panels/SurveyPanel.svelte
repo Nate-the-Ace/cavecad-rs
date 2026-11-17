@@ -26,7 +26,7 @@
   import * as live from '../lib/survey.svelte';
   import { survey } from '../lib/survey.svelte';
   import { webBluetoothAvailable } from '../lib/instrument/webble';
-  import { dome, estimate as domeEstimate, connectGimbal, disconnectGimbal, startDome, startRing, stopDome, aim, aimHold, aimRelease, aimStick, aimCentred, AIM_SPEEDS } from '../lib/dome.svelte';
+  import { dome, estimate as domeEstimate, connectGimbal, disconnectGimbal, startDome, startRing, stopDome, aim, aimHold, aimRelease, aimStick, aimCentred, aimReset, AIM_SPEEDS } from '../lib/dome.svelte';
 
   let ready = $state(false);
   let showCapture = $state(false);
@@ -247,6 +247,7 @@
             <p class="hint aimpos" role="status">pan {Math.round(aim.pan)}° · roll {Math.round(aim.roll)}° · tilt {Math.round(aim.tilt)}°{#if aim.atLimit}<strong class="warn"> · at the {aim.atLimit} limit</strong>{/if}{#if !aim.longRoll} · roll held to ±35° until a scan or a deep shot shows the long side{/if}
               <button class="link" onclick={aimCentred} title="Tap after setting the gimbal back to its centre by hand">It's centred</button></p>
             <div class="row">
+              <button onclick={aimReset} disabled={dome.running || aim.resetting} title="Back to the centre: pan and tilt by the estimate, roll by the X1's own reading">{aim.resetting ? 'Resetting…' : 'Reset'}</button>
               <button onclick={() => live.laser(true)} disabled={!survey.canLaser || dome.running}><Flashlight size={18} /> Laser on</button>
               <button onclick={() => { live.laser(true); setTimeout(() => live.takeShot(), 400); }} disabled={!survey.canTakeShot || dome.running} title="Fire the X1 where the gimbal is pointing"><Crosshair size={18} /> Shoot</button>
             </div>

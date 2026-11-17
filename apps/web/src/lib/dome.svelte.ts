@@ -87,6 +87,7 @@ export const aim = $state({
   /** Which roll command sign is the long side (1 / −1), once a scan or a deep shot has shown it. */
   longRoll: 0,
   atLimit: '',
+  resetting: false,
 });
 let want = { pan: 0, tilt: 0, roll: 0 };
 let aimTimer: ReturnType<typeof setInterval> | undefined;
@@ -153,6 +154,41 @@ export function aimCentred() {
   aim.pan = aim.tilt = aim.roll = 0;
   aim.atLimit = '';
 }
+/** Reset: back to the centre (upright, front forward). No gimbal command does this (FINDINGS: 0x4C and 0x0D tried),
+ * so CaveCAD does it: pan and tilt back by the estimate, then roll back to straight up by the X1's own reading
+ * (shoot, roll back by the angle from vertical, check; three tries at most). */
+export async function aimReset() {
+  if (!gimbal.connected || dome.running || aim.resetting) return;
+  aim.resetting = true;
+  aimRelease();
+  await pause(150);
+  try {
+    if (Math.abs(aim.pan) > 1) await turnOnly(aim.pan > 0 ? -RATE : RATE, 0, Math.abs(aim.pan));
+    if (Math.abs(aim.tilt) > 1) await gimbal.turn(0, aim.tilt > 0 ? -10 : 10, 0, (Math.abs(aim.tilt) / 10) * 1000);
+    aim.pan = aim.tilt = 0;
+    if (survey.canTakeShot) {
+      let sign = Math.sign(aim.roll) || 1; // which roll command takes the laser further from vertical
+      let prev = Infinity;
+      for (let i = 0; i < 3; i++) {
+        const s = await moveAndShoot(0, 0, 0);
+        if (!s) break;
+        const off = Math.abs(phiOf(s));
+        if (off < 3) break;
+        if (off > prev) sign = -sign; // went the wrong way: the other sign is the way back
+        prev = off;
+        await turnOnly(0, -sign * RATE, off);
+      }
+    } else if (Math.abs(aim.roll) > 1) {
+      await turnOnly(0, aim.roll > 0 ? -RATE : RATE, Math.abs(aim.roll));
+    }
+    laser(false);
+    aim.roll = 0;
+    aim.atLimit = '';
+  } finally {
+    aim.resetting = false;
+  }
+}
+
 /** A manual shot's reading: correct the roll estimate, and learn the long roll side from a deep shot. */
 function aimFromShot(s: Shot) {
   const depth = Math.abs(phiOf(s));

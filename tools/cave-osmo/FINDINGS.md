@@ -130,6 +130,14 @@ Shallower shots hit other things (desk clutter, wall).
   between 187° and 217° (the pan is stuck at a stop or fighting the weight). Also the laser's inclination changed
   during pure pans (phi 66 → 30 → 107), so pan and roll are not independent with the X1 aboard. Unresolved.
 
+## Recentre (2026-11-17, Nathan watching + X1 readings)
+
+- `04/4c` "reset and set mode" with payload `01 00` / `00 00`, attributes 00 or 40: no recentre.
+- `04/0d` "resume" (`b5 2a`): no change (roll 64.0 → 64.0, 36.6 → 36.9, 9.2 → 9.2; distances unchanged).
+- When the controlling app disconnects, **pan swings back toward the handle (follow mode) but roll stays**.
+- So the app recentres itself: pan/tilt back by its estimate, roll back to vertical by the X1's reading (`aimReset`).
+  The trigger double-press recentres AND switches to landscape; no command for it found. Sniffing Mimo would tell.
+
 ## Still unknown
 
 - Whether the gimbal's motors pull the X1's compass, and whether the X1's weight sits well in the clamp.
