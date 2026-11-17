@@ -228,6 +228,74 @@ pub fn decode_angles(payload: &[u8]) -> Option<Angles> {
     Some(Angles { pitch: v(0), roll: v(2), yaw: v(4) })
 }
 
+/// Sweep plans for an X1 in the Osmo's clamp. No Bluetooth here: a plan is a list of relative turns, testable and
+/// usable by any transport.
+///
+/// Measured on the OM7 (FINDINGS.md): only speed commands work and the gimbal reports no angles, so every move is a
+/// rate held for a time (rates land within ~3 %); the X1's own compass and clino say where each shot really went.
+/// Ranges from rest: pan ~287° between stops, tilt +34° / −24°, roll clean to −164° but unstable past about +65°
+/// (it swings to its landscape position). So plans roll negative only.
+pub mod sweep {
+    /// Turn rate used for every move (°/s): slow enough to stop clean, measured accurate.
+    pub const RATE_DPS: f64 = 30.0;
+    /// Pause after a move before shooting (s).
+    pub const SETTLE_S: f64 = 0.8;
+    /// Furthest negative roll a plan uses (°); the stop is at about −164°.
+    pub const ROLL_LIMIT: f64 = -150.0;
+
+    /// How the X1 sits in the clamp.
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub enum Mount {
+        /// Laser out of the clamp's top: at rest it points straight up. Roll swings it across the passage (a ring),
+        /// pan turns which wall that ring reaches.
+        LaserUp,
+    }
+
+    /// One relative turn (degrees), and whether to shoot once it has settled.
+    #[derive(Clone, Copy, Debug, PartialEq)]
+    pub struct Move {
+        pub yaw: f64,
+        pub pitch: f64,
+        pub roll: f64,
+        pub shoot: bool,
+    }
+
+    impl Move {
+        /// Time to make the move at [`RATE_DPS`] on the axis that moves furthest.
+        pub fn seconds(&self) -> f64 {
+            self.yaw.abs().max(self.pitch.abs()).max(self.roll.abs()) / RATE_DPS
+        }
+    }
+
+    fn turn(yaw: f64, roll: f64, shoot: bool) -> Move {
+        Move { yaw, pitch: 0.0, roll, shoot }
+    }
+
+    /// A cross-section ring (LRUD sweep). Pan only reaches about ±143° from the gimbal's centre, so the gimbal is set
+    /// down with its centre facing a WALL (across the passage): the ring pans −90° to look along the passage, shoots
+    /// straight up, rolls down one wall in `step`° steps to [`ROLL_LIMIT`], rolls back, pans 180° to look the other way
+    /// along the passage (same cross-section plane, other wall on the roll side), repeats, and pans back. Ends where it
+    /// began. Leaves a wedge of about 30° straight down unreached (the floor: tape or a hand shot).
+    pub fn ring(mount: Mount, step: f64) -> Vec<Move> {
+        let Mount::LaserUp = mount;
+        let n = (ROLL_LIMIT.abs() / step).floor() as usize;
+        let mut plan = vec![turn(-90.0, 0.0, true)];
+        for side in 0..2 {
+            for _ in 0..n {
+                plan.push(turn(0.0, -step, true));
+            }
+            plan.push(turn(0.0, step * n as f64, false));
+            plan.push(turn(if side == 0 { 180.0 } else { -90.0 }, 0.0, false));
+        }
+        plan
+    }
+
+    /// Total time a plan takes, without the shots themselves.
+    pub fn duration(plan: &[Move]) -> f64 {
+        plan.iter().map(|m| m.seconds() + SETTLE_S).sum()
+    }
+}
+
 #[derive(Debug)]
 pub enum Error {
     NoBluetooth(String),
@@ -404,12 +472,30 @@ impl Osmo {
 
     /// Turns at a rate (degrees per second) for `for_how_long`, refreshing every 100 ms, then stops.
     pub async fn turn_at(&mut self, yaw_dps: f64, pitch_dps: f64, for_how_long: Duration) -> Result<(), Error> {
+        self.turn_rates(yaw_dps, pitch_dps, 0.0, for_how_long).await
+    }
+
+    /// Like [`Osmo::turn_at`] with roll too (roll spins the clamp round the camera axis).
+    pub async fn turn_rates(&mut self, yaw_dps: f64, pitch_dps: f64, roll_dps: f64, for_how_long: Duration) -> Result<(), Error> {
         let end = Instant::now() + for_how_long;
         while Instant::now() < end {
-            self.rotate(tenths(yaw_dps), tenths(pitch_dps), Rotate::Speed, 2).await?;
+            let p = rotate_payload(tenths(yaw_dps), tenths(pitch_dps), tenths(roll_dps), Rotate::Speed, 2);
+            let seq = self.next_seq();
+            self.send_raw(&Message::to_gimbal(seq, cmd::SET_GIMBAL, cmd::SPEED, p).encode()).await?;
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
         self.stop().await.map(|_| ())
+    }
+
+    /// Carries out one [`sweep::Move`] (the turn only; shooting is the caller's, after `settle`).
+    pub async fn perform(&mut self, m: &sweep::Move) -> Result<(), Error> {
+        let secs = m.seconds();
+        if secs > 0.0 {
+            let (y, p, r) = (m.yaw / secs, m.pitch / secs, m.roll / secs);
+            self.turn_rates(y, p, r, Duration::from_secs_f64(secs)).await?;
+        }
+        tokio::time::sleep(Duration::from_secs_f64(sweep::SETTLE_S)).await;
+        Ok(())
     }
 
     /// Goes to an absolute angle (degrees, relative to the gimbal's own centre) over `seconds`.
@@ -473,6 +559,27 @@ mod tests {
         // om-research hard-codes this header for a 21-byte rotate
         let m = Message::to_gimbal(1, cmd::SET_GIMBAL, cmd::SPEED, rotate_payload(0, 0, 0, Rotate::Speed, 10));
         assert_eq!(&m.encode()[..4], &[0x55, 0x15, 0x04, 0xa9]);
+    }
+
+    #[test]
+    fn ring_returns_home_and_stays_inside_the_roll_range() {
+        let plan = sweep::ring(sweep::Mount::LaserUp, 15.0);
+        let (mut yaw, mut roll, mut lowest) = (0.0, 0.0, 0.0f64);
+        for m in &plan {
+            yaw += m.yaw;
+            roll += m.roll;
+            lowest = lowest.min(roll);
+            assert!(roll <= 0.0, "a plan never rolls positive");
+        }
+        assert_eq!((yaw, roll), (0.0, 0.0));
+        assert!(lowest >= sweep::ROLL_LIMIT);
+        // straight up once, then 10 shots down each wall
+        assert_eq!(plan.iter().filter(|m| m.shoot).count(), 21);
+        let mut pan = 0.0f64;
+        for m in &plan {
+            pan += m.yaw;
+            assert!(pan.abs() <= 90.0, "pan stays inside the gimbal's reach");
+        }
     }
 
     #[test]

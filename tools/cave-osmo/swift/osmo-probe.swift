@@ -31,8 +31,8 @@ func message(_ set: UInt8, _ cmd: UInt8, _ payload: [UInt8], attr: UInt8 = 0) ->
     return out + body
 }
 func le(_ v: Int) -> [UInt8] { let x = UInt16(bitPattern: Int16(clamping: v)); return [UInt8(x & 0xFF), UInt8(x >> 8)] }
-func rotate(_ yaw: Int, _ pitch: Int, mode: UInt8, time: UInt8) -> [UInt8] {
-    message(0x04, mode == 0x80 ? 0x0C : 0x14, le(yaw) + le(0) + le(pitch) + [mode, time])
+func rotate(_ yaw: Int, _ pitch: Int, roll: Int = 0, mode: UInt8, time: UInt8) -> [UInt8] {
+    message(0x04, mode == 0x80 ? 0x0C : 0x14, le(yaw) + le(roll) + le(pitch) + [mode, time])
 }
 func hex(_ b: [UInt8]) -> String { b.map { String(format: "%02x", $0) }.joined(separator: " ") }
 
@@ -139,11 +139,11 @@ final class Probe: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
         case "abs", "rel":
             let m = rotate(n(1, 0), n(2, 0), mode: p[0] == "abs" ? 0x05 : 0x04, time: UInt8(clamping: n(3, 20)))
             print("sent \(hex(m))"); send(m); next(Double(n(3, 20)) / 10 + 2)
-        case "speed":
+        case "speed":  // speed:<yaw>:<pitch>:<ms>[:<roll>], tenths of a degree per second
             let end = Date().addingTimeInterval(Double(n(3, 500)) / 1000)
-            print("sent \(hex(rotate(n(1, 0), n(2, 0), mode: 0x80, time: 2))) every 100 ms")
+            print("sent \(hex(rotate(n(1, 0), n(2, 0), roll: n(4, 0), mode: 0x80, time: 2))) every 100 ms")
             Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { t in
-                if Date() < end { self.send(rotate(n(1, 0), n(2, 0), mode: 0x80, time: 2)) }
+                if Date() < end { self.send(rotate(n(1, 0), n(2, 0), roll: n(4, 0), mode: 0x80, time: 2)) }
                 else { t.invalidate(); self.send(rotate(0, 0, mode: 0x80, time: 1)); next(2) }
             }
         case "mode": send(message(0x04, 0x4C, [UInt8(n(1, 0)), 0])); next(2)
