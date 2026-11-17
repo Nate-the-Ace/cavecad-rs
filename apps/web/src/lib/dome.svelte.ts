@@ -71,20 +71,96 @@ export async function connectGimbal() {
 }
 export const disconnectGimbal = () => gimbal.disconnect();
 
-// ---- manual aiming: press and hold to turn, then shoot
+// ---- manual aiming: a joystick (pan, roll) and tilt buttons, kept inside the gimbal's safe reach
 export const AIM_SPEEDS = { fine: 3, normal: 10, fast: 30 } as const;
-export const aim = $state({ speed: 'normal' as keyof typeof AIM_SPEEDS, moving: '' });
-/** Starts turning one way while a button is held: `axis` pan/roll/tilt, `sign` ±1. */
-export function aimHold(axis: 'pan' | 'roll' | 'tilt', sign: 1 | -1) {
+/** Safe reach from the gimbal's centre (°), inside the measured stops (FINDINGS: pan ~±143, tilt +34/−24, roll ~130 on
+ * the long side with the X1 aboard and only ~40 on the short one; past a stop it swings wildly). */
+const LIMIT = { pan: 130, tiltUp: 30, tiltDown: 20, rollShort: 35, rollLong: 120 };
+export const aim = $state({
+  speed: 'normal' as keyof typeof AIM_SPEEDS,
+  moving: false,
+  /** Where the gimbal is thought to point, from the centre (°): turns integrated as they are sent, roll corrected by
+   * each X1 shot. Reset by `aimCentred` (and after a scan, which ends back home). */
+  pan: 0,
+  tilt: 0,
+  roll: 0,
+  /** Which roll command sign is the long side (1 / −1), once a scan or a deep shot has shown it. */
+  longRoll: 0,
+  atLimit: '',
+});
+let want = { pan: 0, tilt: 0, roll: 0 };
+let aimTimer: ReturnType<typeof setInterval> | undefined;
+let lastTick = 0;
+const rollMax = (sign: number) => (aim.longRoll === 0 ? LIMIT.rollShort : sign === aim.longRoll ? LIMIT.rollLong : LIMIT.rollShort);
+function clampRate(pos: number, rate: number, lo: number, hi: number, dt: number, name: string) {
+  const next = pos + rate * dt;
+  if ((rate > 0 && next > hi) || (rate < 0 && next < -lo)) {
+    aim.atLimit = name;
+    return 0;
+  }
+  return rate;
+}
+function aimTick() {
+  const now = performance.now();
+  const dt = Math.min(0.3, (now - lastTick) / 1000);
+  lastTick = now;
+  // where it has got to at the rates last sent (the gimbal lands ~3 % short: counting full keeps a margin)
+  aim.pan += sent.pan * dt;
+  aim.tilt += sent.tilt * dt;
+  aim.roll += sent.roll * dt;
+  aim.atLimit = '';
+  const look = 0.25; // stop a quarter second early: the gimbal coasts a little
+  sent = {
+    pan: clampRate(aim.pan, want.pan, LIMIT.pan, LIMIT.pan, look, 'pan'),
+    tilt: clampRate(aim.tilt, want.tilt, LIMIT.tiltDown, LIMIT.tiltUp, look, 'tilt'),
+    roll: clampRate(aim.roll, want.roll, rollMax(-1), rollMax(1), look, 'roll'),
+  };
+  gimbal.setRates(sent.pan, sent.tilt, sent.roll);
+  if (!aim.moving && !sent.pan && !sent.tilt && !sent.roll) {
+    clearInterval(aimTimer);
+    aimTimer = undefined;
+    gimbal.release();
+  }
+}
+let sent = { pan: 0, tilt: 0, roll: 0 };
+/** Sets the wanted turn rates (°/s) while the joystick or a button is held; the guard trims them at the limits. */
+export function aimSet(pan: number, tilt: number, roll: number) {
   if (!gimbal.connected || dome.running) return;
+  want = { pan, tilt, roll };
+  aim.moving = !!(pan || tilt || roll);
+  if (!aimTimer) {
+    lastTick = performance.now();
+    aimTimer = setInterval(aimTick, 50);
+    aimTick();
+  }
+}
+/** Joystick: x (−1…1) pans, y (−1…1, up positive) rolls; the push is squared for fine control near the middle. */
+export function aimStick(x: number, y: number) {
+  const max = AIM_SPEEDS[aim.speed];
+  const shape = (v: number) => Math.sign(v) * v * v * max;
+  aimSet(shape(x), want.tilt, shape(y));
+}
+export function aimHold(axis: 'pan' | 'roll' | 'tilt', sign: 1 | -1) {
   const r = AIM_SPEEDS[aim.speed] * sign;
-  aim.moving = axis;
-  gimbal.hold(axis === 'pan' ? r : 0, axis === 'tilt' ? r : 0, axis === 'roll' ? r : 0);
+  aimSet(axis === 'pan' ? r : want.pan, axis === 'tilt' ? r : 0, axis === 'roll' ? r : want.roll);
 }
 export function aimRelease() {
-  if (!aim.moving) return;
-  aim.moving = '';
-  gimbal.release();
+  want = { pan: 0, tilt: 0, roll: 0 };
+  aim.moving = false;
+}
+/** The gimbal has been set back to its centre by hand (upright, front forward): the estimate starts again from 0. */
+export function aimCentred() {
+  aim.pan = aim.tilt = aim.roll = 0;
+  aim.atLimit = '';
+}
+/** A manual shot's reading: correct the roll estimate, and learn the long roll side from a deep shot. */
+function aimFromShot(s: Shot) {
+  const depth = Math.abs(phiOf(s));
+  if (Math.abs(aim.roll) > 5) {
+    const sign = Math.sign(aim.roll);
+    aim.roll = sign * depth;
+    if (depth > 45) aim.longRoll = sign;
+  }
 }
 
 // ---- the X1's shots as they arrive (raw frames, decoded as crates/cave-instrument/src/cavway.rs does)
@@ -95,6 +171,7 @@ let lastShot: Shot | null = null;
   const a = 360 / 65535;
   const incl = ((b[7] | (b[8] << 8)) << 16 >> 16) * a;
   lastShot = { incl, roll: (b[9] | (b[10] << 8)) * a, at: performance.now() };
+  if (!dome.running && gimbal.connected) aimFromShot(lastShot);
 };
 /** The laser's angle from straight up, signed by which side of vertical it is (the X1's roll figure: ~270 or ~90). */
 const phiOf = (s: Shot) => (s.roll > 180 ? 1 : -1) * (90 - s.incl);
@@ -175,7 +252,10 @@ async function domeBody(step: number) {
       dir = -dir;
       sideSign = Math.sign(p);
     }
-    if (Math.abs(p) > 45) learned = true;
+    if (Math.abs(p) > 45) {
+      learned = true;
+      aim.longRoll = dir;
+    }
     depth = Math.abs(p);
   }
   dome.phase = 'Home';
@@ -237,6 +317,7 @@ async function startScan(kind: 'ring' | 'dome') {
           break;
         }
         depth = Math.abs(p);
+        if (depth > 45) aim.longRoll = dir;
         s = next;
       }
       if (stopRequested) break;
@@ -253,6 +334,7 @@ async function startScan(kind: 'ring' | 'dome') {
   } catch (e) {
     dome.error = e instanceof Error ? e.message : String(e);
   } finally {
+    aimCentred();
     await gimbal.stop().catch(() => {});
     laser(false);
     finishSweep();

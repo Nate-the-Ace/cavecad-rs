@@ -114,16 +114,23 @@ export class OsmoGimbal {
   }
 
   private holdTimer: ReturnType<typeof setInterval> | undefined;
-  /** Keeps turning at these rates (°/s) until `release()`: for a press-and-hold aiming control. */
-  hold(yaw: number, pitch: number, roll: number) {
-    clearInterval(this.holdTimer);
-    const tick = () => void this.send(speedMessage(this.next(), yaw, pitch, roll));
+  private rates = { yaw: 0, pitch: 0, roll: 0 };
+  /** Keeps turning at the current rates (°/s), refreshed every 100 ms, until `release()`; `setRates` changes them
+   * on the fly (a joystick). */
+  setRates(yaw: number, pitch: number, roll: number) {
+    this.rates = { yaw, pitch, roll };
+    if (this.holdTimer) return;
+    const tick = () => void this.send(speedMessage(this.next(), this.rates.yaw, this.rates.pitch, this.rates.roll));
     tick();
     this.holdTimer = setInterval(tick, 100);
+  }
+  hold(yaw: number, pitch: number, roll: number) {
+    this.setRates(yaw, pitch, roll);
   }
   release() {
     clearInterval(this.holdTimer);
     this.holdTimer = undefined;
+    this.rates = { yaw: 0, pitch: 0, roll: 0 };
     void this.stop();
   }
 }

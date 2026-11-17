@@ -10,6 +10,7 @@
   import { untrack } from 'svelte';
   import { Check, ChevronLeft, ChevronRight, Crosshair, Flashlight, FlashlightOff, Pause, Play, Radar, ScanLine, SkipForward, X } from '@lucide/svelte';
   import SweepDial from '../components/SweepDial.svelte';
+  import Joystick from '../components/Joystick.svelte';
   import QuickRef from '../components/QuickRef.svelte';
   import CalibrationGuide from '../components/CalibrationGuide.svelte';
   import { BookOpen, Star } from '@lucide/svelte';
@@ -25,7 +26,7 @@
   import * as live from '../lib/survey.svelte';
   import { survey } from '../lib/survey.svelte';
   import { webBluetoothAvailable } from '../lib/instrument/webble';
-  import { dome, estimate as domeEstimate, connectGimbal, disconnectGimbal, startDome, startRing, stopDome, aim, aimHold, aimRelease, AIM_SPEEDS } from '../lib/dome.svelte';
+  import { dome, estimate as domeEstimate, connectGimbal, disconnectGimbal, startDome, startRing, stopDome, aim, aimHold, aimRelease, aimStick, aimCentred, AIM_SPEEDS } from '../lib/dome.svelte';
 
   let ready = $state(false);
   let showCapture = $state(false);
@@ -234,19 +235,22 @@
                 {/each}
               </div>
             </div>
+            <Joystick onmove={aimStick} disabled={dome.running} />
             <div class="pad">
-              {#each [['pan', -1, '◀ Pan'], ['pan', 1, 'Pan ▶'], ['roll', -1, '⟲ Roll'], ['roll', 1, 'Roll ⟳'], ['tilt', 1, '▲ Tilt'], ['tilt', -1, 'Tilt ▼']] as [axis, sign, label]}
+              {#each [['tilt', 1, '▲ Tilt'], ['tilt', -1, 'Tilt ▼']] as [axis, sign, label]}
                 <button class="hold" disabled={dome.running}
                   onpointerdown={(e) => { e.currentTarget.setPointerCapture(e.pointerId); aimHold(axis as 'pan' | 'roll' | 'tilt', sign as 1 | -1); }}
                   onpointerup={aimRelease} onpointercancel={aimRelease} onlostpointercapture={aimRelease}
                   oncontextmenu={(e) => e.preventDefault()}>{label}</button>
               {/each}
             </div>
+            <p class="hint aimpos" role="status">pan {Math.round(aim.pan)}° · roll {Math.round(aim.roll)}° · tilt {Math.round(aim.tilt)}°{#if aim.atLimit}<strong class="warn"> · at the {aim.atLimit} limit</strong>{/if}{#if !aim.longRoll} · roll held to ±35° until a scan or a deep shot shows the long side{/if}
+              <button class="link" onclick={aimCentred} title="Tap after setting the gimbal back to its centre by hand">It's centred</button></p>
             <div class="row">
               <button onclick={() => live.laser(true)} disabled={!survey.canLaser || dome.running}><Flashlight size={18} /> Laser on</button>
               <button onclick={() => { live.laser(true); setTimeout(() => live.takeShot(), 400); }} disabled={!survey.canTakeShot || dome.running} title="Fire the X1 where the gimbal is pointing"><Crosshair size={18} /> Shoot</button>
             </div>
-            <p class="hint">Hold a button to turn, let go to stop. Roll swings the laser across the passage; pan turns which way that is.</p>
+            <p class="hint">Push the stick: left/right pans, up/down rolls (swings the laser across the passage). Further = faster. Let go to stop.</p>
           </div>
           <p class="hint warn">The gimbal's magnet upsets the X1's compass: bearings of these shots are off; distances and angles up or down are good.</p>
         {/if}
@@ -561,4 +565,6 @@
   .aimhead { display: flex; gap: 8px; align-items: center; justify-content: space-between; flex-wrap: wrap; }
   .aim .pad { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin: 6px 0; }
   .aim .hold { min-height: 44px; touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
+  .aimpos .warn { color: var(--warn, #b26a00); }
+  .aimpos .link { background: none; border: 0; padding: 0 4px; color: var(--accent, #2b7de9); text-decoration: underline; font: inherit; }
 </style>
