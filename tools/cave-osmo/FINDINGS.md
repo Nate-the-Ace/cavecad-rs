@@ -74,6 +74,24 @@ look both ways along the passage, so `sweep::ring` = pan −90°, shoot up, roll
 180°, the other wall, pan back. The gimbal is set down with its centre facing a wall. Unreached: ~30° wedge straight
 down.
 
+## First ring with the real X1 (2026-11-16, home office)
+
+X1 rubber-banded in the clamp, laser out of the top; `osmo-plan -- ring 30 0 flip x1` through the Swift probe;
+11 of 11 shots arrived (laser on + measure, ~5 s each including the move).
+
+| Side | X1 inclination after each 30° roll step |
+|---|---|
+| first | 73.0 → 59.0 → 34.8 → 9.1 → −16.4 → −41.6 |
+| second | 64.2 → 37.7 → 10.7 → −16.1 → −42.8 |
+
+- **The X1's weight pulls the gimbal back:** a commanded 30° step lands ~25° (first step of a side ~14°), and the
+  straight-up shot reads 73° not 90°. The shots are still true (each carries the X1's own angles); only the spacing
+  suffers. Fix: close the loop on the X1's inclination, and balance the X1 in the clamp.
+- **The 180° pan fell short:** both fans point at the same side of the room (level shots at azimuth ~223° and
+  ~192°, should differ by 180°). Likely a pan stop (gimbal not centred facing a wall at the start) or the weight.
+  Fix: check the pan with a level shot's azimuth (X1 compass) and keep turning until it is 180° from side one.
+- Laser near vertical: the X1's azimuth swings wildly (334°, 280°, 232°) and means nothing there.
+
 ## Still unknown
 
 - Whether the gimbal's motors pull the X1's compass, and whether the X1's weight sits well in the clamp.
