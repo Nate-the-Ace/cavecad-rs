@@ -155,6 +155,7 @@
     }
   }
 
+  let gimbalInfo = $state(false);
   let featurePicker = $state(false);
   const symbolName = (key: string) => symbolDef(key)?.name ?? key.replace(/^sym-/, '').replace(/-/g, ' ');
   const enter = (e: KeyboardEvent) => e.key === 'Enter' && (e.currentTarget as HTMLInputElement).blur();
@@ -335,60 +336,59 @@
     </section>
     {:else if tab === 'gimbal'}
     <section class="device" aria-label="Gimbal">
-      <div class="gimbal" aria-label="Gimbal dome scan">
-        <div class="row">
+      <div class="gimbal" aria-label="Gimbal">
+        <div class="grow1">
           {#if dome.connected}
-            <span class="gname">Gimbal: {dome.name}</span>
-            <button onclick={disconnectGimbal} disabled={dome.running}>Disconnect</button>
+            <span class="gname">{dome.name}</span>
+            <button class="small" onclick={disconnectGimbal} disabled={dome.running}>Disconnect</button>
           {:else}
-            <button onclick={connectGimbal} title="An Osmo Mobile gimbal carrying the X1 (laser out of the clamp's top)">Connect gimbal</button>
+            <button class="go" onclick={connectGimbal} title="An Osmo Mobile gimbal carrying the X1, laser out of the clamp's top">Connect gimbal</button>
           {/if}
+          <button class="info" onclick={() => (gimbalInfo = !gimbalInfo)} aria-expanded={gimbalInfo} aria-label="About the gimbal scans">ⓘ</button>
         </div>
+        {#if gimbalInfo}
+          <p class="hint">Set the gimbal down upright (rotate button) facing a wall; the scans turn it to look along the passage. Ring: the cross-section. Dome: the half-sphere above, except ~90° behind. The gimbal's magnet spoils the X1's bearings; distances and up/down angles are good. Stick: left/right pans, up/down rolls; further is faster.</p>
+        {/if}
         {#if dome.connected}
           {@const ringEst = domeEstimate(dome.step, 'ring')}
           {@const domeEst = domeEstimate(dome.step, 'dome')}
-          {@const mins = (sec: number) => `${Math.floor(sec / 60) ? `${Math.floor(sec / 60)} min ` : ''}${Math.round(sec % 60)} s`}
-          <label class="acc">Ring spacing <strong>{dome.step}°</strong>
-            <input type="range" min="2" max="30" step="1" bind:value={dome.step} disabled={dome.running} aria-label="Spacing of the shots round the ring, degrees" />
-          </label>
-          <p class="hint">Ring: {ringEst.shots} shots, about {mins(ringEst.secs)} · Dome: {domeEst.shots} shots, about {mins(domeEst.secs)}. Gimbal upright (rotate button), its front facing a wall, X1 connected.</p>
-          <div class="row">
-            {#if dome.running}
-              <button onclick={stopDome}>Stop</button>
+          {@const t = (sec: number) => (sec >= 60 ? `${Math.round(sec / 60)} min` : `${Math.round(sec)} s`)}
+          <label class="spacing">Spacing <strong>{dome.step}°</strong>
+            <input type="range" min="2" max="30" step="1" bind:value={dome.step} disabled={dome.running} aria-label="Spacing of the shots, degrees" /></label>
+          {#if dome.running}
+            <div class="grow1">
               <span class="gname" role="status">{dome.phase} · {dome.done}/{dome.total}</span>
-            {:else}
-              <button class="sweepbtn" onclick={startRing} disabled={!survey.canTakeShot || !survey.standing} title="A ring across the passage at this station: the cross-section, its walls, roof and as far down as the gimbal reaches"><ScanLine size={20} /> Ring scan</button>
-              <button class="sweepbtn" onclick={startDome} disabled={!survey.canTakeShot || !survey.standing} title="The half-sphere above the horizon at this station, meridian by meridian (about 90° behind the gimbal is out of its reach)"><Radar size={20} /> Dome scan</button>
-              {#if dome.phase}<span class="gname">{dome.phase}</span>{/if}
-            {/if}
-          </div>
-          <div class="aim" aria-label="Aim the gimbal by hand">
-            <div class="aimhead"><strong>Aim</strong>
-              <div class="seg" role="radiogroup" aria-label="Aiming speed">
+              <button onclick={stopDome}>Stop</button>
+            </div>
+          {:else}
+            <div class="two">
+              <button onclick={startRing} disabled={!survey.canTakeShot || !survey.standing} title="A ring across the passage at this station"><ScanLine size={18} /> Ring <small>{ringEst.shots} · {t(ringEst.secs)}</small></button>
+              <button onclick={startDome} disabled={!survey.canTakeShot || !survey.standing} title="The half-sphere above the horizon at this station"><Radar size={18} /> Dome <small>{domeEst.shots} · {t(domeEst.secs)}</small></button>
+            </div>
+            {#if dome.phase}<p class="gname">{dome.phase}</p>{/if}
+          {/if}
+          <div class="aimbox" aria-label="Aim the gimbal by hand">
+            <Joystick onmove={aimStick} disabled={dome.running} size={150} />
+            <div class="aimside">
+              <div class="seg speeds" role="radiogroup" aria-label="Aiming speed">
                 {#each Object.keys(AIM_SPEEDS) as sp}
-                  <button role="radio" aria-checked={aim.speed === sp} class:on={aim.speed === sp} onclick={() => (aim.speed = sp as keyof typeof AIM_SPEEDS)}>{sp} {AIM_SPEEDS[sp as keyof typeof AIM_SPEEDS]}°/s</button>
+                  <button role="radio" aria-checked={aim.speed === sp} class:on={aim.speed === sp} onclick={() => (aim.speed = sp as keyof typeof AIM_SPEEDS)} title="{AIM_SPEEDS[sp as keyof typeof AIM_SPEEDS]}°/s at full push">{sp}</button>
                 {/each}
               </div>
-            </div>
-            <Joystick onmove={aimStick} disabled={dome.running} />
-            <div class="pad">
-              {#each [['tilt', 1, '▲ Tilt'], ['tilt', -1, 'Tilt ▼']] as [axis, sign, label]}
+              {#each [[1, '▲ Tilt'], [-1, 'Tilt ▼']] as [sign, label]}
                 <button class="hold" disabled={dome.running}
-                  onpointerdown={(e) => { e.currentTarget.setPointerCapture(e.pointerId); aimHold(axis as 'pan' | 'roll' | 'tilt', sign as 1 | -1); }}
+                  onpointerdown={(e) => { e.currentTarget.setPointerCapture(e.pointerId); aimHold('tilt', sign as 1 | -1); }}
                   onpointerup={aimRelease} onpointercancel={aimRelease} onlostpointercapture={aimRelease}
                   oncontextmenu={(e) => e.preventDefault()}>{label}</button>
               {/each}
+              <p class="aimpos" role="status">pan {Math.round(aim.pan)}° · roll {Math.round(aim.roll)}°{#if aim.atLimit}<br /><strong class="warn">{aim.atLimit} limit</strong>{/if}</p>
             </div>
-            <p class="hint aimpos" role="status">pan {Math.round(aim.pan)}° · roll {Math.round(aim.roll)}° · tilt {Math.round(aim.tilt)}°{#if aim.atLimit}<strong class="warn"> · at the {aim.atLimit} limit</strong>{/if}{#if !aim.longRoll} · roll held to ±35° until a scan or a deep shot shows the long side{/if}
-              <button class="link" onclick={aimCentred} title="Tap after setting the gimbal back to its centre by hand">It's centred</button></p>
-            <div class="row">
-              <button onclick={aimReset} disabled={dome.running || aim.resetting} title="Back to the centre: pan and tilt by the estimate, roll by the X1's own reading">{aim.resetting ? 'Resetting…' : 'Reset'}</button>
-              <button onclick={() => live.laser(true)} disabled={!survey.canLaser || dome.running}><Flashlight size={18} /> Laser on</button>
-              <button onclick={() => { live.laser(true); setTimeout(() => live.takeShot(), 400); }} disabled={!survey.canTakeShot || dome.running} title="Fire the X1 where the gimbal is pointing"><Crosshair size={18} /> Shoot</button>
-            </div>
-            <p class="hint">Push the stick: left/right pans, up/down rolls (swings the laser across the passage). Further = faster. Let go to stop.</p>
           </div>
-          <p class="hint warn">The gimbal's magnet upsets the X1's compass: bearings of these shots are off; distances and angles up or down are good.</p>
+          <div class="three">
+            <button onclick={aimReset} disabled={dome.running || aim.resetting} title="Back to the centre: pan and tilt by the estimate, roll by the X1's reading. Long-press: it is centred already" oncontextmenu={(e) => { e.preventDefault(); aimCentred(); }}>{aim.resetting ? 'Resetting…' : 'Reset'}</button>
+            <button onclick={() => live.laser(true)} disabled={!survey.canLaser || dome.running}><Flashlight size={18} /> Laser</button>
+            <button class="go" onclick={() => { live.laser(true); setTimeout(() => live.takeShot(), 400); }} disabled={!survey.canTakeShot || dome.running} title="Fire the X1 where the gimbal is pointing"><Crosshair size={18} /> Shoot</button>
+          </div>
         {/if}
         {#if dome.error}<p class="hint warn">{dome.error}</p>{/if}
       </div>
@@ -602,16 +602,26 @@
   .gimbal .gname { font-size: 0.85em; opacity: 0.85; align-self: center; }
   .gimbal input[type='range'] { width: 100%; }
   .hint.warn { color: var(--warn, #b26a00); }
-  .aim { margin-top: 8px; }
-  .aimhead { display: flex; gap: 8px; align-items: center; justify-content: space-between; flex-wrap: wrap; }
-  .aim .pad { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin: 6px 0; }
-  .aim .hold { min-height: 44px; touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
   .aimpos .warn { color: var(--warn, #b26a00); }
-  .aimpos .link { background: none; border: 0; padding: 0 4px; color: var(--accent, #2b7de9); text-decoration: underline; font: inherit; }
   .tabs { position: sticky; top: 0; z-index: 2; display: grid; grid-template-columns: repeat(4, 1fr); gap: 2px; margin: 0 0 8px;
     padding: 4px 0; background: var(--panel-bg, var(--bg, Canvas)); }
   .tabs button { position: relative; padding: 8px 4px; min-height: 40px; border: 1px solid var(--border, #8884); border-radius: 8px;
     background: transparent; color: inherit; font: inherit; font-weight: 600; }
   .tabs button.on { background: var(--accent, #2b7de9); border-color: var(--accent, #2b7de9); color: #fff; }
   .tabs .busy { position: absolute; top: 5px; right: 6px; width: 7px; height: 7px; border-radius: 50%; background: #e8a33d; }
+  .gimbal { display: flex; flex-direction: column; gap: 8px; }
+  .gimbal .grow1 { display: flex; gap: 8px; align-items: center; }
+  .gimbal .grow1 .gname { flex: 1; }
+  .gimbal .info { margin-left: auto; width: 36px; height: 36px; border-radius: 50%; padding: 0; font-size: 18px; }
+  .gimbal .spacing { display: flex; gap: 8px; align-items: center; font-size: 0.95em; }
+  .gimbal .spacing input { flex: 1; }
+  .gimbal .two, .gimbal .three { display: grid; gap: 6px; }
+  .gimbal .two { grid-template-columns: 1fr 1fr; }
+  .gimbal .three { grid-template-columns: 1fr 1fr 1fr; }
+  .gimbal .two button small { display: block; font-size: 0.75em; opacity: 0.75; }
+  .gimbal .aimbox { display: grid; grid-template-columns: auto 1fr; gap: 10px; align-items: center; }
+  .gimbal .aimside { display: flex; flex-direction: column; gap: 6px; }
+  .gimbal .speeds button { flex: 1; padding: 6px 2px; font-size: 0.85em; }
+  .gimbal .hold { min-height: 40px; touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
+  .gimbal .aimpos { margin: 0; font-size: 0.85em; opacity: 0.85; }
 </style>
