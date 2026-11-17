@@ -60,6 +60,8 @@ export interface Scene {
     splays_under: number[][];
     /** Sweep shots (an instrument's scan mode), split the same way. */
     sweeps_over: number[][];
+    /** Splays marked on the X1, by type (`splay-feature`, `splay-ridge`, `splay-generic`): [in the open, under another passage]. */
+    marked?: Record<string, [number[][], number[][]]>;
     sweeps_under: number[][];
     walls_over: number[][];
     walls_under: number[][];

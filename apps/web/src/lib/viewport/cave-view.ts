@@ -2113,6 +2113,11 @@ export class CaveView {
     lines(sh.splays_under, 'splay', true);
     lines(sh.sweeps_over ?? [], 'sweep');
     lines(sh.sweeps_under ?? [], 'sweep', true);
+    // splays the surveyor marked on the X1 (Feature, Ridge, Generic): each mark its own type and colour
+    for (const [type, [over, under]] of Object.entries(sh.marked ?? {})) {
+      lines(over, type);
+      lines(under, type, true);
+    }
     lines(sh.legs_over, legType);
     lines(sh.legs_under, legType, true);
     if (walls && !this.inkWalls) {
