@@ -27,7 +27,27 @@ import {
   type Direction,
   type ProgramStep,
 } from './instrument/gimbal-ik';
-import { survey, laser, takeShot, startDrivenSweep, finishSweep, keepInstrumentAwake } from './survey.svelte';
+import { survey, laser, takeShot, startDrivenSweep, finishSweep, keepInstrumentAwake, instrumentCommand } from './survey.svelte';
+import { engine } from './engine';
+import { cave } from './cave.svelte';
+
+/** Said once in the trip's Instruments field after a gimbal sweep: the X1's compass is trusted, but read next to the
+ * gimbal's motors, so the record says so. */
+const GIMBAL_NOTE = 'gimbal sweeps: X1 compass read on a DJI gimbal (possible magnetic interference)';
+
+function noteGimbalInNotebook() {
+  try {
+    if (!cave.trip) return;
+    const page = engine.notebookPage(cave.trip) as { instruments?: string } | null;
+    const now = (page?.instruments ?? '').trim();
+    if (now.includes('magnetic interference')) return;
+    const text = (now ? `${now}; ${GIMBAL_NOTE}` : `Cavway X1; ${GIMBAL_NOTE}`).slice(0, 200);
+    const r = engine.notebookSetTripField(cave.trip, 'instruments', text);
+    dlog(`notebook: instruments note -> ${r}`);
+  } catch (e) {
+    dlog(`notebook: could not add the gimbal note (${e instanceof Error ? e.message : e})`);
+  }
+}
 
 /** After a move's own time, until the gimbal says "arrived" (s). */
 const ARRIVE_S = 0.5;
@@ -49,6 +69,12 @@ const SHOT_WAIT_MS = 4500;
 /** The deepest a ring asks for below level (°): target mode reaches ~20° below on either wall. */
 const RING_LOWEST = -20;
 const LIMITS = OM7_PORTRAIT;
+/** Smooth sweeps (the X1's own scan mode on CaveCAD firmware, -cc2 and later): the gimbal glides through the same
+ * targets this many times slower than a stop-and-go scan moves (15°/s / 2), never stopping to shoot; the X1 keeps a
+ * shot whenever it is steady and pointing somewhere new. */
+const SMOOTH_SLOW = 2;
+/** Scan control bytes (tools/x1-patch). */
+const SCAN_START = 0x39, SCAN_STOP = 0x3a, SCAN_STATUS = 0x3b;
 
 export const gimbal = new OsmoGimbal();
 
@@ -77,6 +103,16 @@ export const dome = $state({
   })(),
   /** The clamp's sag at home (°), measured at the start of each scan; planning uses it. */
   sag: NOMINAL_SAG,
+  /** Smooth sweep (X1 scan mode while the gimbal glides) when the X1 runs CaveCAD firmware; else stop-and-go. */
+  smooth: ((): boolean => {
+    try {
+      return localStorage.getItem('cavecad.gimbal.smooth') !== 'off';
+    } catch {
+      return true;
+    }
+  })(),
+  /** The X1 answered CaveCAD firmware's scan status (null: not asked yet). */
+  ccFirmware: null as boolean | null,
   running: false,
   phase: '',
   done: 0,
@@ -186,9 +222,55 @@ export const disconnectGimbal = () => gimbal.disconnect();
 
 // ---- the X1's shots as they arrive (raw frames): only to know a shot came back
 let lastShotAt = 0;
+/** Scan shots seen (bit 6 of the flag clear), and the last scan-control answer from CaveCAD firmware. */
+let scanShots = 0;
+type ScanState = { cmd: number; mode: number; laser: number; count: number; result: number; lastEnd: number; at: number };
+let lastScan: ScanState | null = null;
 (globalThis as { __cavecadShotTap?: (b: Uint8Array) => void }).__cavecadShotTap = (b) => {
-  if (b.length >= 33 && b[0] === 0x01) lastShotAt = performance.now();
+  if (b.length >= 33 && b[0] === 0x01) {
+    lastShotAt = performance.now();
+    if ((b[1] & 0x40) === 0) {
+      scanShots++;
+      if (dome.running && dome.smooth) dome.done = scanShots;
+    }
+  }
+  // [3D, cmd, CC, 12, mode, laser, count u16, ticks u32, options, result, last end, version]
+  if (b.length >= 16 && b[0] === 0x3d && b[2] === 0xcc && b[3] === 12 && b[1] >= SCAN_START && b[1] <= SCAN_STATUS) {
+    lastScan = { cmd: b[1], mode: b[4], laser: b[5], count: b[6] | (b[7] << 8), result: b[13], lastEnd: b[14], at: performance.now() };
+  }
 };
+
+/** Sends a scan-control byte and waits for its answer (null: none; the X1 is not on CaveCAD firmware). */
+async function scanAsk(cmd: number, ms = 1500): Promise<ScanState | null> {
+  const since = performance.now();
+  instrumentCommand(cmd);
+  while (performance.now() - since < ms) {
+    if (lastScan && lastScan.at > since && lastScan.cmd === cmd) return lastScan;
+    await pause(60);
+  }
+  return null;
+}
+
+/** Starts the X1's scan mode (laser on first); a few tries while the laser warms. */
+async function scanStart(): Promise<boolean> {
+  for (let i = 0; i < 6; i++) {
+    const r = await scanAsk(SCAN_START);
+    dlog(`smooth: scan start -> ${JSON.stringify(r)}`);
+    if (r?.result === 0) return true;
+    if (r?.result === 1 && r.mode !== 2) laser(true); // wrong mode: the laser is off
+    await pause(r?.result === 1 ? 1600 : 500);
+  }
+  return false;
+}
+
+export function setSmooth(on: boolean) {
+  dome.smooth = on;
+  try {
+    localStorage.setItem('cavecad.gimbal.smooth', on ? 'on' : 'off');
+  } catch {
+    /* not kept: fine */
+  }
+}
 
 async function waitShot(since: number) {
   const t0 = performance.now();
@@ -414,6 +496,39 @@ export const startDome = () => startScan('dome');
  * ~1.5° of the plan; this is the record). Azimuth from the gimbal's front at home. */
 export const shotLog: { planned: Direction; got: Direction; joints: [number, number, number] }[] = [];
 
+/** The smooth sweep: laser on, the X1's scan started, the gimbal plays the targets slowly without stopping, the scan is
+ * restarted if the X1 ends it on its own (its time or 200-shot limit), and stopped at the end. */
+async function smoothScan(kind: 'ring' | 'dome', prog: Program) {
+  scanShots = 0;
+  dome.done = 0;
+  dome.phase = 'Starting the X1 scan';
+  laser(true);
+  await pause(1700);
+  if (!(await scanStart())) throw new Error("The X1 wouldn't start its scan (is the laser on? try again)");
+  let restarting = false;
+  const watch = setInterval(async () => {
+    if (restarting || stopRequested) return;
+    const r = await scanAsk(SCAN_STATUS, 1200);
+    if (r && r.mode !== 2 && !stopRequested) {
+      restarting = true;
+      dlog(`smooth: scan ended on the X1 (last end ${r.lastEnd}); starting it again`);
+      await scanStart();
+      restarting = false;
+    }
+  }, 2500);
+  try {
+    const slow = prog.lists.map((l) => l.map((st) => ({ ...st, ms: Math.round(st.ms * SMOOTH_SLOW) })));
+    dome.phase = `Smooth ${kind}`;
+    await playTargets(slow, async (st) => {
+      if (st.shot !== undefined) dome.current = dirKey(prog.steps[st.shot].d);
+    });
+  } finally {
+    clearInterval(watch);
+    await scanAsk(SCAN_STOP, 1200);
+    dlog(`smooth: done, ${scanShots} scan shots`);
+  }
+}
+
 async function startScan(kind: 'ring' | 'dome') {
   if (dome.running || busy || !gimbal.connected || !survey.canTakeShot) return;
   aimRelease();
@@ -438,6 +553,17 @@ async function startScan(kind: 'ring' | 'dome') {
     let missedInARow = 0;
     dome.missed = prog.missed;
     dome.total = prog.shots;
+    // smooth: the X1 scans on its own while the gimbal glides (CaveCAD firmware); else stop-and-go below
+    if (dome.smooth) {
+      const st = await scanAsk(SCAN_STATUS);
+      dome.ccFirmware = st !== null;
+      if (st) {
+        await smoothScan(kind, prog);
+        return;
+      }
+      dlog('smooth: no scan-control answer (stock firmware?); stop-and-go instead');
+      dome.phase = 'Stop-and-go (the X1 has no remote scan control)';
+    }
     await playTargets(prog.lists, async (st) => {
       if (st.shot === undefined) return;
       const planned = prog.steps[st.shot].d;
@@ -468,8 +594,10 @@ async function startScan(kind: 'ring' | 'dome') {
     await gimbal.targetsExit().catch(() => {});
     laser(false);
     finishSweep();
+    if (dome.done > 0) noteGimbalInNotebook();
     dome.running = false;
     dome.current = '';
     dome.phase = stopRequested ? 'Stopped' : `Done: ${dome.done} shots${dome.missed ? `, ${dome.missed} out of reach` : ''}`;
+    dome.current = '';
   }
 }

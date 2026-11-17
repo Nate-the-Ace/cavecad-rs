@@ -27,7 +27,7 @@
   import * as live from '../lib/survey.svelte';
   import { survey } from '../lib/survey.svelte';
   import { webBluetoothAvailable } from '../lib/instrument/webble';
-  import { dome, estimate as domeEstimate, LEVELS, setLevel, connectGimbal, disconnectGimbal, startDome, startRing, stopDome, setScanKind, aim, aimHold, aimRelease, aimStick, aimReset, AIM_SPEEDS } from '../lib/dome.svelte';
+  import { dome, estimate as domeEstimate, LEVELS, setLevel, setSmooth, connectGimbal, disconnectGimbal, startDome, startRing, stopDome, setScanKind, aim, aimHold, aimRelease, aimStick, aimReset, AIM_SPEEDS } from '../lib/dome.svelte';
 
   let ready = $state(false);
   let showCapture = $state(false);
@@ -366,7 +366,8 @@
                   <button role="radio" aria-checked={dome.level === i} class:on={dome.level === i} onclick={() => setLevel(i)} disabled={dome.running} title="{lv.step}° apart: {e.shots} shots{e.missed ? `, ${e.missed} out of reach` : ''}">{lv.name}<small>{lv.step}° · {t(e.secs)}</small></button>
                 {/each}
               </div>
-              <small>{#if dome.running}{dome.done} of {dome.total} shots{:else}{est.shots} shots · {t(est.secs)}{#if est.missed} · {est.missed} out of reach{/if}{/if}</small>
+              <label class="hint" title="The X1 scans on its own while the gimbal glides without stopping (needs CaveCAD firmware on the X1, 1.1.7-cc2 or later; otherwise stop-and-go)"><input type="checkbox" checked={dome.smooth} onchange={(e) => setSmooth(e.currentTarget.checked)} disabled={dome.running} /> Smooth sweep (X1 scan mode){#if dome.ccFirmware === false} · this X1 has stock firmware{/if}</label>
+              <small>{#if dome.running && dome.smooth && dome.ccFirmware}{dome.done} shots{:else if dome.running}{dome.done} of {dome.total} shots{:else}{est.shots} shots · {t(est.secs)}{#if est.missed} · {est.missed} out of reach{/if}{/if}</small>
               {#if dome.error}<p class="hint warn" role="alert">{dome.error}</p>{/if}
               {#if dome.running}
                 <div class="grow1">

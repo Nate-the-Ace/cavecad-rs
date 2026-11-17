@@ -480,6 +480,11 @@ export function laser(on: boolean) {
   instrument?.laser?.(on);
 }
 
+/** Sends a single-byte command to the X1 (CaveCAD firmware's scan control). */
+export function instrumentCommand(cmd: number) {
+  (instrument as { x1Command?: (cmd: number) => void } | null | undefined)?.x1Command?.(cmd);
+}
+
 /** Keeps the X1 awake (a harmless ping every 45 s) while something drives it unattended, e.g. a gimbal is connected. */
 export function keepInstrumentAwake(on: boolean) {
   (instrument as { keepAwake?: (on: boolean) => void } | null | undefined)?.keepAwake?.(on);
