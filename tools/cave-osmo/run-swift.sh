@@ -4,6 +4,10 @@
 set -e
 cd "$(dirname "$0")"
 app=target/osmo-probe-swift.app
+# one at a time: `open` hands a second launch to the running copy, which would then hold both runs' Bluetooth
+if pgrep -f "osmo-probe-swift.app/Contents/MacOS/osmo-probe-swift" >/dev/null; then
+  echo "another osmo-probe run is still going (a ring from the view?); stop it first" >&2; exit 1
+fi
 mkdir -p "$app/Contents/MacOS"
 # rebuild only when the source changed: every rebuild is a new binary, and macOS asks for Bluetooth again
 if [ ! -x "$app/Contents/MacOS/osmo-probe-swift" ] || [ swift/osmo-probe.swift -nt "$app/Contents/MacOS/osmo-probe-swift" ]; then

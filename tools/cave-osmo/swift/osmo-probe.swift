@@ -175,7 +175,13 @@ final class Probe: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
                 h.write(String(format: "{\"t\":%.0f,\"d\":%.3f,\"az\":%.2f,\"inc\":%.2f,\"roll\":%.2f,\"flag\":%d}\n", Date().timeIntervalSince1970 * 1000, shot.dist, shot.az, shot.incl, shot.roll, Int(shot.flag)).data(using: .utf8)!)
                 h.closeFile()
             }
-            print(String(format: "\(stamp()) X1 shot  dist %.3f m  azimuth %.1f  inclination %.1f  roll %.1f  flag %02x", shot.dist, shot.az, shot.incl, shot.roll, shot.flag))
+            // accuracy block (bytes 45-53, cavway.rs parse_errors): first byte ff = none; bits 7..4 clear = absG, absM, dip, angle
+            let errs: String = {
+                guard b.count >= 54, b[45] != 0xff else { return "" }
+                let names = [(0x80, "absG"), (0x40, "absM"), (0x20, "dip"), (0x10, "angle")].filter { Int(b[45]) & $0.0 == 0 }.map { $0.1 }
+                return "  ACCURACY " + names.joined(separator: ",") + " [" + hex(Array(b[45..<54])) + "]"
+            }()
+            print(String(format: "\(stamp()) X1 shot  dist %.3f m  azimuth %.1f  inclination %.1f  roll %.1f  flag %02x", shot.dist, shot.az, shot.incl, shot.roll, shot.flag) + errs)
             if let f = onShot { onShot = nil; f(shot) }
             return
         }
@@ -301,6 +307,15 @@ final class Probe: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
                 else { t.invalidate(); self.send(rotate(0, 0, mode: 0x80, time: 1)); next(0) }
             }
         case "mode": send(message(0x04, 0x4C, [UInt8(n(1, 0)), 0])); next(2)
+        case "level":  // roll the laser to level (phi 90, long side), steered by the X1
+            Task { @MainActor in
+                laserOn(); await pause(1.5)
+                if var at = await measure().map({ phi($0) }) {
+                    for _ in 0..<3 where abs(at - 90) > 3 { if let r = await rollTo(90, from: at) { at = r.1 } }
+                    print(String(format: "level: phi %.1f", at))
+                }
+                next(0)
+            }
         case "ring":  // ring[:<step°>]: closed-loop LRUD ring with the X1 (see ring())
             Task { @MainActor in await self.ring(step: Double(n(1, 10))); next(0) }
         case "laser":  // laser on now (send before a move: the X1 warms up while the gimbal turns)

@@ -25,6 +25,7 @@
   import * as live from '../lib/survey.svelte';
   import { survey } from '../lib/survey.svelte';
   import { webBluetoothAvailable } from '../lib/instrument/webble';
+  import { dome, estimate as domeEstimate, connectGimbal, disconnectGimbal, startDome, stopDome } from '../lib/dome.svelte';
 
   let ready = $state(false);
   let showCapture = $state(false);
@@ -197,6 +198,34 @@
       <div class="row">
         <button onclick={() => live.laser(true)} disabled={!survey.canLaser} title="Laser on, for aiming (the X1)"><Flashlight size={18} /> Laser on</button>
         <button onclick={() => live.laser(false)} disabled={!survey.canLaser} title="Laser off (the X1)"><FlashlightOff size={18} /> Laser off</button>
+      </div>
+      <div class="gimbal" aria-label="Gimbal dome scan">
+        <div class="row">
+          {#if dome.connected}
+            <span class="gname">Gimbal: {dome.name}</span>
+            <button onclick={disconnectGimbal} disabled={dome.running}>Disconnect</button>
+          {:else}
+            <button onclick={connectGimbal} title="An Osmo Mobile gimbal carrying the X1 (laser out of the clamp's top)">Connect gimbal</button>
+          {/if}
+        </div>
+        {#if dome.connected}
+          {@const est = domeEstimate(dome.step)}
+          <label class="acc">Ring spacing <strong>{dome.step}°</strong>
+            <input type="range" min="2" max="30" step="1" bind:value={dome.step} disabled={dome.running} aria-label="Spacing of the shots round the ring, degrees" />
+          </label>
+          <p class="hint">{est.shots} shots · about {Math.floor(est.secs / 60) ? `${Math.floor(est.secs / 60)} min ` : ''}{Math.round(est.secs % 60)} s. Gimbal upright (rotate button), its front facing a wall, X1 connected.</p>
+          <div class="row">
+            {#if dome.running}
+              <button onclick={stopDome}>Stop</button>
+              <span class="gname" role="status">{dome.phase} · {dome.done}/{dome.total}</span>
+            {:else}
+              <button class="sweepbtn" onclick={startDome} disabled={!survey.canTakeShot || !survey.standing} title="The gimbal turns the X1 round a ring across the passage at this station, firing it every step"><ScanLine size={20} /> Dome scan</button>
+              {#if dome.phase}<span class="gname">{dome.phase}</span>{/if}
+            {/if}
+          </div>
+          <p class="hint warn">The gimbal's magnet upsets the X1's compass: bearings of these shots are off; distances and angles up or down are good.</p>
+        {/if}
+        {#if dome.error}<p class="hint warn">{dome.error}</p>{/if}
       </div>
       {#if survey.calibration}
         <CalibrationGuide guide={survey.calibration} />
@@ -499,4 +528,8 @@
   .capture summary { cursor: pointer; color: var(--muted); font-size: 13px; padding: 6px 0; }
   .capture textarea { width: 100%; box-sizing: border-box; font: inherit; font-size: 12px; padding: 6px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel-2); color: var(--text); margin: 6px 0; }
   .capture pre { max-height: 200px; overflow: auto; font-size: 11px; background: var(--panel-2); padding: 6px; border-radius: var(--radius); margin: 8px 0 0; white-space: pre-wrap; word-break: break-all; }
+  .gimbal { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border, #ccc4); }
+  .gimbal .gname { font-size: 0.85em; opacity: 0.85; align-self: center; }
+  .gimbal input[type='range'] { width: 100%; }
+  .hint.warn { color: var(--warn, #b26a00); }
 </style>

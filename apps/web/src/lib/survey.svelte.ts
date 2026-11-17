@@ -517,6 +517,15 @@ export function startSweep(kind: SweepKind) {
   }
 }
 
+/** Starts a sweep that something else fires (the gimbal dome scan, lib/dome.svelte.ts): no auto-fire, and never the
+ * X1's own scan mode. True if the sweep started. */
+export function startDrivenSweep(kind: SweepKind): boolean {
+  endMemory();
+  if (!apply(engine.surveyStartSweep(kind))) return false;
+  if (survey.sweep) showStation(survey.sweep.station);
+  return true;
+}
+
 /** Pauses or carries on CaveCAD's firing during a sweep. */
 export function toggleFiring() {
   if (survey.sweep && survey.canTakeShot) setFiring(!survey.firing);
