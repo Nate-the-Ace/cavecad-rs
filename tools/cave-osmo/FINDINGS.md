@@ -326,3 +326,17 @@ it swings the pan motor to keep the heading). Measured with the clamp top's dire
 - The `60` per target and the header `0a` changed nothing measurable; step byte other than `0a` was refused or
   aborted. Each move takes ~1 s whatever its size, so **to move gently, send small steps** (untested yet with the X1).
 - Sometimes the gimbal answers target mode with 0x20 straight away (seen after a reboot); retry after it settles.
+
+### Target mode: limits found running a ring (2026-11-17)
+
+- **The X1's sag is modelled, not commanded away**: v = Ry(sag)·Rz(yaw)·(0, cos ra, sin ra), ra = −90 − roll (the
+  sag tilts the whole yaw axis back). Every bench point fits within 2°; straight up is reachable (lean out the sag with
+  roll). In app `gimbal-ik.ts` (`targetPointing`, `targetSolutions`).
+- **15 targets per list.** 15 run; 16 or more are taken (`00 01 01 00`) but never stepped through.
+- **Yaw −200…+95.** −195, −184 run; +120 runs with reply `…80` and status 0x6c (clamped); +176…180 refused (`…90`).
+  Same heading 360° lower is used past +95.
+- **A new list cannot be sent while one is loaded**: it is half taken (`…10`/`…90`, status jumps to index 1) and the
+  next go is refused, target mode ends. Leaving (`04/6b [00 01 00 6d]`) holds position; **entering (`04/6b
+  [00 00 00 6d]`) sends the gimbal home** (as does `04/4c [01 00]`). So every list starts from a swing home.
+- Ring at 15° spacing, lists 1 and 3 (the ones that ran): every stop **within 0.2–2.5°** of the plan, by the
+  gimbal's own attitude report.

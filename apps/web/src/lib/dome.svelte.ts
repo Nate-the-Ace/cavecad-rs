@@ -1,20 +1,16 @@
 // Gimbal control for an X1 riding an Osmo Mobile 7, laser out of the clamp's top. CaveCAD asks for laser DIRECTIONS
-// (azimuth from the gimbal's front, inclination); ./instrument/gimbal-ik turns them into yaw and roll targets that keep
-// every joint inside its safe window, and this file moves the gimbal there and trims on the gimbal's own attitude
-// report (once a second). Measured behaviour behind every number: tools/cave-osmo/FINDINGS.md; the same control is
-// bench-tested in the Rust library (`Osmo::aim`).
+// (azimuth from the gimbal's front, inclination). Scans and Reset run in TARGET MODE, DJI's own positioning (as Mimo
+// runs a panorama): ./instrument/gimbal-ik turns directions into attitude targets (the X1's sag at home is in the maths),
+// the whole scan is worked out in advance as a list of targets (big moves split into small, gentle steps), and here
+// the list is sent in batches and stepped through, shooting on each "arrived". Nothing is worked out while it runs;
+// the gimbal's report at each shot logs where it really went. Measured behaviour: tools/cave-osmo/FINDINGS.md.
 //
-// The roll has no stop: past its window the clamp FLIPS OVER (violently, at any speed). So every move is guarded:
-// before each step the joints are predicted from how they moved on the step before, and a step that would leave the
-// window is cut short. Targets past the flip are reached by panning round and rolling the long way.
-//
-// The gimbal is set down facing the forward station. Its front is wherever the pan centre faces, read off the joints,
-// so it does not matter where it was left pointing.
+// The joystick still drives with speed commands, guarded by the reported joints (speed commands CAN flip the roll).
+// The gimbal is set down facing the forward station.
 import { OsmoGimbal } from './instrument/osmo';
 import {
   OM7_PORTRAIT,
   OM7_UPRIGHT_ROLL,
-  solutions,
   plan,
   compile,
   programSeconds,
@@ -23,21 +19,20 @@ import {
   homeFrom,
   pointing,
   jointsOf,
-  along,
   euler,
-  fromEuler,
+  clampTop,
   wrap180,
+  NOMINAL_SAG,
   type Att,
-  type Axis,
   type Direction,
-  type Op,
+  type ProgramStep,
 } from './instrument/gimbal-ik';
-import { survey, laser, takeShot, startDrivenSweep, finishSweep } from './survey.svelte';
+import { survey, laser, takeShot, startDrivenSweep, finishSweep, keepInstrumentAwake } from './survey.svelte';
 
-/** Turn rate for planned moves (°/s). */
-const RATE = 30;
-/** Trim rate (°/s). */
-const TRIM_RATE = 15;
+/** Seconds a target takes (move and "arrived"; bench ~1 s whatever its size). */
+const MOVE_S = 1.0;
+/** Targets per list sent to the gimbal: 15 run, 16 or more are taken but never stepped through (bench 2026-11-17). */
+const BATCH = 15;
 /** Seconds a shot takes with the laser warmed during the move (bench: 1.46). */
 export const SHOT_S = 1.5;
 /** Still time after a move before the shot (s). */
@@ -51,10 +46,8 @@ export const LEVELS = [
 ] as const;
 /** Wait for a shot before giving up on it (ms). */
 const SHOT_WAIT_MS = 4500;
-/** The deepest a ring asks for below level (°); the roll window ends ~19° below on either wall. */
+/** The deepest a ring asks for below level (°): target mode reaches ~20° below on either wall. */
 const RING_LOWEST = -20;
-/** Close enough (°). */
-const TOL = 1.5;
 const LIMITS = OM7_PORTRAIT;
 
 export const gimbal = new OsmoGimbal();
@@ -82,6 +75,8 @@ export const dome = $state({
       return 'ring';
     }
   })(),
+  /** The clamp's sag at home (°), measured at the start of each scan; planning uses it. */
+  sag: NOMINAL_SAG,
   running: false,
   phase: '',
   done: 0,
@@ -90,6 +85,8 @@ export const dome = $state({
   error: '',
 });
 gimbal.onChange = () => {
+  // the X1 rides the gimbal unattended: keep it from sleeping while the gimbal is connected
+  if (gimbal.connected !== dome.connected) keepInstrumentAwake(gimbal.connected);
   dome.connected = gimbal.connected;
   dome.name = gimbal.name;
 };
@@ -133,39 +130,31 @@ gimbal.onPosition = () => {
   }
 };
 
-/** A home for planning when the gimbal has not reported yet (estimates only). */
-const NOMINAL_HOME: Att = { q: fromEuler(-90, 0, 0), pan: 0, tilt: 25, roll: 95 };
-
 /** A direction's key, for marking progress. */
 export const dirKey = (d: Direction) => `${Math.round(d.az * 10)},${Math.round(d.inc * 10)}`;
 
-type Program = { ops: Op[]; steps: ReturnType<typeof plan>['steps']; points: (Direction & { ok: boolean; key: string })[]; shots: number; missed: number; secs: number };
-// worked out once per scan, level and home (rounded: the report wobbles a little), not while it runs
+type Program = { prog: ProgramStep[]; steps: ReturnType<typeof plan>['steps']; points: (Direction & { ok: boolean; key: string })[]; shots: number; missed: number; secs: number };
+// worked out once per scan, level and sag (to the degree), never while it runs
 const programs = new Map<string, Program>();
-function program(kind: 'ring' | 'dome', level: number): Program {
-  const home = homeNow().home ?? NOMINAL_HOME;
-  const [r, p, y] = euler(home.q);
-  const key = `${kind}:${level}:${Math.round(home.roll / 2)}:${Math.round(home.tilt / 2)}:${Math.round(r / 2)}:${Math.round(p / 2)}`;
+function program(kind: 'ring' | 'dome', level: number, sag = dome.sag): Program {
+  const key = `${kind}:${level}:${Math.round(sag)}`;
   let got = programs.get(key);
   if (!got) {
     const step = LEVELS[level].step;
     const dirs = kind === 'dome' ? domeDirections(step) : ringDirections(0, step, RING_LOWEST);
-    // the plan and moves are made relative to home's heading; the heading itself only rotates them, so leave it out
-    const h: Att = { ...home, q: fromEuler(r, p, 0) };
-    const pl = plan(dirs, h);
-    const ops = compile(pl, h, RATE);
+    const pl = plan(dirs, Math.round(sag));
+    const prog = compile(pl);
     const miss = new Set(pl.unreachable);
     got = {
-      ops,
+      prog,
       steps: pl.steps,
       points: dirs.map((d) => ({ ...d, ok: !miss.has(d), key: dirKey(d) })),
       shots: pl.steps.length,
       missed: pl.unreachable.length,
-      secs: programSeconds(ops, { shotS: SHOT_S, settleS: SETTLE_S }),
+      secs: programSeconds(prog, { moveS: MOVE_S, shotS: SHOT_S, settleS: SETTLE_S }) + Math.ceil(prog.length / BATCH) * 0.5,
     };
     if (programs.size > 40) programs.clear();
     programs.set(key, got);
-    void y;
   }
   return got;
 }
@@ -219,125 +208,62 @@ async function shoot() {
   return false;
 }
 
-// ---- guarded moves on the gimbal's report
-class AtLimit extends Error {
-  constructor(public at: Att) {
-    super('at the edge of the safe range');
-  }
-}
-
+// ---- target mode runs
 async function fresh(): Promise<Att> {
   const a = await gimbal.freshAttitude(performance.now(), 3000);
   if (!a) throw new Error('The gimbal stopped reporting its position');
   return a;
 }
 
-const RATES = (axis: Axis, v: number): [number, number, number] => (axis === 'pan' ? [v, 0, 0] : axis === 'tilt' ? [0, v, 0] : [0, 0, v]);
+let listId = 0x30;
+/** Into target mode and home (target 0/0); returns the sag and heading measured there. */
+async function targetsHome(): Promise<{ sag: number; heading: number }> {
+  await gimbal.targetsEnter();
+  await pause(300);
+  const id = (listId = ((listId + 1) & 0x7f) | 0x30);
+  await gimbal.targetsUpload([{ yaw: 0, roll: 0 }], id);
+  const r = await gimbal.targetsArrived(0, id, 6000);
+  if (r !== 'arrived') throw new Error(r === 'aborted' ? 'The gimbal would not take its targets (let it settle upright and try again)' : 'The gimbal did not answer');
+  await pause(400);
+  const a = await fresh();
+  const [, pitch, yaw] = euler(a.q);
+  return { sag: pitch, heading: yaw };
+}
 
-/** Turns `axis` by `deg` without letting the roll joint (or the axis's own joint) leave its window: steps of at most
- * one second, each followed by the next report; before each step every joint is predicted from how much it moved per
- * degree on the step before (one axis moves several joints with the clamp on its side). Throws AtLimit at the edge. */
-async function guardedTurn(axis: Axis, deg: number, dps: number): Promise<Att> {
-  let now = await fresh();
-  const dir = Math.sign(deg) || 1;
-  const own = axis === 'pan' ? 0 : axis === 'tilt' ? 1 : 2;
-  const per = [0, 0, 0];
-  per[own] = axis === 'tilt' ? -1.3 : 1.3; // pitching up lowers the tilt joint
-  let known = false;
-  let done = 0;
-  const w = [LIMITS.pan, LIMITS.tilt, LIMITS.roll];
-  for (let i = 0; i < 64; i++) {
-    const left = Math.abs(deg) - done;
-    if (left < 1) return now;
-    const j = jointsOf(now);
-    let allowed = Math.min(left, dps);
-    for (let k = 0; k < 3; k++) {
-      if (k !== own && k !== 2) continue; // pan and tilt end at harmless stops; the roll limits every move
-      const rate = Math.abs(per[k]) * (known ? 1.5 : 1);
-      if (rate < 1e-3) continue;
-      const edge = per[k] * dir > 0 ? w[k][1] - j[k] : j[k] - w[k][0];
-      allowed = Math.min(allowed, Math.max(0, edge) / rate);
+/** Plays a precalculated list of targets: in batches, each target stepped to and waited for; `onArrive` is called at
+ * each (the shot). A batch the gimbal drops is re-sent once from where it stopped. */
+async function playTargets(prog: ProgramStep[], onArrive: (st: ProgramStep, i: number) => Promise<void>) {
+  let i = 0;
+  let retried = false;
+  while (i < prog.length) {
+    if (stopRequested) return;
+    const batch = prog.slice(i, i + BATCH);
+    const id = (listId = ((listId + 1) & 0x7f) | 0x30);
+    // the first target of a list is started by the upload itself
+    if (batch.some((st) => st.shot !== undefined)) laser(true);
+    await gimbal.targetsUpload(batch.map((st) => st.t), id);
+    let k = 0;
+    for (; k < batch.length; k++) {
+      if (stopRequested) return;
+      if (k > 0) {
+        if (batch[k].shot !== undefined) laser(true);
+        await gimbal.targetsGo(k);
+      }
+      const r = await gimbal.targetsArrived(k, id, 5000);
+      if (r !== 'arrived') break;
+      await onArrive(batch[k], i + k);
     }
-    if (allowed < 2) throw new AtLimit(now);
-    const [y, p, r] = RATES(axis, dir * dps);
-    await gimbal.turn(y, p, r, (allowed / dps) * 1000);
-    await pause(300);
-    const next = await fresh();
-    const turned = wrap180(along(next, axis) - along(now, axis)) * dir;
-    done += turned;
-    if (turned > 2) {
-      const a = jointsOf(now), b = jointsOf(next);
-      for (let k = 0; k < 3; k++) per[k] = ((b[k] - a[k]) / turned) * dir;
-      known = true;
-    } else if (allowed > 5) {
-      throw new AtLimit(next); // asked to move and it did not: a hard stop
-    }
-    now = next;
-  }
-  return now;
-}
-
-/** guardedTurn, with stopping at the edge as an answer rather than an error. */
-async function turnOrEdge(axis: Axis, deg: number, dps: number): Promise<Att> {
-  try {
-    return await guardedTurn(axis, deg, dps);
-  } catch (e) {
-    if (e instanceof AtLimit) return e.at;
-    throw e;
-  }
-}
-
-/** If the roll joint is outside its window (near a flip), turn it slowly back inside. */
-async function backInside(): Promise<Att> {
-  let now = await fresh();
-  for (let i = 0; i < 6; i++) {
-    const r = now.roll;
-    const want = r < LIMITS.roll[0] + 2 ? LIMITS.roll[0] + 8 - r : r > LIMITS.roll[1] - 2 ? LIMITS.roll[1] - 8 - r : 0;
-    if (!want) return now;
-    await gimbal.turn(0, 0, Math.sign(want) * 8, (Math.abs(want) / 8) * 1000);
-    await pause(300);
-    now = await fresh();
-  }
-  return now;
-}
-
-/** Points the clamp top at `d`: the cheapest answer inside the windows; for a big pan it first stands the clamp
- * upright (nothing flips on the way), then pans, then rolls, then trims tilt, pan and roll on the report. `warm` is
- * called before the last trim (the laser warms up while the gimbal settles). Null when out of reach. */
-async function moveToward(d: Direction, home: Att, warm: () => void = () => {}): Promise<Att | null> {
-  let now = await backInside();
-  const sol = solutions(d, home, now, LIMITS)[0];
-  if (!sol) return null;
-  const hr = euler(home.q)[0];
-  if (Math.abs(sol.turnYaw) > 3) {
-    const up = wrap180(hr - along(now, 'roll'));
-    if (Math.abs(up) > 3) now = await turnOrEdge('roll', up, RATE);
-    now = await turnOrEdge('pan', sol.turnYaw, RATE);
-  }
-  const roll = wrap180(sol.roll - along(now, 'roll'));
-  if (Math.abs(roll) > 1) now = await turnOrEdge('roll', roll, RATE);
-  warm();
-  // trim; inclination follows roll as −1 on one side (r = −inc), +1 on the other (r = inc − 180)
-  const incPerRoll = Math.cos((sol.roll * Math.PI) / 180) >= 0 ? -1 : 1;
-  let best = Infinity;
-  for (let i = 0; i < 6; i++) {
-    const p = pointing(now, home);
-    const vertical = d.inc > 85 || p.inc > 85;
-    const daz = vertical ? 0 : wrap180(d.az - p.az), dinc = d.inc - p.inc;
-    const err = Math.hypot(daz, dinc);
-    // within reach, or trimming stopped helping (near vertical the tilt sets how high it gets: rolling on would only
-    // lean it the other way, toward the flip)
-    if (err < TOL || err > best - 0.3) break;
-    best = err;
-    const pitch = along(now, 'tilt');
-    if (Math.abs(pitch) >= TOL) {
-      now = await turnOrEdge('tilt', -pitch, TRIM_RATE);
+    if (k === batch.length) {
+      i += batch.length;
+      retried = false;
       continue;
     }
-    if (Math.abs(daz) >= TOL) now = await turnOrEdge('pan', daz, TRIM_RATE);
-    if (Math.abs(dinc) >= TOL) now = await turnOrEdge('roll', dinc * incPerRoll, TRIM_RATE);
+    if (retried) throw new Error('The gimbal keeps dropping its targets (too much weight? let it settle and try again)');
+    retried = true;
+    await gimbal.targetsEnter();
+    await pause(500);
+    i += k; // carry on from the one it did not reach
   }
-  return now;
 }
 
 // ---- manual aiming: the stick moves the laser forward/back (tilt; push up = forward) and turns it (pan); two
@@ -433,20 +359,17 @@ export function aimRelease() {
   aim.moving = false;
 }
 
-/** Reset: back to home (pan centred, clamp upright, tilt level), on the gimbal's own report. */
+/** Reset: home (target 0/0: the gimbal's own front, upright as it sits), in target mode, then out. */
 export async function aimReset() {
   if (!gimbal.connected || dome.running || busy) return;
-  const { home, why } = homeNow();
-  if (!home) {
-    dome.error = why;
-    return;
-  }
   busy = aim.resetting = true;
   aimRelease();
   dome.error = '';
   await pause(150);
   try {
-    await moveToward({ az: 0, inc: 90 }, home);
+    const h = await targetsHome();
+    dome.sag = h.sag;
+    await gimbal.targetsExit();
   } catch (e) {
     dome.error = e instanceof Error ? e.message : String(e);
   } finally {
@@ -473,27 +396,16 @@ export const startRing = () => startScan('ring');
 /** Dome scan: the half-sphere above the horizon, every `step` of azimuth and inclination that the gimbal can reach. */
 export const startDome = () => startScan('dome');
 
-/** Where each shot really went, by the gimbal's report taken while the X1 measured (the plan is played without
- * correction, so this, not the plan, is the shot's direction). */
+/** Where each shot really went, by the gimbal's report taken while the X1 measured (the planned target puts it within
+ * ~1.5° of the plan; this is the record). Azimuth from the gimbal's front at home. */
 export const shotLog: { planned: Direction; got: Direction; joints: [number, number, number] }[] = [];
-
-/** The roll joint must stay well clear of the flip (63 / 221): the one check made while a program plays. */
-const FLIP_GUARD: [number, number] = [70, 212];
 
 async function startScan(kind: 'ring' | 'dome') {
   if (dome.running || busy || !gimbal.connected || !survey.canTakeShot) return;
-  const { home, why } = homeNow();
-  if (!home) {
-    dome.error = why;
-    return;
-  }
-  const prog = program(kind, dome.level);
   aimRelease();
   dome.running = true;
   dome.error = '';
   dome.done = 0;
-  dome.missed = prog.missed;
-  dome.total = prog.shots;
   dome.taken = [];
   dome.current = '';
   shotLog.length = 0;
@@ -504,41 +416,35 @@ async function startScan(kind: 'ring' | 'dome') {
     return;
   }
   try {
-    // set up: home, precisely, on the report (the program starts from there)
     dome.phase = 'Getting ready';
-    await moveToward({ az: 0, inc: 90 }, home);
-    // play the program as it stands
-    for (const op of prog.ops) {
-      if (stopRequested) break;
-      const a = gimbal.attitude;
-      if (a && (a.roll < FLIP_GUARD[0] || a.roll > FLIP_GUARD[1])) throw new Error(`Stopped: the roll got near the point where it flips (joint ${Math.round(a.roll)}°)`);
-      const st = op.shot !== undefined ? prog.steps[op.shot] : null;
-      if (st) {
-        dome.current = dirKey(st.d);
-        dome.phase = `${kind === 'dome' ? 'Dome' : 'Ring'} ${op.shot! + 1}/${prog.shots}`;
-      }
-      if (op.laser) laser(true);
-      if (op.ms > 0) await gimbal.turn(op.yaw, op.pitch, op.roll, op.ms);
-      if (!st) continue;
+    const home = await targetsHome();
+    dome.sag = home.sag;
+    // the program for this sag: worked out before (cached) unless the sag is new
+    const prog = program(kind, dome.level, home.sag);
+    dome.missed = prog.missed;
+    dome.total = prog.shots;
+    await playTargets(prog.prog, async (st) => {
+      if (st.shot === undefined) return;
+      const planned = prog.steps[st.shot].d;
+      dome.current = dirKey(planned);
+      dome.phase = `${kind === 'dome' ? 'Dome' : 'Ring'} ${st.shot + 1}/${prog.shots}`;
       await pause(SETTLE_S * 1000);
       const t = performance.now();
       if (await shoot()) {
         dome.done++;
-        dome.taken = [...dome.taken, dirKey(st.d)];
-        // the report that comes while the X1 measures says where it really went
+        dome.taken = [...dome.taken, dirKey(planned)];
         const r = await gimbal.freshAttitude(t, 1500);
-        if (r) shotLog.push({ planned: st.d, got: pointing(r, home), joints: jointsOf(r) });
+        if (r) {
+          const top = clampTop(r.q);
+          shotLog.push({ planned, got: { az: wrap180(top.az - home.heading), inc: top.inc }, joints: jointsOf(r) });
+        }
       }
-    }
+    });
     dome.current = '';
-    if (!stopRequested) {
-      dome.phase = 'Home';
-      await moveToward({ az: 0, inc: 90 }, home);
-    }
   } catch (e) {
     dome.error = e instanceof Error ? e.message : String(e);
   } finally {
-    await gimbal.stop().catch(() => {});
+    await gimbal.targetsExit().catch(() => {});
     laser(false);
     finishSweep();
     dome.running = false;

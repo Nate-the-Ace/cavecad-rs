@@ -1,9 +1,9 @@
 // A DJI Osmo Mobile gimbal over Web Bluetooth (in the apps, the native bridge stands in for navigator.bluetooth).
 // DJI publishes nothing; the gimbal speaks DJI's DUML messages on service fff0 (write fff5, it talks back on fff4).
-// What the Osmo Mobile 7 actually does is measured in tools/cave-osmo/FINDINGS.md: only SPEED commands move it (the
-// angle commands 04/14 and 04/0a are ignored), timed turns land within a few per cent, once its handshake is answered it
-// reports its attitude (a quaternion) and joint angles once a second, and its clamp holds a strong magnet that upsets an
-// instrument's compass. Kept behind this small class so another pan-tilt head can replace it.
+// What the Osmo Mobile 7 actually does is measured in tools/cave-osmo/FINDINGS.md: it is positioned in TARGET MODE
+// (DJI's waypoints, as Mimo runs a panorama: ~1 s accurate moves, no flip); speed commands move it too (the joystick);
+// the angle commands 04/14 and 04/0a are ignored; once its handshake is answered it reports its attitude (a quaternion)
+// and joint angles once a second; its clamp holds a strong magnet that upsets an instrument's compass. Kept behind this small class so another pan-tilt head can replace it.
 
 const SERVICE = '0000fff0-0000-1000-8000-00805f9b34fb';
 const WRITE = '0000fff5-0000-1000-8000-00805f9b34fb';
@@ -144,10 +144,67 @@ export class OsmoGimbal {
       }
       (globalThis as { __cavecadDlog?: (s: string) => void }).__cavecadDlog?.(`gimbal pos ${JSON.stringify(this.position)}`);
       this.onPosition();
+    } else if (m.set === 0x04 && m.cmd === 0x6b && m.attr === 0x00 && m.payload.length >= 9 && m.payload[1] === 0x6d) {
+      // target mode status: [01 6d 06 01 S 00 i N id]
+      this.targets = { state: m.payload[4], index: m.payload[6], count: m.payload[7], id: m.payload[8], at: performance.now() };
     } else if (m.set === 0x04 && m.cmd === 0x57 && m.payload.length >= 4) {
       const i16 = (o: number) => (((m.payload[o] | (m.payload[o + 1] << 8)) << 16) >> 16);
       this.stick = { x: i16(0), y: i16(2) };
     }
+  }
+
+  // ---- target mode: DJI's waypoints, as DJI Mimo drives a panorama (FINDINGS "DJI's positioning protocol"). The
+  // gimbal is sent a list of attitude targets (yaw, roll, pitch relative to home, tenths of a degree) and told to go to
+  // each in turn; it solves its motors itself, takes ~1 s a move, never flips, and reports moving / arrived.
+  /** Last target-mode status: state 0x40 moving, 0x60 arrived, 0x20 aborted, 0x00 idle; which target; list id. */
+  targets = { state: 0, index: -1, count: 0, id: -1, at: 0 };
+  static readonly MOVING = 0x40;
+  static readonly ARRIVED = 0x60;
+  private uploadedAt = 0;
+
+  /** Into target mode (Mimo's order: follow mode, 04/0f, then enter). */
+  async targetsEnter() {
+    await this.send(duml(this.next(), 0x04, 0x4c, [0x01, 0x00], 0x40));
+    await this.send(duml(this.next(), 0x04, 0x0f, [0x22, 0x01, 0x00], 0x40));
+    await this.send(duml(this.next(), 0x04, 0x6b, [0x00, 0x00, 0x00, 0x6d], 0x40));
+  }
+
+  /** Sends a list of targets (at most 15: 16 or more are taken but never stepped through); the gimbal sets off for
+   * the first at once. */
+  async targetsUpload(list: { yaw: number; roll: number; pitch?: number }[], id: number) {
+    if (list.length < 1 || list.length > 15) throw new Error(`target lists hold 1 to 15, not ${list.length}`);
+    const body = [0x2c, 0x00, 0x00, 0x0a, list.length];
+    for (const t of list) body.push(60, 0, ...le16(t.yaw * 10), ...le16(t.roll * 10), ...le16((t.pitch ?? 0) * 10));
+    body.push(id & 0xff);
+    this.targets = { ...this.targets, state: 0, index: -1, id: -1 };
+    this.uploadedAt = performance.now();
+    await this.send(duml(this.next(), 0x04, 0x6d, [0x01, body.length, ...body], 0x40));
+  }
+
+  /** Go to target `i` of the uploaded list. */
+  async targetsGo(i: number) {
+    await this.send(duml(this.next(), 0x04, 0x6d, [0x00, 0x06, 0x40, 0x00, i & 0xff, 0x0a, 0x00, 0x00], 0x40));
+  }
+
+  /** Out of target mode (the gimbal then goes home: send a home target first so it does not swing). */
+  async targetsExit() {
+    await this.send(duml(this.next(), 0x04, 0x6b, [0x00, 0x01, 0x00, 0x6d], 0x40));
+    await this.send(duml(this.next(), 0x04, 0x6d, [0x01, 0x06, 0xc0, 0x00, 0x00, 0x00, 0x00, 0x00], 0x40));
+  }
+
+  /** Waits for "arrived" at target `i` of list `id`: 'arrived', 'aborted' (the gimbal left target mode) or 'timeout'. */
+  async targetsArrived(i: number, id: number, waitMs = 4000): Promise<'arrived' | 'aborted' | 'timeout'> {
+    const end = performance.now() + waitMs;
+    while (performance.now() < end) {
+      const t = this.targets;
+      // 0x60 arrived; 0x6c arrived with the target clamped by the gimbal (seen at yaw +120)
+      if (t.id === (id & 0xff) && t.index === i && (t.state & 0xf0) === OsmoGimbal.ARRIVED) return 'arrived';
+      // 0x20 (or idle) after the list went up: the gimbal dropped it and went home. (Right after entering, before any
+      // list, it also says 0x20: that one is only "ready".)
+      if (t.at > this.uploadedAt + 50 && (t.state === 0x20 || t.state === 0x00)) return 'aborted';
+      await new Promise((r) => setTimeout(r, 30));
+    }
+    return 'timeout';
   }
 
   /** The first attitude report that arrives after `after` (performance.now() time), or null after `waitMs`. */

@@ -149,6 +149,19 @@ export class WebBleInstrument implements Instrument {
     if (this.kind === 'x1') this.write(Uint8Array.from(on ? this.cat.x1.laserOn : this.cat.x1.laserOff));
   }
 
+  private awakeTimer: ReturnType<typeof setInterval> | undefined;
+  /** Keeps an X1 from going to sleep: a harmless one-byte memory read (3d, address 0, 1 byte) every 45 s, the only X1
+   * command known to change nothing (cave-x1 FINDINGS; no sleep setting is known, and memory writes are refused). */
+  keepAwake(on: boolean) {
+    clearInterval(this.awakeTimer);
+    this.awakeTimer = undefined;
+    if (!on) return;
+    const ping = Uint8Array.from([0x64, 0x61, 0x74, 0x61, 0x3a, 4, 0x3d, 0x00, 0x00, 0x01, 0x0d, 0x0a]);
+    this.awakeTimer = setInterval(() => {
+      if (this.kind === 'x1' && this.canTakeShot) this.write(ping);
+    }, 45_000);
+  }
+
   /** What the browser's device chooser is asked to show: the known instruments by their names, or everything. */
   private chooser(): unknown {
     const reach = [...allServices(this.cat), ...(this.opts.services ?? [])];

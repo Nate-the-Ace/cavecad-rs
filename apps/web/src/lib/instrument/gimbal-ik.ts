@@ -168,97 +168,125 @@ export function domeDirections(step: number): Direction[] {
   return out;
 }
 
-/** One planned shot: the direction and its answer measured from home (turnYaw = yaw from home). */
+// ---- target mode (DJI's waypoints; tools/cave-osmo FINDINGS "DJI's positioning protocol") -------------------------
+// The gimbal is given attitude targets (yaw, roll; pitch left at its home sag) and solves its motors itself: no flip,
+// ~1 s a move whatever its size, "arrived" reported. Measured: the clamp ends at roll −90 − r about a yaw axis that is
+// itself tilted back by the home sag (with the X1 aboard the handle/clamp sag ~16° back at home; left in, accounted for
+// here, not commanded away). So the clamp top's direction for a target, relative to home's heading (north-east-down):
+//   v = Ry(sag) · Rz(yaw) · (0, cos ra, sin ra), ra = −90 − roll;  inc = asin(−v_down), az = atan2(v_east, v_north)
+// Fits every bench point to ~1.5° (target 0/45 → −105.3 / 42.8 measured −105.6 / 42.9; −180/45 → 105.3 / 42.8
+// measured 104.7 / 44.5; −90/90 → 180 / −15.8 measured 178.9 / −14.4).
+
+/** A target as the gimbal takes it: degrees, relative to home. */
+export interface Target {
+  yaw: number;
+  roll: number;
+}
+
+/** What target mode allows: roll −75…+110 (the gimbal caps the − side at ~77°; + tested to 110 = 20° below level);
+ * yaw −200…+95 (lopsided like the pan stops: −195 and −184 run, +120 is taken clamped, +176…180 is refused with 0x90;
+ * a yaw past +95 is asked for 360° lower); big moves split into steps of at most `maxStep` (each takes ~1 s, so small
+ * steps are gentle with the X1's weight). */
+export const OM7_TARGETS = { roll: [-75, 110] as [number, number], yaw: [-200, 95] as [number, number], maxStep: 20 };
+
+/** The home sag measured on the bench with the X1 aboard (°): used to plan before the gimbal reports its own. */
+export const NOMINAL_SAG = 16;
+
+/** Where the clamp top points for a target, relative to home's heading, with the clamp sagging `sag` at home. */
+export function targetPointing(t: Target, sag: number): Direction {
+  const ra = (-90 - t.roll) / DEG, p = sag / DEG, y = t.yaw / DEG;
+  // w = Rz(yaw) · (0, cos ra, sin ra)
+  const wx = -Math.cos(ra) * Math.sin(y), wy = Math.cos(ra) * Math.cos(y), wz = Math.sin(ra);
+  // v = Ry(sag) · w
+  const n = wx * Math.cos(p) + wz * Math.sin(p), e = wy, d = -wx * Math.sin(p) + wz * Math.cos(p);
+  return { az: Math.atan2(e, n) * DEG, inc: Math.asin(Math.max(-1, Math.min(1, -d))) * DEG };
+}
+
+/** Every target that points at `d` within the reach, cheapest from `from` first. */
+export function targetSolutions(d: Direction, sag: number, from: Target = { yaw: 0, roll: 0 }, reach = OM7_TARGETS): Target[] {
+  const p = sag / DEG, az = d.az / DEG, inc = d.inc / DEG;
+  const n = Math.cos(inc) * Math.cos(az), e = Math.cos(inc) * Math.sin(az), dn = -Math.sin(inc);
+  // w = Ry(−sag) · v
+  const wx = n * Math.cos(p) - dn * Math.sin(p), wy = e, wz = n * Math.sin(p) + dn * Math.cos(p);
+  const out: Target[] = [];
+  const a = Math.asin(Math.max(-1, Math.min(1, wz)));
+  for (const ra of [a, Math.PI - a]) {
+    const c = Math.cos(ra);
+    if (Math.abs(c) < 1e-6) {
+      // the clamp top along the (tilted) yaw axis: any yaw does; keep it still
+      out.push({ yaw: from.yaw, roll: wrap180(-90 - ra * DEG) });
+      continue;
+    }
+    const yaw0 = Math.atan2(-wx / c, wy / c) * DEG;
+    const roll = wrap180(-90 - ra * DEG);
+    if (roll < reach.roll[0] || roll > reach.roll[1]) continue;
+    // the same heading a turn either way, wherever it fits the lopsided yaw range
+    for (const yaw of [yaw0, yaw0 - 360, yaw0 + 360]) if (yaw >= reach.yaw[0] && yaw <= reach.yaw[1]) out.push({ yaw, roll });
+  }
+  const cost = (t: Target) => Math.abs(t.yaw - from.yaw) + Math.abs(t.roll - from.roll);
+  return out.sort((x, y) => cost(x) - cost(y));
+}
+
+/** One planned shot: the direction asked for, the target that takes it there, and its place in the order. */
 export interface PlannedShot {
   d: Direction;
-  s: Solution;
-  /** Which column (one yaw, the shots in it differ only in roll). */
+  t: Target;
   col: number;
 }
 
-/** Plans a scan for smooth, fast running: every reachable direction solved from home, grouped into columns of one yaw
- * (inside a column only the roll moves, in small steps, in roll order so it never doubles back), columns swept from
- * one pan end to the other with the roll zig-zagging. Says which directions are out of reach. */
-export function plan(dirs: Direction[], home: Att, limits: JointLimits = OM7_PORTRAIT) {
+/** Plans a scan: every reachable direction as a target, in the order that moves least: from home, always the nearest
+ * remaining shot (by yaw plus roll to turn), each shot taking whichever of its two targets is nearer from there. */
+export function plan(dirs: Direction[], sag: number, reach = OM7_TARGETS) {
   const unreachable: Direction[] = [];
-  const cols = new Map<number, { d: Direction; s: Solution }[]>();
+  const left: { d: Direction; ts: Target[] }[] = [];
   for (const d of dirs) {
-    const s = solutions(d, home, home, limits)[0];
-    if (!s) {
-      unreachable.push(d);
-      continue;
-    }
-    const k = Math.round(s.turnYaw * 10) / 10;
-    if (!cols.has(k)) cols.set(k, []);
-    cols.get(k)!.push({ d, s });
+    const ts = targetSolutions(d, sag, { yaw: 0, roll: 0 }, reach);
+    if (ts.length) left.push({ d, ts });
+    else unreachable.push(d);
   }
   const steps: PlannedShot[] = [];
-  // start at the column nearest home (no pan), then sweep to the nearer pan end, then the far side
-  const keys = [...cols.keys()].sort((a, b) => a - b);
-  const zero = keys.reduce((b, k) => (Math.abs(k) < Math.abs(b) ? k : b), keys[0] ?? 0);
-  const lower = keys.filter((k) => k < zero).reverse(), upper = keys.filter((k) => k > zero);
-  const order = [zero, ...(upper.length <= lower.length ? [...upper, ...lower] : [...lower, ...upper])].filter((k) => cols.has(k));
-  const hr = euler(home.q)[0];
-  let rollAt = hr;
-  for (const [i, k] of order.entries()) {
-    const col = cols.get(k)!.sort((a, b) => a.s.roll - b.s.roll);
-    // start from the column end nearer where the roll is (upright after a pan)
-    if (Math.abs(wrap180(col[col.length - 1].s.roll - rollAt)) < Math.abs(wrap180(col[0].s.roll - rollAt))) col.reverse();
-    for (const c of col) steps.push({ ...c, col: i });
-    rollAt = order.length > i + 1 && Math.abs(order[i + 1] - k) > 3 ? hr : col[col.length - 1].s.roll;
+  let at: Target = { yaw: 0, roll: 0 };
+  const cost = (t: Target) => Math.abs(t.yaw - at.yaw) + Math.abs(t.roll - at.roll);
+  while (left.length) {
+    let bi = 0, bt = left[0].ts[0], bc = Infinity;
+    for (const [i, c] of left.entries())
+      for (const t of c.ts) {
+        const k = cost(t);
+        if (k < bc) [bi, bt, bc] = [i, t, k];
+      }
+    steps.push({ d: left[bi].d, t: bt, col: steps.length });
+    at = bt;
+    left[bi] = left[left.length - 1];
+    left.pop();
   }
-  let travel = 0;
-  for (let i = 1; i < steps.length; i++) travel += Math.abs(steps[i].s.turnYaw - steps[i - 1].s.turnYaw) + Math.abs(wrap180(steps[i].s.roll - steps[i - 1].s.roll));
-  return { steps, unreachable, travel, columns: order.length };
+  return { steps, unreachable, columns: steps.length };
 }
 
-/** A precalculated move: turn at these rates (°/s: pan = yaw, tilt = pitch, roll) for `ms`; `shot` fires the X1 at
- * planned shot `shot` when the move is done; `laser` turns it on before the move (it warms up while the gimbal
- * turns). */
-export interface Op {
-  yaw: number;
-  pitch: number;
-  roll: number;
-  ms: number;
-  laser?: boolean;
+/** One target of a precalculated program; `shot` = which planned shot to take on arrival (none: a smoothing step). */
+export interface ProgramStep {
+  t: Target;
   shot?: number;
 }
 
-/** Timed turns come up about 2° short, big or small (bench 2026-11-17: 5→3.3, 10→9.3, 20→18, 45→41.4, 80→77.3). */
-export const MOVE_SHORTFALL = 2;
-
-/** The whole scan as moves, worked out in advance and played as they stand (no reckoning while it runs): from home
- * (pan centred, upright) to each shot in plan order; between columns the clamp stands upright first, then pans, then
- * rolls; roll and pan at `rate`, each move lengthened for the shortfall; back home at the end. */
-export function compile(p: ReturnType<typeof plan>, home: Att, rate = 30): Op[] {
-  const hr = euler(home.q)[0];
-  const ops: Op[] = [];
-  let yaw = 0, roll = hr;
-  const turn = (axis: 'yaw' | 'roll', deg: number, extra: Partial<Op> = {}) => {
-    if (Math.abs(deg) < 0.3) return false;
-    ops.push({ yaw: 0, pitch: 0, roll: 0, [axis]: Math.sign(deg) * rate, ms: ((Math.abs(deg) + MOVE_SHORTFALL) / rate) * 1000, ...extra });
-    return true;
+/** The whole scan as targets, worked out in advance: from home through every shot in plan order, any move bigger than
+ * `maxStep` split into even steps (gentle with the X1's weight), and back home at the end. */
+export function compile(p: ReturnType<typeof plan>, reach = OM7_TARGETS): ProgramStep[] {
+  const out: ProgramStep[] = [];
+  let at: Target = { yaw: 0, roll: 0 };
+  const go = (t: Target, shot?: number) => {
+    const dy = t.yaw - at.yaw, dr = t.roll - at.roll;
+    const n = Math.max(1, Math.ceil(Math.max(Math.abs(dy), Math.abs(dr)) / reach.maxStep - 1e-9));
+    for (let k = 1; k < n; k++) out.push({ t: { yaw: at.yaw + (dy * k) / n, roll: at.roll + (dr * k) / n } });
+    out.push(shot === undefined ? { t } : { t, shot });
+    at = t;
   };
-  for (const [i, st] of p.steps.entries()) {
-    const dy = st.s.turnYaw - yaw;
-    if (Math.abs(dy) > 3) {
-      turn('roll', wrap180(hr - roll));
-      roll = hr;
-      turn('yaw', dy);
-      yaw = st.s.turnYaw;
-    }
-    const moved = turn('roll', wrap180(st.s.roll - roll), { laser: true });
-    roll = st.s.roll;
-    if (moved) ops[ops.length - 1].shot = i;
-    else ops.push({ yaw: 0, pitch: 0, roll: 0, ms: 0, laser: true, shot: i });
-  }
-  turn('roll', wrap180(hr - roll));
-  turn('yaw', -yaw);
-  return ops;
+  for (const [i, st] of p.steps.entries()) go(st.t, i);
+  go({ yaw: 0, roll: 0 });
+  return out;
 }
 
-/** How long a program takes: its moves, a settle after each shot's move, and the shots (~1.5 s with the laser warmed
- * during the move). */
-export function programSeconds(ops: Op[], o: { shotS: number; settleS: number }) {
-  return ops.reduce((t, op) => t + op.ms / 1000 + (op.shot !== undefined ? o.shotS + o.settleS : 0), 0);
+/** How long a program takes: ~1 s a target (move and "arrived"), plus a settle and the shot (~1.5 s, the laser warmed
+ * during the move) for each shot. */
+export function programSeconds(prog: ProgramStep[], o: { moveS: number; shotS: number; settleS: number }) {
+  return prog.reduce((t, st) => t + o.moveS + (st.shot !== undefined ? o.shotS + o.settleS : 0), 0);
 }

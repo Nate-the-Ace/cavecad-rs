@@ -480,6 +480,11 @@ export function laser(on: boolean) {
   instrument?.laser?.(on);
 }
 
+/** Keeps the X1 awake (a harmless ping every 45 s) while something drives it unattended, e.g. a gimbal is connected. */
+export function keepInstrumentAwake(on: boolean) {
+  (instrument as { keepAwake?: (on: boolean) => void } | null | undefined)?.keepAwake?.(on);
+}
+
 let sweepTimer: ReturnType<typeof setInterval> | undefined;
 let laserForSweep = false;
 

@@ -1,6 +1,6 @@
 // Gimbal kinematics (attitude model): every answer points where asked, stays in the safe windows, and goes round the
 // other way where the short way would flip the roll. Same cases as the Rust library's aim tests.
-import { solutions, pointing, fromEuler, euler, homeFrom, plan, compile, programSeconds, panRollDrag, ringDirections, domeDirections, clampTop, OM7_PORTRAIT, wrap180, type Att } from '../src/lib/instrument/gimbal-ik.ts';
+import { solutions, pointing, fromEuler, euler, homeFrom, plan, compile, programSeconds, targetPointing, targetSolutions, OM7_TARGETS, ringDirections, domeDirections, clampTop, OM7_PORTRAIT, wrap180, type Att } from '../src/lib/instrument/gimbal-ik.ts';
 
 let fails = 0;
 const ok = (c: boolean, msg: string) => {
@@ -43,57 +43,53 @@ ok(solutions({ az: -150, inc: 10 }, home, home).length === 0, 'behind-left low')
   ok(Math.abs(wrap180(euler(h.q)[2] + 4)) < 0.01 && Math.abs(euler(h.q)[0] + 90) < 0.01 && Math.abs(h.roll - 95.7) < 0.01, `homeFrom ${JSON.stringify(h)}`);
 }
 
-// a ring with the gimbal facing the forward station: both walls (az 90 and -90) reachable to 15 below level, the left
-// one by going round; deeper than ~19 below on either side is past the roll window
+// ---- target mode: the model against the bench (sag 15.8, X1 aboard)
 {
-  const p = plan(ringDirections(0, 15, -15), home);
-  ok(p.unreachable.length === 0, `ring: ${JSON.stringify(p.unreachable)}`);
-  const deep = plan(ringDirections(0, 10, -30), home);
-  ok(deep.unreachable.length > 0 && deep.unreachable.every((d) => d.inc < -15), `deep ring misses only the deep ones: ${JSON.stringify(deep.unreachable)}`);
-}
-// facing a wall cannot work: the pan stops (+84 / -198) cannot face behind
-ok(plan(ringDirections(-90, 15, 0), home).unreachable.length > 0, 'facing a wall misses the back wall');
-// dome: straight up first, most of it reachable
-{
-  const all = domeDirections(15);
-  const p = plan(all, home);
-  ok(p.unreachable.length < all.length / 3, `dome reaches most: ${p.unreachable.length} of ${all.length} missed`);
-}
-
-// columns: inside one the yaw never changes and the roll moves one step at a time; the ring is two columns (the
-// right wall with the top and the high left wall, then the left wall from behind)
-{
-  const p = plan(ringDirections(0, 10, -20), home);
-  ok(p.columns === 2, `ring columns ${p.columns}`);
-  for (let i = 1; i < p.steps.length; i++)
-    if (p.steps[i].col === p.steps[i - 1].col) {
-      ok(Math.abs(p.steps[i].s.turnYaw - p.steps[i - 1].s.turnYaw) < 0.2, 'same yaw in a column');
-      ok(Math.abs(wrap180(p.steps[i].s.roll - p.steps[i - 1].s.roll)) <= 10.01, `one step of roll: ${p.steps[i - 1].s.roll} -> ${p.steps[i].s.roll}`);
-    }
-  // the program: replaying its moves (with the shortfall taken back off) lands on every shot and ends home
-  const ops = compile(p, home);
-  let yaw = 0, roll = -90;
-  const seen: number[] = [];
-  for (const op of ops) {
-    const deg = Math.max(0, (op.ms / 1000) * 30 - 2);
-    yaw += Math.sign(op.yaw) * (op.yaw ? deg : 0);
-    roll += Math.sign(op.roll) * (op.roll ? deg : 0);
-    // the roll joint (with the pan's drag) never passes its window on the way
-    const rj = 95.7 + wrap180(roll + 90) + panRollDrag(yaw);
-    ok(rj >= OM7_PORTRAIT.roll[0] - 3 && rj <= OM7_PORTRAIT.roll[1] + 0.01, `roll joint inside on the way: ${rj} at yaw ${yaw}`);
-    if (op.shot !== undefined) {
-      const s = p.steps[op.shot].s;
-      ok(Math.abs(yaw - s.turnYaw) < 0.01 && Math.abs(wrap180(roll - s.roll)) < 0.01, `shot ${op.shot} at yaw ${yaw} roll ${roll}, planned ${s.turnYaw} ${s.roll}`);
-      seen.push(op.shot);
-    }
+  const bench: [number, number, number, number][] = [
+    // target yaw, roll -> measured az, inc
+    [0, 0, 180, 74.1],
+    [0, 45, -105.6, 42.9],
+    [0, 90, -90.3, -0.5],
+    [0, 110, -84.9, -19.1],
+    [-180, 90, 90.6, 1.2],
+    [-180, 110, 85.4, -17.7],
+    [-180, 45, 104.7, 44.5],
+  ];
+  for (const [y, r, az, inc] of bench) {
+    const g = targetPointing({ yaw: y, roll: r }, 15.8);
+    ok(Math.abs(wrap180(g.az - az)) < 2 && Math.abs(g.inc - inc) < 2, `target ${y}/${r}: model ${g.az.toFixed(1)}/${g.inc.toFixed(1)}, bench ${az}/${inc}`);
   }
-  ok(seen.length === p.steps.length, 'every shot once');
-  ok(Math.abs(yaw) < 0.01 && Math.abs(roll + 90) < 0.01, `ends home: ${yaw} ${roll}`);
-  const secs = programSeconds(ops, { shotS: 1.5, settleS: 0.3 });
-  ok(secs > p.steps.length * 1.8 && secs < p.steps.length * 4, `ring time ${secs}`);
+  // inverse: every answer points back where asked, inside the reach
+  for (let az = -180; az < 180; az += 15)
+    for (let inc = -20; inc <= 90; inc += 10)
+      for (const t of targetSolutions({ az, inc }, 16)) {
+        const g = targetPointing(t, 16);
+        ok((inc > 89.9 || Math.abs(wrap180(g.az - az)) < 0.01) && Math.abs(g.inc - inc) < 0.01, `inverse ${az}/${inc} -> ${JSON.stringify(t)} -> ${JSON.stringify(g)}`);
+        ok(t.roll >= OM7_TARGETS.roll[0] && t.roll <= OM7_TARGETS.roll[1], 'roll in reach');
+      }
+  // straight up is reachable: lean out the sag with roll
+  ok(targetSolutions({ az: 0, inc: 90 }, 16).length > 0, 'straight up');
+  // both walls level and 20 below: reachable (left = yaw 0 roll + ; right = yaw -180 roll +, or the short side)
+  for (const az of [90, -90]) for (const inc of [0, -10, -18]) ok(targetSolutions({ az, inc }, 16).length > 0, `wall ${az} at ${inc}`);
+  // a ring facing the forward station, every 10 to 18 below: all reachable; program steps never jump more than 20
+  const p = plan(ringDirections(0, 10, -18), 16);
+  ok(p.unreachable.length === 0, `ring: ${JSON.stringify(p.unreachable)}`);
+  const prog = compile(p);
+  let at = { yaw: 0, roll: 0 };
+  for (const st of prog) {
+    ok(Math.abs(st.t.yaw - at.yaw) <= 20.01 && Math.abs(st.t.roll - at.roll) <= 20.01 && st.t.yaw >= OM7_TARGETS.yaw[0] && st.t.yaw <= OM7_TARGETS.yaw[1], `step ${JSON.stringify(at)} -> ${JSON.stringify(st.t)}`);
+    at = st.t;
+  }
+  ok(prog.filter((st) => st.shot !== undefined).length === p.steps.length, 'every shot once');
+  ok(Math.abs(at.yaw) < 0.01 && Math.abs(at.roll) < 0.01, 'ends home');
+  const secs = programSeconds(prog, { moveS: 1, shotS: 1.5, settleS: 0.3 });
+  ok(secs > p.steps.length * 2.5 && secs < p.steps.length * 5, `ring ${p.steps.length} shots in ${secs} s`);
+  // the dome: most reachable, plans fast
   const t0 = Date.now();
-  compile(plan(domeDirections(4), home), home);
-  ok(Date.now() - t0 < 300, `dome 4° plans fast: ${Date.now() - t0} ms`);
+  const dp = plan(domeDirections(5), 16);
+  compile(dp);
+  ok(Date.now() - t0 < 300, `dome 5° plans fast: ${Date.now() - t0} ms`);
+  ok(dp.unreachable.length < domeDirections(5).length / 10, `dome reach: ${dp.unreachable.length} missed`);
 }
 
 if (fails) {
