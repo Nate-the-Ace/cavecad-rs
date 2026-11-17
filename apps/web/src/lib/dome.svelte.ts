@@ -29,8 +29,8 @@ import {
 } from './instrument/gimbal-ik';
 import { survey, laser, takeShot, startDrivenSweep, finishSweep, keepInstrumentAwake } from './survey.svelte';
 
-/** Seconds a target takes (move and "arrived"; bench ~1 s whatever its size). */
-const MOVE_S = 1.0;
+/** After a move's own time, until the gimbal says "arrived" (s). */
+const ARRIVE_S = 0.5;
 /** Seconds to leave and re-enter target mode between lists (at home: no move). */
 const LIST_S = 0.8;
 /** Seconds a shot takes with the laser warmed during the move (bench: 1.46). */
@@ -153,7 +153,7 @@ function program(kind: 'ring' | 'dome', level: number, sag = dome.sag): Program 
       points: dirs.map((d) => ({ ...d, ok: !miss.has(d), key: dirKey(d) })),
       shots: pl.steps.length,
       missed: pl.unreachable.length,
-      secs: programSeconds(lists.flat(), { moveS: MOVE_S, shotS: SHOT_S, settleS: SETTLE_S }) + lists.length * LIST_S,
+      secs: programSeconds(lists.flat(), { arriveS: ARRIVE_S, shotS: SHOT_S, settleS: SETTLE_S }) + lists.length * LIST_S,
     };
     if (programs.size > 40) programs.clear();
     programs.set(key, got);
@@ -243,13 +243,13 @@ async function playTargets(lists: ProgramStep[][], onArrive: (st: ProgramStep) =
       if (stopRequested) return;
       // every list (the first too: getting ready left the home list loaded) goes in fresh: leave, enter again (at
       // home: no move), give the gimbal a moment to settle into target mode, send
-      await gimbal.targetsLeave();
-      await pause(400);
+      if (!(await gimbal.targetsLeave())) dlog('gimbal: no "cleared" after leaving target mode; carrying on');
+      await pause(300);
       await gimbal.targetsEnter(true);
       await pause(2500);
       const id = (listId = ((listId + 1) & 0x7f) | 0x30);
       if (list[0].shot !== undefined) laser(true);
-      await gimbal.targetsUpload(list.map((st) => st.t), id);
+      await gimbal.targetsUpload(list.map((st) => ({ ...st.t, ms: st.ms })), id);
       let k = 0;
       for (; k < list.length; k++) {
         if (stopRequested) return;
@@ -257,11 +257,11 @@ async function playTargets(lists: ProgramStep[][], onArrive: (st: ProgramStep) =
           if (list[k].shot !== undefined) laser(true);
           await gimbal.targetsGo(k);
         }
-        let r = await gimbal.targetsArrived(k, id, 5000);
+        let r = await gimbal.targetsArrived(k, id, list[k].ms + 5000);
         if (r === 'timeout') {
           // seen once on the phone: the first target of a fresh list sat "moving"; asking again got it there
           await gimbal.targetsGo(k);
-          r = await gimbal.targetsArrived(k, id, 5000);
+          r = await gimbal.targetsArrived(k, id, list[k].ms + 5000);
         }
         dlog(`gimbal list ${li + 1}/${lists.length} target ${k + 1}/${list.length} yaw ${list[k].t.yaw.toFixed(1)} roll ${list[k].t.roll.toFixed(1)}: ${r} (status ${JSON.stringify(gimbal.targets)})`);
         if (r !== 'arrived') break;

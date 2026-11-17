@@ -187,9 +187,11 @@ export interface Target {
  * is the short side, where the X1 hangs out sideways: on the phone a move to −61 overloaded it and it went home;
  * + tested to 110 = 20° below level);
  * yaw −200…+95 (lopsided like the pan stops: −195 and −184 run, +120 is taken clamped, +176…180 is refused with 0x90;
- * a yaw past +95 is asked for 360° lower); big moves split into steps of at most `maxStep` (each takes ~1 s, so small
- * steps are gentle with the X1's weight; 20 was too quick on the phone). */
-export const OM7_TARGETS = { roll: [-35, 110] as [number, number], yaw: [-200, 95] as [number, number], maxStep: 12 };
+ * a yaw past +95 is asked for 360° lower). Each target carries its move time (the gimbal's per-target field is the
+ * move's duration in hundredths of a second: 300 → a 45° move in ~3.5 s, 1000 → 10.4 s; Mimo sends 0.6 s, too quick
+ * with the X1): moves run at `dps`, never under `minMs`; moves longer than `maxStep` are split so the gimbal's path
+ * stays close to the planned one. */
+export const OM7_TARGETS = { roll: [-35, 110] as [number, number], yaw: [-200, 95] as [number, number], maxStep: 45, dps: 15, minMs: 600 };
 
 /** The home sag measured on the bench with the X1 aboard (°): used to plan before the gimbal reports its own. */
 export const NOMINAL_SAG = 16;
@@ -267,15 +269,16 @@ export function plan(dirs: Direction[], sag: number, reach = OM7_TARGETS) {
 /** One target of a precalculated program; `shot` = which planned shot to take on arrival (none: a travel step). */
 export interface ProgramStep {
   t: Target;
+  /** How long the move to this target takes (the gimbal's own pacing). */
+  ms: number;
   shot?: number;
 }
 
 /** Targets in one list the gimbal will run (16 or more are taken but never stepped through). */
 export const LIST_MAX = 15;
-/** Most steps on the way out from home or back to it, in one list: the legs to a far patch stretch their steps (up
- * to ~37° for the farthest) rather than eat the list. 5 balances time and gentleness (5° dome: 6 legs 87 min, 5 79,
- * 4 73, 3 67). */
-const LEG_STEPS = 5;
+/** Most steps on the way out from home or back to it, in one list (the pace is set by each move's time, so a leg needs
+ * few steps; they only keep the path near the planned one). */
+const LEG_STEPS = 3;
 
 const HOME: Target = { yaw: 0, roll: 0 };
 const span = (a: Target, b: Target) => Math.max(Math.abs(b.yaw - a.yaw), Math.abs(b.roll - a.roll));
@@ -293,10 +296,20 @@ const legSteps = (a: Target, b: Target, step: number, cap: number) => Math.min(c
 export function compileLists(p: ReturnType<typeof plan>, reach = OM7_TARGETS): ProgramStep[][] {
   const lists: ProgramStep[][] = [];
   const legStep = (a: Target, b: Target) => Math.max(reach.maxStep, span(a, b) / LEG_STEPS);
+  const ms = (a: Target, b: Target) => Math.max(reach.minMs, (span(a, b) / reach.dps) * 1000);
+  // each step's time from the target before it in the list (home before the first)
+  const timed = (l: { t: Target; shot?: number }[]): ProgramStep[] => {
+    let at = HOME;
+    return l.map((st) => {
+      const out = { ...st, ms: ms(at, st.t) };
+      at = st.t;
+      return out;
+    });
+  };
   let i = 0;
   while (i < p.steps.length) {
     const first = p.steps[i].t;
-    const list: ProgramStep[] = legTo(HOME, first, legStep(HOME, first)).map((t) => ({ t }));
+    const list: { t: Target; shot?: number }[] = legTo(HOME, first, legStep(HOME, first)).map((t) => ({ t }));
     list[list.length - 1].shot = i;
     let at = first;
     i++;
@@ -312,7 +325,7 @@ export function compileLists(p: ReturnType<typeof plan>, reach = OM7_TARGETS): P
       i++;
     }
     list.push(...legTo(at, HOME, legStep(at, HOME)).map((t) => ({ t })));
-    lists.push(list);
+    lists.push(timed(list));
   }
   return lists;
 }
@@ -320,8 +333,8 @@ export function compileLists(p: ReturnType<typeof plan>, reach = OM7_TARGETS): P
 /** All the lists end to end (the order the gimbal runs them). */
 export const compile = (p: ReturnType<typeof plan>, reach = OM7_TARGETS): ProgramStep[] => compileLists(p, reach).flat();
 
-/** How long a program takes: ~1 s a target (move and "arrived"), plus a settle and the shot (~1.5 s, the laser warmed
- * during the move) for each shot. */
-export function programSeconds(prog: ProgramStep[], o: { moveS: number; shotS: number; settleS: number }) {
-  return prog.reduce((t, st) => t + o.moveS + (st.shot !== undefined ? o.shotS + o.settleS : 0), 0);
+/** How long a program takes: each move's own time, the gimbal's "arrived" (~0.5 s after), and a settle and the shot
+ * (~1.5 s, the laser warmed during the move) for each shot. */
+export function programSeconds(prog: ProgramStep[], o: { arriveS: number; shotS: number; settleS: number }) {
+  return prog.reduce((t, st) => t + st.ms / 1000 + o.arriveS + (st.shot !== undefined ? o.shotS + o.settleS : 0), 0);
 }

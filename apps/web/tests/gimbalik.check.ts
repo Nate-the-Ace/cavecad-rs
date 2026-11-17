@@ -82,13 +82,13 @@ ok(solutions({ az: -150, inc: 10 }, home, home).length === 0, 'behind-left low')
     ok(Math.abs(last.yaw) < 0.01 && Math.abs(last.roll) < 0.01, 'every list ends home');
     let at = { yaw: 0, roll: 0 };
     for (const st of l) {
-      // out and back legs stretch up to ~40° (the farthest, 200° of yaw, in 5); between shots at most 12
-      ok(Math.abs(st.t.yaw - at.yaw) <= 40 && Math.abs(st.t.roll - at.roll) <= 40 && st.t.yaw >= OM7_TARGETS.yaw[0] && st.t.yaw <= OM7_TARGETS.yaw[1], `step ${JSON.stringify(at)} -> ${JSON.stringify(st.t)}`);
+      // legs up to ~67° (the farthest, 200° of yaw, in 3), at most 45 between shots; each move timed at 15°/s
+      ok(Math.abs(st.t.yaw - at.yaw) <= 70 && Math.abs(st.t.roll - at.roll) <= 70 && st.ms >= 600 && st.ms <= 15000 && st.t.yaw >= OM7_TARGETS.yaw[0] && st.t.yaw <= OM7_TARGETS.yaw[1], `step ${JSON.stringify(at)} -> ${JSON.stringify(st.t)}`);
       at = st.t;
     }
   }
   ok(prog.filter((st) => st.shot !== undefined).length === p.steps.length, 'every shot once');
-  const secs = programSeconds(prog, { moveS: 1, shotS: 1.5, settleS: 0.3 });
+  const secs = programSeconds(prog, { arriveS: 0.5, shotS: 1.5, settleS: 0.3 });
   ok(secs > p.steps.length * 2.5 && secs < p.steps.length * 7, `ring ${p.steps.length} shots in ${secs} s`);
   // the dome: most reachable, plans fast
   const t0 = Date.now();

@@ -172,17 +172,31 @@ export class OsmoGimbal {
     await this.send(duml(this.next(), 0x04, 0x6b, [0x00, 0x00, 0x00, 0x6d], 0x40));
   }
 
-  /** Out of target mode, holding where it is (the way to send a new list: leave, enter again, send). */
-  async targetsLeave() {
-    await this.send(duml(this.next(), 0x04, 0x6b, [0x00, 0x01, 0x00, 0x6d], 0x40));
+  /** Out of target mode, holding where it is (the way to send a new list: leave, enter again, send). Waits until the
+   * gimbal says the list is cleared (status 0x00); a leave sent while it is still moving is ignored, so it is sent
+   * again (up to 4 times). True once cleared. */
+  async targetsLeave(): Promise<boolean> {
+    for (let k = 0; k < 4; k++) {
+      const t0 = performance.now();
+      await this.send(duml(this.next(), 0x04, 0x6b, [0x00, 0x01, 0x00, 0x6d], 0x40));
+      while (performance.now() - t0 < 1500) {
+        if (this.targets.at > t0 && this.targets.state === 0x00) return true;
+        await new Promise((r) => setTimeout(r, 40));
+      }
+    }
+    return false;
   }
 
   /** Sends a list of targets (at most 15: 16 or more are taken but never stepped through); the gimbal sets off for
    * the first at once. */
-  async targetsUpload(list: { yaw: number; roll: number; pitch?: number }[], id: number) {
+  async targetsUpload(list: { yaw: number; roll: number; pitch?: number; ms?: number }[], id: number) {
     if (list.length < 1 || list.length > 15) throw new Error(`target lists hold 1 to 15, not ${list.length}`);
     const body = [0x2c, 0x00, 0x00, 0x0a, list.length];
-    for (const t of list) body.push(60, 0, ...le16(t.yaw * 10), ...le16(t.roll * 10), ...le16((t.pitch ?? 0) * 10));
+    for (const t of list) {
+      // the move's time in hundredths of a second (bench: 300 → ~3.5 s, 1000 → 10.4 s; Mimo sends 60)
+      const cs = Math.max(1, Math.min(65535, Math.round((t.ms ?? 600) / 10)));
+      body.push(cs & 0xff, cs >> 8, ...le16(t.yaw * 10), ...le16(t.roll * 10), ...le16((t.pitch ?? 0) * 10));
+    }
     body.push(id & 0xff);
     this.targets = { ...this.targets, state: 0, index: -1, id: -1 };
     this.uploadedAt = performance.now();
