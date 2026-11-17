@@ -7,7 +7,7 @@
 import { cave, changed, focusStation } from './cave.svelte';
 import { engine, loadEngine } from './engine';
 import { WebBleInstrument } from './instrument/webble';
-import { followLog, resetMarks } from './x1-marks.svelte';
+import { followLog, placeFeatures, resetMarks } from './x1-marks.svelte';
 import type { Catalog, Device, HeldView, Instrument, LinkBridge, LinkEvents, LinkStatus, LogEntry, Reading, SessionState, Snapshot, Step, StandingWalls, SurveyStandard, CalibrationView, SweepKind, SweepView } from './survey-types';
 
 export type { LogEntry } from './survey-types';
@@ -83,6 +83,8 @@ export const survey = $state({
   waiting: 0,
   stored: [] as Reading[],
   readingMemory: false,
+  /** The next shot is a feature shot. */
+  feature: null as { symbol: string; label: string } | null,
   last: null as Reading | null,
   log: [] as LogEntry[],
   message: '',
@@ -145,6 +147,8 @@ function mirror(s: Snapshot) {
   survey.waiting = s.waiting;
   survey.stored = s.stored ?? [];
   survey.readingMemory = !!s.reading_memory;
+  survey.feature = s.feature ?? null;
+  placeFeatures(s.feature_hits ?? []); // a feature shot places its symbol on the map
   if (s.reading_memory) watchMemory();
   survey.last = s.last;
   survey.log = s.log;
@@ -177,6 +181,27 @@ function watchMemory() {
 function endMemory() {
   clearTimeout(memoryTimer);
   if (survey.readingMemory) apply(engine.surveyMemoryDone());
+}
+
+/** The next shot (this button again, or the instrument's own) is a feature shot: it places `symbol` where it hits, with
+ *  `label` beside it, and writes nothing to the notebook. With an X1 the laser comes on to aim. */
+export function armFeature(symbol: string, label: string) {
+  endMemory();
+  apply(engine.surveyArmFeature(symbol, label));
+  if (aimsFirst()) laser(true);
+}
+
+/** Fires the feature shot that is waiting. */
+export function shootFeature() {
+  if (!survey.feature) return;
+  if (simulator) return void apply(engine.surveySimShot());
+  takeShot();
+}
+
+/** The next shot is an ordinary one again. */
+export function cancelFeature() {
+  apply(engine.surveyCancelFeature());
+  if (aimsFirst()) laser(false);
 }
 
 /** Writes the shots from the instrument's memory at the station the surveyor stands at. */

@@ -48,6 +48,15 @@ export interface LogEntry {
   shot?: string | null;
 }
 
+/** Where a feature shot hit: from the station, metres east, north, up. */
+export interface FeatureHit {
+  n: number;
+  station: string;
+  offset: [number, number, number];
+  symbol: string;
+  label: string;
+}
+
 export interface HeldView {
   text: string;
   warnings: string[];
@@ -79,6 +88,10 @@ export interface Snapshot {
   stored: Reading[];
   /** The instrument has just connected and may still be sending what it had stored. */
   reading_memory: boolean;
+  /** The next shot is a feature shot: its symbol and label. */
+  feature: { symbol: string; label: string } | null;
+  /** Feature shots taken lately, newest last: each places its symbol once. */
+  feature_hits: FeatureHit[];
   log: LogEntry[];
   message: string;
   warnings: string[];

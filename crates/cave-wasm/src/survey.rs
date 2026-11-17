@@ -271,6 +271,20 @@ pub fn survey_memory_done() -> String {
     with_session(|s, _, _| s.memory_done())
 }
 
+/// The next shot is a feature shot: `symbol` (a palette key) placed where it hits, with `label` beside it; left out of the
+/// legs, walls and splays.
+#[wasm_bindgen]
+pub fn survey_arm_feature(symbol: &str, label: &str) -> String {
+    let (symbol, label) = (symbol.to_string(), label.to_string());
+    with_session(move |s, _, _| s.arm_feature(&symbol, &label))
+}
+
+/// The next shot is an ordinary one again.
+#[wasm_bindgen]
+pub fn survey_cancel_feature() -> String {
+    with_session(|s, _, _| s.cancel_feature())
+}
+
 /// Writes the shots from the instrument's memory at the station the surveyor stands at.
 #[wasm_bindgen]
 pub fn survey_add_stored() -> String {
@@ -857,6 +871,43 @@ mod tests {
         let v = json(survey_discard_stored());
         assert!(v["snapshot"]["stored"].as_array().unwrap().is_empty());
         assert_eq!(v["snapshot"]["log"].as_array().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn a_feature_shot_places_a_symbol_and_writes_nothing() {
+        let trip = new_cave();
+        json(survey_sync_trip(&trip));
+        json(survey_connect("x1", "{}"));
+        json(survey_memory_done());
+        let rows_before = cave_wasm_page(&trip)["rows"].as_array().unwrap().len();
+        let v = json(survey_arm_feature("sym-bat", "Bat roost"));
+        assert_eq!(v["snapshot"]["feature"]["symbol"], "sym-bat");
+        let packet = cavway::encode_packet(&cavway::PacketSpec {
+            distance: 4.0,
+            azimuth: 90.0,
+            inclination: 0.0,
+            time: 3,
+            ..cavway::PacketSpec::default()
+        });
+        let v = json(survey_frame("frame", &packet));
+        assert!(v["snapshot"]["log"].as_array().unwrap().is_empty(), "no shot written");
+        assert!(v["snapshot"]["feature"].is_null(), "used up");
+        let hit = &v["snapshot"]["feature_hits"][0];
+        assert_eq!(hit["symbol"], "sym-bat");
+        assert_eq!(hit["label"], "Bat roost");
+        assert!((hit["offset"][0].as_f64().unwrap() - 4.0).abs() < 1e-6, "{hit}");
+        assert_eq!(cave_wasm_page(&trip)["rows"].as_array().unwrap().len(), rows_before, "the notebook is untouched");
+        // the next shot is an ordinary splay again
+        let packet = cavway::encode_packet(&cavway::PacketSpec {
+            distance: 2.0,
+            azimuth: 200.0,
+            inclination: 0.0,
+            time: 4,
+            ..cavway::PacketSpec::default()
+        });
+        json(survey_frame("frame", &packet));
+        let v = json(survey_settle_now());
+        assert_eq!(v["snapshot"]["log"][0]["kind"], "splay");
     }
 
     #[test]

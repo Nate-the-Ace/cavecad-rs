@@ -5,7 +5,7 @@
 
 import { cave, changed } from './cave.svelte';
 import { engine } from './engine';
-import type { LogEntry } from './survey-types';
+import type { FeatureHit, LogEntry } from './survey-types';
 
 export type MarkClass = 'feature' | 'ridge' | 'generic';
 export const MARK_CLASSES: { id: MarkClass; label: string; hint: string }[] = [
@@ -94,6 +94,27 @@ export function followLog(log: LogEntry[]) {
     } else {
       ridge = { cls, from, kind, points: [hit], id: '' }; // a line needs a second hit
     }
+  }
+  if (drew) changed();
+}
+
+let placedFeature = 0;
+
+/** Places the symbol of each feature shot not placed yet, where the shot hit, with its label beside it. */
+export function placeFeatures(hits: FeatureHit[]) {
+  const fresh = hits.filter((h) => h.n > placedFeature);
+  if (fresh.length === 0) return;
+  placedFeature = Math.max(placedFeature, ...fresh.map((h) => h.n));
+  const scene = engine.scene(cave.adjusted);
+  let drew = false;
+  for (const h of fresh) {
+    const st = scene.stations.find((s) => s.label === h.station);
+    if (!st) continue;
+    const hit: [number, number] = [st.at[0] + h.offset[0], st.at[1] + h.offset[1]];
+    // facing along the shot, as a symbol placed by hand faces the way it was dragged
+    const len = Math.hypot(h.offset[0], h.offset[1]) || 1;
+    const ahead: [number, number] = [hit[0] + h.offset[0] / len, hit[1] + h.offset[1] / len];
+    if (engine.addMapLine(h.symbol, [hit, ahead], null, false, cave.adjusted, h.label) === 'ok') drew = true;
   }
   if (drew) changed();
 }

@@ -4,13 +4,15 @@
   // and Cross Section beside this panel redraw from the notebook, so the cave grows while it is being
   // surveyed. Everything here is sized for a tablet held in a glove: big targets, one thing to do next.
   // The rules (what a reading is, where the surveyor stands next) are Rust: crates/cave-session, tested there.
+  import FeatureShotPicker from '../components/FeatureShotPicker.svelte';
+  import { symbolDef } from '../lib/symbols';
   import X1Marks from '../components/X1Marks.svelte';
   import { untrack } from 'svelte';
   import { Check, ChevronLeft, ChevronRight, Crosshair, Flashlight, FlashlightOff, Pause, Play, Radar, ScanLine, SkipForward, X } from '@lucide/svelte';
   import SweepDial from '../components/SweepDial.svelte';
   import QuickRef from '../components/QuickRef.svelte';
   import CalibrationGuide from '../components/CalibrationGuide.svelte';
-  import { BookOpen } from '@lucide/svelte';
+  import { BookOpen, Star } from '@lucide/svelte';
   import SurveyOptions from '../components/SurveyOptions.svelte';
   import { Bluetooth, FlaskConical, Unplug } from '@lucide/svelte';
   import { phone } from '../lib/phone.svelte';
@@ -125,6 +127,8 @@
     }
   }
 
+  let featurePicker = $state(false);
+  const symbolName = (key: string) => symbolDef(key)?.name ?? key.replace(/^sym-/, '').replace(/-/g, ' ');
   const enter = (e: KeyboardEvent) => e.key === 'Enter' && (e.currentTarget as HTMLInputElement).blur();
 </script>
 
@@ -377,6 +381,20 @@
       </span>
     </button>
     {/if}
+    {#if survey.feature}
+      <div class="feat armed">
+        <button class="shoot" onclick={live.shootFeature} disabled={!survey.canTakeShot}>
+          <Star size={20} />
+          <span class="lines">
+            <span class="where">Feature: {survey.feature.label || symbolName(survey.feature.symbol)}</span>
+            <small>Aim at it, then press (or DIST on the X1)</small>
+          </span>
+        </button>
+        <button class="cancel" onclick={live.cancelFeature} title="The next shot is an ordinary one"><X size={18} /> Cancel</button>
+      </div>
+    {:else}
+      <button class="featbtn" onclick={() => (featurePicker = true)} disabled={!survey.canTakeShot} title="Place a symbol where the laser hits, with a label: nothing is written to the notebook"><Star size={18} /> Feature shot</button>
+    {/if}
     <div class="slots">
       <button onclick={live.previousStation} disabled={survey.state.awaiting !== null} title="Step back to the station before this one (undo is in the bar above)"><ChevronLeft size={18} /> Previous station</button>
       {#if survey.state.awaiting}
@@ -388,6 +406,7 @@
   </footer>
 </div>
 {#if quickRef}<QuickRef page="cavway-x1" onclose={() => (quickRef = false)} />{/if}
+{#if featurePicker}<FeatureShotPicker onclose={() => (featurePicker = false)} onpick={(sym, label) => { featurePicker = false; live.armFeature(sym, label); }} />{/if}
 
 <style>
   .panel { display: flex; flex-direction: column; height: 100%; background: var(--panel); color: var(--text); font-size: 14px; outline: none; }
@@ -403,6 +422,11 @@
   button.go, button.shoot { background: var(--accent); border-color: var(--accent); color: var(--on-accent, #fff); }
   button.no { color: var(--danger); }
   button.shoot { font-size: 17px; font-weight: 600; min-height: 56px; width: 100%; }
+  .featbtn { display: flex; align-items: center; justify-content: center; gap: 6px; min-height: 40px; font: inherit; color: var(--text); background: var(--panel-2); border: 1px solid var(--line); border-radius: var(--radius); }
+  .feat { display: flex; gap: 8px; }
+  .feat .shoot { flex: 1; }
+  .feat.armed .shoot { border-color: var(--warn); }
+  .feat .cancel { display: flex; align-items: center; gap: 4px; padding: 0 12px; font: inherit; color: var(--text); background: var(--panel-2); border: 1px solid var(--line); border-radius: var(--radius); }
   .shots { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
   .shots button.shoot { font-size: 16px; padding: 8px 6px; }
   button.shoot .lines { display: flex; flex-direction: column; align-items: center; min-width: 0; line-height: 1.2; }

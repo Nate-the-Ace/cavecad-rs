@@ -147,6 +147,8 @@ export const READS: readonly string[] = [
   'surveyDiscard',
   'surveyDiscardStored',
   'surveyMemoryDone',
+  'surveyArmFeature',
+  'surveyCancelFeature',
   'surveyFinishSweep',
   'surveySetSweepKind',
   'surveySetStandard',

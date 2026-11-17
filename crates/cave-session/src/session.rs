@@ -95,6 +95,30 @@ pub struct EntryView {
     pub shot: Option<String>,
 }
 
+/// A feature shot waiting for its shot.
+#[derive(Clone, Debug, Serialize)]
+pub struct FeatureArm {
+    /// The symbol (a palette key, `sym-…`).
+    pub symbol: String,
+    /// The words beside it.
+    pub label: String,
+}
+
+/// Where a feature shot hit, for the screen to place its symbol.
+#[derive(Clone, Debug, Serialize)]
+pub struct FeatureHit {
+    /// A counter: each hit is placed once.
+    pub n: u32,
+    /// The station it was shot from.
+    pub station: String,
+    /// From the station to the hit, metres: east, north, up (true north).
+    pub offset: [f64; 3],
+    /// The symbol (a palette key, `sym-…`).
+    pub symbol: String,
+    /// The words beside it.
+    pub label: String,
+}
+
 /// A held thing as the screen shows it, for the Accept card.
 #[derive(Clone, Debug, Serialize)]
 pub struct HeldView {
@@ -144,6 +168,10 @@ pub struct Snapshot {
     pub waiting: usize,
     /// The latest reading, written or not, for the big display.
     pub last: Option<Reading>,
+    /// The next shot will be a feature shot: its symbol and label.
+    pub feature: Option<FeatureArm>,
+    /// Feature shots taken lately (the last 20), newest last: each places its symbol once.
+    pub feature_hits: Vec<FeatureHit>,
     /// Shots the instrument had stored and sent as it connected (taken before this link, maybe days ago): kept
     /// out of the notebook until the surveyor adds them at a station or discards them. Oldest first.
     pub stored: Vec<Reading>,
@@ -262,6 +290,10 @@ pub struct Session {
     stored: Vec<Reading>,
     /// What arrives now is from the instrument's memory, not a shot just taken.
     memory_open: bool,
+    /// The next shot is a feature shot: its symbol and label.
+    feature: Option<(String, String)>,
+    /// The feature shots taken lately, for the screen to place their symbols.
+    feature_hits: Vec<FeatureHit>,
 }
 
 impl Default for Session {
@@ -300,6 +332,8 @@ impl Session {
             passage: None,
             stored: Vec::new(),
             memory_open: false,
+            feature: None,
+            feature_hits: Vec::new(),
         }
     }
 
@@ -364,6 +398,46 @@ impl Session {
             self.state.mode
         };
         self.assembler.reset();
+    }
+
+    /// The next shot (from the screen or the instrument's own button) is a feature shot: it points at something worth
+    /// a symbol, and places it: it is not written to the notebook, so it is no leg, wall or splay.
+    pub fn arm_feature(&mut self, symbol: &str, label: &str) {
+        self.feature = Some((symbol.trim().to_string(), label.trim().to_string()));
+    }
+
+    /// The next shot is an ordinary one again.
+    pub fn cancel_feature(&mut self) {
+        self.feature = None;
+    }
+
+    /// A feature shot places a symbol, nothing more: no shot is written to the notebook, so no survey format ever sees
+    /// it. Where it hit is worked out here (true bearing: the trip's declination applied) and handed to the screen.
+    fn write_feature(&mut self, host: &mut dyn Host, r: &Reading, symbol: &str, label: &str) {
+        let from = standing(&self.state);
+        if from.trim().is_empty() {
+            self.fail("Name the station you are at first.");
+            return;
+        }
+        let declination = self
+            .trip
+            .and_then(|t| cave_notebook::page(host.doc(), t))
+            .and_then(|p| p.declination)
+            .unwrap_or(0.0);
+        let v = splay_vector(r.distance, r.azimuth + declination, r.inclination);
+        self.counter += 1;
+        self.feature_hits.push(FeatureHit {
+            n: self.counter,
+            station: from.trim().to_string(),
+            offset: v,
+            symbol: symbol.to_string(),
+            label: label.to_string(),
+        });
+        if self.feature_hits.len() > 20 {
+            self.feature_hits.remove(0);
+        }
+        self.message.clear();
+        self.warnings.clear();
     }
 
     /// A real instrument connected: what it sends before [`Session::memory_done`] is what it had stored (shots
@@ -728,6 +802,16 @@ impl Session {
             self.stored.push(reading);
             return;
         }
+        if reading.scan != Some(true)
+            && reading.lrud.is_none()
+            && let Some((symbol, label)) = self.feature.take()
+        {
+            // shots the grouping was waiting on are what they were before this one
+            self.settle_now(host);
+            self.write_feature(host, &reading, &symbol, &label);
+            self.last = Some(reading);
+            return;
+        }
         self.tag_sweep(&mut reading);
         self.last = Some(reading.clone());
         if !self.groups_legs {
@@ -1080,6 +1164,11 @@ impl Session {
             last: self.last.clone(),
             stored: self.stored.clone(),
             reading_memory: self.memory_open,
+            feature: self.feature.as_ref().map(|(symbol, label)| FeatureArm {
+                symbol: symbol.clone(),
+                label: label.clone(),
+            }),
+            feature_hits: self.feature_hits.clone(),
             log: self
                 .log
                 .iter()
