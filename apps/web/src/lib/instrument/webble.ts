@@ -193,6 +193,8 @@ export class WebBleInstrument implements Instrument {
   /** A frame from the instrument goes to the engine. */
   private frame(kind: string, bytes: Uint8Array) {
     (globalThis as { __cavecadDlog?: (s: string) => void }).__cavecadDlog?.(`recv ${kind} ${hex(bytes)}`);
+    // a listener outside the engine (the gimbal dome scan reads each shot's angle to steer the next move)
+    (globalThis as { __cavecadShotTap?: (b: Uint8Array) => void }).__cavecadShotTap?.(bytes);
     const step = this.bridge.frame(kind, bytes);
     // what the engine made of it (a leg, a splay, held back), for reading the log afterwards
     const last = step.snapshot?.log?.[step.snapshot.log.length - 1];

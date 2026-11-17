@@ -2,9 +2,11 @@
 // station's cross-section ring is shot evenly with no hand wobble. The shots are an ordinary sweep (live check, splays,
 // 3D), taken at the standing station. Measured behaviour behind every number here: tools/cave-osmo/FINDINGS.md.
 //
-// Open loop for now: the gimbal reports no angles and its magnet spoils the X1's compass, so moves are timed. Roll
-// (the ring axis) only reaches ~130° one way with the X1 aboard, so the ring is done as two half-rings with a 180° pan
-// between them. Set the gimbal upright (rotate button) with its centre facing a wall before starting.
+// The gimbal reports no angles and its magnet spoils the X1's compass, so moves are timed and the X1's own reading of
+// each shot (inclination, and its roll figure for which side of vertical the laser is on) steers the ring: which way
+// is the long roll side, how deep each side got, how far to roll back. Roll (the ring axis) only reaches ~130° one
+// way with the X1 aboard, and which way depends on how the clamp got upright, so the ring is two half-rings with a 180°
+// pan between them. Set the gimbal upright (rotate button) with its centre facing a wall before starting.
 import { OsmoGimbal } from './instrument/osmo';
 import { survey, laser, takeShot, startDrivenSweep, finishSweep } from './survey.svelte';
 
@@ -60,6 +62,18 @@ export async function connectGimbal() {
 }
 export const disconnectGimbal = () => gimbal.disconnect();
 
+// ---- the X1's shots as they arrive (raw frames, decoded as crates/cave-instrument/src/cavway.rs does)
+type Shot = { incl: number; roll: number; at: number };
+let lastShot: Shot | null = null;
+(globalThis as { __cavecadShotTap?: (b: Uint8Array) => void }).__cavecadShotTap = (b) => {
+  if (b.length < 33 || b[0] !== 0x01) return;
+  const a = 360 / 65535;
+  const incl = ((b[7] | (b[8] << 8)) << 16 >> 16) * a;
+  lastShot = { incl, roll: (b[9] | (b[10] << 8)) * a, at: performance.now() };
+};
+/** The laser's angle from straight up, signed by which side of vertical it is (the X1's roll figure: ~270 or ~90). */
+const phiOf = (s: Shot) => (s.roll > 180 ? 1 : -1) * (90 - s.incl);
+
 let stopRequested = false;
 export function stopDome() {
   stopRequested = true;
@@ -67,16 +81,31 @@ export function stopDome() {
 
 const pause = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-/** Laser on while the gimbal turns (the X1 warms up meanwhile), settle, measure, wait for the shot to land. */
-async function moveAndShoot(yaw: number, roll: number, deg: number) {
+async function waitShot(since: number): Promise<Shot | null> {
+  const t0 = performance.now();
+  while (performance.now() - t0 < SHOT_WAIT_MS) {
+    if (lastShot && lastShot.at > since) return lastShot;
+    await pause(80);
+  }
+  return null;
+}
+
+/** Laser on while the gimbal turns (the X1 warms up meanwhile), settle, measure, wait for the shot; one retry. */
+async function moveAndShoot(yaw: number, roll: number, deg: number): Promise<Shot | null> {
   laser(true);
   if (deg > 0) await gimbal.turn(yaw, 0, roll, (deg / RATE) * 1000 * (deg <= 20 ? SMALL_GAIN : 1));
   await pause(SETTLE_MS);
-  const before = survey.sweep?.check.shots ?? 0;
-  takeShot();
-  const t0 = performance.now();
-  while ((survey.sweep?.check.shots ?? 0) <= before && performance.now() - t0 < SHOT_WAIT_MS) await pause(100);
-  if ((survey.sweep?.check.shots ?? 0) > before) dome.done++;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const since = performance.now();
+    if (attempt) laser(true), await pause(400);
+    takeShot();
+    const s = await waitShot(since);
+    if (s) {
+      dome.done++;
+      return s;
+    }
+  }
+  return null;
 }
 
 async function turnOnly(yaw: number, roll: number, deg: number) {
@@ -89,7 +118,6 @@ async function turnOnly(yaw: number, roll: number, deg: number) {
 export async function startDome() {
   if (dome.running || !gimbal.connected || !survey.canTakeShot) return;
   const step = Math.max(2, Math.min(30, dome.step));
-  const perSide = Math.floor(DEEPEST / step);
   dome.running = true;
   dome.error = '';
   dome.done = 0;
@@ -104,18 +132,46 @@ export async function startDome() {
     dome.phase = 'Turning to look along the passage';
     await turnOnly(-RATE, 0, 90);
     dome.phase = 'Straight up';
-    await moveAndShoot(0, 0, 0);
+    let s = await moveAndShoot(0, 0, 0);
+    let dir = 1; // roll command sign; flipped if this way turns out to be the short side
     for (const side of [1, 2]) {
-      for (let i = 1; i <= perSide && !stopRequested; i++) {
-        dome.phase = `Wall ${side}: ${i * step}° from up`;
-        await moveAndShoot(0, RATE, step);
+      let depth = s ? Math.abs(phiOf(s)) : 0; // how far from straight up on this side
+      let sideSign = 0; // which side of vertical this half-ring is on (from the first reading past 10°)
+      let flipped = side === 2; // only the first side may still learn the long direction
+      let misses = 0, moved = 0; // moved: degrees rolled this side (the way back if the X1 stops answering)
+      while (!stopRequested && depth < DEEPEST && moved < DEEPEST + 40) {
+        dome.phase = `Wall ${side}: ${Math.round(depth)}° from up`;
+        const next = await moveAndShoot(0, dir * RATE, step);
+        moved += step;
+        if (!next) {
+          if (++misses >= 3) break;
+          depth += step;
+          continue;
+        }
+        const p = phiOf(next);
+        if (!sideSign && Math.abs(p) > 10) sideSign = Math.sign(p);
+        if (sideSign && Math.sign(p) !== sideSign && Math.abs(p) > 10) {
+          // snapped back over the top: this way is the short roll side
+          if (!flipped && depth < 80) {
+            dir = -dir;
+            sideSign = Math.sign(p);
+            flipped = true;
+            depth = Math.abs(p);
+            s = next;
+            continue;
+          }
+          break;
+        }
+        depth = Math.abs(p);
+        s = next;
       }
       if (stopRequested) break;
       dome.phase = 'Back to straight up';
-      await turnOnly(0, -RATE, perSide * step);
+      await turnOnly(0, -dir * RATE, depth);
       if (side === 1) {
         dome.phase = 'Turning round for the other wall';
         await turnOnly(RATE, 0, 180);
+        s = await moveAndShoot(0, 0, 0);
       }
     }
     dome.phase = 'Home';
