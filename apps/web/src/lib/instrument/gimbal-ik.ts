@@ -262,28 +262,61 @@ export function plan(dirs: Direction[], sag: number, reach = OM7_TARGETS) {
   return { steps, unreachable, columns: steps.length };
 }
 
-/** One target of a precalculated program; `shot` = which planned shot to take on arrival (none: a smoothing step). */
+/** One target of a precalculated program; `shot` = which planned shot to take on arrival (none: a travel step). */
 export interface ProgramStep {
   t: Target;
   shot?: number;
 }
 
-/** The whole scan as targets, worked out in advance: from home through every shot in plan order, any move bigger than
- * `maxStep` split into even steps (gentle with the X1's weight), and back home at the end. */
-export function compile(p: ReturnType<typeof plan>, reach = OM7_TARGETS): ProgramStep[] {
-  const out: ProgramStep[] = [];
-  let at: Target = { yaw: 0, roll: 0 };
-  const go = (t: Target, shot?: number) => {
-    const dy = t.yaw - at.yaw, dr = t.roll - at.roll;
-    const n = Math.max(1, Math.ceil(Math.max(Math.abs(dy), Math.abs(dr)) / reach.maxStep - 1e-9));
-    for (let k = 1; k < n; k++) out.push({ t: { yaw: at.yaw + (dy * k) / n, roll: at.roll + (dr * k) / n } });
-    out.push(shot === undefined ? { t } : { t, shot });
-    at = t;
-  };
-  for (const [i, st] of p.steps.entries()) go(st.t, i);
-  go({ yaw: 0, roll: 0 });
-  return out;
+/** Targets in one list the gimbal will run (16 or more are taken but never stepped through). */
+export const LIST_MAX = 15;
+/** Most steps on the way out from home or back to it, in one list: the legs to a far patch stretch their steps (up
+ * to ~37° for the farthest) rather than eat the list. 5 balances time and gentleness (5° dome: 6 legs 87 min, 5 79,
+ * 4 73, 3 67). */
+const LEG_STEPS = 5;
+
+const HOME: Target = { yaw: 0, roll: 0 };
+const span = (a: Target, b: Target) => Math.max(Math.abs(b.yaw - a.yaw), Math.abs(b.roll - a.roll));
+/** The steps from `a` to `b` (b included), each at most `step`. */
+function legTo(a: Target, b: Target, step: number): Target[] {
+  const n = Math.max(1, Math.ceil(span(a, b) / step - 1e-9));
+  return Array.from({ length: n }, (_, k) => ({ yaw: a.yaw + ((b.yaw - a.yaw) * (k + 1)) / n, roll: a.roll + ((b.roll - a.roll) * (k + 1)) / n }));
 }
+const legSteps = (a: Target, b: Target, step: number, cap: number) => Math.min(cap, Math.max(1, Math.ceil(span(a, b) / step - 1e-9)));
+
+/** The whole scan, worked out in advance, as lists the gimbal runs one after another. Every list starts at home and
+ * ends at home (a new list always starts from home: the gimbal goes there itself on entering target mode, so ending
+ * there makes that a non-move): out from home in at most LEG_STEPS gentle steps, a patch of neighbouring shots in plan
+ * order (steps of at most `maxStep` between them), back home in at most LEG_STEPS; never more than LIST_MAX targets. */
+export function compileLists(p: ReturnType<typeof plan>, reach = OM7_TARGETS): ProgramStep[][] {
+  const lists: ProgramStep[][] = [];
+  const legStep = (a: Target, b: Target) => Math.max(reach.maxStep, span(a, b) / LEG_STEPS);
+  let i = 0;
+  while (i < p.steps.length) {
+    const first = p.steps[i].t;
+    const list: ProgramStep[] = legTo(HOME, first, legStep(HOME, first)).map((t) => ({ t }));
+    list[list.length - 1].shot = i;
+    let at = first;
+    i++;
+    // take the next shots while the list still has room for them and the way home
+    while (i < p.steps.length) {
+      const nx = p.steps[i].t;
+      const between = legTo(at, nx, reach.maxStep);
+      const home = legSteps(nx, HOME, legStep(nx, HOME), LEG_STEPS);
+      if (list.length + between.length + home > LIST_MAX) break;
+      list.push(...between.map((t) => ({ t })));
+      list[list.length - 1].shot = i;
+      at = nx;
+      i++;
+    }
+    list.push(...legTo(at, HOME, legStep(at, HOME)).map((t) => ({ t })));
+    lists.push(list);
+  }
+  return lists;
+}
+
+/** All the lists end to end (the order the gimbal runs them). */
+export const compile = (p: ReturnType<typeof plan>, reach = OM7_TARGETS): ProgramStep[] => compileLists(p, reach).flat();
 
 /** How long a program takes: ~1 s a target (move and "arrived"), plus a settle and the shot (~1.5 s, the laser warmed
  * during the move) for each shot. */

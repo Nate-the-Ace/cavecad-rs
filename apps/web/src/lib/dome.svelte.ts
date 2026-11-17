@@ -12,7 +12,7 @@ import {
   OM7_PORTRAIT,
   OM7_UPRIGHT_ROLL,
   plan,
-  compile,
+  compileLists,
   programSeconds,
   ringDirections,
   domeDirections,
@@ -31,8 +31,8 @@ import { survey, laser, takeShot, startDrivenSweep, finishSweep, keepInstrumentA
 
 /** Seconds a target takes (move and "arrived"; bench ~1 s whatever its size). */
 const MOVE_S = 1.0;
-/** Targets per list sent to the gimbal: 15 run, 16 or more are taken but never stepped through (bench 2026-11-17). */
-const BATCH = 15;
+/** Seconds to leave and re-enter target mode between lists (at home: no move). */
+const LIST_S = 0.8;
 /** Seconds a shot takes with the laser warmed during the move (bench: 1.46). */
 export const SHOT_S = 1.5;
 /** Still time after a move before the shot (s). */
@@ -133,7 +133,7 @@ gimbal.onPosition = () => {
 /** A direction's key, for marking progress. */
 export const dirKey = (d: Direction) => `${Math.round(d.az * 10)},${Math.round(d.inc * 10)}`;
 
-type Program = { prog: ProgramStep[]; steps: ReturnType<typeof plan>['steps']; points: (Direction & { ok: boolean; key: string })[]; shots: number; missed: number; secs: number };
+type Program = { lists: ProgramStep[][]; steps: ReturnType<typeof plan>['steps']; points: (Direction & { ok: boolean; key: string })[]; shots: number; missed: number; secs: number };
 // worked out once per scan, level and sag (to the degree), never while it runs
 const programs = new Map<string, Program>();
 function program(kind: 'ring' | 'dome', level: number, sag = dome.sag): Program {
@@ -143,15 +143,15 @@ function program(kind: 'ring' | 'dome', level: number, sag = dome.sag): Program 
     const step = LEVELS[level].step;
     const dirs = kind === 'dome' ? domeDirections(step) : ringDirections(0, step, RING_LOWEST);
     const pl = plan(dirs, Math.round(sag));
-    const prog = compile(pl);
+    const lists = compileLists(pl);
     const miss = new Set(pl.unreachable);
     got = {
-      prog,
+      lists,
       steps: pl.steps,
       points: dirs.map((d) => ({ ...d, ok: !miss.has(d), key: dirKey(d) })),
       shots: pl.steps.length,
       missed: pl.unreachable.length,
-      secs: programSeconds(prog, { moveS: MOVE_S, shotS: SHOT_S, settleS: SETTLE_S }) + Math.ceil(prog.length / BATCH) * 0.5,
+      secs: programSeconds(lists.flat(), { moveS: MOVE_S, shotS: SHOT_S, settleS: SETTLE_S }) + lists.length * LIST_S,
     };
     if (programs.size > 40) programs.clear();
     programs.set(key, got);
@@ -230,39 +230,36 @@ async function targetsHome(): Promise<{ sag: number; heading: number }> {
   return { sag: pitch, heading: yaw };
 }
 
-/** Plays a precalculated list of targets: in batches, each target stepped to and waited for; `onArrive` is called at
- * each (the shot). A batch the gimbal drops is re-sent once from where it stopped. */
-async function playTargets(prog: ProgramStep[], onArrive: (st: ProgramStep, i: number) => Promise<void>) {
-  let i = 0;
-  let retried = false;
-  while (i < prog.length) {
-    if (stopRequested) return;
-    const batch = prog.slice(i, i + BATCH);
-    const id = (listId = ((listId + 1) & 0x7f) | 0x30);
-    // the first target of a list is started by the upload itself
-    if (batch.some((st) => st.shot !== undefined)) laser(true);
-    await gimbal.targetsUpload(batch.map((st) => st.t), id);
-    let k = 0;
-    for (; k < batch.length; k++) {
+/** Plays precalculated lists, each home to home: a list is sent (the gimbal sets off for its first target), each next
+ * target stepped to and waited for, `onArrive` called at each (the shot). Between lists target mode is left and entered
+ * again (the gimbal can only take a new list that way; entering sends it home, where the last list just ended). A list
+ * the gimbal drops is run once more from the start (dropping sends it home, where every list starts). */
+async function playTargets(lists: ProgramStep[][], onArrive: (st: ProgramStep) => Promise<void>) {
+  for (const [li, list] of lists.entries()) {
+    for (let attempt = 0; ; attempt++) {
       if (stopRequested) return;
-      if (k > 0) {
-        if (batch[k].shot !== undefined) laser(true);
-        await gimbal.targetsGo(k);
+      if (li > 0 || attempt > 0) {
+        await gimbal.targetsLeave();
+        await pause(300);
+        await gimbal.targetsEnter(true);
+        await pause(300);
       }
-      const r = await gimbal.targetsArrived(k, id, 5000);
-      if (r !== 'arrived') break;
-      await onArrive(batch[k], i + k);
+      const id = (listId = ((listId + 1) & 0x7f) | 0x30);
+      if (list[0].shot !== undefined) laser(true);
+      await gimbal.targetsUpload(list.map((st) => st.t), id);
+      let k = 0;
+      for (; k < list.length; k++) {
+        if (stopRequested) return;
+        if (k > 0) {
+          if (list[k].shot !== undefined) laser(true);
+          await gimbal.targetsGo(k);
+        }
+        if ((await gimbal.targetsArrived(k, id, 5000)) !== 'arrived') break;
+        await onArrive(list[k]);
+      }
+      if (k === list.length) break;
+      if (attempt >= 1) throw new Error('The gimbal keeps dropping its targets (too much weight? let it settle and try again)');
     }
-    if (k === batch.length) {
-      i += batch.length;
-      retried = false;
-      continue;
-    }
-    if (retried) throw new Error('The gimbal keeps dropping its targets (too much weight? let it settle and try again)');
-    retried = true;
-    await gimbal.targetsEnter();
-    await pause(500);
-    i += k; // carry on from the one it did not reach
   }
 }
 
@@ -423,7 +420,7 @@ async function startScan(kind: 'ring' | 'dome') {
     const prog = program(kind, dome.level, home.sag);
     dome.missed = prog.missed;
     dome.total = prog.shots;
-    await playTargets(prog.prog, async (st) => {
+    await playTargets(prog.lists, async (st) => {
       if (st.shot === undefined) return;
       const planned = prog.steps[st.shot].d;
       dome.current = dirKey(planned);

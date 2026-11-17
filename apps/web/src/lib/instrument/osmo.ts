@@ -162,11 +162,19 @@ export class OsmoGimbal {
   static readonly ARRIVED = 0x60;
   private uploadedAt = 0;
 
-  /** Into target mode (Mimo's order: follow mode, 04/0f, then enter). */
-  async targetsEnter() {
-    await this.send(duml(this.next(), 0x04, 0x4c, [0x01, 0x00], 0x40));
-    await this.send(duml(this.next(), 0x04, 0x0f, [0x22, 0x01, 0x00], 0x40));
+  /** Into target mode (Mimo's order: follow mode, 04/0f, then enter; `again`: enter only, between lists). Entering
+   * sends the gimbal home. */
+  async targetsEnter(again = false) {
+    if (!again) {
+      await this.send(duml(this.next(), 0x04, 0x4c, [0x01, 0x00], 0x40));
+      await this.send(duml(this.next(), 0x04, 0x0f, [0x22, 0x01, 0x00], 0x40));
+    }
     await this.send(duml(this.next(), 0x04, 0x6b, [0x00, 0x00, 0x00, 0x6d], 0x40));
+  }
+
+  /** Out of target mode, holding where it is (the way to send a new list: leave, enter again, send). */
+  async targetsLeave() {
+    await this.send(duml(this.next(), 0x04, 0x6b, [0x00, 0x01, 0x00, 0x6d], 0x40));
   }
 
   /** Sends a list of targets (at most 15: 16 or more are taken but never stepped through); the gimbal sets off for

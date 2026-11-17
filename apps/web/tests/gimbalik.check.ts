@@ -1,6 +1,6 @@
 // Gimbal kinematics (attitude model): every answer points where asked, stays in the safe windows, and goes round the
 // other way where the short way would flip the roll. Same cases as the Rust library's aim tests.
-import { solutions, pointing, fromEuler, euler, homeFrom, plan, compile, programSeconds, targetPointing, targetSolutions, OM7_TARGETS, ringDirections, domeDirections, clampTop, OM7_PORTRAIT, wrap180, type Att } from '../src/lib/instrument/gimbal-ik.ts';
+import { solutions, pointing, fromEuler, euler, homeFrom, plan, compile, compileLists, LIST_MAX, programSeconds, targetPointing, targetSolutions, OM7_TARGETS, ringDirections, domeDirections, clampTop, OM7_PORTRAIT, wrap180, type Att } from '../src/lib/instrument/gimbal-ik.ts';
 
 let fails = 0;
 const ok = (c: boolean, msg: string) => {
@@ -74,20 +74,28 @@ ok(solutions({ az: -150, inc: 10 }, home, home).length === 0, 'behind-left low')
   // a ring facing the forward station, every 10 to 18 below: all reachable; program steps never jump more than 20
   const p = plan(ringDirections(0, 10, -18), 16);
   ok(p.unreachable.length === 0, `ring: ${JSON.stringify(p.unreachable)}`);
-  const prog = compile(p);
-  let at = { yaw: 0, roll: 0 };
-  for (const st of prog) {
-    ok(Math.abs(st.t.yaw - at.yaw) <= 20.01 && Math.abs(st.t.roll - at.roll) <= 20.01 && st.t.yaw >= OM7_TARGETS.yaw[0] && st.t.yaw <= OM7_TARGETS.yaw[1], `step ${JSON.stringify(at)} -> ${JSON.stringify(st.t)}`);
-    at = st.t;
+  const lists = compileLists(p);
+  const prog = lists.flat();
+  for (const l of lists) {
+    ok(l.length <= LIST_MAX, `list of ${l.length}`);
+    const last = l[l.length - 1].t;
+    ok(Math.abs(last.yaw) < 0.01 && Math.abs(last.roll) < 0.01, 'every list ends home');
+    let at = { yaw: 0, roll: 0 };
+    for (const st of l) {
+      // out and back legs stretch up to ~37°; between shots at most 20
+      ok(Math.abs(st.t.yaw - at.yaw) <= 38 && Math.abs(st.t.roll - at.roll) <= 38 && st.t.yaw >= OM7_TARGETS.yaw[0] && st.t.yaw <= OM7_TARGETS.yaw[1], `step ${JSON.stringify(at)} -> ${JSON.stringify(st.t)}`);
+      at = st.t;
+    }
   }
   ok(prog.filter((st) => st.shot !== undefined).length === p.steps.length, 'every shot once');
-  ok(Math.abs(at.yaw) < 0.01 && Math.abs(at.roll) < 0.01, 'ends home');
   const secs = programSeconds(prog, { moveS: 1, shotS: 1.5, settleS: 0.3 });
-  ok(secs > p.steps.length * 2.5 && secs < p.steps.length * 5, `ring ${p.steps.length} shots in ${secs} s`);
+  ok(secs > p.steps.length * 2.5 && secs < p.steps.length * 7, `ring ${p.steps.length} shots in ${secs} s`);
   // the dome: most reachable, plans fast
   const t0 = Date.now();
   const dp = plan(domeDirections(5), 16);
-  compile(dp);
+  const dl = compileLists(dp);
+  ok(dl.every((l) => l.length <= LIST_MAX), 'dome lists fit');
+  console.log(`  ring 15°: ${p.steps.length} shots in ${lists.length} lists; dome 5°: ${dp.steps.length} shots in ${dl.length} lists, ${dl.flat().length} targets`);
   ok(Date.now() - t0 < 300, `dome 5° plans fast: ${Date.now() - t0} ms`);
   ok(dp.unreachable.length < domeDirections(5).length / 10, `dome reach: ${dp.unreachable.length} missed`);
 }

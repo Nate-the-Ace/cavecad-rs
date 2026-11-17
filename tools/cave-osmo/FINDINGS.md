@@ -340,3 +340,7 @@ it swings the pan motor to keep the heading). Measured with the clamp top's dire
   [00 00 00 6d]`) sends the gimbal home** (as does `04/4c [01 00]`). So every list starts from a swing home.
 - Ring at 15° spacing, lists 1 and 3 (the ones that ran): every stop **within 0.2–2.5°** of the plan, by the
   gimbal's own attitude report.
+- **Home-to-home lists work.** Each list goes out from home (≤5 steps, ≤~37° each), takes a patch of neighbouring
+  shots (≤20° apart), comes back home (≤5 steps); between lists leave + enter (enter only, no `04/4c`), at home so the
+  re-entry is no move. Medium ring (15 shots, 4 lists) from the Mac: **every stop 0.7–2.5° off, mean 1.6°**, every list
+  accepted. Estimated times: ring 15° ~1 min, ring 5° ~3 min, dome 15° ~9 min, dome 5° (1,219 shots, 170 lists) ~79 min.
