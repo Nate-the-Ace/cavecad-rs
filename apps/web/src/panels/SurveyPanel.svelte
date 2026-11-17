@@ -26,8 +26,7 @@
   import * as live from '../lib/survey.svelte';
   import { survey } from '../lib/survey.svelte';
   import { webBluetoothAvailable } from '../lib/instrument/webble';
-  import { dome, estimate as domeEstimate, connectGimbal, disconnectGimbal, startDome, startRing, stopDome, setFacing, findLongSide, rollReach, gimbal, aim, aimHold, aimRelease, aimStick, aimCentred, aimReset, AIM_SPEEDS } from '../lib/dome.svelte';
-  import { clampAxis } from '../lib/instrument/osmo';
+  import { dome, estimate as domeEstimate, connectGimbal, disconnectGimbal, startDome, startRing, stopDome, aim, aimHold, aimRelease, aimStick, aimReset, AIM_SPEEDS } from '../lib/dome.svelte';
 
   let ready = $state(false);
   let showCapture = $state(false);
@@ -157,12 +156,6 @@
   }
 
   let gimbalInfo = $state(false);
-  // the gimbal's own attitude report (once a second): where the clamp top points, and its joint angles
-  let gimbalPos = $state<{ az: number; inc: number; pan: number; tilt: number; roll: number } | null>(null);
-  gimbal.onPosition = () => {
-    const a = gimbal.attitude;
-    gimbalPos = a ? { ...clampAxis(a.q), pan: a.pan, tilt: a.tilt, roll: a.roll } : null;
-  };
   let featurePicker = $state(false);
   const symbolName = (key: string) => symbolDef(key)?.name ?? key.replace(/^sym-/, '').replace(/-/g, ' ');
   const enter = (e: KeyboardEvent) => e.key === 'Enter' && (e.currentTarget as HTMLInputElement).blur();
@@ -354,16 +347,12 @@
           <button class="info" onclick={() => (gimbalInfo = !gimbalInfo)} aria-expanded={gimbalInfo} aria-label="About the gimbal scans">ⓘ</button>
         </div>
         {#if gimbalInfo}
-          <p class="hint">Set the gimbal down upright (rotate button) and say which way it faces. Facing the forward station, the ring misses the far wall below ~55° up (the gimbal cannot turn round); facing a wall it reaches both. Dome: the half-sphere above, where it can reach. The gimbal's magnet spoils the X1's bearings; distances and up/down angles are good. Stick: up moves the laser forward, down back, left/right turns it; the Roll buttons lean it to either side; further is faster. Reset puts it back upright; long-press Reset if it is centred already.</p>
+          <p class="hint">Set the gimbal down upright (rotate button), facing the forward station. Ring: both walls from straight up to 20° below level (the left wall by turning round). Dome: the half-sphere above, where it can reach. The gimbal reports where it points; it never rolls past the point where it would flip over. The gimbal's magnet spoils the X1's bearings; distances and up/down angles are good. Stick: up moves the laser forward, left/right turns it; the Roll buttons lean it; further is faster. Reset stands it back up, facing front.</p>
         {/if}
         {#if dome.connected}
           {@const ringEst = domeEstimate(dome.step, 'ring')}
           {@const domeEst = domeEstimate(dome.step, 'dome')}
           {@const t = (sec: number) => (sec >= 60 ? `${Math.round(sec / 60)} min` : `${Math.round(sec)} s`)}
-          <div class="seg facing" role="radiogroup" aria-label="Which way the gimbal was set down">
-            <button role="radio" aria-checked={dome.facing === 'forward'} class:on={dome.facing === 'forward'} onclick={() => setFacing('forward')} disabled={dome.running}>Faces forward stn</button>
-            <button role="radio" aria-checked={dome.facing === 'wall'} class:on={dome.facing === 'wall'} onclick={() => setFacing('wall')} disabled={dome.running}>Faces a wall</button>
-          </div>
           <label class="spacing">Spacing <strong>{dome.step}°</strong>
             <input type="range" min="2" max="30" step="1" bind:value={dome.step} disabled={dome.running} aria-label="Spacing of the shots, degrees" /></label>
           {#if dome.running}
@@ -392,13 +381,11 @@
                   onpointerup={aimRelease} onpointercancel={aimRelease} onlostpointercapture={aimRelease}
                   oncontextmenu={(e) => e.preventDefault()}>{label}</button>
               {/each}
-              <p class="aimpos" role="status">pan {Math.round(aim.pan)}° · tilt {Math.round(aim.tilt)}° · roll {Math.round(aim.roll)}°{#if aim.atLimit}<br /><strong class="warn">{aim.atLimit} limit</strong>{/if}
-<br />roll reach ⟲{rollReach().left}° ⟳{rollReach().right}°{#if gimbalPos}<br /><span title="The gimbal's own report: where the clamp top points (azimuth from where the gimbal woke up, inclination), and its pan/tilt/roll joints">top {gimbalPos.az.toFixed(0)}° / {gimbalPos.inc.toFixed(0)}° · joints {gimbalPos.pan.toFixed(0)} {gimbalPos.tilt.toFixed(0)} {gimbalPos.roll.toFixed(0)}</span>{/if}</p>
-              {#if !aim.longRoll}<button class="small" onclick={findLongSide} disabled={dome.running || !survey.canTakeShot} title="Lean 45° each way with a shot to learn which roll side reaches far; kept on this device">Find long side</button>{/if}
+              <p class="aimpos" role="status">{#if aim.reporting}az {Math.round(aim.az)}° · {Math.round(aim.inc)}° up<br /><span title="Pan, tilt and roll joints as the gimbal reports them">joints {aim.joints.map((v) => Math.round(v)).join(' · ')}</span>{:else}waiting for the gimbal's report{/if}{#if aim.atLimit}<br /><strong class="warn">{aim.atLimit} limit</strong>{/if}</p>
             </div>
           </div>
           <div class="three">
-            <button onclick={aimReset} disabled={dome.running || aim.resetting} title="Back to the centre: pan and tilt by the estimate, roll by the X1's reading. Long-press: it is centred already" oncontextmenu={(e) => { e.preventDefault(); aimCentred(); }}>{aim.resetting ? 'Resetting…' : 'Reset'}</button>
+            <button onclick={aimReset} disabled={dome.running || aim.resetting || !aim.reporting} title="Stand it back up, facing front, by the gimbal's own report">{aim.resetting ? 'Resetting…' : 'Reset'}</button>
             <button onclick={() => live.laser(true)} disabled={!survey.canLaser || dome.running}><Flashlight size={18} /> Laser</button>
             <button class="go" onclick={() => { live.laser(true); setTimeout(() => live.takeShot(), 400); }} disabled={!survey.canTakeShot || dome.running} title="Fire the X1 where the gimbal is pointing"><Crosshair size={18} /> Shoot</button>
           </div>
@@ -637,5 +624,4 @@
   .gimbal .speeds button { flex: 1; padding: 6px 2px; font-size: 0.85em; }
   .gimbal .hold { min-height: 40px; touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
   .gimbal .aimpos { margin: 0; font-size: 0.85em; opacity: 0.85; }
-  .gimbal .facing button { flex: 1; font-size: 0.85em; padding: 6px 4px; }
 </style>

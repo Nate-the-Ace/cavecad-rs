@@ -150,8 +150,19 @@ export class OsmoGimbal {
     }
   }
 
-  /** Recentre as DJI Mimo does (capture 2026-11-17): 04/54 [01 dc 05 00 00 00 00 80 00 00 00], once a second, three
-   * times. Unconfirmed: it lines up with the gimbal going back to centre in the capture. */
+  /** The first attitude report that arrives after `after` (performance.now() time), or null after `waitMs`. */
+  async freshAttitude(after: number, waitMs = 3000) {
+    const end = performance.now() + waitMs;
+    while (performance.now() < end) {
+      const a = this.attitude;
+      if (a && a.at > after) return a;
+      await new Promise((r) => setTimeout(r, 40));
+    }
+    return null;
+  }
+
+  /** DJI Mimo's 04/54 [01 dc 05 00 00 00 00 80 00 00 00], once a second, three times. The OM7 acknowledges it and does
+   * NOT move (bench 2026-11-17): kept for the record, not used. */
   async recentre() {
     for (let k = 0; k < 3; k++) {
       await this.send(duml(this.next(), 0x04, 0x54, [0x01, 0xdc, 0x05, 0, 0, 0, 0, 0x80, 0, 0, 0], 0x40));

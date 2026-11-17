@@ -1,41 +1,46 @@
-// Gimbal kinematics for an X1 riding a phone gimbal with its laser out of the clamp's top (tools/cave-osmo/FINDINGS.md).
+// Gimbal kinematics for an X1 riding an Osmo Mobile 7 with its laser out of the clamp's top, from the gimbal's own
+// attitude report (tools/cave-osmo/FINDINGS.md; the same model as the Rust library's `aim` module, bench-tested there).
 //
-// Joints, from the gimbal's own centre (where it was set down, upright, front forward):
-//   pan  ψ: turns everything about the vertical; + is clockwise seen from above (to the right).
-//   roll ρ: swings the clamp about the camera (front) axis; the laser, straight up at ρ = 0, leans sideways by |ρ|.
-//           + leans it to the side `rightIsPositive` says (fixed by how the X1 sits in the clamp).
-//   tilt θ: nods the clamp about the side axis; held at 0 except to cancel a fore/aft lean.
-//
-// Forward kinematics (tilt 0): the laser's inclination is 90 − |ρ| (below level past 90) and its azimuth, from the
-// gimbal's front, is ψ + 90° toward the side ρ leans. Inverse: for a wanted direction there are two answers, one per
-// roll side (ρ = ±(90 − inc), ψ = az ∓ 90); keep the ones inside the reach and pick the cheapest from where it is.
+// The gimbal reports, once a second, its attitude as a quaternion (north-east-down, north = wherever it woke up) and
+// its joint angles. Speed commands turn the attitude's Euler angles: pan = yaw, tilt = pitch, roll = roll. With pitch
+// held near 0 the clamp top points at inclination asin(−sin r), azimuth y + 90° when cos r > 0 and y − 90° when
+// cos r < 0 (upright in portrait is r = −90°). So each direction has two answers: r = −inc with y = az − 90°, or
+// r = inc − 180° with y = az + 90°. An answer counts only if the joints stay inside the safe windows: the roll has no
+// stop, it FLIPS OVER (violently, at any speed) past joint ~63 and ~221, so most targets are reached by panning to face
+// them from the long roll side ("going round the other way") instead of crossing the flip.
 // Everything is in degrees.
 
-export interface Joints {
+/** w x y z */
+export type Quat = [number, number, number, number];
+
+/** One attitude report: the quaternion and the joints as the gimbal gives them. */
+export interface Att {
+  q: Quat;
   pan: number;
-  roll: number;
   tilt: number;
+  roll: number;
 }
 
-/** A laser direction relative to the gimbal's front: azimuth clockwise from the front, inclination up from level. */
+/** A laser direction relative to the gimbal's front at home: azimuth clockwise from the front, inclination up. */
 export interface Direction {
   az: number;
   inc: number;
 }
 
-export interface Reach {
-  /** Pan either way from the centre. */
-  pan: number;
-  /** Roll on the long side and the short side (which way is long: `longRoll`, +1 or −1; 0 unknown = both short). */
-  rollLong: number;
-  rollShort: number;
-  longRoll: number;
-  /** Which side + roll leans the laser to, seen looking out from the gimbal's front. */
-  rightIsPositive: boolean;
+export interface JointLimits {
+  pan: [number, number];
+  tilt: [number, number];
+  roll: [number, number];
 }
 
-/** Measured on the OM7 with the X1 aboard, less a margin (FINDINGS). */
-export const OM7_REACH: Reach = { pan: 130, rollLong: 120, rollShort: 35, longRoll: 0, rightIsPositive: true };
+/** Safe joint windows in portrait (range test 2026-11-17, less a margin). Pan and tilt end at harmless stops; the
+ * roll window is the one that matters (measured clean 63…221). */
+export const OM7_PORTRAIT: JointLimits = { pan: [-198, 84], tilt: [-11, 31], roll: [75, 205] };
+/** The roll joint at rest upright in portrait was 93–97 every time; outside this the clamp went portrait some other
+ * way and the windows were not measured for it. */
+export const OM7_UPRIGHT_ROLL: [number, number] = [80, 112];
+
+const DEG = 180 / Math.PI;
 
 export const wrap180 = (a: number) => {
   let x = ((a % 360) + 360) % 360;
@@ -43,39 +48,100 @@ export const wrap180 = (a: number) => {
   return x;
 };
 
-/** Where the laser points for these joints (tilt taken as 0). */
-export function forward(j: Joints, reach: Pick<Reach, 'rightIsPositive'> = OM7_REACH): Direction {
-  const side = (reach.rightIsPositive ? 1 : -1) * Math.sign(j.roll || 0);
-  return { az: wrap180(j.pan + (side >= 0 ? 90 : -90)), inc: 90 - Math.abs(j.roll) };
+/** The pan joint unwrapped onto the OM7's stops (−202 … +92; readings wrap at ±180). */
+export const om7Pan = (j: number) => (j > 97 ? j - 360 : j);
+export const jointsOf = (a: Att): [number, number, number] => [om7Pan(a.pan), a.tilt, a.roll];
+
+/** Euler angles (roll, pitch, yaw). */
+export function euler(q: Quat): [number, number, number] {
+  const [w, x, y, z] = q;
+  return [
+    Math.atan2(2 * (w * x + y * z), 1 - 2 * (x * x + y * y)) * DEG,
+    Math.asin(Math.max(-1, Math.min(1, 2 * (w * y - z * x)))) * DEG,
+    Math.atan2(2 * (w * z + x * y), 1 - 2 * (y * y + z * z)) * DEG,
+  ];
 }
 
-const rollLimit = (sign: number, r: Reach) => (r.longRoll === 0 ? r.rollShort : sign === r.longRoll ? r.rollLong : r.rollShort);
+export function fromEuler(roll: number, pitch: number, yaw: number): Quat {
+  const [r, p, y] = [roll / DEG / 2, pitch / DEG / 2, yaw / DEG / 2];
+  const [cr, sr, cp, sp, cy, sy] = [Math.cos(r), Math.sin(r), Math.cos(p), Math.sin(p), Math.cos(y), Math.sin(y)];
+  return [cr * cp * cy + sr * sp * sy, sr * cp * cy - cr * sp * sy, cr * sp * cy + sr * cp * sy, cr * cp * sy - sr * sp * cy];
+}
 
-/** Every way to point at `d` inside the reach (0, 1 or 2 answers; one for straight up). */
-export function solutions(d: Direction, reach: Reach = OM7_REACH): Joints[] {
-  const lean = 90 - d.inc; // how far from straight up
-  if (lean < 0 || lean > 180) return [];
-  if (lean < 0.5) return [{ pan: 0, roll: 0, tilt: 0 }];
-  const out: Joints[] = [];
-  for (const sign of [1, -1]) {
-    const roll = sign * lean;
-    if (Math.abs(roll) > rollLimit(sign, reach)) continue;
-    const side = (reach.rightIsPositive ? 1 : -1) * sign;
-    const pan = wrap180(d.az - side * 90);
-    if (Math.abs(pan) > reach.pan) continue;
-    out.push({ pan, roll, tilt: 0 });
+/** The rotation between two attitudes. */
+export function angleBetween(a: Quat, b: Quat) {
+  const d = Math.abs(a[0] * b[0] + a[1] * b[1] + a[2] * b[2] + a[3] * b[3]);
+  return 2 * Math.acos(Math.min(1, d)) * DEG;
+}
+
+export type Axis = 'pan' | 'tilt' | 'roll';
+/** The Euler angle an axis's speed command turns. */
+export const along = (a: Att, axis: Axis) => {
+  const [r, p, y] = euler(a.q);
+  return axis === 'pan' ? y : axis === 'tilt' ? p : r;
+};
+
+/** Where the clamp top (body +Y) points in the gimbal's world: azimuth from its north, inclination. */
+export function clampTop(q: Quat): Direction {
+  const [w, x, y, z] = q;
+  // body (0,1,0) rotated: the quaternion's second column
+  const n = 2 * (x * y - w * z), e = 1 - 2 * (x * x + z * z), d = 2 * (y * z + w * x);
+  return { az: Math.atan2(e, n) * DEG, inc: Math.asin(Math.max(-1, Math.min(1, -d))) * DEG };
+}
+
+/** Where the clamp top points relative to the gimbal's front at `home`. */
+export function pointing(a: Att, home: Att): Direction {
+  const t = clampTop(a.q);
+  return { az: wrap180(t.az - euler(home.q)[2]), inc: t.inc };
+}
+
+/** A home from wherever the gimbal is: same heading the pan centre faces, clamp upright, joints as they would be. */
+export function homeFrom(a: Att): Att {
+  const [r, p, y] = euler(a.q);
+  const pan = om7Pan(a.pan);
+  return { q: fromEuler(-90, p, y - pan), pan: 0, tilt: a.tilt, roll: a.roll - wrap180(r + 90) };
+}
+
+/** One way to point there: the yaw to turn (signed, the way round that stays between the pan stops), the roll Euler
+ * angle to end at, and the joints it should land on. */
+export interface Solution {
+  turnYaw: number;
+  roll: number;
+  panJoint: number;
+  rollJoint: number;
+}
+
+/** Every answer for `d` from `now`, measured against `home`, inside `limits`; cheapest first. */
+export function solutions(d: Direction, home: Att, now: Att, limits: JointLimits = OM7_PORTRAIT): Solution[] {
+  const [hr, , hy] = euler(home.q);
+  const [nr, , ny] = euler(now.q);
+  const nj = jointsOf(now);
+  const inc = Math.max(-90, Math.min(90, d.inc));
+  const out: Solution[] = [];
+  for (const [r0, yawRel] of [
+    [-inc, d.az - 90],
+    [inc - 180, d.az + 90],
+  ]) {
+    const roll = wrap180(r0);
+    const rollJoint = home.roll + wrap180(roll - hr);
+    if (rollJoint < limits.roll[0] || rollJoint > limits.roll[1]) continue;
+    // straight up has no azimuth: face home, the only place the tilt can stand the clamp fully upright
+    const targetYaw = inc > 89.5 ? hy : hy + yawRel;
+    const base = wrap180(targetYaw - ny);
+    for (const turnYaw of [base, base - 360, base + 360]) {
+      const panJoint = nj[0] + turnYaw;
+      if (panJoint < limits.pan[0] || panJoint > limits.pan[1]) continue;
+      out.push({ turnYaw, roll, panJoint, rollJoint });
+    }
   }
-  return out;
+  const cost = (s: Solution) => Math.abs(s.turnYaw) + Math.abs(wrap180(s.roll - nr));
+  return out.sort((a, b) => cost(a) - cost(b));
 }
 
-/** Cost of moving between two joint sets: the longest single move (the axes turn one after another at one rate). */
-export const cost = (a: Joints, b: Joints) => Math.abs(a.pan - b.pan) + Math.abs(a.roll - b.roll);
-
-/** The cheapest way to point at `d` from `from`, or null if the gimbal cannot reach it. */
-export function solve(d: Direction, from: Joints, reach: Reach = OM7_REACH): Joints | null {
-  const s = solutions(d, reach);
-  if (!s.length) return null;
-  return s.reduce((best, j) => (cost(from, j) < cost(from, best) ? j : best));
+/** The attitude a solution should land on (pitch held), for planning the next move from it. */
+export function landing(s: Solution, now: Att): Att {
+  const [, p, y] = euler(now.q);
+  return { q: fromEuler(s.roll, p, y + s.turnYaw), pan: s.panJoint, tilt: now.tilt, roll: s.rollJoint };
 }
 
 /** Directions for a ring across the passage: the plane square to `passageAz` (where the passage goes, from the
@@ -96,35 +162,39 @@ export function domeDirections(step: number): Direction[] {
   return out;
 }
 
-/** Orders reachable targets so the gimbal moves little between them: by pan, rolling down then up in turn (zig-zag),
- * and says which were out of reach. */
-export function plan(dirs: Direction[], reach: Reach = OM7_REACH, from: Joints = { pan: 0, roll: 0, tilt: 0 }) {
-  const reachable: { d: Direction; j: Joints }[] = [];
+/** Orders the reachable targets so the gimbal moves little (always the nearest next, straight up first) and says
+ * which are out of reach. Each step carries the solution as planned from the one before. */
+export function plan(dirs: Direction[], home: Att, from: Att = home, limits: JointLimits = OM7_PORTRAIT) {
   const unreachable: Direction[] = [];
+  let left = dirs.filter((d) => {
+    const ok = solutions(d, home, home, limits).length > 0;
+    if (!ok) unreachable.push(d);
+    return ok;
+  });
+  const steps: { d: Direction; s: Solution }[] = [];
   let at = from;
-  // solve each against a neutral start first, then order; ties broken toward the side already in use
-  for (const d of dirs) {
-    const j = solve(d, at, reach);
-    if (j) reachable.push({ d, j });
-    else unreachable.push(d);
+  let travel = 0;
+  const up = left.findIndex((d) => d.inc >= 89.5);
+  if (up >= 0) left = [left[up], ...left.slice(0, up), ...left.slice(up + 1)];
+  let first = up >= 0;
+  while (left.length) {
+    let best = -1, bestCost = Infinity, bestSol: Solution | null = null;
+    for (const [i, d] of left.entries()) {
+      if (first && i > 0) break;
+      const s = solutions(d, home, at, limits)[0];
+      if (!s) continue;
+      const c = Math.abs(s.turnYaw) + Math.abs(wrap180(s.roll - euler(at.q)[0]));
+      if (c < bestCost) [best, bestCost, bestSol] = [i, c, s];
+    }
+    first = false;
+    if (best < 0 || !bestSol) {
+      unreachable.push(...left);
+      break;
+    }
+    steps.push({ d: left[best], s: bestSol });
+    travel += bestCost;
+    at = landing(bestSol, at);
+    left.splice(best, 1);
   }
-  const panKey = (p: number) => Math.round(p * 10) / 10;
-  const byPan = new Map<number, { d: Direction; j: Joints }[]>();
-  for (const r of reachable) {
-    const k = panKey(r.j.pan);
-    if (!byPan.has(k)) byPan.set(k, []);
-    byPan.get(k)!.push(r);
-  }
-  const ordered: { d: Direction; j: Joints }[] = [];
-  let down = true;
-  for (const k of [...byPan.keys()].sort((a, b) => a - b)) {
-    const col = byPan.get(k)!.sort((a, b) => Math.abs(a.j.roll) - Math.abs(b.j.roll) || a.j.roll - b.j.roll);
-    ordered.push(...(down ? col : col.reverse()));
-    down = !down;
-  }
-  // straight up first if it is in the list (it is the reference shot)
-  const upIdx = ordered.findIndex((o) => o.d.inc >= 89.5);
-  if (upIdx > 0) ordered.unshift(...ordered.splice(upIdx, 1));
-  at = from;
-  return { steps: ordered, unreachable };
+  return { steps, unreachable, travel };
 }
