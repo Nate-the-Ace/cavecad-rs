@@ -233,10 +233,12 @@ async function learnLongSide() {
   }
 }
 
-// ---- manual aiming: the stick moves the LASER (up/down = higher/lower, left/right = turn), the kinematics turn that
-// into pan and roll for wherever the gimbal is, and the guard keeps it inside the reach
+// ---- manual aiming (Nathan, 2026-11-17): the stick moves the laser forward/back (tilt; push up = forward) and turns it
+// (pan); two buttons lean it left/right (roll). The guard keeps every axis inside the reach.
+/** Which tilt command sign takes the laser (out of the clamp's top) forward: camera nose down, as on phone gimbals. */
+const TILT_FORWARD = -1;
 let stick = { x: 0, y: 0 };
-let tiltWant = 0;
+let rollWant = 0;
 let aimTimer: ReturnType<typeof setInterval> | undefined;
 let lastTick = 0;
 let sent = { pan: 0, tilt: 0, roll: 0 };
@@ -252,11 +254,9 @@ function aimTick() {
   aim.atLimit = '';
   const max = AIM_SPEEDS[aim.speed];
   const shape = (v: number) => Math.sign(v) * v * v * max;
-  const turnRate = shape(stick.x), upRate = shape(stick.y);
-  // which way roll lowers the laser: the side it leans to now, or the long side from straight up
-  const side = Math.abs(aim.roll) > 1 ? Math.sign(aim.roll) : aim.longRoll || 1;
-  let roll = -side * upRate;
-  if (upRate > 0 && Math.abs(aim.roll) <= 1) roll = 0; // straight up already: no going over the top
+  const turnRate = shape(stick.x);
+  const tiltRate = TILT_FORWARD * shape(stick.y);
+  const roll = rollWant;
   const look = 0.25; // stop a quarter second early: the gimbal coasts a little
   const r = reach();
   const rollMax = (sgn: number) => (r.longRoll === 0 ? r.rollShort : sgn === r.longRoll ? r.rollLong : r.rollShort);
@@ -270,7 +270,7 @@ function aimTick() {
   };
   sent = {
     pan: guard(aim.pan, turnRate, r.pan, r.pan, 'pan'),
-    tilt: guard(aim.tilt, tiltWant, TILT.down, TILT.up, 'tilt'),
+    tilt: guard(aim.tilt, tiltRate, TILT.down, TILT.up, 'tilt'),
     roll: guard(aim.roll, roll, rollMax(-1), rollMax(1), 'roll'),
   };
   gimbal.setRates(sent.pan, sent.tilt, sent.roll);
@@ -281,27 +281,28 @@ function aimTick() {
   }
 }
 function startAim() {
-  aim.moving = !!(stick.x || stick.y || tiltWant);
+  aim.moving = !!(stick.x || stick.y || rollWant);
   if (!aimTimer && aim.moving) {
     lastTick = performance.now();
     aimTimer = setInterval(aimTick, 50);
     aimTick();
   }
 }
-/** Joystick: x (−1…1) turns the laser left/right, y (−1…1, up positive) raises/lowers it; squared for fine control. */
+/** Joystick: x (−1…1) turns, y (−1…1, up positive) moves the laser forward; squared for fine control. */
 export function aimStick(x: number, y: number) {
   if (!gimbal.connected || dome.running || busy) return;
   stick = { x, y };
   startAim();
 }
-export function aimHold(axis: 'tilt', sign: 1 | -1) {
+/** Roll buttons: lean the laser to one side or the other while held. */
+export function aimHold(axis: 'roll', sign: 1 | -1) {
   if (!gimbal.connected || dome.running || busy) return;
-  tiltWant = AIM_SPEEDS[aim.speed] * sign;
+  rollWant = AIM_SPEEDS[aim.speed] * sign;
   startAim();
 }
 export function aimRelease() {
   stick = { x: 0, y: 0 };
-  tiltWant = 0;
+  rollWant = 0;
   aim.moving = false;
 }
 /** The gimbal has been set back to its centre by hand (upright, front forward): the estimate starts again from 0. */

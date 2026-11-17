@@ -30,8 +30,8 @@
 
 <div class="stick" class:active class:disabled bind:this={base} style="width:{size}px;height:{size}px"
   onpointerdown={down} onpointermove={(e) => active && at(e)} onpointerup={up} onpointercancel={up} onlostpointercapture={up}
-  oncontextmenu={(e) => e.preventDefault()} role="slider" aria-label="Aim: left and right pan, up and down roll" aria-valuenow={0} tabindex="-1">
-  <span class="lab t">roll</span><span class="lab l">pan</span>
+  oncontextmenu={(e) => e.preventDefault()} role="slider" aria-label="Aim: up moves the laser forward, left and right turn" aria-valuenow={0} tabindex="-1">
+  <span class="lab t">forward</span><span class="lab l">turn</span>
   <div class="thumb" style="transform: translate({dx}px, {dy}px)"></div>
 </div>
 

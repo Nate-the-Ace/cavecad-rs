@@ -347,7 +347,7 @@
           <button class="info" onclick={() => (gimbalInfo = !gimbalInfo)} aria-expanded={gimbalInfo} aria-label="About the gimbal scans">ⓘ</button>
         </div>
         {#if gimbalInfo}
-          <p class="hint">Set the gimbal down upright (rotate button) and say which way it faces. Facing the forward station, the ring misses the far wall below ~55° up (the gimbal cannot turn round); facing a wall it reaches both. Dome: the half-sphere above, where it can reach. The gimbal's magnet spoils the X1's bearings; distances and up/down angles are good. Stick: up/down moves the laser higher/lower, left/right turns it; further is faster. Reset puts it back upright; long-press Reset if it is centred already.</p>
+          <p class="hint">Set the gimbal down upright (rotate button) and say which way it faces. Facing the forward station, the ring misses the far wall below ~55° up (the gimbal cannot turn round); facing a wall it reaches both. Dome: the half-sphere above, where it can reach. The gimbal's magnet spoils the X1's bearings; distances and up/down angles are good. Stick: up moves the laser forward, down back, left/right turns it; the Roll buttons lean it to either side; further is faster. Reset puts it back upright; long-press Reset if it is centred already.</p>
         {/if}
         {#if dome.connected}
           {@const ringEst = domeEstimate(dome.step, 'ring')}
@@ -379,13 +379,13 @@
                   <button role="radio" aria-checked={aim.speed === sp} class:on={aim.speed === sp} onclick={() => (aim.speed = sp as keyof typeof AIM_SPEEDS)} title="{AIM_SPEEDS[sp as keyof typeof AIM_SPEEDS]}°/s at full push">{sp}</button>
                 {/each}
               </div>
-              {#each [[1, '▲ Tilt'], [-1, 'Tilt ▼']] as [sign, label]}
+              {#each [[-1, '⟲ Roll'], [1, 'Roll ⟳']] as [sign, label]}
                 <button class="hold" disabled={dome.running}
-                  onpointerdown={(e) => { e.currentTarget.setPointerCapture(e.pointerId); aimHold('tilt', sign as 1 | -1); }}
+                  onpointerdown={(e) => { e.currentTarget.setPointerCapture(e.pointerId); aimHold('roll', sign as 1 | -1); }}
                   onpointerup={aimRelease} onpointercancel={aimRelease} onlostpointercapture={aimRelease}
                   oncontextmenu={(e) => e.preventDefault()}>{label}</button>
               {/each}
-              <p class="aimpos" role="status">pan {Math.round(aim.pan)}° · roll {Math.round(aim.roll)}°{#if aim.atLimit}<br /><strong class="warn">{aim.atLimit} limit</strong>{/if}</p>
+              <p class="aimpos" role="status">pan {Math.round(aim.pan)}° · tilt {Math.round(aim.tilt)}° · roll {Math.round(aim.roll)}°{#if aim.atLimit}<br /><strong class="warn">{aim.atLimit} limit</strong>{/if}</p>
             </div>
           </div>
           <div class="three">
