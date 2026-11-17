@@ -435,8 +435,9 @@ pub mod aim {
                 continue;
             }
             // the pan joint can land on the target yaw two ways round; keep those between the stops
-            // straight up has no azimuth: stay facing as it is
-            let target_yaw = if inc > 89.5 { ny } else { hy + yaw_rel };
+            // straight up has no azimuth: face home (pan centred), the only place the tilt has room to stand the clamp
+            // fully upright (panned far, the handle's lean pins the tilt joint on a stop; bench 2026-11-17)
+            let target_yaw = if inc > 89.5 { hy } else { hy + yaw_rel };
             let base = wrap180(target_yaw - ny);
             for turn in [base, base - 360.0, base + 360.0] {
                 let pan_joint = nj[0] + turn;
@@ -829,7 +830,12 @@ impl Osmo {
             let j = now.joints();
             // the furthest this step may go before some joint leaves its window
             let mut allowed = left.min(dps.abs());
+            let own = match axis { Axis::Pan => 0, Axis::Tilt => 1, Axis::Roll => 2 };
             for k in 0..3 {
+                // pan and tilt end at harmless stops: they limit only their own moves; the roll limits every move
+                if k != own && k != 2 {
+                    continue;
+                }
                 // 1.5x what the last step showed: a report is a second old and the gimbal coasts
                 let rate = per[k].abs() * if per_known { 1.5 } else { 1.0 };
                 if rate > 1e-3 {
