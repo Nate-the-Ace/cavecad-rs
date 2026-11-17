@@ -1,4 +1,4 @@
-"""Gimbal Watch receiver: serves index.html and appends the phone's orientation samples to samples.jsonl.
+"""Gimbal Watch receiver: serves index.html (phone gyro page), /view (live 3D of X1 shots from shots.jsonl) and appends the phone's orientation samples to samples.jsonl.
 Run: python3 -I server.py [port]  (then `tailscale serve --bg <port>` so the phone gets https)."""
 import http.server, json, sys, os
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -6,7 +6,14 @@ OUT = os.path.join(HERE, "samples.jsonl")
 
 class H(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
-        body = open(os.path.join(HERE, "index.html"), "rb").read()
+        path = self.path.split("?")[0]
+        if path.endswith("/shots"):
+            f = os.path.join(HERE, "shots.jsonl")
+            body = open(f, "rb").read() if os.path.exists(f) else b""
+            self.send_response(200); self.send_header("Content-Type", "text/plain")
+            self.send_header("Cache-Control", "no-store"); self.end_headers(); self.wfile.write(body); return
+        page = "view.html" if path.rstrip("/").endswith("view") else "index.html"
+        body = open(os.path.join(HERE, page), "rb").read()
         self.send_response(200); self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Cache-Control", "no-store"); self.end_headers(); self.wfile.write(body)
     def do_POST(self):

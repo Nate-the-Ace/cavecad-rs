@@ -36,6 +36,24 @@ func rotate(_ yaw: Int, _ pitch: Int, roll: Int = 0, mode: UInt8, time: UInt8) -
 }
 func hex(_ b: [UInt8]) -> String { b.map { String(format: "%02x", $0) }.joined(separator: " ") }
 
+// ---- Cavway X1 (same wire format as crates/cave-instrument/src/cavway.rs): `data:` len payload CR LF; a shot packet is
+// acknowledged with its flag | 0x55. Laser goes off after every remote shot, so each shot is laser on (36) + measure (38).
+let NUS = CBUUID(string: "6E400001-B5A3-F393-E0A9-E50E24DCCA9E")
+let X1_WRITE = CBUUID(string: "6E400002-B5A3-F393-E0A9-E50E24DCCA9E")
+let X1_NOTIFY = CBUUID(string: "6E400003-B5A3-F393-E0A9-E50E24DCCA9E")
+func x1Frame(_ p: [UInt8]) -> [UInt8] { [0x64, 0x61, 0x74, 0x61, 0x3a, UInt8(p.count)] + p + [0x0d, 0x0a] }
+struct X1Shot { let flag: UInt8; let dist, az, incl, roll: Double }
+func x1Decode(_ b: [UInt8]) -> X1Shot? {
+    guard b.count >= 33, b[0] == 0x01 else { return nil }
+    let u16 = { (i: Int) in Double(UInt16(b[i]) | UInt16(b[i + 1]) << 8) }
+    let i16 = { (i: Int) in Double(Int16(bitPattern: UInt16(b[i]) | UInt16(b[i + 1]) << 8)) }
+    let a = 360.0 / 65535.0
+    let dist = Double(UInt32(b[2]) << 16 | UInt32(b[4]) << 8 | UInt32(b[3])) / 1000
+    var incl = i16(7) * a
+    if abs(incl) > 90 && abs(incl) < 90.01 { incl = incl < 0 ? -90 : 90 }
+    return X1Shot(flag: b[1], dist: dist, az: u16(5) * a, incl: incl, roll: u16(9) * a)
+}
+
 // ---- parse what the gimbal says (per characteristic; messages may span notifications)
 struct Msg { let sender, receiver, attr, set, cmd: UInt8; let seq: UInt16; let payload: [UInt8] }
 var buffers: [CBUUID: [UInt8]] = [:]
@@ -79,25 +97,49 @@ final class Probe: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
     var central: CBCentralManager!
     var osmo: CBPeripheral?
     var write: CBCharacteristic?
+    var x1: CBPeripheral?
+    var x1Write: CBCharacteristic?
+    var wantX1 = false, osmoReady = false, x1Ready = false, started = false
+    var recentX1: [[UInt8]] = []
+    var onShot: ((X1Shot) -> Void)?
     let steps: [String]
-    init(steps: [String]) { self.steps = steps; super.init(); central = CBCentralManager(delegate: self, queue: nil) }
+    init(steps: [String]) {
+        self.steps = steps
+        wantX1 = steps.contains { $0.hasPrefix("shoot") }
+        super.init(); central = CBCentralManager(delegate: self, queue: nil)
+    }
+    func startIfReady() {
+        guard !started, osmoReady, !wantX1 || x1Ready else { return }
+        started = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { self.run(0) }
+    }
 
     func centralManagerDidUpdateState(_ c: CBCentralManager) {
         guard c.state == .poweredOn else { if c.state != .unknown { print("Bluetooth not on: \(c.state.rawValue)") }; return }
         if let p = c.retrieveConnectedPeripherals(withServices: [FFF0]).first {
             print("using the Mac's existing link: \(p.name ?? "?")")
             take(p)
-        } else {
+        }
+        if wantX1, let p = c.retrieveConnectedPeripherals(withServices: [NUS]).first(where: { ($0.name ?? "").hasPrefix("CavwayX1") }) {
+            takeX1(p)
+        }
+        if osmo == nil || (wantX1 && x1 == nil) {
             print("scanning…")
             c.scanForPeripherals(withServices: nil)
-            DispatchQueue.main.asyncAfter(deadline: .now() + 12) { if self.osmo == nil { print("no Osmo found"); exit(1) } }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 15) {
+                if self.osmo == nil { print("no Osmo found"); exit(1) }
+                if self.wantX1 && self.x1 == nil { print("no X1 found (awake? not connected to the phone/iPad?)"); exit(1) }
+            }
         }
     }
     func centralManager(_ c: CBCentralManager, didDiscover p: CBPeripheral, advertisementData ad: [String: Any], rssi: NSNumber) {
         let name = p.name ?? (ad[CBAdvertisementDataLocalNameKey] as? String) ?? ""
-        if name.uppercased().hasPrefix("OM") || name.uppercased().contains("OSMO") { c.stopScan(); take(p) }
+        if osmo == nil, name.uppercased().hasPrefix("OM") || name.uppercased().contains("OSMO") { take(p) }
+        if wantX1, x1 == nil, name.hasPrefix("CavwayX1") { takeX1(p) }
+        if osmo != nil && (!wantX1 || x1 != nil) { c.stopScan() }
     }
     func take(_ p: CBPeripheral) { osmo = p; p.delegate = self; central.connect(p) }
+    func takeX1(_ p: CBPeripheral) { x1 = p; p.delegate = self; central.connect(p) }
     func centralManager(_ c: CBCentralManager, didConnect p: CBPeripheral) { print("connected \(p.name ?? "")"); p.discoverServices(nil) }
     func centralManager(_ c: CBCentralManager, didFailToConnect p: CBPeripheral, error: Error?) { print("connect failed: \(String(describing: error))"); exit(1) }
     func peripheral(_ p: CBPeripheral, didDiscoverServices error: Error?) {
@@ -105,15 +147,39 @@ final class Probe: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
     }
     var pending = 0
     func peripheral(_ p: CBPeripheral, didDiscoverCharacteristicsFor s: CBService, error: Error?) {
+        if p == x1 {
+            for ch in s.characteristics ?? [] {
+                if ch.uuid == X1_WRITE { x1Write = ch }
+                if ch.uuid == X1_NOTIFY { p.setNotifyValue(true, for: ch) }
+            }
+            if s.uuid == NUS { x1Ready = true; startIfReady() }
+            return
+        }
         for ch in s.characteristics ?? [] {
             print("  \(s.uuid) \(ch.uuid) props=\(ch.properties.rawValue)")
             if ch.uuid == FFF5 { write = ch }
             if ch.properties.contains(.notify) || ch.properties.contains(.indicate) { p.setNotifyValue(true, for: ch) }
         }
-        if s.uuid == FFF0 { DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { self.run(0) } }
+        if s.uuid == FFF0 { osmoReady = true; startIfReady() }
     }
     func peripheral(_ p: CBPeripheral, didUpdateValueFor ch: CBCharacteristic, error: Error?) {
-        if let v = ch.value { heard(ch.uuid, v) }
+        guard let v = ch.value else { return }
+        if p == x1 {
+            let b = [UInt8](v)
+            guard let shot = x1Decode(b) else { return }
+            if let w = x1Write { p.writeValue(Data(x1Frame([shot.flag | 0x55])), for: w, type: .withoutResponse) }
+            if recentX1.contains(b) { return }
+            recentX1.append(b); if recentX1.count > 8 { recentX1.removeFirst() }
+            if let path = shotLog, let h = FileHandle(forWritingAtPath: path) ?? { FileManager.default.createFile(atPath: path, contents: nil); return FileHandle(forWritingAtPath: path) }() {
+                h.seekToEndOfFile()
+                h.write(String(format: "{\"t\":%.0f,\"d\":%.3f,\"az\":%.2f,\"inc\":%.2f,\"roll\":%.2f,\"flag\":%d}\n", Date().timeIntervalSince1970 * 1000, shot.dist, shot.az, shot.incl, shot.roll, Int(shot.flag)).data(using: .utf8)!)
+                h.closeFile()
+            }
+            print(String(format: "\(stamp()) X1 shot  dist %.3f m  azimuth %.1f  inclination %.1f  roll %.1f  flag %02x", shot.dist, shot.az, shot.incl, shot.roll, shot.flag))
+            if let f = onShot { onShot = nil; f(shot) }
+            return
+        }
+        heard(ch.uuid, v)
     }
 
     func send(_ b: [UInt8]) {
@@ -126,6 +192,7 @@ final class Probe: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
         guard i < steps.count else {
             print("--- counts: " + counts.sorted { $0.key < $1.key }.map { "\($0.key) ×\($0.value)" }.joined(separator: ", "))
             if let p = osmo { central.cancelPeripheralConnection(p) }
+            if let p = x1 { central.cancelPeripheralConnection(p) }
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { exit(0) }
             return
         }
@@ -147,6 +214,13 @@ final class Probe: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
                 else { t.invalidate(); self.send(rotate(0, 0, mode: 0x80, time: 1)); next(2) }
             }
         case "mode": send(message(0x04, 0x4C, [UInt8(n(1, 0)), 0])); next(2)
+        case "shoot":  // laser on + measure, wait for the shot (X1 FINDINGS: ~1.45 s, give up at 4 s)
+            guard let p = x1, let w = x1Write else { print("no X1"); next(0); return }
+            var done = false
+            onShot = { _ in if !done { done = true; next(0.3) } }
+            p.writeValue(Data(x1Frame([0x36])), for: w, type: .withoutResponse)
+            p.writeValue(Data(x1Frame([0x38])), for: w, type: .withoutResponse)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 4) { if !done { done = true; self.onShot = nil; print("\(stamp()) X1 no shot"); next(0) } }
         case "raw":  // raw:<set hex>:<cmd hex>:<payload hex>:<attr hex>
             let b = (p.count > 3 ? p[3] : "")
             let payload = stride(from: 0, to: b.count - 1, by: 2).compactMap { UInt8(String(Array(b)[$0...$0 + 1]), radix: 16) }
@@ -157,5 +231,10 @@ final class Probe: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
     }
 }
 
-let probe = Probe(steps: Array(CommandLine.arguments.dropFirst(CommandLine.arguments.count > 1 && CommandLine.arguments[1] == "steps" ? 2 : 1)))
+// osmo-probe-swift [--shots <file.jsonl>] steps …   (--shots: every X1 shot appended as one JSON line, for watch/view.html)
+var argv = Array(CommandLine.arguments.dropFirst())
+var shotLog: String? = nil
+if argv.first == "--shots", argv.count > 1 { shotLog = argv[1]; argv.removeFirst(2) }
+if argv.first == "steps" { argv.removeFirst() }
+let probe = Probe(steps: argv)
 RunLoop.main.run()
