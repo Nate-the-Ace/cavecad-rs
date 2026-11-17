@@ -23,11 +23,11 @@ const CRC16 = Array.from({ length: 256 }, (_, i) => {
 export const crc8 = (d: number[]) => d.reduce((c, b) => CRC8[(b ^ c) & 0xff], 0x77);
 export const crc16 = (d: number[]) => d.reduce((c, b) => (c >> 8) ^ CRC16[(b ^ c) & 0xff], 0x3692);
 
-/** One message to the gimbal (sender app 0x02, receiver gimbal 0x04). */
-export function duml(seq: number, set: number, cmd: number, payload: number[], attr = 0): Uint8Array {
+/** One message from the app (0x02) to the gimbal (0x04) or another part of it (`to`; 0x27 is the handle board). */
+export function duml(seq: number, set: number, cmd: number, payload: number[], attr = 0, to = 0x04): Uint8Array {
   const len = (13 + payload.length) | (1 << 10);
   const head = [0x55, len & 0xff, len >> 8];
-  const body = [0x02, 0x04, seq & 0xff, (seq >> 8) & 0xff, attr, set, cmd, ...payload];
+  const body = [0x02, to, seq & 0xff, (seq >> 8) & 0xff, attr, set, cmd, ...payload];
   const frame = [...head, crc8(head), ...body];
   const c = crc16(frame);
   return Uint8Array.from([...frame, c & 0xff, c >> 8]);
@@ -42,7 +42,51 @@ const le16 = (v: number) => {
 export const speedMessage = (seq: number, yaw: number, pitch: number, roll: number) =>
   duml(seq, 0x04, 0x0c, [...le16(yaw * 10), ...le16(roll * 10), ...le16(pitch * 10), 0x80, 2]);
 
-type Char = { writeValueWithoutResponse?: (d: BufferSource) => Promise<void>; writeValue: (d: BufferSource) => Promise<void>; startNotifications?: () => Promise<unknown> };
+type Char = {
+  writeValueWithoutResponse?: (d: BufferSource) => Promise<void>;
+  writeValue: (d: BufferSource) => Promise<void>;
+  startNotifications?: () => Promise<unknown>;
+  addEventListener?: (e: string, f: (ev: Event) => void) => void;
+  value?: DataView;
+};
+
+/** One message as it came from the gimbal. */
+export interface Heard {
+  sender: number;
+  seq: number;
+  attr: number;
+  set: number;
+  cmd: number;
+  payload: Uint8Array;
+}
+
+/** Splits the gimbal's byte stream into messages (whole-message checksum); junk and bad messages are skipped. */
+export class DumlParser {
+  private buf: number[] = [];
+  feed(bytes: Uint8Array): Heard[] {
+    this.buf.push(...bytes);
+    const out: Heard[] = [];
+    for (;;) {
+      const i = this.buf.indexOf(0x55);
+      if (i < 0) {
+        this.buf = [];
+        break;
+      }
+      if (i) this.buf.splice(0, i);
+      if (this.buf.length < 4) break;
+      const len = (this.buf[1] | (this.buf[2] << 8)) & 0x3ff;
+      if (len < 13 || crc8(this.buf.slice(0, 3)) !== this.buf[3]) {
+        this.buf.shift();
+        continue;
+      }
+      if (this.buf.length < len) break;
+      const raw = this.buf.splice(0, len);
+      if (crc16(raw.slice(0, len - 2)) !== (raw[len - 2] | (raw[len - 1] << 8))) continue;
+      out.push({ sender: raw[4], seq: raw[6] | (raw[7] << 8), attr: raw[8], set: raw[9], cmd: raw[10], payload: Uint8Array.from(raw.slice(11, len - 2)) });
+    }
+    return out;
+  }
+}
 type Dev = { name?: string; gatt?: { connect: () => Promise<{ getPrimaryService: (u: string) => Promise<{ getCharacteristic: (u: string) => Promise<Char> }> }>; disconnect: () => void; connected?: boolean }; addEventListener: (e: string, f: () => void) => void };
 
 export class OsmoGimbal {
@@ -51,7 +95,39 @@ export class OsmoGimbal {
   private dev: Dev | null = null;
   private writer: Char | null = null;
   private seq = 1 + Math.floor(Math.random() * 60000);
+  private parser = new DumlParser();
   onChange: () => void = () => {};
+  /** The gimbal's last position report (04/05, about once a second once the handshake is answered): its int16 fields
+   * in tenths of a degree by byte offset. Which field is which joint is still being worked out (FINDINGS). */
+  position: { at: number; o0: number; o2: number; o4: number; o6: number; o8: number; o20: number; o22: number } | null = null;
+  /** The thumb stick on the gimbal's handle (04/57 from the handle board, about 18 a second): −660…660 each way. */
+  stick = { x: 0, y: 0 };
+  onPosition: () => void = () => {};
+
+  /** What the gimbal says. Mimo's handshake: it sends 00/00 flagged 0x20 and wants it acknowledged (00/00, flags 0xc0,
+   * payload 00 + its byte, its sequence number); position reports follow. */
+  private heard(m: Heard) {
+    if (m.set === 0x00 && m.cmd === 0x00 && m.attr & 0x20) {
+      void this.send(duml(m.seq, 0x00, 0x00, [0x00, m.payload[0] ?? 0], 0xc0, m.sender));
+    } else if (m.set === 0x04 && m.cmd === 0x05 && m.payload.length >= 24) {
+      const v = (o: number) => (((m.payload[o] | (m.payload[o + 1] << 8)) << 16) >> 16) / 10;
+      this.position = { at: performance.now(), o0: v(0), o2: v(2), o4: v(4), o6: m.payload[6], o8: v(8), o20: v(20), o22: v(22) };
+      (globalThis as { __cavecadDlog?: (s: string) => void }).__cavecadDlog?.(`gimbal pos ${JSON.stringify(this.position)}`);
+      this.onPosition();
+    } else if (m.set === 0x04 && m.cmd === 0x57 && m.payload.length >= 4) {
+      const i16 = (o: number) => (((m.payload[o] | (m.payload[o + 1] << 8)) << 16) >> 16);
+      this.stick = { x: i16(0), y: i16(2) };
+    }
+  }
+
+  /** Recentre as DJI Mimo does (capture 2026-11-17): 04/54 [01 dc 05 00 00 00 00 80 00 00 00], once a second, three
+   * times. Unconfirmed: it lines up with the gimbal going back to centre in the capture. */
+  async recentre() {
+    for (let k = 0; k < 3; k++) {
+      await this.send(duml(this.next(), 0x04, 0x54, [0x01, 0xdc, 0x05, 0, 0, 0, 0, 0x80, 0, 0, 0], 0x40));
+      await new Promise((r) => setTimeout(r, 1000));
+    }
+  }
 
   async connect(): Promise<void> {
     const bt = (navigator as unknown as { bluetooth?: { requestDevice: (o: unknown) => Promise<Dev> } }).bluetooth;
@@ -65,7 +141,12 @@ export class OsmoGimbal {
     const svc = await server.getPrimaryService(SERVICE);
     this.writer = await svc.getCharacteristic(WRITE);
     try {
-      await (await svc.getCharacteristic(NOTIFY)).startNotifications?.();
+      const n = await svc.getCharacteristic(NOTIFY);
+      n.addEventListener?.('characteristicvaluechanged', (ev: Event) => {
+        const v = (ev.target as unknown as Char).value;
+        if (v) for (const m of this.parser.feed(new Uint8Array(v.buffer, v.byteOffset, v.byteLength))) this.heard(m);
+      });
+      await n.startNotifications?.();
     } catch {
       /* the gimbal moves without anyone listening */
     }

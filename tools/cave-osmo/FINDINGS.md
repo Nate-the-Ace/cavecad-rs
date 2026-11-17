@@ -138,10 +138,71 @@ Shallower shots hit other things (desk clutter, wall).
 - So the app recentres itself: pan/tilt back by its estimate, roll back to vertical by the X1's reading (`aimReset`).
   The trigger double-press recentres AND switches to landscape; no command for it found. Sniffing Mimo would tell.
 
+## DJI Mimo capture (2026-11-17, PacketLogger iOS trace, 230 s, OM7 firmware 01.06.00.02)
+
+How: iPhone with Apple's Bluetooth logging profile, PacketLogger → New iOS Trace, Mimo used normally. Decoded with
+the scratch scripts (pklg → ACL → ATT → DUML). One link; Mimo writes only `fff5` (2072 writes), the gimbal answers only
+on `fff4` (12,585 notifications). 15,802 messages, all with good checksums once the checksum was fixed (below).
+
+### The checksum (the big one)
+
+**CRC-16 is DJI's standard: seed 0x3692 over the whole message** (header and header checksum included). The community
+seed 0xDF0C over the body only is the same thing for a 21-byte message (header `55 15 04 a9`) and wrong for every
+other length. So **every non-speed command we sent before had a bad checksum and the gimbal silently dropped it**:
+get-position (13 bytes), 0x4C mode/reset (15), 0x0D resume (15), the 0x0A tries. Those "did nothing" results mean
+nothing. Speed (0x0C) and 0x14 rotates are 21 bytes, so they were right (0x14 still did nothing for other reasons).
+Fixed in `src/lib.rs`, `swift/osmo-probe.swift` and the app (`apps/web/src/lib/instrument/osmo.ts`); the app's
+encoder rebuilds Mimo's messages byte for byte (`apps/web/tests/osmo.check.ts`).
+
+### Who is who
+
+- `04` gimbal, `27` handle board (buttons, thumb stick, battery), `02` the app. Mimo also writes to 03, 1c, 1d, 5a, f0.
+- **`27→02 04/57` (~18/s) is the handle's thumb stick**: int16 at 0 and 2 run −660…660 (0 at rest, all we ever saw).
+  With an app connected the stick is reported to the app instead of moving the gimbal ("the gimbal's joystick did
+  nothing" while Mimo was connected).
+
+### Handshake
+
+- The gimbal sends `04→02 00/00` flagged **0x20** (payload `11`); Mimo answers **`02→04 00/00` flagged 0xc0, payload
+  `00 11`, same sequence number** (147 times over the session). 60 ms after the first answer the gimbal starts its
+  position pushes (`04/05`). We never answered, so we never got them. Now answered (probe and app).
+- Mimo's steady traffic: `02→27 00/00 [02 00]` ~2/s, `ee/02` to 04 and 27 ~1/s, polls `04/10` params 0x85 / 0x22 /
+  0x69 (answers are setting flags, not angles), `04/50`, `04/68`.
+
+### What the gimbal reports with Mimo connected
+
+| Msg | Rate | What |
+|---|---|---|
+| `04/05` | 1/s | **position**: int16 tenths at offsets 0, 4, 8, 20, 22 move with the gimbal; byte 6 a mode (134 at rest, 130/66/70/2/6 at times) |
+| `04/27` | 10/s | 5 bytes, two changing int16 |
+| `04/66` | 5/s | 19 bytes |
+| `04/6f` | 4/s | 21 bytes, mostly zero |
+| `04/38`, `04/77`, `04/68` | 1/s | constant |
+| `03/d7` | 1/s | 13+ bytes, varying (camera/phone link?) |
+
+`04/05` fields at rest: o0 ≈ ±179.9, o4 ≈ 0, o8 ≈ −10.2, o20 ≈ 21, o22 ≈ 94.6. After the rotate button (portrait) o4
+≈ 100, o8 ≈ −95. **Which field is which joint is not settled**: next bench test drives one axis at a time with the
+phone gyro watching and the pushes logged (`osmo-probe` prints `POS` lines now).
+
+### Commands Mimo sent (all `02→04` unless said)
+
+| Msg | Payload | When / guess |
+|---|---|---|
+| `04/4c` | `02 00`, `01 00` | mode switch (lock/follow); answered `04/4c` flagged 0x80 |
+| **`04/54`** | **`01 dc 05 00 00 00 00 80 00 00 00`**, once a second ×7 | lines up with the gimbal going back to centre (150-157 s): **likely recentre**, 0x05dc = 1500 (ms?) |
+| `04/54` | eleven zeros | often, alone: stop / idle? |
+| `04/0f` | `82 01 02`, `82 01 06`, `22 01 00`, `8d 04 …` | set parameters |
+| `04/12` | 30+ bytes | settings blocks at connect |
+| `23/09` | 30+ bytes, 3/s, 81-209 s, floats | a stream (phone attitude? tracking?) |
+| `04/72`, `04/6d`, `04/58`, `03/da`, `00/32`, `00/4a`, `00/0c`, `12/07` | — | connect-time queries (`00/32` answers the serial `95DVM25923403WJA`, `12/07` the name) |
+
+No `04/0c` (speed) or `04/14` (angle) from Mimo at all.
+
 ## Still unknown
 
 - Whether the gimbal's motors pull the X1's compass, and whether the X1's weight sits well in the clamp.
-- Why angle commands are ignored: maybe a mode the Mimo app sets first, or a different command on the OM7 (sniff
-  Mimo's traffic with an nRF sniffer to find out).
+- Which `04/05` field is which joint; whether its rate can be raised (1/s is slow for steering).
+- Whether `04/54 [01 dc 05 …]` is recentre (the app's Reset now tries it first, then checks with the X1).
+- Whether 0x14 / 0x0A angle commands work now that the checksum is right (0x0A and short ones were never valid).
 - Any way to read its angles (try `04/02` with other attributes, the `15f1e6…` service, the `fff3` channel).
-- What 0x27 `04/57` wants as a reply.
+- `04/57` is the handle stick (answered: it wants nothing back; Mimo never replies to it).

@@ -1,6 +1,6 @@
 // The Osmo message encoder: DJI's whole-message checksum (seed 0x3692) rebuilds DJI Mimo's own messages to the gimbal
 // byte for byte (PacketLogger capture, 2026-11-17), and a speed message is still exactly the one proven to move it.
-import { duml, speedMessage } from '../src/lib/instrument/osmo.ts';
+import { duml, speedMessage, DumlParser } from '../src/lib/instrument/osmo.ts';
 const hex = (b: Uint8Array) => Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
 let fails = 0;
 const ok = (c: boolean, m: string) => {
@@ -22,6 +22,11 @@ for (const [seq, set, cmd, p, attr, want] of mimo) {
 }
 // proven on the gimbal (Swift probe, 2026-11-16): seq 1, yaw 30°/s
 ok(hex(speedMessage(1, 30, 0, 0)) === '551504a90204010000040c2c0100000000800223de', `speed: ${hex(speedMessage(1, 30, 0, 0))}`);
+// the parser takes Mimo's messages back apart, also when they arrive split across notifications and with junk between
+const p = new DumlParser();
+const stream = [...duml(7, 0x04, 0x05, Array.from({ length: 30 }, (_, i) => i), 0, 0x02), 0x00, 0x13, ...duml(8, 0x00, 0x00, [0x11], 0x20, 0x02)];
+const got = [...p.feed(Uint8Array.from(stream.slice(0, 9))), ...p.feed(Uint8Array.from(stream.slice(9)))];
+ok(got.length === 2 && got[0].set === 4 && got[0].cmd === 5 && got[0].payload.length === 30 && got[1].attr === 0x20 && got[1].seq === 8, `parser: ${JSON.stringify(got.map((g) => [g.set, g.cmd, g.attr, g.seq]))}`);
 if (fails) {
   console.error(`${fails} osmo check(s) failed`);
   process.exit(1);

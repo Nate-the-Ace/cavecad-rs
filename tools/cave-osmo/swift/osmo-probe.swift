@@ -21,12 +21,13 @@ func crc16(_ d: [UInt8]) -> UInt16 { d.reduce(0x3692) { ($0 >> 8) ^ crc16Table[I
 // the OM7 drops a message whose sequence number matches the last one it took (measured 2026-11-16), so a run must
 // not start where the last run started
 var seq = UInt16.random(in: 2...0xFFF0)
-func message(_ set: UInt8, _ cmd: UInt8, _ payload: [UInt8], attr: UInt8 = 0) -> [UInt8] {
+func message(_ set: UInt8, _ cmd: UInt8, _ payload: [UInt8], attr: UInt8 = 0, to: UInt8 = 0x04, replySeq: UInt16? = nil) -> [UInt8] {
     let len = UInt16(13 + payload.count) | (1 << 10)
     var out: [UInt8] = [0x55, UInt8(len & 0xFF), UInt8(len >> 8)]
     out.append(crc8(out))
-    var body: [UInt8] = [0x02, 0x04, UInt8(seq & 0xFF), UInt8(seq >> 8), attr, set, cmd] + payload
-    seq &+= 1
+    let sq = replySeq ?? seq
+    var body: [UInt8] = [0x02, to, UInt8(sq & 0xFF), UInt8(sq >> 8), attr, set, cmd] + payload
+    if replySeq == nil { seq &+= 1 }
     let c = crc16(out + body); body += [UInt8(c & 0xFF), UInt8(c >> 8)]
     return out + body
 }
@@ -84,6 +85,19 @@ func heard(_ uuid: CBUUID, _ data: Data) {
     let msgs = parse(uuid, bytes)
     if msgs.isEmpty, uuid != FFF4 { print("\(stamp()) \(uuid) raw \(hex(bytes))"); return }
     for m in msgs {
+        // handshake (Mimo capture 2026-11-17): the gimbal sends 00/00 flagged 0x20 and wants it acknowledged
+        // (00/00, flags 0xc0, payload 00 + its byte, same sequence number); Mimo's answer is followed by position pushes
+        if m.set == 0x00 && m.cmd == 0x00 && m.attr & 0x20 != 0, let p = probeRef {
+            p.send(message(0x00, 0x00, [0x00, m.payload.first ?? 0], attr: 0xC0, to: m.sender, replySeq: m.seq))
+        }
+        if m.set == 0x04 && m.cmd == 0x05 && m.payload.count >= 24 {
+            let v = { (o: Int) in Double(Int16(bitPattern: UInt16(m.payload[o]) | UInt16(m.payload[o + 1]) << 8)) / 10 }
+            print(String(format: "\(stamp()) POS o0 %7.1f o2 %6.1f o4 %6.1f o6 %3d o8 %6.1f o20 %6.1f o22 %6.1f", v(0), v(2), v(4), Int(m.payload[6]), v(8), v(20), v(22)))
+        }
+        if m.set == 0x04 && m.cmd == 0x57 && m.payload.count >= 4 {
+            let a = Int16(bitPattern: UInt16(m.payload[0]) | UInt16(m.payload[1]) << 8), b = Int16(bitPattern: UInt16(m.payload[2]) | UInt16(m.payload[3]) << 8)
+            if a != 0 || b != 0 { print("\(stamp()) STICK \(a) \(b)") }
+        }
         let key = String(format: "%02x→%02x %02x/%02x", m.sender, m.receiver, m.set, m.cmd)
         counts[key, default: 0] += 1
         if lastPayload[key] != m.payload {
@@ -306,7 +320,12 @@ final class Probe: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
                 if Date() < end { self.send(rotate(n(1, 0), n(2, 0), roll: n(4, 0), mode: 0x80, time: 2)) }
                 else { t.invalidate(); self.send(rotate(0, 0, mode: 0x80, time: 1)); next(0) }
             }
-        case "mode": send(message(0x04, 0x4C, [UInt8(n(1, 0)), 0])); next(2)
+        case "mode": send(message(0x04, 0x4C, [UInt8(n(1, 0)), 0], attr: 0x40)); next(2)
+        case "recentre":  // Mimo's 04/54 [01 dc 05 00 00 00 00 80 00 00 00] (1500 = ms?), sent as Mimo did: once a second
+            for k in 0..<3 { DispatchQueue.main.asyncAfter(deadline: .now() + Double(k)) { self.send(message(0x04, 0x54, [0x01, 0xdc, 0x05, 0, 0, 0, 0, 0x80, 0, 0, 0], attr: 0x40)) } }
+            next(4)
+        case "hello":  // what Mimo sends right after connecting (heartbeats to the gimbal and the handle board)
+            send(message(0x00, 0x00, [0x02, 0x00], to: 0x27)); send(message(0x04, 0x10, [0x0a], attr: 0x40)); next(1)
         case "level":  // roll the laser to level (phi 90, long side), steered by the X1
             Task { @MainActor in
                 laserOn(); await pause(1.5)
@@ -347,7 +366,9 @@ final class Probe: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
 // osmo-probe-swift [--shots <file.jsonl>] steps …   (--shots: every X1 shot appended as one JSON line, for watch/view.html)
 var argv = Array(CommandLine.arguments.dropFirst())
 var shotLog: String? = nil
+var probeRef: Probe? = nil
 if argv.first == "--shots", argv.count > 1 { shotLog = argv[1]; argv.removeFirst(2) }
 if argv.first == "steps" { argv.removeFirst() }
 let probe = Probe(steps: argv)
+probeRef = probe
 RunLoop.main.run()

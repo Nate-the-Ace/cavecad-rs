@@ -343,7 +343,11 @@ export async function aimReset() {
   aimRelease();
   await pause(150);
   try {
-    await moveTo({ pan: 0, roll: aim.roll, tilt: 0 });
+    // first the gimbal's own recentre, as Mimo sends it (unconfirmed); the X1 check below tidies up what is left
+    await gimbal.recentre();
+    await pause(1500);
+    aim.pan = aim.tilt = 0;
+    aim.roll = 0;
     if (survey.canTakeShot) {
       const way = { side: 1, fore: 1 }; // laser change per + command, by axis
       laser(true);
