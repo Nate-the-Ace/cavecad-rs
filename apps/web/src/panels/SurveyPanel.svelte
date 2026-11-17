@@ -27,7 +27,7 @@
   import * as live from '../lib/survey.svelte';
   import { survey } from '../lib/survey.svelte';
   import { webBluetoothAvailable } from '../lib/instrument/webble';
-  import { dome, estimate as domeEstimate, connectGimbal, disconnectGimbal, startDome, startRing, stopDome, setScanKind, aim, aimHold, aimRelease, aimStick, aimReset, AIM_SPEEDS } from '../lib/dome.svelte';
+  import { dome, estimate as domeEstimate, LEVELS, setLevel, connectGimbal, disconnectGimbal, startDome, startRing, stopDome, setScanKind, aim, aimHold, aimRelease, aimStick, aimReset, AIM_SPEEDS } from '../lib/dome.svelte';
 
   let ready = $state(false);
   let showCapture = $state(false);
@@ -351,18 +351,22 @@
           <p class="hint">Set the gimbal down upright (rotate button), facing the forward station. Ring: both walls from straight up to 20° below level (the left wall by turning round). Dome: the half-sphere above, where it can reach. The gimbal reports where it points; it never rolls past the point where it would flip over. The gimbal's magnet spoils the X1's bearings; distances and up/down angles are good. Stick: up moves the laser forward, left/right turns it; the Roll buttons lean it; further is faster. Reset stands it back up, facing front.</p>
         {/if}
         {#if dome.connected}
-          {@const est = domeEstimate(dome.step, dome.kind)}
+          {@const est = domeEstimate(dome.level, dome.kind)}
           {@const t = (sec: number) => (sec >= 60 ? `${Math.round(sec / 60)} min` : `${Math.round(sec)} s`)}
           <div class="seg" role="radiogroup" aria-label="Which scan">
             <button role="radio" aria-checked={dome.kind === 'ring'} class:on={dome.kind === 'ring'} onclick={() => setScanKind('ring')} disabled={dome.running}><ScanLine size={16} /> Ring</button>
             <button role="radio" aria-checked={dome.kind === 'dome'} class:on={dome.kind === 'dome'} onclick={() => setScanKind('dome')} disabled={dome.running}><Radar size={16} /> Dome</button>
           </div>
           <div class="detail">
-            <ScanPreview kind={dome.kind} points={est.points} />
+            <ScanPreview kind={dome.kind} points={est.points} taken={dome.taken} current={dome.current} />
             <div class="detailside">
-              <label class="spacing">Spacing <strong>{dome.step}°</strong>
-                <input type="range" min="2" max="30" step="1" bind:value={dome.step} disabled={dome.running} aria-label="Spacing of the shots, degrees" /></label>
-              <small>{est.shots} shots · {t(est.secs)}{#if est.missed} · {est.missed} out of reach{/if}</small>
+              <div class="levels" role="radiogroup" aria-label="Detail">
+                {#each LEVELS as lv, i}
+                  {@const e = domeEstimate(i, dome.kind)}
+                  <button role="radio" aria-checked={dome.level === i} class:on={dome.level === i} onclick={() => setLevel(i)} disabled={dome.running} title="{lv.step}° apart: {e.shots} shots{e.missed ? `, ${e.missed} out of reach` : ''}">{lv.name}<small>{lv.step}° · {t(e.secs)}</small></button>
+                {/each}
+              </div>
+              <small>{#if dome.running}{dome.done} of {dome.total} shots{:else}{est.shots} shots · {t(est.secs)}{#if est.missed} · {est.missed} out of reach{/if}{/if}</small>
               {#if dome.running}
                 <div class="grow1">
                   <span class="gname" role="status">{dome.phase} · {dome.done}/{dome.total}</span>
@@ -607,7 +611,6 @@
   .capture pre { max-height: 200px; overflow: auto; font-size: 11px; background: var(--panel-2); padding: 6px; border-radius: var(--radius); margin: 8px 0 0; white-space: pre-wrap; word-break: break-all; }
   .gimbal { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border, #ccc4); }
   .gimbal .gname { font-size: 0.85em; opacity: 0.85; align-self: center; }
-  .gimbal input[type='range'] { width: 100%; }
   .hint.warn { color: var(--warn, #b26a00); }
   .aimpos .warn { color: var(--warn, #b26a00); }
   .tabs { position: sticky; top: 0; z-index: 2; display: grid; grid-template-columns: repeat(4, 1fr); gap: 2px; margin: 0 0 8px;
@@ -620,11 +623,13 @@
   .gimbal .grow1 { display: flex; gap: 8px; align-items: center; }
   .gimbal .grow1 .gname { flex: 1; }
   .gimbal .info { margin-left: auto; width: 36px; height: 36px; border-radius: 50%; padding: 0; font-size: 18px; }
-  .gimbal .spacing { display: flex; gap: 8px; align-items: center; font-size: 0.95em; }
   .gimbal .detail { display: flex; gap: 10px; align-items: center; }
   .gimbal .detailside { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
   .gimbal .detailside small { opacity: 0.75; font-size: 0.8em; }
-  .gimbal .spacing input { flex: 1; }
+  .gimbal .levels { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; }
+  .gimbal .levels button { padding: 5px 4px; border: 1px solid var(--border, #8884); border-radius: 8px; font-size: 0.85em; line-height: 1.15; }
+  .gimbal .levels button.on { background: var(--accent); border-color: var(--accent); color: var(--on-accent, #fff); font-weight: 600; }
+  .gimbal .levels small { display: block; font-size: 0.8em; opacity: 0.8; font-weight: 400; }
   .gimbal .three { display: grid; gap: 6px; }
   .gimbal .three { grid-template-columns: 1fr 1fr 1fr; }
   .gimbal .aimbox { display: grid; grid-template-columns: auto 1fr; gap: 10px; align-items: center; }

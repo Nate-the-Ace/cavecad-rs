@@ -1,6 +1,6 @@
 // Gimbal kinematics (attitude model): every answer points where asked, stays in the safe windows, and goes round the
 // other way where the short way would flip the roll. Same cases as the Rust library's aim tests.
-import { solutions, pointing, fromEuler, euler, homeFrom, plan, ringDirections, domeDirections, clampTop, OM7_PORTRAIT, wrap180, type Att } from '../src/lib/instrument/gimbal-ik.ts';
+import { solutions, pointing, fromEuler, euler, homeFrom, plan, compile, programSeconds, panRollDrag, ringDirections, domeDirections, clampTop, OM7_PORTRAIT, wrap180, type Att } from '../src/lib/instrument/gimbal-ik.ts';
 
 let fails = 0;
 const ok = (c: boolean, msg: string) => {
@@ -48,7 +48,6 @@ ok(solutions({ az: -150, inc: 10 }, home, home).length === 0, 'behind-left low')
 {
   const p = plan(ringDirections(0, 15, -15), home);
   ok(p.unreachable.length === 0, `ring: ${JSON.stringify(p.unreachable)}`);
-  ok(p.steps[0].d.inc >= 89.5, 'ring starts straight up');
   const deep = plan(ringDirections(0, 10, -30), home);
   ok(deep.unreachable.length > 0 && deep.unreachable.every((d) => d.inc < -15), `deep ring misses only the deep ones: ${JSON.stringify(deep.unreachable)}`);
 }
@@ -58,8 +57,43 @@ ok(plan(ringDirections(-90, 15, 0), home).unreachable.length > 0, 'facing a wall
 {
   const all = domeDirections(15);
   const p = plan(all, home);
-  ok(p.steps[0].d.inc >= 89.5, 'dome starts up');
   ok(p.unreachable.length < all.length / 3, `dome reaches most: ${p.unreachable.length} of ${all.length} missed`);
+}
+
+// columns: inside one the yaw never changes and the roll moves one step at a time; the ring is two columns (the
+// right wall with the top and the high left wall, then the left wall from behind)
+{
+  const p = plan(ringDirections(0, 10, -20), home);
+  ok(p.columns === 2, `ring columns ${p.columns}`);
+  for (let i = 1; i < p.steps.length; i++)
+    if (p.steps[i].col === p.steps[i - 1].col) {
+      ok(Math.abs(p.steps[i].s.turnYaw - p.steps[i - 1].s.turnYaw) < 0.2, 'same yaw in a column');
+      ok(Math.abs(wrap180(p.steps[i].s.roll - p.steps[i - 1].s.roll)) <= 10.01, `one step of roll: ${p.steps[i - 1].s.roll} -> ${p.steps[i].s.roll}`);
+    }
+  // the program: replaying its moves (with the shortfall taken back off) lands on every shot and ends home
+  const ops = compile(p, home);
+  let yaw = 0, roll = -90;
+  const seen: number[] = [];
+  for (const op of ops) {
+    const deg = Math.max(0, (op.ms / 1000) * 30 - 2);
+    yaw += Math.sign(op.yaw) * (op.yaw ? deg : 0);
+    roll += Math.sign(op.roll) * (op.roll ? deg : 0);
+    // the roll joint (with the pan's drag) never passes its window on the way
+    const rj = 95.7 + wrap180(roll + 90) + panRollDrag(yaw);
+    ok(rj >= OM7_PORTRAIT.roll[0] - 3 && rj <= OM7_PORTRAIT.roll[1] + 0.01, `roll joint inside on the way: ${rj} at yaw ${yaw}`);
+    if (op.shot !== undefined) {
+      const s = p.steps[op.shot].s;
+      ok(Math.abs(yaw - s.turnYaw) < 0.01 && Math.abs(wrap180(roll - s.roll)) < 0.01, `shot ${op.shot} at yaw ${yaw} roll ${roll}, planned ${s.turnYaw} ${s.roll}`);
+      seen.push(op.shot);
+    }
+  }
+  ok(seen.length === p.steps.length, 'every shot once');
+  ok(Math.abs(yaw) < 0.01 && Math.abs(roll + 90) < 0.01, `ends home: ${yaw} ${roll}`);
+  const secs = programSeconds(ops, { shotS: 1.5, settleS: 0.3 });
+  ok(secs > p.steps.length * 1.8 && secs < p.steps.length * 4, `ring time ${secs}`);
+  const t0 = Date.now();
+  compile(plan(domeDirections(4), home), home);
+  ok(Date.now() - t0 < 300, `dome 4° plans fast: ${Date.now() - t0} ms`);
 }
 
 if (fails) {

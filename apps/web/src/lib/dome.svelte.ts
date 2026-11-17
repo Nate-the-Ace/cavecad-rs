@@ -16,6 +16,8 @@ import {
   OM7_UPRIGHT_ROLL,
   solutions,
   plan,
+  compile,
+  programSeconds,
   ringDirections,
   domeDirections,
   homeFrom,
@@ -28,6 +30,7 @@ import {
   type Att,
   type Axis,
   type Direction,
+  type Op,
 } from './instrument/gimbal-ik';
 import { survey, laser, takeShot, startDrivenSweep, finishSweep } from './survey.svelte';
 
@@ -35,8 +38,17 @@ import { survey, laser, takeShot, startDrivenSweep, finishSweep } from './survey
 const RATE = 30;
 /** Trim rate (°/s). */
 const TRIM_RATE = 15;
-/** Average seconds a shot (1.5 when the X1 is quick, ~3.4 when slow). */
-export const SHOT_S = 2.0;
+/** Seconds a shot takes with the laser warmed during the move (bench: 1.46). */
+export const SHOT_S = 1.5;
+/** Still time after a move before the shot (s). */
+const SETTLE_S = 0.3;
+/** Detail levels: spacing of the shots (°). */
+export const LEVELS = [
+  { name: 'Coarse', step: 30 },
+  { name: 'Medium', step: 15 },
+  { name: 'Fine', step: 10 },
+  { name: 'Detailed', step: 5 },
+] as const;
 /** Wait for a shot before giving up on it (ms). */
 const SHOT_WAIT_MS = 4500;
 /** The deepest a ring asks for below level (°); the roll window ends ~19° below on either wall. */
@@ -50,8 +62,18 @@ export const gimbal = new OsmoGimbal();
 export const dome = $state({
   connected: false,
   name: '',
-  /** Spacing of the shots (°). */
-  step: 10,
+  /** Which detail level (index into LEVELS). */
+  level: ((): number => {
+    try {
+      const v = Number(localStorage.getItem('cavecad.gimbal.level'));
+      return v >= 0 && v < 4 ? v : 1;
+    } catch {
+      return 1;
+    }
+  })(),
+  /** Shots taken in the running (or last) scan, by direction key, and the one being taken. */
+  taken: [] as string[],
+  current: '',
   /** Which scan the Start button runs. */
   kind: ((): 'ring' | 'dome' => {
     try {
@@ -114,20 +136,50 @@ gimbal.onPosition = () => {
 /** A home for planning when the gimbal has not reported yet (estimates only). */
 const NOMINAL_HOME: Att = { q: fromEuler(-90, 0, 0), pan: 0, tilt: 25, roll: 95 };
 
-/** Shots and seconds a scan at this spacing takes, and how many of its directions are out of reach. */
-export function estimate(step: number, kind: 'ring' | 'dome' = 'ring') {
+/** A direction's key, for marking progress. */
+export const dirKey = (d: Direction) => `${Math.round(d.az * 10)},${Math.round(d.inc * 10)}`;
+
+type Program = { ops: Op[]; steps: ReturnType<typeof plan>['steps']; points: (Direction & { ok: boolean; key: string })[]; shots: number; missed: number; secs: number };
+// worked out once per scan, level and home (rounded: the report wobbles a little), not while it runs
+const programs = new Map<string, Program>();
+function program(kind: 'ring' | 'dome', level: number): Program {
   const home = homeNow().home ?? NOMINAL_HOME;
-  const dirs = kind === 'dome' ? domeDirections(step) : ringDirections(0, step, RING_LOWEST);
-  const p = plan(dirs, home);
-  const miss = new Set(p.unreachable);
-  // each move waits for a report (~1 s) and usually one trim (~2 s more)
-  return {
-    shots: p.steps.length,
-    missed: p.unreachable.length,
-    secs: p.steps.length * (SHOT_S + 3) + p.travel / RATE,
-    /** every direction asked for, and whether the gimbal can reach it (for the preview) */
-    points: dirs.map((d) => ({ ...d, ok: !miss.has(d) })),
-  };
+  const [r, p, y] = euler(home.q);
+  const key = `${kind}:${level}:${Math.round(home.roll / 2)}:${Math.round(home.tilt / 2)}:${Math.round(r / 2)}:${Math.round(p / 2)}`;
+  let got = programs.get(key);
+  if (!got) {
+    const step = LEVELS[level].step;
+    const dirs = kind === 'dome' ? domeDirections(step) : ringDirections(0, step, RING_LOWEST);
+    // the plan and moves are made relative to home's heading; the heading itself only rotates them, so leave it out
+    const h: Att = { ...home, q: fromEuler(r, p, 0) };
+    const pl = plan(dirs, h);
+    const ops = compile(pl, h, RATE);
+    const miss = new Set(pl.unreachable);
+    got = {
+      ops,
+      steps: pl.steps,
+      points: dirs.map((d) => ({ ...d, ok: !miss.has(d), key: dirKey(d) })),
+      shots: pl.steps.length,
+      missed: pl.unreachable.length,
+      secs: programSeconds(ops, { shotS: SHOT_S, settleS: SETTLE_S }),
+    };
+    if (programs.size > 40) programs.clear();
+    programs.set(key, got);
+    void y;
+  }
+  return got;
+}
+
+/** Shots, seconds and the picture's points for a scan at a detail level (precalculated, cached). */
+export const estimate = (level: number, kind: 'ring' | 'dome') => program(kind, level);
+
+export function setLevel(i: number) {
+  dome.level = i;
+  try {
+    localStorage.setItem('cavecad.gimbal.level', String(i));
+  } catch {
+    /* not kept: fine */
+  }
 }
 
 export async function connectGimbal() {
@@ -421,6 +473,13 @@ export const startRing = () => startScan('ring');
 /** Dome scan: the half-sphere above the horizon, every `step` of azimuth and inclination that the gimbal can reach. */
 export const startDome = () => startScan('dome');
 
+/** Where each shot really went, by the gimbal's report taken while the X1 measured (the plan is played without
+ * correction, so this, not the plan, is the shot's direction). */
+export const shotLog: { planned: Direction; got: Direction; joints: [number, number, number] }[] = [];
+
+/** The roll joint must stay well clear of the flip (63 / 221): the one check made while a program plays. */
+const FLIP_GUARD: [number, number] = [70, 212];
+
 async function startScan(kind: 'ring' | 'dome') {
   if (dome.running || busy || !gimbal.connected || !survey.canTakeShot) return;
   const { home, why } = homeNow();
@@ -428,12 +487,16 @@ async function startScan(kind: 'ring' | 'dome') {
     dome.error = why;
     return;
   }
-  const step = Math.max(2, Math.min(30, dome.step));
+  const prog = program(kind, dome.level);
   aimRelease();
   dome.running = true;
   dome.error = '';
   dome.done = 0;
-  dome.missed = 0;
+  dome.missed = prog.missed;
+  dome.total = prog.shots;
+  dome.taken = [];
+  dome.current = '';
+  shotLog.length = 0;
   stopRequested = false;
   if (!startDrivenSweep('lrud')) {
     dome.running = false;
@@ -441,22 +504,37 @@ async function startScan(kind: 'ring' | 'dome') {
     return;
   }
   try {
-    const dirs = kind === 'dome' ? domeDirections(step) : ringDirections(0, step, RING_LOWEST);
-    const p = plan(dirs, home, gimbal.attitude ?? home);
-    dome.total = p.steps.length;
-    dome.missed = p.unreachable.length;
-    for (const [i, s] of p.steps.entries()) {
-      if (stopRequested) break;
-      dome.phase = `${kind === 'dome' ? 'Dome' : 'Ring'} ${i + 1}/${p.steps.length}: az ${Math.round(s.d.az)}°, ${Math.round(s.d.inc)}° up`;
-      const at = await moveToward(s.d, home, () => laser(true));
-      if (!at) {
-        dome.missed++;
-        continue;
-      }
-      if (await shoot()) dome.done++;
-    }
-    dome.phase = 'Home';
+    // set up: home, precisely, on the report (the program starts from there)
+    dome.phase = 'Getting ready';
     await moveToward({ az: 0, inc: 90 }, home);
+    // play the program as it stands
+    for (const op of prog.ops) {
+      if (stopRequested) break;
+      const a = gimbal.attitude;
+      if (a && (a.roll < FLIP_GUARD[0] || a.roll > FLIP_GUARD[1])) throw new Error(`Stopped: the roll got near the point where it flips (joint ${Math.round(a.roll)}°)`);
+      const st = op.shot !== undefined ? prog.steps[op.shot] : null;
+      if (st) {
+        dome.current = dirKey(st.d);
+        dome.phase = `${kind === 'dome' ? 'Dome' : 'Ring'} ${op.shot! + 1}/${prog.shots}`;
+      }
+      if (op.laser) laser(true);
+      if (op.ms > 0) await gimbal.turn(op.yaw, op.pitch, op.roll, op.ms);
+      if (!st) continue;
+      await pause(SETTLE_S * 1000);
+      const t = performance.now();
+      if (await shoot()) {
+        dome.done++;
+        dome.taken = [...dome.taken, dirKey(st.d)];
+        // the report that comes while the X1 measures says where it really went
+        const r = await gimbal.freshAttitude(t, 1500);
+        if (r) shotLog.push({ planned: st.d, got: pointing(r, home), joints: jointsOf(r) });
+      }
+    }
+    dome.current = '';
+    if (!stopRequested) {
+      dome.phase = 'Home';
+      await moveToward({ az: 0, inc: 90 }, home);
+    }
   } catch (e) {
     dome.error = e instanceof Error ? e.message : String(e);
   } finally {
@@ -464,6 +542,7 @@ async function startScan(kind: 'ring' | 'dome') {
     laser(false);
     finishSweep();
     dome.running = false;
+    dome.current = '';
     dome.phase = stopRequested ? 'Stopped' : `Done: ${dome.done} shots${dome.missed ? `, ${dome.missed} out of reach` : ''}`;
   }
 }

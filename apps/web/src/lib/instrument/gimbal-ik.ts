@@ -42,6 +42,10 @@ export const OM7_UPRIGHT_ROLL: [number, number] = [80, 112];
 
 const DEG = 180 / Math.PI;
 
+/** How far panning drags the roll joint with the clamp upright, by pan joint (fit to the range test 2026-11-17: pan
+ * +86 → −23, +42 → −13, −33 → +8, −94 → +12, −159 → −3, −189 → −13; within ~3°). */
+export const panRollDrag = (pan: number) => -16 * Math.sin(pan / DEG) - 4 * (1 - Math.cos(pan / DEG));
+
 export const wrap180 = (a: number) => {
   let x = ((a % 360) + 360) % 360;
   if (x > 180) x -= 360;
@@ -123,14 +127,16 @@ export function solutions(d: Direction, home: Att, now: Att, limits: JointLimits
     [inc - 180, d.az + 90],
   ]) {
     const roll = wrap180(r0);
-    const rollJoint = home.roll + wrap180(roll - hr);
-    if (rollJoint < limits.roll[0] || rollJoint > limits.roll[1]) continue;
+    const rollTurn = wrap180(roll - hr);
     // straight up has no azimuth: face home, the only place the tilt can stand the clamp fully upright
     const targetYaw = inc > 89.5 ? hy : hy + yawRel;
     const base = wrap180(targetYaw - ny);
     for (const turnYaw of [base, base - 360, base + 360]) {
       const panJoint = nj[0] + turnYaw;
       if (panJoint < limits.pan[0] || panJoint > limits.pan[1]) continue;
+      // the roll joint there: home's, plus the roll turned, plus what the pan drags it by
+      const rollJoint = home.roll + rollTurn + panRollDrag(panJoint) - panRollDrag(home.pan);
+      if (rollJoint < limits.roll[0] || rollJoint > limits.roll[1]) continue;
       out.push({ turnYaw, roll, panJoint, rollJoint });
     }
   }
@@ -162,39 +168,97 @@ export function domeDirections(step: number): Direction[] {
   return out;
 }
 
-/** Orders the reachable targets so the gimbal moves little (always the nearest next, straight up first) and says
- * which are out of reach. Each step carries the solution as planned from the one before. */
-export function plan(dirs: Direction[], home: Att, from: Att = home, limits: JointLimits = OM7_PORTRAIT) {
+/** One planned shot: the direction and its answer measured from home (turnYaw = yaw from home). */
+export interface PlannedShot {
+  d: Direction;
+  s: Solution;
+  /** Which column (one yaw, the shots in it differ only in roll). */
+  col: number;
+}
+
+/** Plans a scan for smooth, fast running: every reachable direction solved from home, grouped into columns of one yaw
+ * (inside a column only the roll moves, in small steps, in roll order so it never doubles back), columns swept from
+ * one pan end to the other with the roll zig-zagging. Says which directions are out of reach. */
+export function plan(dirs: Direction[], home: Att, limits: JointLimits = OM7_PORTRAIT) {
   const unreachable: Direction[] = [];
-  let left = dirs.filter((d) => {
-    const ok = solutions(d, home, home, limits).length > 0;
-    if (!ok) unreachable.push(d);
-    return ok;
-  });
-  const steps: { d: Direction; s: Solution }[] = [];
-  let at = from;
-  let travel = 0;
-  const up = left.findIndex((d) => d.inc >= 89.5);
-  if (up >= 0) left = [left[up], ...left.slice(0, up), ...left.slice(up + 1)];
-  let first = up >= 0;
-  while (left.length) {
-    let best = -1, bestCost = Infinity, bestSol: Solution | null = null;
-    for (const [i, d] of left.entries()) {
-      if (first && i > 0) break;
-      const s = solutions(d, home, at, limits)[0];
-      if (!s) continue;
-      const c = Math.abs(s.turnYaw) + Math.abs(wrap180(s.roll - euler(at.q)[0]));
-      if (c < bestCost) [best, bestCost, bestSol] = [i, c, s];
+  const cols = new Map<number, { d: Direction; s: Solution }[]>();
+  for (const d of dirs) {
+    const s = solutions(d, home, home, limits)[0];
+    if (!s) {
+      unreachable.push(d);
+      continue;
     }
-    first = false;
-    if (best < 0 || !bestSol) {
-      unreachable.push(...left);
-      break;
-    }
-    steps.push({ d: left[best], s: bestSol });
-    travel += bestCost;
-    at = landing(bestSol, at);
-    left.splice(best, 1);
+    const k = Math.round(s.turnYaw * 10) / 10;
+    if (!cols.has(k)) cols.set(k, []);
+    cols.get(k)!.push({ d, s });
   }
-  return { steps, unreachable, travel };
+  const steps: PlannedShot[] = [];
+  // start at the column nearest home (no pan), then sweep to the nearer pan end, then the far side
+  const keys = [...cols.keys()].sort((a, b) => a - b);
+  const zero = keys.reduce((b, k) => (Math.abs(k) < Math.abs(b) ? k : b), keys[0] ?? 0);
+  const lower = keys.filter((k) => k < zero).reverse(), upper = keys.filter((k) => k > zero);
+  const order = [zero, ...(upper.length <= lower.length ? [...upper, ...lower] : [...lower, ...upper])].filter((k) => cols.has(k));
+  const hr = euler(home.q)[0];
+  let rollAt = hr;
+  for (const [i, k] of order.entries()) {
+    const col = cols.get(k)!.sort((a, b) => a.s.roll - b.s.roll);
+    // start from the column end nearer where the roll is (upright after a pan)
+    if (Math.abs(wrap180(col[col.length - 1].s.roll - rollAt)) < Math.abs(wrap180(col[0].s.roll - rollAt))) col.reverse();
+    for (const c of col) steps.push({ ...c, col: i });
+    rollAt = order.length > i + 1 && Math.abs(order[i + 1] - k) > 3 ? hr : col[col.length - 1].s.roll;
+  }
+  let travel = 0;
+  for (let i = 1; i < steps.length; i++) travel += Math.abs(steps[i].s.turnYaw - steps[i - 1].s.turnYaw) + Math.abs(wrap180(steps[i].s.roll - steps[i - 1].s.roll));
+  return { steps, unreachable, travel, columns: order.length };
+}
+
+/** A precalculated move: turn at these rates (°/s: pan = yaw, tilt = pitch, roll) for `ms`; `shot` fires the X1 at
+ * planned shot `shot` when the move is done; `laser` turns it on before the move (it warms up while the gimbal
+ * turns). */
+export interface Op {
+  yaw: number;
+  pitch: number;
+  roll: number;
+  ms: number;
+  laser?: boolean;
+  shot?: number;
+}
+
+/** Timed turns come up about 2° short, big or small (bench 2026-11-17: 5→3.3, 10→9.3, 20→18, 45→41.4, 80→77.3). */
+export const MOVE_SHORTFALL = 2;
+
+/** The whole scan as moves, worked out in advance and played as they stand (no reckoning while it runs): from home
+ * (pan centred, upright) to each shot in plan order; between columns the clamp stands upright first, then pans, then
+ * rolls; roll and pan at `rate`, each move lengthened for the shortfall; back home at the end. */
+export function compile(p: ReturnType<typeof plan>, home: Att, rate = 30): Op[] {
+  const hr = euler(home.q)[0];
+  const ops: Op[] = [];
+  let yaw = 0, roll = hr;
+  const turn = (axis: 'yaw' | 'roll', deg: number, extra: Partial<Op> = {}) => {
+    if (Math.abs(deg) < 0.3) return false;
+    ops.push({ yaw: 0, pitch: 0, roll: 0, [axis]: Math.sign(deg) * rate, ms: ((Math.abs(deg) + MOVE_SHORTFALL) / rate) * 1000, ...extra });
+    return true;
+  };
+  for (const [i, st] of p.steps.entries()) {
+    const dy = st.s.turnYaw - yaw;
+    if (Math.abs(dy) > 3) {
+      turn('roll', wrap180(hr - roll));
+      roll = hr;
+      turn('yaw', dy);
+      yaw = st.s.turnYaw;
+    }
+    const moved = turn('roll', wrap180(st.s.roll - roll), { laser: true });
+    roll = st.s.roll;
+    if (moved) ops[ops.length - 1].shot = i;
+    else ops.push({ yaw: 0, pitch: 0, roll: 0, ms: 0, laser: true, shot: i });
+  }
+  turn('roll', wrap180(hr - roll));
+  turn('yaw', -yaw);
+  return ops;
+}
+
+/** How long a program takes: its moves, a settle after each shot's move, and the shots (~1.5 s with the laser warmed
+ * during the move). */
+export function programSeconds(ops: Op[], o: { shotS: number; settleS: number }) {
+  return ops.reduce((t, op) => t + op.ms / 1000 + (op.shot !== undefined ? o.shotS + o.settleS : 0), 0);
 }

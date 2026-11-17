@@ -3,7 +3,10 @@
   // Ring: the cross-section seen from the station looking along the passage (left wall left, up up). Dome: the
   // half-sphere seen from straight above, front up (straight up in the middle, the horizon at the rim).
   import type { Direction } from '../lib/instrument/gimbal-ik';
-  let { kind, points }: { kind: 'ring' | 'dome'; points: (Direction & { ok: boolean })[] } = $props();
+  // while a scan runs: `taken` holds the keys of shots done, `current` the one being taken
+  let { kind, points, taken = [], current = '' }: { kind: 'ring' | 'dome'; points: (Direction & { ok: boolean; key?: string })[]; taken?: string[]; current?: string } = $props();
+  const done = $derived(new Set(taken));
+  const running = $derived(taken.length > 0 || !!current);
   const R = 40;
   const rad = (d: number) => (d * Math.PI) / 180;
   const dotR = $derived(Math.max(0.55, Math.min(2.6, 70 / Math.max(points.length, 1) ** (kind === 'dome' ? 0.5 : 1) / 2)));
@@ -26,8 +29,8 @@
     <path d="M -40 0 A 40 40 0 0 0 40 0" class="guide faint" />
     {#each points as p}
       {@const [x, y] = ringXY(p)}
-      <line x1="0" y1="0" x2={x} y2={y} class="ray" class:off={!p.ok} />
-      <circle cx={x} cy={y} r={dotR} class="dot" class:off={!p.ok} />
+      <line x1="0" y1="0" x2={x} y2={y} class="ray" class:off={!p.ok} class:todo={running && !done.has(p.key ?? '')} />
+      <circle cx={x} cy={y} r={p.key === current ? dotR * 1.8 : dotR} class="dot" class:off={!p.ok} class:todo={running && !done.has(p.key ?? '')} class:now={p.key === current} />
     {/each}
     <circle cx="0" cy="0" r="2.2" class="me" />
   </svg>
@@ -38,7 +41,7 @@
     <path d="M 0 -46 l -3 5 h 6 z" class="me" />
     {#each points as p}
       {@const [x, y] = domeXY(p)}
-      <circle cx={x} cy={y} r={dotR} class="dot" class:off={!p.ok} />
+      <circle cx={x} cy={y} r={p.key === current ? dotR * 1.8 : dotR} class="dot" class:off={!p.ok} class:todo={running && !done.has(p.key ?? '')} class:now={p.key === current} />
     {/each}
   </svg>
 {/if}
@@ -51,5 +54,11 @@
   .ray.off { opacity: 0.08; }
   .dot { fill: currentColor; }
   .dot.off { fill: var(--text, #888); opacity: 0.25; }
+  /* while running: still to do is hollow, done is solid, the one being taken pulses */
+  .dot.todo:not(.off):not(.now) { fill: none; stroke: currentColor; stroke-width: 0.6; opacity: 0.6; }
+  .ray.todo { opacity: 0.1; }
+  .dot.now { fill: #e8a33d; stroke: none; opacity: 1; animation: pulse 0.8s ease-in-out infinite alternate; }
+  @keyframes pulse { from { opacity: 1; } to { opacity: 0.45; } }
+  @media (prefers-reduced-motion: reduce) { .dot.now { animation: none; } }
   .me { fill: var(--text, #888); }
 </style>
