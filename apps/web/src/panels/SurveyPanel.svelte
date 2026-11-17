@@ -26,7 +26,7 @@
   import * as live from '../lib/survey.svelte';
   import { survey } from '../lib/survey.svelte';
   import { webBluetoothAvailable } from '../lib/instrument/webble';
-  import { dome, estimate as domeEstimate, connectGimbal, disconnectGimbal, startDome, startRing, stopDome, aim, aimHold, aimRelease, aimStick, aimCentred, aimReset, AIM_SPEEDS } from '../lib/dome.svelte';
+  import { dome, estimate as domeEstimate, connectGimbal, disconnectGimbal, startDome, startRing, stopDome, setFacing, aim, aimHold, aimRelease, aimStick, aimCentred, aimReset, AIM_SPEEDS } from '../lib/dome.svelte';
 
   let ready = $state(false);
   let showCapture = $state(false);
@@ -347,12 +347,16 @@
           <button class="info" onclick={() => (gimbalInfo = !gimbalInfo)} aria-expanded={gimbalInfo} aria-label="About the gimbal scans">ⓘ</button>
         </div>
         {#if gimbalInfo}
-          <p class="hint">Set the gimbal down upright (rotate button) facing a wall; the scans turn it to look along the passage. Ring: the cross-section. Dome: the half-sphere above, except ~90° behind. The gimbal's magnet spoils the X1's bearings; distances and up/down angles are good. Stick: left/right pans, up/down rolls; further is faster.</p>
+          <p class="hint">Set the gimbal down upright (rotate button) and say which way it faces. Facing the forward station, the ring misses the far wall below ~55° up (the gimbal cannot turn round); facing a wall it reaches both. Dome: the half-sphere above, where it can reach. The gimbal's magnet spoils the X1's bearings; distances and up/down angles are good. Stick: up/down moves the laser higher/lower, left/right turns it; further is faster. Reset puts it back upright; long-press Reset if it is centred already.</p>
         {/if}
         {#if dome.connected}
           {@const ringEst = domeEstimate(dome.step, 'ring')}
           {@const domeEst = domeEstimate(dome.step, 'dome')}
           {@const t = (sec: number) => (sec >= 60 ? `${Math.round(sec / 60)} min` : `${Math.round(sec)} s`)}
+          <div class="seg facing" role="radiogroup" aria-label="Which way the gimbal was set down">
+            <button role="radio" aria-checked={dome.facing === 'forward'} class:on={dome.facing === 'forward'} onclick={() => setFacing('forward')} disabled={dome.running}>Faces forward stn</button>
+            <button role="radio" aria-checked={dome.facing === 'wall'} class:on={dome.facing === 'wall'} onclick={() => setFacing('wall')} disabled={dome.running}>Faces a wall</button>
+          </div>
           <label class="spacing">Spacing <strong>{dome.step}°</strong>
             <input type="range" min="2" max="30" step="1" bind:value={dome.step} disabled={dome.running} aria-label="Spacing of the shots, degrees" /></label>
           {#if dome.running}
@@ -362,8 +366,8 @@
             </div>
           {:else}
             <div class="two">
-              <button onclick={startRing} disabled={!survey.canTakeShot || !survey.standing} title="A ring across the passage at this station"><ScanLine size={18} /> Ring <small>{ringEst.shots} · {t(ringEst.secs)}</small></button>
-              <button onclick={startDome} disabled={!survey.canTakeShot || !survey.standing} title="The half-sphere above the horizon at this station"><Radar size={18} /> Dome <small>{domeEst.shots} · {t(domeEst.secs)}</small></button>
+              <button onclick={startRing} disabled={!survey.canTakeShot || !survey.standing} title="A ring across the passage at this station"><ScanLine size={18} /> Ring <small>{ringEst.shots} · {t(ringEst.secs)}{#if ringEst.missed} · {ringEst.missed} out of reach{/if}</small></button>
+              <button onclick={startDome} disabled={!survey.canTakeShot || !survey.standing} title="The half-sphere above the horizon at this station"><Radar size={18} /> Dome <small>{domeEst.shots} · {t(domeEst.secs)}{#if domeEst.missed} · {domeEst.missed} out of reach{/if}</small></button>
             </div>
             {#if dome.phase}<p class="gname">{dome.phase}</p>{/if}
           {/if}
@@ -624,4 +628,5 @@
   .gimbal .speeds button { flex: 1; padding: 6px 2px; font-size: 0.85em; }
   .gimbal .hold { min-height: 40px; touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
   .gimbal .aimpos { margin: 0; font-size: 0.85em; opacity: 0.85; }
+  .gimbal .facing button { flex: 1; font-size: 0.85em; padding: 6px 4px; }
 </style>

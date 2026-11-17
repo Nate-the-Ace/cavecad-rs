@@ -1,63 +1,107 @@
-// Ring and dome scans: the X1 rides an Osmo gimbal (laser out of the clamp's top) and CaveCAD turns it and fires it, so a
-// station's cross-section ring is shot evenly with no hand wobble. The shots are an ordinary sweep (live check, splays,
-// 3D), taken at the standing station. Measured behaviour behind every number here: tools/cave-osmo/FINDINGS.md.
+// Gimbal control for an X1 riding an Osmo gimbal, laser out of the clamp's top. CaveCAD asks for laser DIRECTIONS
+// (azimuth from the gimbal's front, inclination); the kinematics in ./instrument/gimbal-ik turn them into pan and roll,
+// and this file moves the gimbal there and checks it with the X1's own reading. Measured behaviour behind every number:
+// tools/cave-osmo/FINDINGS.md.
 //
-// The gimbal reports no angles and its magnet spoils the X1's compass, so moves are timed and the X1's own reading of
-// each shot (inclination, and its roll figure for which side of vertical the laser is on) steers the ring: which way
-// is the long roll side, how deep each side got, how far to roll back. Roll (the ring axis) only reaches ~130° one
-// way with the X1 aboard, and which way depends on how the clamp got upright, so the ring is two half-rings with a 180°
-// pan between them. Set the gimbal upright (rotate button) with its centre facing a wall before starting.
+// The gimbal reports no angles and its magnet spoils the X1's compass, so pan is dead-reckoned (timed turns land within
+// a few per cent) and roll is checked against each shot's inclination. Roll only reaches ~130° one way with the X1
+// aboard (the "long side", which depends on how the clamp got upright) and ~40° the other; past that it snaps over, so
+// the kinematics keep inside that reach and say which directions are out of it.
 import { OsmoGimbal } from './instrument/osmo';
+import { OM7_REACH, solve, plan, ringDirections, domeDirections, cost, type Direction, type Joints, type Reach } from './instrument/gimbal-ik';
 import { survey, laser, takeShot, startDrivenSweep, finishSweep } from './survey.svelte';
 
-/** Turn rate for every move (°/s): measured accurate (FINDINGS: timed turns land within ~3 %). */
+/** Turn rate for planned moves (°/s): measured accurate (FINDINGS: timed turns land within ~3 %). */
 const RATE = 30;
-/** Small moves run a little long (10° asked → 11.5°); time per degree asked is scaled by this. */
-const SMALL_GAIN = 0.87;
-/** Deepest roll from straight up (°): with the X1 aboard the long side snaps back past ~130. */
-export const DEEPEST = 120;
-/** Settle after a move before measuring (s). */
+/** Settle after a move before measuring (ms). */
 const SETTLE_MS = 300;
 /** Average seconds a shot (1.5 when the X1 is quick, ~3.4 when slow). */
 export const SHOT_S = 2.0;
-/** Pans: −90, +180, −90 at RATE. */
-const PAN_S = 12;
 /** Wait for a shot before giving up on it (ms). */
 const SHOT_WAIT_MS = 4500;
+/** Tilt reach from level (°), inside the measured +34 / −24. */
+const TILT = { up: 30, down: 20 };
+/** The deepest a ring goes below level (°). */
+const RING_LOWEST = -40;
 
 export const gimbal = new OsmoGimbal();
+
+const LONG_KEY = 'cavecad.gimbal.longRoll';
+const SIGN_KEY = 'cavecad.gimbal.rollSign';
+const FACING_KEY = 'cavecad.gimbal.facing';
+const load = (k: string) => {
+  try {
+    return localStorage.getItem(k);
+  } catch {
+    return null;
+  }
+};
+const keep = (k: string, v: string) => {
+  try {
+    localStorage.setItem(k, v);
+  } catch {
+    /* not kept: fine */
+  }
+};
 
 export const dome = $state({
   connected: false,
   name: '',
-  /** Spacing of the shots round the ring (°). */
+  /** Spacing of the shots (°). */
   step: 10,
+  /** How the gimbal was set down: its front toward the forward station, or toward a wall (across the passage). */
+  facing: (load(FACING_KEY) === 'wall' ? 'wall' : 'forward') as 'forward' | 'wall',
   running: false,
   phase: '',
   done: 0,
   total: 0,
+  missed: 0,
   error: '',
 });
 gimbal.onChange = () => {
   dome.connected = gimbal.connected;
   dome.name = gimbal.name;
 };
+export function setFacing(f: 'forward' | 'wall') {
+  dome.facing = f;
+  keep(FACING_KEY, f);
+}
+/** Where the passage runs, from the gimbal's front. */
+const passageAz = () => (dome.facing === 'forward' ? 0 : -90);
 
-/** How far the dome pans each way from the gimbal's centre (its stops are ~±143°): the ~90° behind is unreached. */
-export const DOME_PAN = 135;
+export const AIM_SPEEDS = { fine: 3, normal: 10, fast: 30 } as const;
+export const aim = $state({
+  speed: 'normal' as keyof typeof AIM_SPEEDS,
+  moving: false,
+  /** Where the gimbal is thought to point, from its centre (°): turns integrated as they are sent, roll corrected by
+   * each X1 shot. Reset by `aimCentred`, `aimReset`, and the end of a scan (which goes home). */
+  pan: 0,
+  tilt: 0,
+  roll: 0,
+  /** Which roll sign is the long side (1 / −1), kept on this device once seen; 0 = not known yet. */
+  longRoll: Number(load(LONG_KEY)) === 1 ? 1 : Number(load(LONG_KEY)) === -1 ? -1 : 0,
+  atLimit: '',
+  resetting: false,
+});
+function setLongRoll(s: number) {
+  if (s !== 1 && s !== -1) return;
+  aim.longRoll = s;
+  keep(LONG_KEY, String(s));
+}
+const reach = (): Reach => ({ ...OM7_REACH, longRoll: aim.longRoll });
+const here = (): Joints => ({ pan: aim.pan, roll: aim.roll, tilt: aim.tilt });
 
-/** Shots and seconds a scan at this spacing takes. Ring: a cross-section across the passage. Dome: the hemisphere
- * above the horizon, as meridians from straight up to level every `step` of pan. */
+/** Shots and seconds a scan at this spacing takes, and how many of its directions are out of reach. */
 export function estimate(step: number, kind: 'ring' | 'dome' = 'ring') {
-  if (kind === 'dome') {
-    const meridians = Math.floor((2 * DOME_PAN) / step) + 1;
-    const shots = meridians * (Math.floor(90 / step) + 1);
-    return { shots, secs: shots * SHOT_S + (2 * DOME_PAN) / RATE };
+  const dirs = kind === 'dome' ? domeDirections(step) : ringDirections(passageAz(), step, RING_LOWEST);
+  const p = plan(dirs, { ...reach(), longRoll: aim.longRoll || 1 });
+  let travel = 0, at: Joints = { pan: 0, roll: 0, tilt: 0 };
+  for (const s of p.steps) {
+    travel += cost(at, s.j);
+    at = s.j;
   }
-  const perSide = Math.floor(DEEPEST / step);
-  const shots = 1 + 2 * perSide;
-  const roll = (4 * DEEPEST) / RATE; // down and back, both sides
-  return { shots, secs: shots * SHOT_S + PAN_S + roll * 0.4 };
+  travel += cost(at, { pan: 0, roll: 0, tilt: 0 });
+  return { shots: p.steps.length, missed: p.unreachable.length, secs: p.steps.length * SHOT_S + (travel / RATE) * 0.5 };
 }
 
 export async function connectGimbal() {
@@ -71,162 +115,30 @@ export async function connectGimbal() {
 }
 export const disconnectGimbal = () => gimbal.disconnect();
 
-// ---- manual aiming: a joystick (pan, roll) and tilt buttons, kept inside the gimbal's safe reach
-export const AIM_SPEEDS = { fine: 3, normal: 10, fast: 30 } as const;
-/** Safe reach from the gimbal's centre (°), inside the measured stops (FINDINGS: pan ~±143, tilt +34/−24, roll ~130 on
- * the long side with the X1 aboard and only ~40 on the short one; past a stop it swings wildly). */
-const LIMIT = { pan: 130, tiltUp: 30, tiltDown: 20, rollShort: 35, rollLong: 120 };
-export const aim = $state({
-  speed: 'normal' as keyof typeof AIM_SPEEDS,
-  moving: false,
-  /** Where the gimbal is thought to point, from the centre (°): turns integrated as they are sent, roll corrected by
-   * each X1 shot. Reset by `aimCentred` (and after a scan, which ends back home). */
-  pan: 0,
-  tilt: 0,
-  roll: 0,
-  /** Which roll command sign is the long side (1 / −1), once a scan or a deep shot has shown it. */
-  longRoll: 0,
-  atLimit: '',
-  resetting: false,
-});
-let want = { pan: 0, tilt: 0, roll: 0 };
-let aimTimer: ReturnType<typeof setInterval> | undefined;
-let lastTick = 0;
-const rollMax = (sign: number) => (aim.longRoll === 0 ? LIMIT.rollShort : sign === aim.longRoll ? LIMIT.rollLong : LIMIT.rollShort);
-function clampRate(pos: number, rate: number, lo: number, hi: number, dt: number, name: string) {
-  const next = pos + rate * dt;
-  if ((rate > 0 && next > hi) || (rate < 0 && next < -lo)) {
-    aim.atLimit = name;
-    return 0;
-  }
-  return rate;
-}
-function aimTick() {
-  const now = performance.now();
-  const dt = Math.min(0.3, (now - lastTick) / 1000);
-  lastTick = now;
-  // where it has got to at the rates last sent (the gimbal lands ~3 % short: counting full keeps a margin)
-  aim.pan += sent.pan * dt;
-  aim.tilt += sent.tilt * dt;
-  aim.roll += sent.roll * dt;
-  aim.atLimit = '';
-  const look = 0.25; // stop a quarter second early: the gimbal coasts a little
-  sent = {
-    pan: clampRate(aim.pan, want.pan, LIMIT.pan, LIMIT.pan, look, 'pan'),
-    tilt: clampRate(aim.tilt, want.tilt, LIMIT.tiltDown, LIMIT.tiltUp, look, 'tilt'),
-    roll: clampRate(aim.roll, want.roll, rollMax(-1), rollMax(1), look, 'roll'),
-  };
-  gimbal.setRates(sent.pan, sent.tilt, sent.roll);
-  if (!aim.moving && !sent.pan && !sent.tilt && !sent.roll) {
-    clearInterval(aimTimer);
-    aimTimer = undefined;
-    gimbal.release();
-  }
-}
-let sent = { pan: 0, tilt: 0, roll: 0 };
-/** Sets the wanted turn rates (°/s) while the joystick or a button is held; the guard trims them at the limits. */
-export function aimSet(pan: number, tilt: number, roll: number) {
-  if (!gimbal.connected || dome.running) return;
-  want = { pan, tilt, roll };
-  aim.moving = !!(pan || tilt || roll);
-  if (!aimTimer) {
-    lastTick = performance.now();
-    aimTimer = setInterval(aimTick, 50);
-    aimTick();
-  }
-}
-/** Joystick: x (−1…1) pans, y (−1…1, up positive) rolls; the push is squared for fine control near the middle. */
-export function aimStick(x: number, y: number) {
-  const max = AIM_SPEEDS[aim.speed];
-  const shape = (v: number) => Math.sign(v) * v * v * max;
-  aimSet(shape(x), want.tilt, shape(y));
-}
-export function aimHold(axis: 'pan' | 'roll' | 'tilt', sign: 1 | -1) {
-  const r = AIM_SPEEDS[aim.speed] * sign;
-  aimSet(axis === 'pan' ? r : want.pan, axis === 'tilt' ? r : 0, axis === 'roll' ? r : want.roll);
-}
-export function aimRelease() {
-  want = { pan: 0, tilt: 0, roll: 0 };
-  aim.moving = false;
-}
-/** The gimbal has been set back to its centre by hand (upright, front forward): the estimate starts again from 0. */
-export function aimCentred() {
-  aim.pan = aim.tilt = aim.roll = 0;
-  aim.atLimit = '';
-}
-/** Reset: back to the centre (upright, front forward). No gimbal command does this (FINDINGS: 0x4C and 0x0D tried),
- * so CaveCAD does it: pan and tilt back by the estimate, then roll back to straight up by the X1's own reading
- * (shoot, roll back by the angle from vertical, check; three tries at most). */
-export async function aimReset() {
-  if (!gimbal.connected || dome.running || aim.resetting) return;
-  aim.resetting = true;
-  aimRelease();
-  await pause(150);
-  try {
-    if (Math.abs(aim.pan) > 1) await turnOnly(aim.pan > 0 ? -RATE : RATE, 0, Math.abs(aim.pan));
-    if (Math.abs(aim.tilt) > 1) await gimbal.turn(0, aim.tilt > 0 ? -10 : 10, 0, (Math.abs(aim.tilt) / 10) * 1000);
-    aim.pan = aim.tilt = 0;
-    if (survey.canTakeShot) {
-      // The laser's lean from vertical, split by the X1's roll figure into a sideways part (the gimbal's roll axis)
-      // and a fore/aft part (its tilt axis). Fix the bigger part each round with 90 % of it; learn from the result
-      // which way each axis moves the laser (a move that changed nothing is just tried again).
-      const lean = (sh: Shot) => {
-        const t = 90 - sh.incl, r = (sh.roll * Math.PI) / 180;
-        return { side: -t * Math.sin(r), fore: t * Math.cos(r) };
-      };
-      const way = { side: aim.longRoll || 1, fore: 1 }; // laser change per + command, by axis
-      let s = await moveAndShoot(0, 0, 0);
-      for (let i = 0; s && i < 6; i++) {
-        const l = lean(s);
-        if (Math.abs(l.side) < 2.5 && Math.abs(l.fore) < 2.5) break;
-        const axis = Math.abs(l.side) >= Math.abs(l.fore) ? 'side' : 'fore';
-        const off = l[axis], cmd = -Math.sign(off) * way[axis], deg = Math.abs(off) * 0.9;
-        if (axis === 'side') await turnOnly(0, cmd * RATE, deg);
-        else await gimbal.turn(0, cmd * 10, 0, (deg / 10) * 1000), await pause(SETTLE_MS);
-        const n = await moveAndShoot(0, 0, 0);
-        if (!n) break;
-        const moved = lean(n)[axis] - off;
-        if (Math.abs(moved) > 2 && Math.sign(moved) !== cmd) way[axis] = -way[axis];
-        s = n;
-      }
-    } else if (Math.abs(aim.roll) > 1) {
-      await turnOnly(0, aim.roll > 0 ? -RATE : RATE, Math.abs(aim.roll));
-    }
-    laser(false);
-    aim.roll = 0;
-    aim.atLimit = '';
-  } finally {
-    aim.resetting = false;
-  }
-}
-
-/** A manual shot's reading: correct the roll estimate, and learn the long roll side from a deep shot. */
-function aimFromShot(s: Shot) {
-  const depth = Math.abs(phiOf(s));
-  if (Math.abs(aim.roll) > 5) {
-    const sign = Math.sign(aim.roll);
-    aim.roll = sign * depth;
-    if (depth > 45) aim.longRoll = sign;
-  }
-}
-
 // ---- the X1's shots as they arrive (raw frames, decoded as crates/cave-instrument/src/cavway.rs does)
 type Shot = { incl: number; roll: number; at: number };
 let lastShot: Shot | null = null;
 (globalThis as { __cavecadShotTap?: (b: Uint8Array) => void }).__cavecadShotTap = (b) => {
   if (b.length < 33 || b[0] !== 0x01) return;
   const a = 360 / 65535;
-  const incl = ((b[7] | (b[8] << 8)) << 16 >> 16) * a;
+  const incl = (((b[7] | (b[8] << 8)) << 16) >> 16) * a;
   lastShot = { incl, roll: (b[9] | (b[10] << 8)) * a, at: performance.now() };
-  if (!dome.running && gimbal.connected) aimFromShot(lastShot);
+  if (!dome.running && !busy && gimbal.connected) fromShot(lastShot);
 };
-/** The laser's sideways angle from straight up (the roll axis), signed by side: the X1's roll figure is ~270 on one
- * side and ~90 on the other; the sine keeps only the sideways part when the laser also leans fore or aft. */
-const phiOf = (s: Shot) => -(90 - s.incl) * Math.sin((s.roll * Math.PI) / 180);
-
-let stopRequested = false;
-export function stopDome() {
-  stopRequested = true;
+/** The laser's sideways lean from straight up (the roll axis), signed by side (+ is the side + roll leans to: on the
+ * bench a + roll put the X1's roll figure at ~270); the sine keeps only the sideways part if it also leans fore/aft. */
+const sideLean = (s: Shot) => -(90 - s.incl) * Math.sin((s.roll * Math.PI) / 180);
+const foreLean = (s: Shot) => (90 - s.incl) * Math.cos((s.roll * Math.PI) / 180);
+/** +1 if a + roll command leans the laser the way the X1 reads as + (it did on the bench), −1 if the X1 or the clamp
+ * sits the other way round; learned with the long side and kept on this device. */
+let rollSign = Number(load(SIGN_KEY)) === -1 ? -1 : 1;
+/** Roll in the gimbal's own terms (command sign) from a shot. */
+const rollOf = (s: Shot) => rollSign * sideLean(s);
+/** A shot's reading says where roll really is; a deep one also says which side is long. */
+function fromShot(s: Shot) {
+  const r = rollOf(s);
+  aim.roll = r;
+  if (Math.abs(r) > 45) setLongRoll(Math.sign(r));
 }
 
 const pause = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -240,86 +152,221 @@ async function waitShot(since: number): Promise<Shot | null> {
   return null;
 }
 
-/** Laser on while the gimbal turns (the X1 warms up meanwhile), settle, measure, wait for the shot; one retry. */
-async function moveAndShoot(yaw: number, roll: number, deg: number): Promise<Shot | null> {
-  laser(true);
-  if (deg > 0) await gimbal.turn(yaw, 0, roll, (deg / RATE) * 1000 * (deg <= 20 ? SMALL_GAIN : 1));
-  await pause(SETTLE_MS);
+/** Measure with the laser already on (it warmed up during the move); one retry. */
+async function shoot(): Promise<Shot | null> {
   for (let attempt = 0; attempt < 2; attempt++) {
     const since = performance.now();
     if (attempt) laser(true), await pause(400);
     takeShot();
     const s = await waitShot(since);
-    if (s) {
-      dome.done++;
-      return s;
-    }
+    if (s) return s;
   }
   return null;
 }
 
-async function turnOnly(yaw: number, roll: number, deg: number) {
-  await gimbal.turn(yaw, 0, roll, (deg / RATE) * 1000);
+/** Moves pan and roll together (each at its share of RATE, so both finish at once) and tilt to `j`; the estimate
+ * follows. */
+async function moveTo(j: Joints) {
+  const dp = j.pan - aim.pan, dr = j.roll - aim.roll;
+  const secs = Math.max(Math.abs(dp), Math.abs(dr)) / RATE;
+  if (secs > 0.03) await gimbal.turn(dp / secs, 0, dr / secs, secs * 1000);
+  aim.pan = j.pan;
+  aim.roll = j.roll;
+  const dt = j.tilt - aim.tilt;
+  if (Math.abs(dt) > 0.5) await gimbal.turn(0, Math.sign(dt) * 10, 0, (Math.abs(dt) / 10) * 1000);
+  aim.tilt = j.tilt;
   await pause(SETTLE_MS);
 }
 
-/** Ring scan: one cross-section at the standing station (see ringBody). */
-export const startRing = () => startScan('ring');
-/** Dome scan: the hemisphere above the horizon at the standing station (see domeBody). */
-export const startDome = () => startScan('dome');
-
-/** Dome: pan to −DOME_PAN, then meridian by meridian: roll from straight up down to level on the long roll side,
- * pan one step, roll back up, pan one step, … (zig-zag, so no time is spent rolling back), then home. */
-async function domeBody(step: number) {
-  dome.phase = 'Turning to the start';
-  await turnOnly(-RATE, 0, DOME_PAN);
-  let pan = -DOME_PAN;
-  const s0 = await moveAndShoot(0, 0, 0);
-  let depth = s0 ? Math.abs(phiOf(s0)) : 0;
-  let dir = 1, sideSign = 0, learned = false, down = true;
-  while (!stopRequested) {
-    dome.phase = `Pan ${pan}°: ${Math.round(depth)}° from up`;
-    const atEnd = down ? depth >= 90 - step / 2 : depth <= step / 2;
-    if (atEnd) {
-      if (pan + step > DOME_PAN) break;
-      const n = await moveAndShoot(RATE, 0, step);
-      pan += step;
-      if (n) depth = Math.abs(phiOf(n));
-      down = !down;
-      continue;
-    }
-    const n = await moveAndShoot(0, (down ? dir : -dir) * RATE, step);
-    if (!n) {
-      depth += down ? step : -step;
-      continue;
-    }
-    const p = phiOf(n);
-    if (!sideSign && Math.abs(p) > 10) sideSign = Math.sign(p);
-    if (!learned && sideSign && Math.sign(p) !== sideSign && Math.abs(p) > 10) {
-      // snapped over the top on the first meridian: the other way is the long roll side
-      dir = -dir;
-      sideSign = Math.sign(p);
-    }
-    if (Math.abs(p) > 45) {
-      learned = true;
-      aim.longRoll = dir;
-    }
-    depth = Math.abs(p);
+/** Points the laser at `d` (from the gimbal's front) and shoots: solve, move (laser warming meanwhile), shoot, and if
+ * the X1 says roll fell short or overshot, correct once and shoot again. Null when out of reach or no shot. */
+export async function aimAt(d: Direction): Promise<Shot | null> {
+  const j = solve(d, here(), reach());
+  if (!j) return null;
+  laser(true);
+  await moveTo(j);
+  let s = await shoot();
+  if (!s) return null;
+  const actual = rollOf(s);
+  if (Math.abs(j.roll) > 20 && Math.sign(actual) !== Math.sign(j.roll) && Math.abs(actual) > 10) {
+    // snapped over the top: that side is the short one
+    setLongRoll(-Math.sign(j.roll));
+    aim.roll = actual;
+    return s;
   }
-  dome.phase = 'Home';
-  if (depth > 3) await turnOnly(0, -dir * RATE, depth);
-  if (pan) await turnOnly(pan > 0 ? -RATE : RATE, 0, Math.abs(pan));
+  const off = j.roll - actual;
+  aim.roll = actual;
+  if (Math.abs(off) > 2.5 && Math.abs(off) < 40) {
+    laser(true);
+    await moveTo(j); // from where the X1 says roll really is, back to the target
+    const s2 = await shoot();
+    if (s2) {
+      aim.roll = rollOf(s2);
+      s = s2;
+    }
+  }
+  return s;
 }
 
-/** One ring at the standing station: pan −90 to look along the passage, straight up, roll down one wall in `step`
- * steps, roll back, pan 180 (same ring plane, other wall), roll down again, roll back, pan −90 home. */
+/** Finds which roll side is long, and which way the X1 reads a + roll, if not known: lean 45° the + way; if it holds,
+ * + is long and its reading gives the sign; if it snaps over, come back and try 45° the − way. */
+async function learnLongSide() {
+  if (aim.longRoll) return;
+  dome.phase = 'Finding the long roll side';
+  for (const cmd of [1, -1]) {
+    laser(true);
+    await gimbal.turn(0, 0, cmd * RATE, (45 / RATE) * 1000);
+    await pause(SETTLE_MS);
+    const s = await shoot();
+    if (!s) return;
+    const r = sideLean(s);
+    if (Math.abs(r) > 35) {
+      rollSign = cmd * Math.sign(r);
+      keep(SIGN_KEY, String(rollSign));
+      setLongRoll(cmd);
+      aim.roll = cmd * Math.abs(r);
+      return;
+    }
+    // snapped over: bring it back up by the reading before trying the other way
+    await gimbal.turn(0, 0, -cmd * RATE, (45 / RATE) * 1000);
+    await pause(SETTLE_MS);
+  }
+}
+
+// ---- manual aiming: the stick moves the LASER (up/down = higher/lower, left/right = turn), the kinematics turn that
+// into pan and roll for wherever the gimbal is, and the guard keeps it inside the reach
+let stick = { x: 0, y: 0 };
+let tiltWant = 0;
+let aimTimer: ReturnType<typeof setInterval> | undefined;
+let lastTick = 0;
+let sent = { pan: 0, tilt: 0, roll: 0 };
+let busy = false;
+
+function aimTick() {
+  const now = performance.now();
+  const dt = Math.min(0.3, (now - lastTick) / 1000);
+  lastTick = now;
+  aim.pan += sent.pan * dt;
+  aim.tilt += sent.tilt * dt;
+  aim.roll += sent.roll * dt;
+  aim.atLimit = '';
+  const max = AIM_SPEEDS[aim.speed];
+  const shape = (v: number) => Math.sign(v) * v * v * max;
+  const turnRate = shape(stick.x), upRate = shape(stick.y);
+  // which way roll lowers the laser: the side it leans to now, or the long side from straight up
+  const side = Math.abs(aim.roll) > 1 ? Math.sign(aim.roll) : aim.longRoll || 1;
+  let roll = -side * upRate;
+  if (upRate > 0 && Math.abs(aim.roll) <= 1) roll = 0; // straight up already: no going over the top
+  const look = 0.25; // stop a quarter second early: the gimbal coasts a little
+  const r = reach();
+  const rollMax = (sgn: number) => (r.longRoll === 0 ? r.rollShort : sgn === r.longRoll ? r.rollLong : r.rollShort);
+  const guard = (pos: number, rate: number, lo: number, hi: number, name: string) => {
+    const next = pos + rate * look;
+    if ((rate > 0 && next > hi) || (rate < 0 && next < -lo)) {
+      aim.atLimit = name;
+      return 0;
+    }
+    return rate;
+  };
+  sent = {
+    pan: guard(aim.pan, turnRate, r.pan, r.pan, 'pan'),
+    tilt: guard(aim.tilt, tiltWant, TILT.down, TILT.up, 'tilt'),
+    roll: guard(aim.roll, roll, rollMax(-1), rollMax(1), 'roll'),
+  };
+  gimbal.setRates(sent.pan, sent.tilt, sent.roll);
+  if (!aim.moving && !sent.pan && !sent.tilt && !sent.roll) {
+    clearInterval(aimTimer);
+    aimTimer = undefined;
+    gimbal.release();
+  }
+}
+function startAim() {
+  aim.moving = !!(stick.x || stick.y || tiltWant);
+  if (!aimTimer && aim.moving) {
+    lastTick = performance.now();
+    aimTimer = setInterval(aimTick, 50);
+    aimTick();
+  }
+}
+/** Joystick: x (−1…1) turns the laser left/right, y (−1…1, up positive) raises/lowers it; squared for fine control. */
+export function aimStick(x: number, y: number) {
+  if (!gimbal.connected || dome.running || busy) return;
+  stick = { x, y };
+  startAim();
+}
+export function aimHold(axis: 'tilt', sign: 1 | -1) {
+  if (!gimbal.connected || dome.running || busy) return;
+  tiltWant = AIM_SPEEDS[aim.speed] * sign;
+  startAim();
+}
+export function aimRelease() {
+  stick = { x: 0, y: 0 };
+  tiltWant = 0;
+  aim.moving = false;
+}
+/** The gimbal has been set back to its centre by hand (upright, front forward): the estimate starts again from 0. */
+export function aimCentred() {
+  aim.pan = aim.tilt = aim.roll = 0;
+  aim.atLimit = '';
+}
+
+/** Reset: back to the centre (upright, front forward). No gimbal command does this (FINDINGS: 0x4C and 0x0D tried), so
+ * CaveCAD does: pan and tilt back by the estimate, then lean out by the X1's reading (sideways by roll, fore/aft by
+ * tilt, 90 % a round, learning each axis's direction; up to six rounds). */
+export async function aimReset() {
+  if (!gimbal.connected || dome.running || busy) return;
+  busy = aim.resetting = true;
+  aimRelease();
+  await pause(150);
+  try {
+    await moveTo({ pan: 0, roll: aim.roll, tilt: 0 });
+    if (survey.canTakeShot) {
+      const way = { side: 1, fore: 1 }; // laser change per + command, by axis
+      laser(true);
+      let s = await shoot();
+      for (let i = 0; s && i < 6; i++) {
+        const l = { side: sideLean(s), fore: foreLean(s) };
+        if (Math.abs(l.side) < 2.5 && Math.abs(l.fore) < 2.5) break;
+        const axis = Math.abs(l.side) >= Math.abs(l.fore) ? 'side' : 'fore';
+        const off = l[axis], cmd = -Math.sign(off) * way[axis], deg = Math.abs(off) * 0.9;
+        laser(true);
+        if (axis === 'side') await gimbal.turn(0, 0, cmd * rollSign * RATE, (deg / RATE) * 1000);
+        else await gimbal.turn(0, cmd * 10, 0, (deg / 10) * 1000);
+        await pause(SETTLE_MS);
+        const n = await shoot();
+        if (!n) break;
+        const l2 = axis === 'side' ? sideLean(n) : foreLean(n);
+        if (Math.abs(l2 - off) > 2 && Math.sign(l2 - off) !== cmd) way[axis] = -way[axis];
+        s = n;
+      }
+    } else if (Math.abs(aim.roll) > 1) {
+      await moveTo({ pan: 0, roll: 0, tilt: 0 });
+    }
+    laser(false);
+    aimCentred();
+  } finally {
+    busy = aim.resetting = false;
+  }
+}
+
+// ---- scans: lists of directions, planned by the kinematics
+let stopRequested = false;
+export function stopDome() {
+  stopRequested = true;
+}
+/** Ring scan: the cross-section square to the passage, both walls from straight up to 40° below level. */
+export const startRing = () => startScan('ring');
+/** Dome scan: the half-sphere above the horizon, every `step` of azimuth and inclination that the gimbal can reach. */
+export const startDome = () => startScan('dome');
+
 async function startScan(kind: 'ring' | 'dome') {
-  if (dome.running || !gimbal.connected || !survey.canTakeShot) return;
+  if (dome.running || busy || !gimbal.connected || !survey.canTakeShot) return;
   const step = Math.max(2, Math.min(30, dome.step));
+  aimRelease();
   dome.running = true;
   dome.error = '';
   dome.done = 0;
-  dome.total = estimate(step, kind).shots;
+  dome.missed = 0;
   stopRequested = false;
   if (!startDrivenSweep('lrud')) {
     dome.running = false;
@@ -327,66 +374,30 @@ async function startScan(kind: 'ring' | 'dome') {
     return;
   }
   try {
-    if (kind === 'dome') {
-      await domeBody(step);
-      return;
-    }
-    dome.phase = 'Turning to look along the passage';
-    await turnOnly(-RATE, 0, 90);
-    dome.phase = 'Straight up';
-    let s = await moveAndShoot(0, 0, 0);
-    let dir = 1; // roll command sign; flipped if this way turns out to be the short side
-    for (const side of [1, 2]) {
-      let depth = s ? Math.abs(phiOf(s)) : 0; // how far from straight up on this side
-      let sideSign = 0; // which side of vertical this half-ring is on (from the first reading past 10°)
-      let flipped = side === 2; // only the first side may still learn the long direction
-      let misses = 0, moved = 0; // moved: degrees rolled this side (the way back if the X1 stops answering)
-      while (!stopRequested && depth < DEEPEST && moved < DEEPEST + 40) {
-        dome.phase = `Wall ${side}: ${Math.round(depth)}° from up`;
-        const next = await moveAndShoot(0, dir * RATE, step);
-        moved += step;
-        if (!next) {
-          if (++misses >= 3) break;
-          depth += step;
-          continue;
-        }
-        const p = phiOf(next);
-        if (!sideSign && Math.abs(p) > 10) sideSign = Math.sign(p);
-        if (sideSign && Math.sign(p) !== sideSign && Math.abs(p) > 10) {
-          // snapped back over the top: this way is the short roll side
-          if (!flipped && depth < 80) {
-            dir = -dir;
-            sideSign = Math.sign(p);
-            flipped = true;
-            depth = Math.abs(p);
-            s = next;
-            continue;
-          }
-          break;
-        }
-        depth = Math.abs(p);
-        if (depth > 45) aim.longRoll = dir;
-        s = next;
-      }
+    await learnLongSide();
+    const dirs = kind === 'dome' ? domeDirections(step) : ringDirections(passageAz(), step, RING_LOWEST);
+    const p = plan(dirs, reach(), here());
+    dome.total = p.steps.length;
+    dome.missed = p.unreachable.length;
+    for (const [i, s] of p.steps.entries()) {
       if (stopRequested) break;
-      dome.phase = 'Back to straight up';
-      await turnOnly(0, -dir * RATE, depth);
-      if (side === 1) {
-        dome.phase = 'Turning round for the other wall';
-        await turnOnly(RATE, 0, 180);
-        s = await moveAndShoot(0, 0, 0);
+      dome.phase = `${kind === 'dome' ? 'Dome' : 'Ring'} ${i + 1}/${p.steps.length}: az ${Math.round(s.d.az)}°, ${Math.round(s.d.inc)}° up`;
+      // the long side may have been learned by a snap since planning: skip what is now out of reach
+      if (!solve(s.d, here(), reach())) {
+        dome.missed++;
+        continue;
       }
+      if (await aimAt(s.d)) dome.done++;
     }
     dome.phase = 'Home';
-    await turnOnly(-RATE, 0, 90);
+    await moveTo({ pan: 0, roll: 0, tilt: 0 });
   } catch (e) {
     dome.error = e instanceof Error ? e.message : String(e);
   } finally {
-    aimCentred();
     await gimbal.stop().catch(() => {});
     laser(false);
     finishSweep();
     dome.running = false;
-    dome.phase = stopRequested ? 'Stopped' : `Done: ${dome.done} shots`;
+    dome.phase = stopRequested ? 'Stopped' : `Done: ${dome.done} shots${dome.missed ? `, ${dome.missed} out of reach` : ''}`;
   }
 }
