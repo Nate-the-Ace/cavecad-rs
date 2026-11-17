@@ -59,14 +59,32 @@ pub struct Shot {
     pub raw: Vec<u8>,
 }
 
+/// What the real X1 was measured to do (FINDINGS.md has how). Tools and the app plan around these.
+pub mod timing {
+    use std::time::Duration;
+    /// From laser on to the reading, whenever the trigger follows: the X1 waits internally (1.40 to 1.50 s seen).
+    pub const LASER_TO_READING: Duration = Duration::from_millis(1500);
+    /// Laser already on and settled: trigger to reading, usually (0.36 to 0.39 s seen; sometimes 2.2 s).
+    pub const SETTLED_TRIGGER_TO_READING: Duration = Duration::from_millis(400);
+    /// Wait at least this long before deciding a shot is lost (a settled shot once took 2.2 s).
+    pub const LOST_AFTER: Duration = Duration::from_secs(3);
+}
+
 /// The single-byte commands the X1 is known to take.
 pub mod command {
     /// Laser on.
     pub const LASER_ON: u8 = cave_instrument::cavway::CMD_LASER_ON;
     /// Laser off.
     pub const LASER_OFF: u8 = cave_instrument::cavway::CMD_LASER_OFF;
-    /// Measure, as a press of DIST does with the laser on.
+    /// Measure, as a press of DIST does with the laser on. Does nothing with the laser off, and the laser goes off
+    /// after every shot, so each shot is `LASER_ON` then `TRIGGER` (see [`crate::X1::fire`]).
     pub const TRIGGER: u8 = cave_instrument::cavway::CMD_TRIGGER;
+
+    /// Commands [`crate::X1::send`] refuses: power off, calibration mode, and memory or firmware writes (which take
+    /// an address and data; sent bare they could write garbage). FINDINGS.md lists what each is.
+    pub fn refused(cmd: u8) -> bool {
+        matches!(cmd, 0x30..=0x34 | 0x39..=0x3c | 0x3e)
+    }
 }
 
 /// A connected X1.
@@ -173,8 +191,12 @@ impl X1 {
         &self.name
     }
 
-    /// Sends a single-byte command (see [`command`]); returns when it was sent.
+    /// Sends a single-byte command (see [`command`]); returns when it was sent. Refuses the ones that could power off,
+    /// change modes or write memory ([`command::refused`]).
     pub async fn send(&mut self, cmd: u8) -> Result<Instant, Error> {
+        if command::refused(cmd) {
+            return Err(Error::Link(format!("command 0x{cmd:02x} is refused by this library (see FINDINGS.md)")));
+        }
         let frame = cavway::command(cmd);
         self.peripheral
             .write(&self.write, &frame, WriteType::WithoutResponse)
@@ -199,6 +221,22 @@ impl X1 {
     pub async fn shoot(&mut self, wait: Duration) -> Result<Shot, Error> {
         self.send(command::TRIGGER).await?;
         self.next_shot(wait).await.ok_or(Error::Timeout)
+    }
+
+    /// A shot from cold, as the X1 needs it: laser on, trigger, and the reading (about 1.45 s; waits up to `wait`).
+    /// Call it only once the previous reading has arrived: a laser on during a measurement loses the next shot.
+    pub async fn fire(&mut self, wait: Duration) -> Result<Shot, Error> {
+        self.laser_on().await?;
+        self.shoot(wait).await
+    }
+
+    /// A leg as Station to station takes it: the first shot with the laser already on (aimed), the next two from cold.
+    /// About 3.3 s. Returns the three shots; the X1 flags the third as LEG when they agree.
+    pub async fn leg(&mut self) -> Result<[Shot; 3], Error> {
+        let a = self.shoot(timing::LOST_AFTER).await?;
+        let b = self.fire(timing::LOST_AFTER).await?;
+        let c = self.fire(timing::LOST_AFTER).await?;
+        Ok([a, b, c])
     }
 
     /// The next shot the X1 sends (fired from here or with its own button), if one comes within `wait`.

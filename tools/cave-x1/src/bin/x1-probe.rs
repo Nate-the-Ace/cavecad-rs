@@ -15,7 +15,7 @@ async fn main() {
     let cmds: Vec<u8> = std::env::args()
         .skip(1)
         .filter_map(|a| u8::from_str_radix(a.trim_start_matches("0x"), 16).ok())
-        .filter(|c| !NEVER.contains(c) && !NEVER2.contains(c))
+        .filter(|c| !NEVER.contains(c) && !NEVER2.contains(c) && !cave_x1::command::refused(*c))
         .collect();
     let mut x1 = match X1::find(Duration::from_secs(30)).await {
         Ok(x) => x,
