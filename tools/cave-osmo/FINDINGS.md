@@ -287,3 +287,42 @@ Default demo run, 30°/s, nothing in the clamp:
   first. Next: skip the upright step when the roll path stays inside the window, trim at higher speed.
 - Not yet in the app: apps/web/src/lib/instrument/gimbal-ik.ts still has the old model (both roll sides "long"); port
   `aim::solutions` + the joint windows there.
+
+## DJI's positioning protocol: waypoints (Mimo panorama capture + bench, 2026-11-17)
+
+Captured Mimo doing a 3×3 and a 7-stop panorama (`capture/decode_pklg.py "osmo pano.pklg" --all`), then drove it
+from the Mac (`capture/waypoints.py` prints probe steps). **This is how DJI puts the gimbal at an angle; it is the
+command we were missing. Every move lands in about 1 s, accurately, with no correction.**
+
+1. `04/4c [01 00]`, `04/0f [22 01 00]`, then **enter**: `04/6b [00 00 00 6d]`.
+2. **Upload**: `04/6d [01, L, 2c 00 00 0a, N, N × (u16 60, i16 yaw, i16 roll, i16 pitch in tenths), id]`, L = payload
+   length − 2, id any byte (echoed in the status). The gimbal starts for target 0 at once.
+3. **Go to target i**: `04/6d [00 06 40 00 i 0a 00 00]` (reply `00 01 01 00` = accepted, `00 00 01 00` = refused).
+4. **Status push** `04/6b [01 6d 06 01 S 00 i N id]`: S 0x40 moving, 0x60 arrived, 0x20 aborted (gimbal exits target
+   mode and goes home), 0x00 idle. Mimo steps every ~2 s; idle much past 5 s may end target mode.
+5. **Exit**: `04/6b [00 01 00 6d]`, `04/6d [01 06 c0 00 00 00 00 00]` (it returns home: send a home target first so
+   the exit does not swing).
+
+Targets are **attitudes relative to home**, not joints: the gimbal solves the motors itself (holding yaw while rolling
+it swings the pan motor to keep the heading). Measured with the clamp top's direction from the attitude report:
+
+| target yaw/roll | clamp top az / inc | joints pan/tilt/roll |
+|---|---|---|
+| 0 / 0 | 180 / 74 (home leans 16° back) | 0 / 0 / 90 |
+| 0 / 45 | −106 / 43 | 15 / 0 / 45 |
+| 0 / 90 | −90 / −0.5 (level) | 92 / 0 / 0 |
+| 0 / 110 | −85 / −19 | 144 / 0 / −20 |
+| −90 / 90 | 179 / −14 | 93 / 0 / 0 |
+| −180 / 90 | 91 / 1 | 95 / 0 / 0 |
+| −180 / 110 | 85 / −18 | 37 / 0 / −20 |
+| 0 / −30, −60 | | roll joint 120, 150 |
+| 0 / −90, −115 | | **roll joint stops at 167** ("arrived"; the gimbal limits itself) |
+
+- **No flip in target mode.** + roll reached roll joint −20 (laser 19° below level); speed commands flipped at 63.
+  The − side is capped by the gimbal at joint 167 (≈ 77° of lean). So: + roll is the long side, laser az = yaw − 90°.
+- Both walls level and below: left wall = yaw 0, roll 90…110; right wall = yaw −180, roll 90…110.
+- Home (0,0,0) is not vertical: the clamp top leans 16° back. Pitch targets of ±16 were refused (aborted, 0x20) right
+  after a reboot, with the clamp sagging 16° under the X1; untested since.
+- The `60` per target and the header `0a` changed nothing measurable; step byte other than `0a` was refused or
+  aborted. Each move takes ~1 s whatever its size, so **to move gently, send small steps** (untested yet with the X1).
+- Sometimes the gimbal answers target mode with 0x20 straight away (seen after a reboot); retry after it settles.
