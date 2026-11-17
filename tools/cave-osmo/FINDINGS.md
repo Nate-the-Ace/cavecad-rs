@@ -257,3 +257,33 @@ them (pan unwrapped).
 - At rest in portrait the tilt joint sits at or near its +30 stop, so "pitch down" from rest has almost no room.
 - Homing by timed turn + report correction lands within 0.5–1.8° every time, including from 200° away.
 - A target past the roll window has to be reached from the other side: pan round (up to 180°) and roll the long way.
+
+## Aim at a direction (library `Osmo::aim`, 2026-11-17)
+
+`run-mac.sh osmo-aim [dps] [az:inc …]`. `aim::solutions` turns a direction (relative to the gimbal's front at home)
+into yaw + roll targets on both roll sides and keeps only those whose predicted joints stay inside `OM7_PORTRAIT`;
+`aim` stands the clamp upright before a big pan, pans, rolls, then trims tilt/pan/roll on the gimbal's report.
+Default demo run, 30°/s, nothing in the clamp:
+
+| asked az/inc | got | off | s |
+|---|---|---|---|
+| 90/0 (right wall) | 90.2/0.0 | 0.2° | 8 |
+| 0/45 | −2.4/42.5 | 3.5° | 22 |
+| −90/0 (left wall: **pans 180, rolls the long way**) | −90.2/−0.3 | 0.3° | 19 |
+| −90/−15 | −87.9/−16.3 | 2.5° | 4 |
+| 0/90 (up, from pan −180) | 80.9 inc | 9° | 10 |
+| −150/10 | refused: out of reach | | |
+| 90/−15 | 90.9/−14.3 | 1.2° | 30 |
+| 45/20 | 43.8/18.5 | 2.0° | 21 |
+| 0/90 (up, from pan −45) | 84.5 inc | 5.5° | 9 |
+
+- Side-wall and below-level targets land within 0.2–2.5°. No roll flip in any run once the guard had 1.5× margin
+  and a 2° minimum step (an earlier version trimmed straight-up targets to roll joint 69, 6° from the flip: fixed,
+  the trim now stops when it stops improving, and `back_inside` returns the roll into its window first).
+- **Straight up is the weak spot**: after a pan the tilt joint sits on a stop (−10 at pan −180), so the clamp top
+  can't get back to vertical: 81–85° is the best. Fix ideas: pan back toward centre for near-vertical targets; trim
+  tilt before rolling.
+- Moves are slow (4–30 s) because every correction waits for the next 1 Hz report and big pans stand the clamp up
+  first. Next: skip the upright step when the roll path stays inside the window, trim at higher speed.
+- Not yet in the app: apps/web/src/lib/instrument/gimbal-ik.ts still has the old model (both roll sides "long"); port
+  `aim::solutions` + the joint windows there.

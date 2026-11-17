@@ -266,6 +266,18 @@ impl Attitude {
         ]
     }
 
+    /// An attitude from Euler angles (roll, pitch, yaw, degrees; the same order [`Attitude::euler`] gives) and joints.
+    pub fn from_euler(roll: f64, pitch: f64, yaw: f64, joints: [f64; 3]) -> Attitude {
+        let (r, p, y) = (roll.to_radians() / 2.0, pitch.to_radians() / 2.0, yaw.to_radians() / 2.0);
+        let (cr, sr, cp, sp, cy, sy) = (r.cos(), r.sin(), p.cos(), p.sin(), y.cos(), y.sin());
+        Attitude {
+            q: [cr * cp * cy + sr * sp * sy, sr * cp * cy - cr * sp * sy, cr * sp * cy + sr * cp * sy, cr * cp * sy - sr * sp * cy],
+            pan: joints[0],
+            tilt: joints[1],
+            roll: joints[2],
+        }
+    }
+
     /// The joints (pan unwrapped onto the OM7's stops, tilt, roll), degrees.
     pub fn joints(&self) -> [f64; 3] {
         [om7_pan(self.pan), self.tilt, self.roll]
@@ -324,7 +336,9 @@ pub struct JointLimits {
     pub roll: (f64, f64),
 }
 
-pub const OM7_PORTRAIT: JointLimits = JointLimits { pan: (-195.0, 80.0), tilt: (-7.0, 27.0), roll: (75.0, 205.0) };
+// pan and tilt end at hard stops, harmless to reach (a pan swings the tilt joint onto its stops on the way): their
+// windows only keep it off them; the roll window is the one that matters
+pub const OM7_PORTRAIT: JointLimits = JointLimits { pan: (-198.0, 84.0), tilt: (-11.0, 31.0), roll: (75.0, 205.0) };
 
 impl JointLimits {
     /// How far (degrees) each joint is inside its window; negative = outside.
@@ -369,6 +383,82 @@ impl Axis {
 /// rate held for a time (rates land within ~3 %); the X1's own compass and clino say where each shot really went.
 /// Ranges from rest: pan ~287° between stops, tilt +34° / −24°, roll clean to −164° but unstable past about +65°
 /// (it swings to its landscape position). So plans roll negative only.
+/// Pointing the clamp top (where the X1's laser comes out) at a direction, from the gimbal's own attitude.
+///
+/// Measured model (range test 2026-11-17), Euler angles of the attitude report with pitch held near 0: the clamp top
+/// points at inclination asin(−sin r) and azimuth y + 90° when cos r > 0, y − 90° when cos r < 0 (y yaw, r roll; upright
+/// in portrait is r = −90°). So each direction has two answers: r = −inc with y = az − 90°, or r = inc − 180° with
+/// y = az + 90°. The joints follow: pan joint ≈ its home value + the yaw turned, roll joint ≈ its home value + the roll
+/// turned; an answer counts only if both stay inside the safe windows. The roll window is far from symmetric (the clamp
+/// flips 32° one way, 125° the other), so most targets are reached by panning to face them from the long side, i.e.
+/// "going round the other way" instead of crossing the flip.
+pub mod aim {
+    use super::{wrap180, Attitude, JointLimits};
+
+    /// A direction relative to the gimbal's front at `home`: azimuth clockwise, inclination up from level, degrees.
+    #[derive(Clone, Copy, Debug, PartialEq)]
+    pub struct Direction {
+        pub az: f64,
+        pub inc: f64,
+    }
+
+    /// One way to point there: the yaw to turn by (signed, the way round that stays between the pan stops) and the
+    /// roll Euler angle to end at, plus the joints it should land on.
+    #[derive(Clone, Copy, Debug, PartialEq)]
+    pub struct Solution {
+        pub turn_yaw: f64,
+        pub roll: f64,
+        pub pan_joint: f64,
+        pub roll_joint: f64,
+    }
+
+    /// Every answer for `d` from where the gimbal is (`now`), measured against its `home` (front, upright), that stays
+    /// inside `limits`, cheapest first (least yaw plus roll to turn).
+    pub fn solutions(d: Direction, home: &Attitude, now: &Attitude, limits: &JointLimits) -> Vec<Solution> {
+        let (hr, _, hy) = home.euler();
+        let hj = home.joints();
+        let (nr, _, ny) = now.euler();
+        let nj = now.joints();
+        let mut out = Vec::new();
+        let inc = d.inc.clamp(-90.0, 90.0);
+        for (roll, yaw_rel) in [(-inc, d.az - 90.0), (inc - 180.0, d.az + 90.0)] {
+            let roll = wrap180(roll);
+            // roll joint from home, along the roll turned (no wrap: the roll never goes round)
+            let mut dr = roll - hr;
+            if dr > 180.0 {
+                dr -= 360.0;
+            } else if dr < -180.0 {
+                dr += 360.0;
+            }
+            let roll_joint = hj[2] + dr;
+            if roll_joint < limits.roll.0 || roll_joint > limits.roll.1 {
+                continue;
+            }
+            // the pan joint can land on the target yaw two ways round; keep those between the stops
+            // straight up has no azimuth: stay facing as it is
+            let target_yaw = if inc > 89.5 { ny } else { hy + yaw_rel };
+            let base = wrap180(target_yaw - ny);
+            for turn in [base, base - 360.0, base + 360.0] {
+                let pan_joint = nj[0] + turn;
+                if pan_joint < limits.pan.0 || pan_joint > limits.pan.1 {
+                    continue;
+                }
+                out.push(Solution { turn_yaw: turn, roll, pan_joint, roll_joint });
+            }
+        }
+        let cost = |s: &Solution| s.turn_yaw.abs() + wrap180(s.roll - nr).abs();
+        out.sort_by(|a, b| cost(a).total_cmp(&cost(b)));
+        out
+    }
+
+    /// Where the clamp top points relative to the gimbal's front at `home`.
+    pub fn pointing(a: &Attitude, home: &Attitude) -> Direction {
+        let (az, inc) = a.clamp_axis(1.0);
+        let (_, _, hy) = home.euler();
+        Direction { az: wrap180(az - hy), inc }
+    }
+}
+
 pub mod sweep {
     /// Turn rate used for every move (°/s): slow enough to stop clean, measured accurate.
     pub const RATE_DPS: f64 = 30.0;
@@ -728,8 +818,10 @@ impl Osmo {
             Axis::Roll => per[2] = 1.3,
         }
         let mut per_known = false;
+        // turned so far, summed step by step (a half turn or more cannot be read off one wrapped difference)
+        let mut done = 0.0;
+        let _ = start;
         for _ in 0..64 {
-            let done = wrap180(now.along(axis) - start) * dir;
             let left = deg.abs() - done;
             if left < 1.0 {
                 return Ok(now);
@@ -738,7 +830,8 @@ impl Osmo {
             // the furthest this step may go before some joint leaves its window
             let mut allowed = left.min(dps.abs());
             for k in 0..3 {
-                let rate = per[k].abs() * if per_known { 1.2 } else { 1.0 };
+                // 1.5x what the last step showed: a report is a second old and the gimbal coasts
+                let rate = per[k].abs() * if per_known { 1.5 } else { 1.0 };
                 if rate > 1e-3 {
                     // only joints heading toward their nearer edge limit the step
                     let w = [limits.pan, limits.tilt, limits.roll][k];
@@ -747,7 +840,7 @@ impl Osmo {
                     allowed = allowed.min(edge_room.max(0.0) / rate);
                 }
             }
-            if allowed < 1.0 {
+            if allowed < 2.0 {
                 return Err(Error::AtLimit(now));
             }
             let (y, p, r) = axis.rates(dir * dps.abs());
@@ -755,6 +848,7 @@ impl Osmo {
             tokio::time::sleep(Duration::from_millis(300)).await;
             let next = self.fresh_attitude(Instant::now(), Duration::from_secs(3)).await.ok_or(Error::Timeout)?;
             let turned = wrap180(next.along(axis) - now.along(axis)) * dir;
+            done += turned;
             if turned > 2.0 {
                 let (a, b) = (now.joints(), next.joints());
                 for k in 0..3 {
@@ -768,6 +862,78 @@ impl Osmo {
             now = next;
         }
         Ok(now)
+    }
+
+    /// If the roll joint is outside `limits` (near a flip), turns it slowly back inside, away from the edge it is
+    /// past. Returns the attitude after.
+    pub async fn back_inside(&mut self, limits: &JointLimits) -> Result<Attitude, Error> {
+        let mut now = self.fresh_attitude(Instant::now(), Duration::from_secs(3)).await.ok_or(Error::Timeout)?;
+        for _ in 0..6 {
+            let r = now.joints()[2];
+            let want = if r < limits.roll.0 + 2.0 { limits.roll.0 + 8.0 - r } else if r > limits.roll.1 - 2.0 { limits.roll.1 - 8.0 - r } else { return Ok(now) };
+            self.turn_rates(0.0, 0.0, want.signum() * 8.0, Duration::from_secs_f64(want.abs() / 8.0)).await?;
+            tokio::time::sleep(Duration::from_millis(300)).await;
+            now = self.fresh_attitude(Instant::now(), Duration::from_secs(3)).await.ok_or(Error::Timeout)?;
+        }
+        Ok(now)
+    }
+
+    /// Points the clamp top at `d` (relative to the gimbal's front and upright at `home`), never leaving `limits`:
+    /// picks the cheapest answer that stays inside them ([`aim::solutions`]); for a big pan it first stands the clamp
+    /// upright (the pan range is measured there and nothing flips on the way), then pans, then rolls; then trims on
+    /// the gimbal's report until within `tol` degrees. Err(NotFound) when nothing inside the limits points there.
+    pub async fn aim(&mut self, d: aim::Direction, home: &Attitude, limits: &JointLimits, dps: f64, tol: f64) -> Result<Attitude, Error> {
+        let now = self.back_inside(limits).await?;
+        let sol = *aim::solutions(d, home, &now, limits).first().ok_or(Error::NotFound)?;
+        let (hr, _, _) = home.euler();
+        let mut now = now;
+        if sol.turn_yaw.abs() > 3.0 {
+            let up = wrap180(hr - now.along(Axis::Roll));
+            if up.abs() > 3.0 {
+                now = self.guarded_or_edge(Axis::Roll, up, dps, limits).await?;
+            }
+            now = self.guarded_or_edge(Axis::Pan, sol.turn_yaw, dps, limits).await?;
+        }
+        let roll_left = wrap180(sol.roll - now.along(Axis::Roll));
+        if roll_left.abs() > 1.0 {
+            now = self.guarded_or_edge(Axis::Roll, roll_left, dps, limits).await?;
+        }
+        // trim: the solution's roll sign says how inclination follows roll (r = −inc on one side, inc − 180 on the other)
+        let inc_per_roll = if sol.roll.to_radians().cos() >= 0.0 { -1.0 } else { 1.0 };
+        let mut best = f64::INFINITY;
+        for _ in 0..6 {
+            let p = aim::pointing(&now, home);
+            let vertical = d.inc > 85.0 || p.inc > 85.0;
+            let (daz, dinc) = (if vertical { 0.0 } else { wrap180(d.az - p.az) }, d.inc - p.inc);
+            let err = daz.hypot(dinc);
+            // stop when within tol, or when trimming stopped helping (near vertical the tilt, not the roll, sets how
+            // high it can point: rolling on only leans it the other way, toward the flip)
+            if err < tol || err > best - 0.3 {
+                break;
+            }
+            best = err;
+            // the model holds the tilt level (pitch 0); a pan swings the tilt joint, so put it back first
+            let pitch = now.along(Axis::Tilt);
+            if pitch.abs() >= tol {
+                now = self.guarded_or_edge(Axis::Tilt, -pitch, dps.min(15.0), limits).await?;
+                continue;
+            }
+            if daz.abs() >= tol {
+                now = self.guarded_or_edge(Axis::Pan, daz, dps.min(15.0), limits).await?;
+            }
+            if dinc.abs() >= tol {
+                now = self.guarded_or_edge(Axis::Roll, dinc * inc_per_roll, dps.min(15.0), limits).await?;
+            }
+        }
+        Ok(now)
+    }
+
+    /// guarded_turn, but stopping at the edge is an answer (where it got to), not an error.
+    async fn guarded_or_edge(&mut self, axis: Axis, deg: f64, dps: f64, limits: &JointLimits) -> Result<Attitude, Error> {
+        match self.guarded_turn(axis, deg, dps, limits).await {
+            Ok(a) | Err(Error::AtLimit(a)) => Ok(a),
+            Err(e) => Err(e),
+        }
     }
 
     /// Turns one axis at `dps` until the gimbal stops following (a motor limit) or `max_deg` of travel; every second
@@ -831,6 +997,66 @@ impl Osmo {
 
     pub async fn disconnect(self) {
         let _ = self.peripheral.disconnect().await;
+    }
+}
+
+#[cfg(test)]
+mod aim_tests {
+    use super::aim::{pointing, solutions, Direction};
+    use super::*;
+    // home as measured: upright in portrait, yaw -4, joints pan 0, tilt 30, roll 95.7
+    fn home() -> Attitude {
+        Attitude::from_euler(-90.0, 0.0, -4.0, [0.0, 30.0, 95.7])
+    }
+    // forward model for the tests: where the clamp top points for a roll and yaw (pitch 0)
+    fn at(roll: f64, yaw: f64) -> Attitude {
+        Attitude::from_euler(roll, 0.0, yaw, [0.0, 30.0, 95.7 + roll + 90.0])
+    }
+    #[test]
+    fn euler_round_trip() {
+        let a = Attitude::from_euler(-63.0, 2.0, 37.0, [0.0; 3]);
+        let (r, p, y) = a.euler();
+        assert!((r + 63.0).abs() < 1e-6 && (p - 2.0).abs() < 1e-6 && (y - 37.0).abs() < 1e-6);
+    }
+    #[test]
+    fn every_solution_points_where_asked() {
+        let h = home();
+        for az in (-180..180).step_by(15) {
+            for inc in (-30..=90).step_by(10) {
+                let d = Direction { az: az as f64, inc: inc as f64 };
+                for s in solutions(d, &h, &h, &OM7_PORTRAIT) {
+                    let got = pointing(&at(s.roll, -4.0 + s.turn_yaw), &h);
+                    assert!((got.inc - d.inc).abs() < 0.01, "{d:?} {s:?} {got:?}");
+                    if d.inc < 89.0 {
+                        assert!(wrap180(got.az - d.az).abs() < 0.01, "{d:?} {s:?} {got:?}");
+                    }
+                    assert!(s.pan_joint >= OM7_PORTRAIT.pan.0 && s.pan_joint <= OM7_PORTRAIT.pan.1);
+                    assert!(s.roll_joint >= OM7_PORTRAIT.roll.0 && s.roll_joint <= OM7_PORTRAIT.roll.1);
+                }
+            }
+        }
+    }
+    #[test]
+    fn left_wall_goes_round_the_other_way() {
+        // the left wall, level: rolling left would flip (window ends 20 deg that way), so it pans 180 and rolls right
+        let h = home();
+        let s = solutions(Direction { az: -90.0, inc: 0.0 }, &h, &h, &OM7_PORTRAIT);
+        assert!(!s.is_empty());
+        assert!((s[0].turn_yaw + 180.0).abs() < 0.01 && s[0].roll.abs() < 0.01, "{:?}", s[0]);
+    }
+    #[test]
+    fn right_wall_rolls_without_panning() {
+        let h = home();
+        let s = solutions(Direction { az: 90.0, inc: -10.0 }, &h, &h, &OM7_PORTRAIT);
+        assert!(s[0].turn_yaw.abs() < 0.01 && (s[0].roll - 10.0).abs() < 0.01, "{:?}", s[0]);
+    }
+    #[test]
+    fn too_far_below_and_behind_left_are_unreachable() {
+        let h = home();
+        // below the roll window on the long side
+        assert!(solutions(Direction { az: 90.0, inc: -40.0 }, &h, &h, &OM7_PORTRAIT).is_empty());
+        // behind-left, low: the pan would need to pass its + stop
+        assert!(solutions(Direction { az: -150.0, inc: 10.0 }, &h, &h, &OM7_PORTRAIT).is_empty());
     }
 }
 
