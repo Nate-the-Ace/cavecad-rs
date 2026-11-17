@@ -232,3 +232,28 @@ Swift probe from the Mac, gimbal in portrait, nothing in the clamp.
   (a file name `DGS001.DAT`), handle 27→02 05/06 (battery?) and 04/57 (thumb stick, ~18/s).
 
 Control is therefore: timed speed moves (rates land within ~8 %), then read the next report (≤ 1 s) and correct.
+
+## Full range test through the library (2026-11-17)
+
+`run-mac.sh osmo-range 30 [axis|cross+|cross-]` (src/bin/osmo-range.rs): each axis each way, measured by the
+gimbal's own report, brought home closed-loop. Clamp in portrait, nothing in it. Joint angles as the gimbal reports
+them (pan unwrapped).
+
+| axis | reached (joint) | how it ends | back home within |
+|---|---|---|---|
+| pan + | +86…+92.5 | hard stop (stall, harmless) | 0.5–1.4° |
+| pan − | −202 | hard stop | 1.5° |
+| tilt (pitch up) | joint −10 (pitch +32° from rest) | hard stop | 1.8° |
+| tilt (pitch down) | joint +30 | already at its stop at rest | — |
+| roll − | 63 (−32° from rest) | **flips over** | — |
+| roll + | 221 (+125°, laser 36° below level) | **flips over** | — |
+
+- **The roll has no stop: past its window the clamp flips** (swings 80–170° in under a second, nearly knocked the
+  gimbal over). Speed makes no difference: creeping at 5°/s it went cleanly to joint 220.7 and flipped at ~221 exactly
+  as at 30°/s. It is the gimbal's own switch to the other orientation, not momentum. So the library holds the roll
+  inside `OM7_PORTRAIT` (75…205) and `run_to_limit` refuses the roll; `guarded_turn` predicts every joint before each
+  step (pan moves the tilt and roll joints too in portrait) and stops at the edge.
+- The pan stops are not centred: +86…92 one way, −202 the other (295° total).
+- At rest in portrait the tilt joint sits at or near its +30 stop, so "pitch down" from rest has almost no room.
+- Homing by timed turn + report correction lands within 0.5–1.8° every time, including from 200° away.
+- A target past the roll window has to be reached from the other side: pan round (up to 180°) and roll the long way.

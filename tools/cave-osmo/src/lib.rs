@@ -18,6 +18,7 @@
 use btleplug::api::{Central, CentralEvent, Characteristic, Manager as _, Peripheral as _, ScanFilter, WriteType};
 use btleplug::platform::{Manager, Peripheral};
 use futures::StreamExt;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 use uuid::Uuid;
@@ -265,11 +266,99 @@ impl Attitude {
         ]
     }
 
+    /// The joints (pan unwrapped onto the OM7's stops, tilt, roll), degrees.
+    pub fn joints(&self) -> [f64; 3] {
+        [om7_pan(self.pan), self.tilt, self.roll]
+    }
+
+    /// The rotation between two attitudes, degrees.
+    pub fn angle_to(&self, other: &Attitude) -> f64 {
+        let d: f64 = self.q.iter().zip(other.q.iter()).map(|(a, b)| a * b).sum();
+        (2.0 * d.abs().min(1.0).acos()).to_degrees()
+    }
+
+    /// Euler angles (roll, pitch, yaw), degrees, aerospace order.
+    pub fn euler(&self) -> (f64, f64, f64) {
+        let [w, x, y, z] = self.q;
+        let roll = (2.0 * (w * x + y * z)).atan2(1.0 - 2.0 * (x * x + y * y));
+        let pitch = (2.0 * (w * y - z * x)).clamp(-1.0, 1.0).asin();
+        let yaw = (2.0 * (w * z + x * y)).atan2(1.0 - 2.0 * (y * y + z * z));
+        (roll.to_degrees(), pitch.to_degrees(), yaw.to_degrees())
+    }
+
+    /// The Euler angle that `axis`'s speed command turns (pan = yaw, tilt = pitch, roll = roll), degrees.
+    pub fn along(&self, axis: Axis) -> f64 {
+        let (r, p, y) = self.euler();
+        match axis {
+            Axis::Pan => y,
+            Axis::Tilt => p,
+            Axis::Roll => r,
+        }
+    }
+
     /// Where the clamp's long axis points (end +1 = body +Y, the top when it went portrait the usual way): azimuth
     /// clockwise from the gimbal's north and inclination up from level, degrees.
     pub fn clamp_axis(&self, end: f64) -> (f64, f64) {
         let [n, e, d] = self.rotate([0.0, end, 0.0]);
         (e.atan2(n).to_degrees(), (-d).clamp(-1.0, 1.0).asin().to_degrees())
+    }
+}
+
+pub fn wrap180(a: f64) -> f64 {
+    let x = a.rem_euclid(360.0);
+    if x > 180.0 { x - 360.0 } else { x }
+}
+
+/// The OM7's pan stops, from its centre, with the clamp in portrait (range test 2026-11-17): +92.5° one way, −202° the
+/// other. Its pan joint reports wrap at ±180, so a reading past the + stop is really the far side of the − stop.
+pub const OM7_PAN_STOPS: (f64, f64) = (-202.0, 92.5);
+
+/// Safe joint windows (degrees, as the gimbal reports its joints), measured with the clamp in portrait (range test
+/// 2026-11-17) less a margin. Pan and tilt end at hard stops (a stall, harmless); the roll has NO stop: past its window
+/// the clamp flips over violently (it swung 110–170° in under a second and nearly knocked the gimbal over), so the roll
+/// window is a hard rule. Measured clean: pan −202…+86, tilt −10…+30, roll 63…219.
+#[derive(Clone, Copy, Debug)]
+pub struct JointLimits {
+    pub pan: (f64, f64),
+    pub tilt: (f64, f64),
+    pub roll: (f64, f64),
+}
+
+pub const OM7_PORTRAIT: JointLimits = JointLimits { pan: (-195.0, 80.0), tilt: (-7.0, 27.0), roll: (75.0, 205.0) };
+
+impl JointLimits {
+    /// How far (degrees) each joint is inside its window; negative = outside.
+    pub fn room(&self, j: [f64; 3]) -> [f64; 3] {
+        let w = [self.pan, self.tilt, self.roll];
+        let mut out = [0.0; 3];
+        for k in 0..3 {
+            out[k] = (j[k] - w[k].0).min(w[k].1 - j[k]);
+        }
+        out
+    }
+}
+
+/// The pan joint unwrapped onto the OM7's stops.
+pub fn om7_pan(joint: f64) -> f64 {
+    if joint > OM7_PAN_STOPS.1 + 5.0 { joint - 360.0 } else { joint }
+}
+
+/// One gimbal axis, for commands that drive one at a time.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Axis {
+    Pan,
+    Tilt,
+    Roll,
+}
+
+impl Axis {
+    /// (yaw, pitch, roll) rates for turning this axis at `dps`.
+    pub fn rates(self, dps: f64) -> (f64, f64, f64) {
+        match self {
+            Axis::Pan => (dps, 0.0, 0.0),
+            Axis::Tilt => (0.0, dps, 0.0),
+            Axis::Roll => (0.0, 0.0, dps),
+        }
     }
 }
 
@@ -347,6 +436,10 @@ pub enum Error {
     NotFound,
     Timeout,
     Link(String),
+    /// The gimbal swung far past what was asked (a roll past its short side flips the clamp): where it ended up.
+    Snapped(Attitude),
+    /// A guarded move stopped at the edge of the safe joint window (or against a hard stop): where it is.
+    AtLimit(Attitude),
 }
 
 impl std::fmt::Display for Error {
@@ -356,6 +449,8 @@ impl std::fmt::Display for Error {
             Error::NotFound => write!(f, "no Osmo found (is it on, and not connected to a phone?)"),
             Error::Timeout => write!(f, "timed out"),
             Error::Link(e) => write!(f, "link: {e}"),
+            Error::Snapped(_) => write!(f, "the gimbal snapped over"),
+            Error::AtLimit(_) => write!(f, "at the edge of the gimbal's safe range"),
         }
     }
 }
@@ -374,6 +469,7 @@ pub struct Osmo {
     pub name: String,
     pub characteristics: Vec<String>,
     seq: u16,
+    latest: Arc<Mutex<Option<(Instant, Attitude)>>>,
 }
 
 fn tenths(deg: f64) -> i16 {
@@ -465,18 +561,38 @@ impl Osmo {
         }
         let mut stream = peripheral.notifications().await.map_err(link)?;
         let (tx, heard) = mpsc::unbounded_channel();
+        let latest: Arc<Mutex<Option<(Instant, Attitude)>>> = Arc::new(Mutex::new(None));
+        let (p2, w2, l2) = (peripheral.clone(), write.clone(), latest.clone());
         tokio::spawn(async move {
             let mut parsers: std::collections::HashMap<Uuid, Parser> = Default::default();
             while let Some(n) = stream.next().await {
                 let at = Instant::now();
                 for message in parsers.entry(n.uuid).or_default().feed(&n.value) {
-                    if tx.send(Heard { at, on: n.uuid, message }).is_err() {
-                        return;
+                    // the handshake (as DJI Mimo answers it): without this the gimbal never reports its attitude
+                    if message.set == 0x00 && message.cmd == 0x00 && message.attributes & 0x20 != 0 {
+                        let ack = Message {
+                            sender: APP,
+                            receiver: message.sender,
+                            seq: message.seq,
+                            attributes: 0xC0,
+                            set: 0x00,
+                            cmd: 0x00,
+                            payload: vec![0x00, message.payload.first().copied().unwrap_or(0)],
+                        };
+                        for chunk in ack.encode().chunks(20) {
+                            let _ = p2.write(&w2, chunk, WriteType::WithoutResponse).await;
+                        }
                     }
+                    if message.set == cmd::SET_GIMBAL && message.cmd == cmd::PUSH_POSITION {
+                        if let Some(a) = Attitude::decode(&message.payload) {
+                            *l2.lock().unwrap() = Some((at, a));
+                        }
+                    }
+                    let _ = tx.send(Heard { at, on: n.uuid, message });
                 }
             }
         });
-        Ok(Osmo { peripheral, write, heard, name, characteristics, seq: 1 })
+        Ok(Osmo { peripheral, write, heard, name, characteristics, seq: 1, latest })
     }
 
     fn next_seq(&mut self) -> u16 {
@@ -573,6 +689,144 @@ impl Osmo {
             }
         }
         out
+    }
+
+    /// The gimbal's latest attitude report and when it came (1 a second once the handshake is answered).
+    pub fn attitude(&self) -> Option<(Instant, Attitude)> {
+        *self.latest.lock().unwrap()
+    }
+
+    /// Waits for an attitude report that arrived after `after` (a report is sent once a second).
+    pub async fn fresh_attitude(&mut self, after: Instant, wait: Duration) -> Option<Attitude> {
+        let end = Instant::now() + wait;
+        while Instant::now() < end {
+            if let Some((at, a)) = self.attitude() {
+                if at > after {
+                    return Some(a);
+                }
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        None
+    }
+
+    /// Turns `axis` by `deg` (its [`Attitude::along`] angle) without letting any joint leave `limits`: it moves in
+    /// steps of at most `dps` for one second, reads the next report, and before each step predicts every joint from
+    /// how much the joints moved per degree on the step before (one axis moves several joints when the clamp is on its
+    /// side). A step that would leave the window is shortened; if there is no room at all it stops with
+    /// [`Error::AtLimit`]. Returns the attitude where it ended.
+    pub async fn guarded_turn(&mut self, axis: Axis, deg: f64, dps: f64, limits: &JointLimits) -> Result<Attitude, Error> {
+        let mut now = self.fresh_attitude(Instant::now(), Duration::from_secs(3)).await.ok_or(Error::Timeout)?;
+        let start = now.along(axis);
+        let dir = deg.signum();
+        // joint change per degree of the axis; before any step, assume its own joint at 1.3 : 1 (tilt runs ~1.25, and
+        // backwards: pitching up lowers the tilt joint)
+        let mut per = [0.0f64; 3];
+        match axis {
+            Axis::Pan => per[0] = 1.3,
+            Axis::Tilt => per[1] = -1.3,
+            Axis::Roll => per[2] = 1.3,
+        }
+        let mut per_known = false;
+        for _ in 0..64 {
+            let done = wrap180(now.along(axis) - start) * dir;
+            let left = deg.abs() - done;
+            if left < 1.0 {
+                return Ok(now);
+            }
+            let j = now.joints();
+            // the furthest this step may go before some joint leaves its window
+            let mut allowed = left.min(dps.abs());
+            for k in 0..3 {
+                let rate = per[k].abs() * if per_known { 1.2 } else { 1.0 };
+                if rate > 1e-3 {
+                    // only joints heading toward their nearer edge limit the step
+                    let w = [limits.pan, limits.tilt, limits.roll][k];
+                    let heading = per[k] * dir;
+                    let edge_room = if heading > 0.0 { w.1 - j[k] } else { j[k] - w.0 };
+                    allowed = allowed.min(edge_room.max(0.0) / rate);
+                }
+            }
+            if allowed < 1.0 {
+                return Err(Error::AtLimit(now));
+            }
+            let (y, p, r) = axis.rates(dir * dps.abs());
+            self.turn_rates(y, p, r, Duration::from_secs_f64(allowed / dps.abs())).await?;
+            tokio::time::sleep(Duration::from_millis(300)).await;
+            let next = self.fresh_attitude(Instant::now(), Duration::from_secs(3)).await.ok_or(Error::Timeout)?;
+            let turned = wrap180(next.along(axis) - now.along(axis)) * dir;
+            if turned > 2.0 {
+                let (a, b) = (now.joints(), next.joints());
+                for k in 0..3 {
+                    per[k] = (b[k] - a[k]) / turned * dir;
+                }
+                per_known = true;
+            } else if turned.abs() <= 2.0 && allowed > 5.0 {
+                // asked to move and it did not: a hard stop
+                return Err(Error::AtLimit(next));
+            }
+            now = next;
+        }
+        Ok(now)
+    }
+
+    /// Turns one axis at `dps` until the gimbal stops following (a motor limit) or `max_deg` of travel; every second
+    /// it checks the attitude. Returns the attitude at the stop and the travel the gimbal reported.
+    /// Pan and tilt only: they end at hard stops. The roll has no stop, it flips over (see [`JointLimits`]); use
+    /// [`Osmo::guarded_turn`] for it.
+    pub async fn run_to_limit(&mut self, axis: Axis, dps: f64, max_deg: f64) -> Result<(Attitude, f64), Error> {
+        if axis == Axis::Roll {
+            return Err(Error::Link("run_to_limit refuses the roll: it flips over instead of stopping".into()));
+        }
+        let start = Instant::now();
+        let mut last = self.fresh_attitude(start, Duration::from_secs(3)).await.ok_or(Error::Timeout)?;
+        let mut travel = 0.0;
+        loop {
+            let (y, p, r) = axis.rates(dps);
+            self.turn_rates(y, p, r, Duration::from_millis(1000)).await?;
+            let now = self.fresh_attitude(Instant::now(), Duration::from_secs(3)).await.ok_or(Error::Timeout)?;
+            let moved = last.angle_to(&now);
+            travel += moved;
+            if std::env::var_os("OSMO_VERBOSE").is_some() {
+                println!("  step: moved {moved:.1}°, joints {:.1} {:.1} {:.1}", now.pan, now.tilt, now.roll);
+            }
+            last = now;
+            // far more than asked: it snapped over (the roll's short side flips to landscape); stop and say so
+            if moved > dps.abs() * 1.8 {
+                self.stop().await?;
+                return Err(Error::Snapped(now));
+            }
+            // under a fifth of what was asked: something stopped it
+            if moved < dps.abs() * 0.2 || travel >= max_deg {
+                return Ok((now, travel));
+            }
+        }
+    }
+
+    /// Turns `axis` until its angle ([`Attitude::along`]) is `target` within `tol` degrees: a timed turn, then the next
+    /// report, then a correction (up to `tries`). `via` +1 / −1 makes the first turn go that way round (the pan has
+    /// stops: the short way can run into one); 0 takes the short way. Returns the final attitude.
+    pub async fn bring_to(&mut self, axis: Axis, target: f64, dps: f64, tol: f64, tries: usize, via: f64) -> Result<Attitude, Error> {
+        let mut now = self.fresh_attitude(Instant::now(), Duration::from_secs(3)).await.ok_or(Error::Timeout)?;
+        for k in 0..tries {
+            let d = target - now.along(axis);
+            let err = if k == 0 && via > 0.0 {
+                d.rem_euclid(360.0)
+            } else if k == 0 && via < 0.0 {
+                -(-d).rem_euclid(360.0)
+            } else {
+                wrap180(d)
+            };
+            if err.abs() < tol {
+                break;
+            }
+            let (y, p, r) = axis.rates(err.signum() * dps.abs());
+            // timed turns land ~8 % short; aim a little long, the next pass trims
+            self.turn_rates(y, p, r, Duration::from_secs_f64(err.abs() / dps.abs() * 1.04)).await?;
+            tokio::time::sleep(Duration::from_millis(400)).await;
+            now = self.fresh_attitude(Instant::now(), Duration::from_secs(3)).await.ok_or(Error::Timeout)?;
+        }
+        Ok(now)
     }
 
     pub async fn disconnect(self) {
