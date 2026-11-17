@@ -27,6 +27,7 @@
   import { survey } from '../lib/survey.svelte';
   import { webBluetoothAvailable } from '../lib/instrument/webble';
   import { dome, estimate as domeEstimate, connectGimbal, disconnectGimbal, startDome, startRing, stopDome, setFacing, findLongSide, rollReach, gimbal, aim, aimHold, aimRelease, aimStick, aimCentred, aimReset, AIM_SPEEDS } from '../lib/dome.svelte';
+  import { clampAxis } from '../lib/instrument/osmo';
 
   let ready = $state(false);
   let showCapture = $state(false);
@@ -156,9 +157,12 @@
   }
 
   let gimbalInfo = $state(false);
-  // the gimbal's own position report, shown raw while its fields are worked out
-  let gimbalPos = $state<{ o0: number; o4: number; o8: number } | null>(null);
-  gimbal.onPosition = () => (gimbalPos = gimbal.position);
+  // the gimbal's own attitude report (once a second): where the clamp top points, and its joint angles
+  let gimbalPos = $state<{ az: number; inc: number; pan: number; tilt: number; roll: number } | null>(null);
+  gimbal.onPosition = () => {
+    const a = gimbal.attitude;
+    gimbalPos = a ? { ...clampAxis(a.q), pan: a.pan, tilt: a.tilt, roll: a.roll } : null;
+  };
   let featurePicker = $state(false);
   const symbolName = (key: string) => symbolDef(key)?.name ?? key.replace(/^sym-/, '').replace(/-/g, ' ');
   const enter = (e: KeyboardEvent) => e.key === 'Enter' && (e.currentTarget as HTMLInputElement).blur();
@@ -389,7 +393,7 @@
                   oncontextmenu={(e) => e.preventDefault()}>{label}</button>
               {/each}
               <p class="aimpos" role="status">pan {Math.round(aim.pan)}° · tilt {Math.round(aim.tilt)}° · roll {Math.round(aim.roll)}°{#if aim.atLimit}<br /><strong class="warn">{aim.atLimit} limit</strong>{/if}
-<br />roll reach ⟲{rollReach().left}° ⟳{rollReach().right}°{#if gimbalPos}<br /><span title="The gimbal's own position report (fields by byte offset, being worked out)">gimbal: {gimbalPos.o0} · {gimbalPos.o4} · {gimbalPos.o8}</span>{/if}</p>
+<br />roll reach ⟲{rollReach().left}° ⟳{rollReach().right}°{#if gimbalPos}<br /><span title="The gimbal's own report: where the clamp top points (azimuth from where the gimbal woke up, inclination), and its pan/tilt/roll joints">top {gimbalPos.az.toFixed(0)}° / {gimbalPos.inc.toFixed(0)}° · joints {gimbalPos.pan.toFixed(0)} {gimbalPos.tilt.toFixed(0)} {gimbalPos.roll.toFixed(0)}</span>{/if}</p>
               {#if !aim.longRoll}<button class="small" onclick={findLongSide} disabled={dome.running || !survey.canTakeShot} title="Lean 45° each way with a shot to learn which roll side reaches far; kept on this device">Find long side</button>{/if}
             </div>
           </div>

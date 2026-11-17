@@ -1,8 +1,9 @@
 // A DJI Osmo Mobile gimbal over Web Bluetooth (in the apps, the native bridge stands in for navigator.bluetooth).
 // DJI publishes nothing; the gimbal speaks DJI's DUML messages on service fff0 (write fff5, it talks back on fff4).
-// What the Osmo Mobile 7 actually does is measured in tools/cave-osmo/FINDINGS.md: only SPEED commands move it (no
-// angle command works, it reports no angles), timed turns land within a few per cent, and its clamp holds a strong
-// magnet that upsets an instrument's compass. Kept behind this small class so another pan-tilt head can replace it.
+// What the Osmo Mobile 7 actually does is measured in tools/cave-osmo/FINDINGS.md: only SPEED commands move it (the
+// angle commands 04/14 and 04/0a are ignored), timed turns land within a few per cent, once its handshake is answered it
+// reports its attitude (a quaternion) and joint angles once a second, and its clamp holds a strong magnet that upsets an
+// instrument's compass. Kept behind this small class so another pan-tilt head can replace it.
 
 const SERVICE = '0000fff0-0000-1000-8000-00805f9b34fb';
 const WRITE = '0000fff5-0000-1000-8000-00805f9b34fb';
@@ -41,6 +42,26 @@ const le16 = (v: number) => {
 /** Turn at a rate (degrees a second); the gimbal keeps turning ~0.2 s without a fresh one. */
 export const speedMessage = (seq: number, yaw: number, pitch: number, roll: number) =>
   duml(seq, 0x04, 0x0c, [...le16(yaw * 10), ...le16(roll * 10), ...le16(pitch * 10), 0x80, 2]);
+
+/** w x y z */
+export type Quat = [number, number, number, number];
+
+/** Rotates body vector v by q (body to world). */
+export function rotateByQuat(q: Quat, v: [number, number, number]): [number, number, number] {
+  const [w, x, y, z] = q;
+  const [a, b, c] = v;
+  // t = 2 (q.xyz × v); v' = v + w t + q.xyz × t
+  const tx = 2 * (y * c - z * b), ty = 2 * (z * a - x * c), tz = 2 * (x * b - y * a);
+  return [a + w * tx + (y * tz - z * ty), b + w * ty + (z * tx - x * tz), c + w * tz + (x * ty - y * tx)];
+}
+
+/** Where the clamp's long axis points (the X1's laser rides it out of the clamp top): `end` +1 for body +Y, −1 for −Y.
+ * Azimuth is clockwise from the gimbal's own north (where it woke up), inclination up from level. */
+export function clampAxis(q: Quat, end: 1 | -1 = 1): { az: number; inc: number } {
+  const [n, e, d] = rotateByQuat(q, [0, end, 0]);
+  const deg = 180 / Math.PI;
+  return { az: Math.atan2(e, n) * deg, inc: Math.asin(Math.max(-1, Math.min(1, -d))) * deg };
+}
 
 type Char = {
   writeValueWithoutResponse?: (d: BufferSource) => Promise<void>;
@@ -100,6 +121,10 @@ export class OsmoGimbal {
   /** The gimbal's last position report (04/05, about once a second once the handshake is answered): its int16 fields
    * in tenths of a degree by byte offset. Which field is which joint is still being worked out (FINDINGS). */
   position: { at: number; o0: number; o2: number; o4: number; o6: number; o8: number; o20: number; o22: number } | null = null;
+  /** The clamp's attitude from the same report (bench test 2026-11-17, FINDINGS): a unit quaternion w x y z, world
+   * north-east-down with north = wherever the gimbal woke up (no compass), and the joint angles in degrees (pan o4,
+   * tilt o20, roll o22; they move together when the clamp is on its side, so aim by the quaternion, guard by these). */
+  attitude: { at: number; q: Quat; pan: number; tilt: number; roll: number } | null = null;
   /** The thumb stick on the gimbal's handle (04/57 from the handle board, about 18 a second): −660…660 each way. */
   stick = { x: 0, y: 0 };
   onPosition: () => void = () => {};
@@ -112,6 +137,11 @@ export class OsmoGimbal {
     } else if (m.set === 0x04 && m.cmd === 0x05 && m.payload.length >= 24) {
       const v = (o: number) => (((m.payload[o] | (m.payload[o + 1] << 8)) << 16) >> 16) / 10;
       this.position = { at: performance.now(), o0: v(0), o2: v(2), o4: v(4), o6: m.payload[6], o8: v(8), o20: v(20), o22: v(22) };
+      if (m.payload.length >= 40) {
+        const dv = new DataView(m.payload.buffer, m.payload.byteOffset, m.payload.byteLength);
+        const q = [24, 28, 32, 36].map((o) => dv.getFloat32(o, true)) as Quat;
+        this.attitude = { at: this.position.at, q, pan: v(4), tilt: v(20), roll: v(22) };
+      }
       (globalThis as { __cavecadDlog?: (s: string) => void }).__cavecadDlog?.(`gimbal pos ${JSON.stringify(this.position)}`);
       this.onPosition();
     } else if (m.set === 0x04 && m.cmd === 0x57 && m.payload.length >= 4) {

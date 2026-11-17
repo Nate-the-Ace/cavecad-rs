@@ -206,3 +206,29 @@ No `04/0c` (speed) or `04/14` (angle) from Mimo at all.
 - Whether 0x14 / 0x0A angle commands work now that the checksum is right (0x0A and short ones were never valid).
 - Any way to read its angles (try `04/02` with other attributes, the `15f1e6…` service, the `fff3` channel).
 - `04/57` is the handle stick (answered: it wants nothing back; Mimo never replies to it).
+
+## Bench test after the checksum fix (2026-11-17, morning)
+
+Swift probe from the Mac, gimbal in portrait, nothing in the clamp.
+
+- **Handshake works.** Answering the gimbal's 00/00 (flags 0x20) starts 04/05 reports at 1 per second. No faster:
+  polling 04/02 (get position) gets no answer; Mimo also saw 1/s.
+- **04/05 decoded.** Floats at payload bytes 24..40 are a unit quaternion (w, x, y, z): the clamp's attitude in a
+  north-east-down world whose north is wherever the gimbal woke up (no compass, so it drifts slowly but is not upset by
+  its own magnet). At rest: (0.707, −0.707, 0.035, −0.016) = rolled −90° (portrait); body +Y is the clamp top, straight
+  up. Every speed command moved exactly its own Euler angle of this quaternion:
+  yaw 30°/s × 1.5 s → yaw +41.4°; pitch 20°/s × 1 s → pitch +18.5°; roll 30°/s × 1 s → roll +27.2°.
+  The int16 tenths at 4, 20, 22 are the pan, tilt and roll **joints** (pan 0 at centre, tilt ~22, roll ~94 at rest in
+  portrait). With the clamp on its side one commanded axis moves several joints (a yaw of 42° moved pan +42, tilt −5,
+  roll −13), as it must with the roll motor at 90°. o0 and o8 track the attitude too (o0 with pitch, o8 with yaw) and
+  are not needed.
+- **So: aim by the quaternion, guard limits by the joints.** Laser direction = q · (0, ±1, 0). Relative azimuth comes
+  from the gimbal, not the X1's spoiled compass.
+- **No angle command moves the OM7.** 04/14 (absolute and relative, attr 0x00 and 0x40): no reply, no move. 04/0a:
+  answers `00 00` (ok) once, never moves, for control bytes 00 01 02 03 04 05 07 0f 81 87. Mimo never sends either.
+- **04/54 (Mimo's "recentre") is acknowledged (`00`) and does nothing** from an off-centre yaw of 52°. Whatever Mimo
+  used it for, it is not recentring here; the trigger double-press stays the only recentre. Reset stays closed-loop.
+- **Other pushes seen** (not decoded, not needed): 04/27 ~4/s `28 00 10 00 00`, 04/6f, 04/1c, 04/38, 00/f1, 03/d7
+  (a file name `DGS001.DAT`), handle 27→02 05/06 (battery?) and 04/57 (thumb stick, ~18/s).
+
+Control is therefore: timed speed moves (rates land within ~8 %), then read the next report (≤ 1 s) and correct.

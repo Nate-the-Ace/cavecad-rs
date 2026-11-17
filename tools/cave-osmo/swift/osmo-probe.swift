@@ -93,6 +93,10 @@ func heard(_ uuid: CBUUID, _ data: Data) {
         if m.set == 0x04 && m.cmd == 0x05 && m.payload.count >= 24 {
             let v = { (o: Int) in Double(Int16(bitPattern: UInt16(m.payload[o]) | UInt16(m.payload[o + 1]) << 8)) / 10 }
             print(String(format: "\(stamp()) POS o0 %7.1f o2 %6.1f o4 %6.1f o6 %3d o8 %6.1f o20 %6.1f o22 %6.1f", v(0), v(2), v(4), Int(m.payload[6]), v(8), v(20), v(22)))
+            if m.payload.count >= 40 {
+                let f = { (o: Int) in Double(Float(bitPattern: UInt32(m.payload[o]) | UInt32(m.payload[o + 1]) << 8 | UInt32(m.payload[o + 2]) << 16 | UInt32(m.payload[o + 3]) << 24)) }
+                print(String(format: "\(stamp()) QUAT %.4f %.4f %.4f %.4f", f(24), f(28), f(32), f(36)))
+            }
         }
         if m.set == 0x04 && m.cmd == 0x57 && m.payload.count >= 4 {
             let a = Int16(bitPattern: UInt16(m.payload[0]) | UInt16(m.payload[1]) << 8), b = Int16(bitPattern: UInt16(m.payload[2]) | UInt16(m.payload[3]) << 8)

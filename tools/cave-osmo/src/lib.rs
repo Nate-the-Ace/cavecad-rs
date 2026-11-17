@@ -40,7 +40,8 @@ pub mod cmd {
     pub const PUSH_POSITION: u8 = 0x05;
     /// rate (mode 0x80)
     pub const SPEED: u8 = 0x0C;
-    /// absolute (mode 0x05) or relative (mode 0x04) angle over a time
+    /// absolute (mode 0x05) or relative (mode 0x04) angle over a time. The OM7 ignores it (no reply, no move, even
+    /// with a correct checksum, bench 2026-11-17); 0x0A answers "ok" and does not move either.
     pub const ANGLE: u8 = 0x14;
     /// 0 lock, 1 follow, 2 FPV
     pub const SET_MODE: u8 = 0x4C;
@@ -228,6 +229,48 @@ pub fn decode_angles(payload: &[u8]) -> Option<Angles> {
     }
     let v = |i: usize| i16::from_le_bytes([payload[i], payload[i + 1]]) as f64 / 10.0;
     Some(Angles { pitch: v(0), roll: v(2), yaw: v(4) })
+}
+
+/// The OM7's own report (04/05, once a second after the handshake is answered; bench test 2026-11-17): the clamp's
+/// attitude as a unit quaternion (w, x, y, z; floats at bytes 24..40) in a north-east-down world whose north is
+/// wherever the gimbal woke up, plus its joint angles in degrees (pan at 4, tilt at 20, roll at 22, int16 tenths).
+/// With the clamp on its side the joints move together for one commanded axis, so aim by the quaternion and guard the
+/// limits by the joints.
+#[derive(Clone, Copy, Debug)]
+pub struct Attitude {
+    pub q: [f64; 4],
+    pub pan: f64,
+    pub tilt: f64,
+    pub roll: f64,
+}
+
+impl Attitude {
+    pub fn decode(payload: &[u8]) -> Option<Attitude> {
+        if payload.len() < 40 {
+            return None;
+        }
+        let v = |i: usize| i16::from_le_bytes([payload[i], payload[i + 1]]) as f64 / 10.0;
+        let f = |i: usize| f32::from_le_bytes([payload[i], payload[i + 1], payload[i + 2], payload[i + 3]]) as f64;
+        Some(Attitude { q: [f(24), f(28), f(32), f(36)], pan: v(4), tilt: v(20), roll: v(22) })
+    }
+
+    /// Body vector to world (north, east, down).
+    pub fn rotate(&self, v: [f64; 3]) -> [f64; 3] {
+        let [w, x, y, z] = self.q;
+        let t = [2.0 * (y * v[2] - z * v[1]), 2.0 * (z * v[0] - x * v[2]), 2.0 * (x * v[1] - y * v[0])];
+        [
+            v[0] + w * t[0] + (y * t[2] - z * t[1]),
+            v[1] + w * t[1] + (z * t[0] - x * t[2]),
+            v[2] + w * t[2] + (x * t[1] - y * t[0]),
+        ]
+    }
+
+    /// Where the clamp's long axis points (end +1 = body +Y, the top when it went portrait the usual way): azimuth
+    /// clockwise from the gimbal's north and inclination up from level, degrees.
+    pub fn clamp_axis(&self, end: f64) -> (f64, f64) {
+        let [n, e, d] = self.rotate([0.0, end, 0.0]);
+        (e.atan2(n).to_degrees(), (-d).clamp(-1.0, 1.0).asin().to_degrees())
+    }
 }
 
 /// Sweep plans for an X1 in the Osmo's clamp. No Bluetooth here: a plan is a list of relative turns, testable and
@@ -534,6 +577,30 @@ impl Osmo {
 
     pub async fn disconnect(self) {
         let _ = self.peripheral.disconnect().await;
+    }
+}
+
+#[cfg(test)]
+mod attitude_tests {
+    use super::*;
+    fn report(q: [f32; 4], pan: i16, tilt: i16, roll: i16) -> Vec<u8> {
+        let mut p = vec![0u8; 49];
+        p[4..6].copy_from_slice(&pan.to_le_bytes());
+        p[20..22].copy_from_slice(&tilt.to_le_bytes());
+        p[22..24].copy_from_slice(&roll.to_le_bytes());
+        for (k, c) in q.iter().enumerate() {
+            p[24 + 4 * k..28 + 4 * k].copy_from_slice(&c.to_le_bytes());
+        }
+        p
+    }
+    #[test]
+    fn bench_rest_and_roll() {
+        // bench 2026-11-17: at rest the top points up; after roll +30 (joint 80.6 -> 108.3) it leans ~27
+        let rest = Attitude::decode(&report([0.7067, -0.7064, 0.0354, -0.016], -1, 219, 941)).unwrap();
+        assert!((rest.clamp_axis(1.0).1 - 88.5).abs() < 1.0);
+        assert!((rest.roll - 94.1).abs() < 1e-9 && (rest.tilt - 21.9).abs() < 1e-9);
+        let rolled = Attitude::decode(&report([0.8044, -0.5005, -0.1525, 0.2815], 421, 163, 1083)).unwrap();
+        assert!((rolled.clamp_axis(1.0).1 - 63.0).abs() < 1.0);
     }
 }
 
