@@ -154,6 +154,21 @@ export class WebBleInstrument implements Instrument {
     if (this.kind === 'x1' && this.canTakeShot) this.write(Uint8Array.from([0x64, 0x61, 0x74, 0x61, 0x3a, 1, cmd & 0xff, 0x0d, 0x0a]));
   }
 
+  /** Raw bytes to the X1 in pieces (its Bluetooth module takes 20 bytes a write), for firmware flashing. Resolves once
+   * all pieces are written. Pings and other writes are held back while `quiet` is set. */
+  async x1Raw(data: Uint8Array, piece = 20, gapMs = 12) {
+    const c = this.writer;
+    if (!c || this.kind !== 'x1') throw new Error('No X1 connected');
+    for (let at = 0; at < data.length; at += piece) {
+      const part = data.slice(at, at + piece);
+      if (c.writeValueWithoutResponse) await c.writeValueWithoutResponse(part);
+      else await c.writeValue(part);
+      await new Promise((r) => setTimeout(r, gapMs));
+    }
+  }
+  /** While flashing: no keep-awake pings or clock sets into the bootloader's stream. */
+  quiet = false;
+
   private awakeTimer: ReturnType<typeof setInterval> | undefined;
   /** Keeps an X1 from going to sleep: a harmless one-byte memory read (3d, address 0, 1 byte) every 45 s, the only X1
    * command known to change nothing (cave-x1 FINDINGS; no sleep setting is known, and memory writes are refused). */
@@ -163,7 +178,7 @@ export class WebBleInstrument implements Instrument {
     if (!on) return;
     const ping = Uint8Array.from([0x64, 0x61, 0x74, 0x61, 0x3a, 4, 0x3d, 0x00, 0x00, 0x01, 0x0d, 0x0a]);
     this.awakeTimer = setInterval(() => {
-      if (this.kind === 'x1' && this.canTakeShot) this.write(ping);
+      if (this.kind === 'x1' && this.canTakeShot && !this.quiet) this.write(ping);
     }, 45_000);
   }
 
@@ -213,6 +228,8 @@ export class WebBleInstrument implements Instrument {
     (globalThis as { __cavecadDlog?: (s: string) => void }).__cavecadDlog?.(`recv ${kind} ${hex(bytes)}`);
     // a listener outside the engine (the gimbal dome scan reads each shot's angle to steer the next move)
     (globalThis as { __cavecadShotTap?: (b: Uint8Array) => void }).__cavecadShotTap?.(bytes);
+    // X1 firmware flashing listens to the bootloader's answers (lib/x1firmware.svelte.ts)
+    (globalThis as { __cavecadFwTap?: (b: Uint8Array) => void }).__cavecadFwTap?.(bytes);
     const step = this.bridge.frame(kind, bytes);
     // what the engine made of it (a leg, a splay, held back), for reading the log afterwards
     const last = step.snapshot?.log?.[step.snapshot.log.length - 1];

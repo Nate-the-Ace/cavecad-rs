@@ -480,6 +480,12 @@ export function laser(on: boolean) {
   instrument?.laser?.(on);
 }
 
+/** The connected X1's raw writer, for firmware flashing (null: no X1). */
+export function x1RawLink(): { x1Raw: (d: Uint8Array) => Promise<void>; quiet: boolean } | null {
+  const i = instrument as { x1Raw?: (d: Uint8Array) => Promise<void>; quiet?: boolean } | null | undefined;
+  return i?.x1Raw ? (i as { x1Raw: (d: Uint8Array) => Promise<void>; quiet: boolean }) : null;
+}
+
 /** Sends a single-byte command to the X1 (CaveCAD firmware's scan control). */
 export function instrumentCommand(cmd: number) {
   (instrument as { x1Command?: (cmd: number) => void } | null | undefined)?.x1Command?.(cmd);

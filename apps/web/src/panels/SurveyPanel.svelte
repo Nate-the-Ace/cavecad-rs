@@ -14,6 +14,7 @@
   import Joystick from '../components/Joystick.svelte';
   import QuickRef from '../components/QuickRef.svelte';
   import CalibrationGuide from '../components/CalibrationGuide.svelte';
+  import X1Firmware from '../components/X1Firmware.svelte';
   import { BookOpen, Star } from '@lucide/svelte';
   import SurveyOptions from '../components/SurveyOptions.svelte';
   import { Bluetooth, FlaskConical, Unplug } from '@lucide/svelte';
@@ -449,6 +450,7 @@
         <button onclick={() => live.laser(false)} disabled={!survey.canLaser} title="Laser off (the X1)"><FlashlightOff size={18} /> Laser off</button>
       </div>
       {#if survey.calibration}<CalibrationGuide guide={survey.calibration} />{/if}
+      <X1Firmware />
     </section>
 
     <details class="capture" bind:open={showCapture}>
