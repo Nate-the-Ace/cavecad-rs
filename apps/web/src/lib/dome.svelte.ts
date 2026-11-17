@@ -59,6 +59,8 @@ export const dome = $state({
   error: '',
 });
 gimbal.onChange = () => {
+  // a fresh connection starts from the centre (set it down upright, front forward)
+  if (gimbal.connected && !dome.connected) aimCentred();
   dome.connected = gimbal.connected;
   dome.name = gimbal.name;
 };
@@ -232,6 +234,27 @@ async function learnLongSide() {
     await pause(SETTLE_MS);
   }
 }
+
+/** The Find long side button: learn it now (two 45° leans and a shot each), then home. */
+export async function findLongSide() {
+  if (!gimbal.connected || dome.running || busy || !survey.canTakeShot) return;
+  busy = true;
+  aimRelease();
+  try {
+    await learnLongSide();
+    dome.phase = aim.longRoll ? `Long roll side found: ${aim.longRoll > 0 ? 'Roll ⟳' : '⟲ Roll'}` : 'Could not tell (no shot?)';
+    await moveTo({ pan: aim.pan, roll: 0, tilt: aim.tilt });
+    laser(false);
+  } finally {
+    busy = false;
+  }
+}
+/** Roll reach each way now (°), for the status line. */
+export const rollReach = () => {
+  const r = reach();
+  const m = (sgn: number) => (r.longRoll === 0 ? r.rollShort : sgn === r.longRoll ? r.rollLong : r.rollShort);
+  return { left: m(-1), right: m(1) };
+};
 
 // ---- manual aiming (Nathan, 2026-11-17): the stick moves the laser forward/back (tilt; push up = forward) and turns it
 // (pan); two buttons lean it left/right (roll). The guard keeps every axis inside the reach.
