@@ -1021,3 +1021,49 @@ fn accuracy_complaints_are_said_in_plain_words() {
     let a = cave_session::rules::accuracy_advice("accuracy error: angle");
     assert!(a.contains("disagree"), "{a}");
 }
+
+#[test]
+fn shots_from_the_instruments_memory_wait_for_the_surveyor() {
+    let mut book = Book::new();
+    let mut s = session(&book, true, false);
+    s.open_memory();
+    // what the X1 had stored arrives as it connects: nothing is written at the station the surveyor stands at
+    let before = book.rows().len();
+    for x in [r(3.0, 10.0, 1.0), r(3.0, 10.2, 1.1), r(3.0, 10.1, 0.9), r(2.0, 200.0, 5.0)] {
+        s.reading(&mut book, x);
+    }
+    assert_eq!(book.rows().len(), before, "nothing written");
+    let snap = s.snapshot(&book);
+    assert_eq!(snap.stored.len(), 4);
+    assert!(snap.reading_memory);
+    // the surveyor starts shooting: live shots are written as usual, the stored ones stay aside
+    s.memory_done();
+    s.reading(&mut book, r(1.5, 90.0, 0.0));
+    s.settle_now(&mut book);
+    assert_eq!(book.splays().len(), 1, "the live splay is written");
+    assert_eq!(s.snapshot(&book).stored.len(), 4);
+    // a reconnect keeps them
+    s.link_down();
+    s.connected(true);
+    s.open_memory();
+    assert_eq!(s.snapshot(&book).stored.len(), 4);
+    // added: three close ones make a leg, the fourth a splay
+    s.add_stored(&mut book);
+    let snap = s.snapshot(&book);
+    assert!(snap.stored.is_empty() && !snap.reading_memory);
+    assert_eq!(book.legs().len(), 1, "the stored leg");
+    assert_eq!(book.splays().len(), 2);
+}
+
+#[test]
+fn discarded_memory_shots_write_nothing() {
+    let mut book = Book::new();
+    let mut s = session(&book, true, false);
+    s.open_memory();
+    s.reading(&mut book, r(2.0, 200.0, 5.0));
+    let before = book.rows().len();
+    s.discard_stored();
+    s.memory_done();
+    assert!(s.snapshot(&book).stored.is_empty());
+    assert_eq!(book.rows().len(), before);
+}

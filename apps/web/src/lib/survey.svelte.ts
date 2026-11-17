@@ -7,6 +7,7 @@
 import { cave, changed, focusStation } from './cave.svelte';
 import { engine, loadEngine } from './engine';
 import { WebBleInstrument } from './instrument/webble';
+import { followLog, resetMarks } from './x1-marks.svelte';
 import type { Catalog, Device, HeldView, Instrument, LinkBridge, LinkEvents, LinkStatus, LogEntry, Reading, SessionState, Snapshot, Step, StandingWalls, SurveyStandard, CalibrationView, SweepKind, SweepView } from './survey-types';
 
 export type { LogEntry } from './survey-types';
@@ -80,6 +81,8 @@ export const survey = $state({
   groupsLegs: false,
   held: [] as HeldView[],
   waiting: 0,
+  stored: [] as Reading[],
+  readingMemory: false,
   last: null as Reading | null,
   log: [] as LogEntry[],
   message: '',
@@ -140,8 +143,12 @@ function mirror(s: Snapshot) {
   survey.groupsLegs = s.groups_legs;
   survey.held = s.held;
   survey.waiting = s.waiting;
+  survey.stored = s.stored ?? [];
+  survey.readingMemory = !!s.reading_memory;
+  if (s.reading_memory) watchMemory();
   survey.last = s.last;
   survey.log = s.log;
+  followLog(s.log); // a shot classed on the X1 draws what its class is set to
   survey.message = s.message;
   survey.warnings = s.warnings;
   survey.standingWalls = s.standing_walls;
@@ -154,6 +161,28 @@ function mirror(s: Snapshot) {
   if (survey.firing && survey.sweep && (survey.sweep.check.complete || survey.sweep.check.shots >= SWEEP_MAX_SHOTS)) setFiring(false);
   watchDeviceSweep();
 }
+
+// ---- what the instrument had stored ----
+/** After connecting, this long with nothing arriving means the instrument has sent all it had stored. */
+const MEMORY_QUIET_MS = 1500;
+let memoryTimer: ReturnType<typeof setTimeout> | undefined;
+
+/** (Re)starts the wait for the instrument to finish sending its memory. */
+function watchMemory() {
+  clearTimeout(memoryTimer);
+  memoryTimer = setTimeout(endMemory, MEMORY_QUIET_MS);
+}
+
+/** What arrives from now on is live (the instrument went quiet, or the surveyor started shooting). */
+function endMemory() {
+  clearTimeout(memoryTimer);
+  if (survey.readingMemory) apply(engine.surveyMemoryDone());
+}
+
+/** Writes the shots from the instrument's memory at the station the surveyor stands at. */
+export const addStored = () => void apply(engine.surveyAddStored());
+/** Throws the shots from the instrument's memory away (they stay on the instrument). */
+export const discardStored = () => void apply(engine.surveyDiscardStored());
 
 // ---- a sweep run on the X1 itself (its scan mode) ----
 /** The X1 streams about 1.5 scan shots a second: this long with none means the surveyor ended the scan on the X1. */
@@ -235,6 +264,7 @@ const events: LinkEvents = {
     if (status === 'idle' || status === 'error' || status === 'unsupported') apply(engine.surveyLinkDown());
   },
   frame(hex, from) {
+    if (survey.readingMemory) watchMemory(); // still sending: the quiet starts again
     survey.frames = [...survey.frames, `${from.length > 8 ? from.slice(0, 8) : from}  ${hex}`].slice(-300);
   },
   step(step) {
@@ -247,6 +277,7 @@ export async function connect(kind: LinkKind, given: { services?: string[]; anyD
   const options = { services: given.services ?? survey.services.split(/[\s,]+/).filter(Boolean), anyDevice: given.anyDevice ?? survey.anyDevice };
   disconnect();
   survey.frames = [];
+  resetMarks(survey.log.at(-1)?.n ?? 0); // a new connection: only shots from now on draw
   survey.kind = kind;
   survey.running = false;
   if (kind === 'simulator') {
@@ -301,12 +332,16 @@ export type ShotKind = 'single' | 'leg';
 const LEG_SHOTS = 3;
 /** Pause between the shots of a burst, and how long one may take to come back before the burst gives up. */
 const BURST_GAP_MS = 250;
+/** Before each later shot of a burst the laser is turned on again (the X1 turns it off after a shot, and a trigger with
+ *  the laser off only lights it, as a first press of DIST does): this long to settle on the target first. TopoDroid
+ *  does the same, laser on then measure, for every shot it fires. */
+const BURST_LASER_MS = 700;
 const BURST_WAIT_MS = 5000;
 let burstTimer: ReturnType<typeof setTimeout> | undefined;
 /** A Single shot was fired and has not come back yet. */
 let singlePending = false;
 
-function fireInBurst() {
+function fireInBurst(first = false) {
   clearTimeout(burstTimer);
   burstTimer = setTimeout(() => {
     if (survey.burst > 0) {
@@ -314,7 +349,9 @@ function fireInBurst() {
       survey.message = 'A shot of the leg did not come back: hold steady and press Station to station again.';
     }
   }, BURST_WAIT_MS);
-  takeShot();
+  if (first || simulator) return takeShot(); // the first shot is aimed: the laser is already on
+  instrument?.laser?.(true);
+  setTimeout(() => survey.burst > 0 && takeShot(), BURST_LASER_MS);
 }
 
 function nextInBurst() {
@@ -322,7 +359,7 @@ function nextInBurst() {
   survey.burst -= 1;
   clearTimeout(burstTimer);
   if (survey.burst === 0) return; // the last one is in
-  setTimeout(fireInBurst, BURST_GAP_MS);
+  setTimeout(() => fireInBurst(), BURST_GAP_MS);
 }
 
 /** The instrument's laser can be turned on from here, so a shot is aimed first (an X1, or the simulator being one). */
@@ -333,6 +370,7 @@ export const aimsFirst = () => survey.canLaser || (survey.kind === 'simulator' &
  * instrument). Other instruments, and CaveCAD's own sweep firing, shoot at once.
  */
 export function pressShot(kind: ShotKind = 'single') {
+  endMemory(); // the surveyor is shooting: what comes now is live
   if (!aimsFirst() || survey.firing) return takeShot();
   if (survey.burst > 0) return; // a leg is being shot
   if (survey.aiming !== kind) {
@@ -351,7 +389,7 @@ export function pressShot(kind: ShotKind = 'single') {
   // station to station: the simulator shoots its whole next station; a real X1 three close shots in a row
   if (simulator) return takeShot();
   survey.burst = LEG_SHOTS;
-  fireInBurst();
+  fireInBurst(true);
 }
 
 export function takeShot() {
@@ -417,6 +455,7 @@ function setFiring(on: boolean) {
  * every 1.5 s until the check passes; otherwise the surveyor shoots (or uses the X1's own scan mode).
  */
 export function startSweep(kind: SweepKind) {
+  endMemory();
   // Digital with an X1: the sweep is the X1's own scan mode, started and ended on the X1; CaveCAD follows it
   if (survey.standard === 'digital' && usesDeviceScan()) {
     setSweepKind(kind);

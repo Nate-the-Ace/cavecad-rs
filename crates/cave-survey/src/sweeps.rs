@@ -109,6 +109,7 @@ pub(crate) fn ring_sweeps(
                 },
                 exclude_from_plot: false,
                 sweep: Some(key.1),
+                class: None,
             });
         }
         let a = ring.axis;

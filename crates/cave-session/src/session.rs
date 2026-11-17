@@ -14,7 +14,7 @@ use crate::rules::{
 use cave_doc::{Action, Document};
 use cave_id::{Id, IdSource};
 use cave_instrument::legs::{LegAssembler, LegEvent};
-use cave_instrument::{Reading, Side};
+use cave_instrument::{Mark, Reading, Side};
 use cave_notebook::{
     EditError, Measured, Reading as Cell, add_measured_shot, remove_shot, set_readings,
     set_station_wall, set_station_walls, station_walls, stations_in_use,
@@ -91,6 +91,8 @@ pub struct EntryView {
     pub reading: Reading,
     /// Worth a look.
     pub warnings: Vec<String>,
+    /// The shot written (an id), when it made one: for the screen to find it on the map.
+    pub shot: Option<String>,
 }
 
 /// A held thing as the screen shows it, for the Accept card.
@@ -142,6 +144,11 @@ pub struct Snapshot {
     pub waiting: usize,
     /// The latest reading, written or not, for the big display.
     pub last: Option<Reading>,
+    /// Shots the instrument had stored and sent as it connected (taken before this link, maybe days ago): kept
+    /// out of the notebook until the surveyor adds them at a station or discards them. Oldest first.
+    pub stored: Vec<Reading>,
+    /// The instrument has just connected and may still be sending what it had stored.
+    pub reading_memory: bool,
     /// The last 50 things written, oldest first.
     pub log: Vec<EntryView>,
     /// Why the last thing was refused (or the last edit failed). Empty when all is well.
@@ -251,6 +258,10 @@ pub struct Session {
     standard: Standard,
     /// The last leg written: the station it arrives at and its direction (for which way the passage runs there).
     passage: Option<(String, [f64; 3])>,
+    /// Shots from the instrument's memory, waiting for the surveyor (see [`Snapshot::stored`]).
+    stored: Vec<Reading>,
+    /// What arrives now is from the instrument's memory, not a shot just taken.
+    memory_open: bool,
 }
 
 impl Default for Session {
@@ -287,6 +298,8 @@ impl Session {
             sweep_kind: SweepKind::Lrud,
             standard: Standard::Digital,
             passage: None,
+            stored: Vec::new(),
+            memory_open: false,
         }
     }
 
@@ -351,6 +364,40 @@ impl Session {
             self.state.mode
         };
         self.assembler.reset();
+    }
+
+    /// A real instrument connected: what it sends before [`Session::memory_done`] is what it had stored (shots
+    /// taken while nothing was connected, perhaps another day), so it is kept aside, not written at the station
+    /// the surveyor happens to stand at now. Stored shots kept from an earlier connection stay.
+    pub fn open_memory(&mut self) {
+        self.memory_open = true;
+    }
+
+    /// The instrument has gone quiet after connecting, or the surveyor has started shooting: what arrives from
+    /// now on is live.
+    pub fn memory_done(&mut self) {
+        self.memory_open = false;
+    }
+
+    /// Writes the stored shots at the station the surveyor stands at, in the order they were taken, as if they
+    /// had just been shot (three close ones still make a leg).
+    pub fn add_stored(&mut self, host: &mut dyn Host) {
+        self.memory_open = false;
+        let stored = std::mem::take(&mut self.stored);
+        if stored.is_empty() {
+            return;
+        }
+        for r in stored {
+            self.reading(host, r);
+        }
+        if self.groups_legs {
+            self.settle_now(host);
+        }
+    }
+
+    /// Throws the stored shots away (they stay in the instrument's own memory).
+    pub fn discard_stored(&mut self) {
+        self.stored.clear();
     }
 
     /// The link went down (idle, error, unsupported): nothing held survives it.
@@ -505,6 +552,20 @@ impl Session {
             }
         } else {
             self.sweep = None;
+        }
+        // the class the surveyor gave the shot on the instrument (its M button while the laser is on)
+        if let Some(class) = match r.mark {
+            Some(Mark::Feature) => Some("feature"),
+            Some(Mark::Ridge) => Some("ridge"),
+            Some(Mark::Generic) => Some("generic"),
+            Some(Mark::Backsight) if splay => Some("backsight"),
+            _ => None,
+        } {
+            actions.push(Action::Set {
+                id: shot,
+                field: cave_doc::Field::ShotClass,
+                value: cave_doc::Value::Text(class.into()),
+            });
         }
         self.commit_actions(host, actions)?;
         if !splay {
@@ -663,6 +724,10 @@ impl Session {
 
     /// A shot arrived from the instrument.
     pub fn reading(&mut self, host: &mut dyn Host, mut reading: Reading) {
+        if self.memory_open {
+            self.stored.push(reading);
+            return;
+        }
         self.tag_sweep(&mut reading);
         self.last = Some(reading.clone());
         if !self.groups_legs {
@@ -1013,6 +1078,8 @@ impl Session {
             held: self.held.iter().map(|h| self.preview(host, h)).collect(),
             waiting: self.assembler.waiting(),
             last: self.last.clone(),
+            stored: self.stored.clone(),
+            reading_memory: self.memory_open,
             log: self
                 .log
                 .iter()
@@ -1022,6 +1089,10 @@ impl Session {
                     label: e.label.clone(),
                     reading: e.reading.clone(),
                     warnings: e.warnings.clone(),
+                    shot: match &e.target {
+                        Target::Shot(id) => Some(id.to_string()),
+                        Target::Wall { .. } => None,
+                    },
                 })
                 .collect(),
             message: self.message.clone(),

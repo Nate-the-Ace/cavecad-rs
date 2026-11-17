@@ -15,6 +15,8 @@ export interface Reading {
   error?: string;
   quality?: number;
   lrud?: 'left' | 'right' | 'up' | 'down';
+  /** Taken in the instrument's scan mode (a sweep). */
+  scan?: boolean;
 }
 
 export type LinkStatus = 'idle' | 'connecting' | 'connected' | 'lost' | 'unsupported' | 'error';
@@ -42,6 +44,8 @@ export interface LogEntry {
   label: string;
   reading: Reading;
   warnings: string[];
+  /** The shot written (an id), when it made one. */
+  shot?: string | null;
 }
 
 export interface HeldView {
@@ -71,6 +75,10 @@ export interface Snapshot {
   held: HeldView[];
   waiting: number;
   last: Reading | null;
+  /** Shots the instrument had stored, sent as it connected: waiting to be added at a station or discarded. */
+  stored: Reading[];
+  /** The instrument has just connected and may still be sending what it had stored. */
+  reading_memory: boolean;
   log: LogEntry[];
   message: string;
   warnings: string[];

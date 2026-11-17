@@ -35,6 +35,7 @@ pub use stations::{
 };
 pub use under::Shading;
 
+use cave_survey::ShotClass;
 use cave_doc::{Document, Field, Kind};
 use cave_id::Id;
 use cave_survey::{LegKind, LegResult, Splay, extract, resolve};
@@ -110,6 +111,9 @@ pub struct Scene {
     pub splay_shots: Vec<String>,
     /// Whether each splay is a sweep shot (an instrument's scan mode), in the same order as `splays`.
     pub splay_sweep: Vec<bool>,
+    /// The type each splay is drawn as (`splay`, `sweep`, `splay-feature`, `splay-ridge`, `splay-generic`), in the same
+    /// order as `splays`.
+    pub splay_type: Vec<String>,
     /// Passage wall lines (both sides), each a run of 3D points built from LRUD and splays.
     pub walls: Vec<Vec<Pt>>,
     /// The same lines split by whether another passage lies over them (drawn dim and dashed).
@@ -166,6 +170,25 @@ impl AlongPassage {
                 })
             })
     }
+}
+
+/// The type a splay is drawn as: a sweep shot, a splay the surveyor classed on the instrument, or a plain splay.
+fn splay_type(s: &cave_survey::Splay) -> &'static str {
+    if s.sweep.is_some() {
+        return "sweep";
+    }
+    match s.class {
+        Some(ShotClass::Feature) => "splay-feature",
+        Some(ShotClass::Ridge) => "splay-ridge",
+        Some(ShotClass::Generic) => "splay-generic",
+        _ => "splay",
+    }
+}
+
+fn has_class(splays: &[cave_survey::Splay], class: ShotClass) -> bool {
+    splays
+        .iter()
+        .any(|s| !s.exclude_from_plot && s.sweep.is_none() && s.class == Some(class))
 }
 
 /// Builds the scene, adjusting loops when `use_adjustment` is set and the solver converges.
@@ -275,6 +298,9 @@ pub fn build_seen_from(
                 .iter()
                 .any(|s| !s.exclude_from_plot && s.sweep.is_some()),
         ),
+        ("splay-feature", has_class(&ex.splays, ShotClass::Feature)),
+        ("splay-ridge", has_class(&ex.splays, ShotClass::Ridge)),
+        ("splay-generic", has_class(&ex.splays, ShotClass::Generic)),
         ("station", !r.stations.is_empty()),
         ("label", !r.stations.is_empty()),
         ("closure", has_leg(LegKind::Closure)),
@@ -362,13 +388,14 @@ pub fn build_seen_from(
     let along = AlongPassage::new(&r.legs, &pos);
     let shown: Vec<_> = vis_splays
         .iter()
-        .filter(|s| filter.type_shown(if s.sweep.is_some() { "sweep" } else { "splay" }))
+        .filter(|s| filter.type_shown(splay_type(s)))
         .filter(|s| !s.exclude_from_plot && !along.hides(s.from, s.offset))
         .collect();
     for s in shown.iter().copied() {
         if let Some(a) = pos(s.from) {
             scene.splay_shots.push(s.shot.to_string());
             scene.splay_sweep.push(s.sweep.is_some());
+            scene.splay_type.push(splay_type(s).to_string());
             scene.splays.push([
                 a.x,
                 a.y,
@@ -416,8 +443,12 @@ pub fn build_seen_from(
         let own = std::collections::HashSet::from([sp.from]);
         let line = [[ray[0], ray[1], ray[2]], [ray[3], ray[4], ray[5]]];
         let sh = &mut scene.shading;
+        let ty = splay_type(sp);
         if sp.sweep.is_some() {
             feet.split(&line, &own, &mut sh.sweeps_over, &mut sh.sweeps_under);
+        } else if ty != "splay" {
+            let [over, under] = sh.marked.entry(ty.to_string()).or_default();
+            feet.split(&line, &own, over, under);
         } else {
             feet.split(&line, &own, &mut sh.splays_over, &mut sh.splays_under);
         }

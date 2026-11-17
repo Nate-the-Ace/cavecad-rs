@@ -250,7 +250,37 @@ pub fn survey_connect(kind: &str, options: &str) -> String {
             _ => {}
         }
         s.connected(groups);
+        if matches!(kind.as_str(), "x1" | "sap6" | "sap5" | "bric") {
+            // what arrives first is what the instrument had stored (the screen says when it has gone quiet)
+            s.open_memory();
+        } else if kind == "sim" && choice.quirk == "memory" {
+            // a pretend X1 with four shots left from another day: a leg and a splay
+            s.open_memory();
+            for (d, a, i) in [(4.2, 131.0, -3.0), (4.21, 131.2, -3.1), (4.19, 130.9, -2.9), (1.8, 40.0, 12.0)] {
+                let mut r = cave_instrument::Reading::new(d, a, i, "sim");
+                r.leg = Some(d > 4.0);
+                s.reading(host, r);
+            }
+        }
     })
+}
+
+/// The instrument has gone quiet after connecting (or the surveyor has started shooting): what arrives now is live.
+#[wasm_bindgen]
+pub fn survey_memory_done() -> String {
+    with_session(|s, _, _| s.memory_done())
+}
+
+/// Writes the shots from the instrument's memory at the station the surveyor stands at.
+#[wasm_bindgen]
+pub fn survey_add_stored() -> String {
+    with_session(|s, host, _| s.add_stored(host))
+}
+
+/// Throws the shots from the instrument's memory away.
+#[wasm_bindgen]
+pub fn survey_discard_stored() -> String {
+    with_session(|s, _, _| s.discard_stored())
 }
 
 /// A frame arrived from the instrument. `kind` is `frame` (an X1, SAP6 or SAP5 packet) or, for a BRIC,
@@ -767,6 +797,7 @@ mod tests {
         let trip = new_cave();
         json(survey_sync_trip(&trip));
         json(survey_connect("x1", "{}"));
+        json(survey_memory_done()); // the instrument had nothing stored: what comes now is live
         let packet = cavway::encode_packet(&cavway::PacketSpec {
             distance: 6.5,
             azimuth: 120.0,
@@ -791,10 +822,49 @@ mod tests {
     }
 
     #[test]
+    fn stored_shots_wait_and_a_marked_splay_keeps_its_class() {
+        let trip = new_cave();
+        json(survey_sync_trip(&trip));
+        json(survey_connect("x1", "{}"));
+        let packet = |d: f64, mark| {
+            cavway::encode_packet(&cavway::PacketSpec {
+                distance: d,
+                azimuth: 30.0,
+                inclination: 2.0,
+                mark,
+                time: 9,
+                ..cavway::PacketSpec::default()
+            })
+        };
+        // sent as it connects: acknowledged but kept aside
+        let v = json(survey_frame("frame", &packet(2.0, cave_instrument::Mark::None)));
+        assert_eq!(v["sends"].as_array().unwrap().len(), 1);
+        assert_eq!(v["snapshot"]["stored"].as_array().unwrap().len(), 1);
+        assert!(v["snapshot"]["log"].as_array().unwrap().is_empty());
+        let v = json(survey_memory_done());
+        assert_eq!(v["snapshot"]["reading_memory"], false);
+        // live: a splay marked Feature on the X1 is written with its class
+        json(survey_frame("frame", &packet(3.3, cave_instrument::Mark::Feature)));
+        let v = json(survey_settle_now());
+        assert_eq!(v["snapshot"]["log"].as_array().unwrap().len(), 1);
+        let scene: Value = json(crate::scene(false, "{}"));
+        assert!(
+            scene["types"].to_string().contains("splay-feature"),
+            "{}",
+            scene["types"]
+        );
+        // discarding the stored one writes nothing more
+        let v = json(survey_discard_stored());
+        assert!(v["snapshot"]["stored"].as_array().unwrap().is_empty());
+        assert_eq!(v["snapshot"]["log"].as_array().unwrap().len(), 1);
+    }
+
+    #[test]
     fn a_bric_shot_waits_for_its_flush() {
         let trip = new_cave();
         json(survey_sync_trip(&trip));
         json(survey_connect("bric", "{}"));
+        json(survey_memory_done());
         let (p, m, _) = bric::encode_shot(&bric::ShotSpec {
             distance: 5.0,
             azimuth: 100.0,

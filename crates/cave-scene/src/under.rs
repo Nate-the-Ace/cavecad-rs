@@ -34,6 +34,9 @@ pub struct Shading {
     pub sweeps_over: Vec<[f64; 6]>,
     /// Sweep-shot pieces under another passage.
     pub sweeps_under: Vec<[f64; 6]>,
+    /// Splays the surveyor classed on the instrument, by their type (`splay-feature`, `splay-ridge`,
+    /// `splay-generic`): `[in the open, under another passage]`.
+    pub marked: std::collections::BTreeMap<String, [Vec<[f64; 6]>; 2]>,
     /// Wall pieces in the open.
     pub walls_over: Vec<[f64; 6]>,
     /// Wall pieces under another passage.

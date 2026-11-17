@@ -4,6 +4,7 @@
   // and Cross Section beside this panel redraw from the notebook, so the cave grows while it is being
   // surveyed. Everything here is sized for a tablet held in a glove: big targets, one thing to do next.
   // The rules (what a reading is, where the surveyor stands next) are Rust: crates/cave-session, tested there.
+  import X1Marks from '../components/X1Marks.svelte';
   import { untrack } from 'svelte';
   import { Check, ChevronLeft, ChevronRight, Crosshair, Flashlight, FlashlightOff, Pause, Play, Radar, ScanLine, SkipForward, X } from '@lucide/svelte';
   import SweepDial from '../components/SweepDial.svelte';
@@ -72,7 +73,7 @@
   });
 
   const units = $derived(cave.units);
-  const linked = $derived(survey.status === 'connected' || survey.status === 'lost');
+  const linked = $derived(survey.status === 'connected' || survey.status === 'lost' || survey.status === 'connecting');
   const noBluetooth = $derived(!webBluetoothAvailable());
   const dist = (m: number) => formatLength(m, units, 2);
   const sweep = $derived(survey.sweep);
@@ -144,7 +145,9 @@
 
   <div class="scroll">
     {#if survey.detail && survey.status !== 'connected'}
-      <p class="banner" role="alert">{survey.detail}</p>
+      <p class="banner" role="alert">{survey.detail}{#if survey.status === 'lost' || survey.status === 'connecting'} <button class="stoplink" onclick={live.disconnect}><Unplug size={16} /> Disconnect</button>{/if}</p>
+    {:else if survey.status === 'lost' || survey.status === 'connecting'}
+      <p class="banner" role="status">{survey.status === 'lost' ? 'Reconnecting…' : 'Connecting…'} <button class="stoplink" onclick={live.disconnect}><Unplug size={16} /> Disconnect</button></p>
     {:else if noBluetooth && !linked}
       <p class="banner">This browser has no Web Bluetooth. On an iPad, open CaveCAD in the <b>Bluefy</b> browser to connect an instrument. The simulator works anywhere.</p>
     {/if}
@@ -185,6 +188,7 @@
           <option value="relaxed">Relaxed: twice Normal</option>
         </select>
       </label>
+      <X1Marks />
       {#if sweepDue}<p class="due" role="status">Sweep {survey.standing} before moving on.</p>{/if}
       <div class="row">
         <button onclick={() => live.laser(true)} disabled={!survey.canLaser} title="Laser on, for aiming (the X1)"><Flashlight size={18} /> Laser on</button>
@@ -261,6 +265,20 @@
         {#if survey.message}<p class="problem" role="alert">{survey.message}</p>{/if}
         {#each survey.warnings as w}<p class="caution" role="status">{w}</p>{/each}
       </div>
+    {/if}
+
+    {#if survey.stored.length > 0}
+      <section class="hold" aria-label="Shots from the instrument's memory">
+        <p><b>{survey.stored.length} shot{survey.stored.length === 1 ? '' : 's'} from the instrument's memory</b>{survey.readingMemory ? ' (still arriving…)' : ''}: taken while it was not connected, maybe another day. They are not in the notebook.</p>
+        <ul class="stored">
+          {#each survey.stored.slice(0, 6) as r}<li>{dist(r.distance)} · {r.azimuth.toFixed(1)}° · {r.inclination.toFixed(1)}°{r.leg ? ' · leg' : ''}{r.scan ? ' · scan' : ''}</li>{/each}
+          {#if survey.stored.length > 6}<li class="hint">and {survey.stored.length - 6} more</li>{/if}
+        </ul>
+        <div class="row">
+          <button class="go" onclick={live.addStored}><Check size={20} /> Add at {survey.standing || survey.state.from}</button>
+          <button class="no" onclick={live.discardStored}><X size={20} /> Discard</button>
+        </div>
+      </section>
     {/if}
 
     {#if held}
@@ -403,6 +421,8 @@
   .idle { color: var(--muted); margin: 6px 0; align-self: center; }
   .problem { margin: 0; color: var(--danger); }
   .caution { margin: 0; color: var(--warn); font-size: 13px; }
+  .stoplink { display: inline-flex; align-items: center; gap: 4px; margin-left: 8px; min-height: 36px; padding: 2px 10px; font: inherit; color: var(--text); background: var(--panel-2); border: 1px solid var(--line); border-radius: var(--radius); cursor: pointer; vertical-align: middle; }
+  .stored { margin: 0; padding-left: 1.2em; font-size: 13px; font-variant-numeric: tabular-nums; }
   .hold { padding: 10px; border: 1px solid var(--accent); border-radius: var(--radius); }
   .hold p { margin: 0 0 8px; }
   .row { display: flex; flex-wrap: wrap; gap: 8px; }

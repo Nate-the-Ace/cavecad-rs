@@ -24,6 +24,8 @@
   import PhoneShell from './components/PhoneShell.svelte';
   import { phone } from './lib/phone.svelte';
   import UpdateBar from './components/UpdateBar.svelte';
+  import WhatsNew from './components/WhatsNew.svelte';
+  import { unseenChanges, type Change } from './lib/changelog';
   import { checkForUpdate, startUpdateChecks } from './lib/desktop-update.svelte';
   import MovedPage from './components/MovedPage.svelte';
   import { isOldJoinUrl, isOldLiveLink } from './lib/moved-link';
@@ -249,6 +251,14 @@
   });
 
   const built = $derived(info?.builtAt ? new Date(info.builtAt).toLocaleTimeString() : '');
+  // What's new: once after an update (what this device has not seen), and on asking from the build label
+  let whatsNew = $state<Change[] | null>(null);
+  $effect(() => {
+    if (account.phase === 'ready') untrack(() => {
+      const fresh = unseenChanges();
+      if (fresh.length > 0) whatsNew = fresh;
+    });
+  });
 </script>
 
 <div class="shell" class:docked={!phone.on} inert={!open}>
@@ -277,8 +287,10 @@
     <span>{version}</span>
     {#if dirty}<span class="unsaved" title="Changes since the cave was opened or last saved. Save with Ctrl/Cmd+S.">Unsaved changes</span>{/if}
     {#if info}<span>build {info.git}{info.dirty ? '+' : ''} · {built}</span>{/if}
+    <button class="news" onclick={() => (whatsNew = [])} title="What changed in CaveCAD">What's new</button>
   </footer>
 </div>
+{#if whatsNew}<WhatsNew changes={whatsNew} onclose={() => (whatsNew = null)} />{/if}
 <AccountGate />
 
 <style>
@@ -293,6 +305,7 @@
   .unsaved { color: var(--warn); font-weight: 600; }
   .body.phone { border-top: 0; }
   footer.gone { display: none; }
+  footer .news { margin-left: auto; font: inherit; font-size: 12px; color: var(--muted); background: none; border: 0; padding: 0; cursor: pointer; text-decoration: underline; }
   footer { display: flex; gap: 16px; padding: 4px 12px; font-size: 12px; color: var(--muted);
     border-top: 1px solid var(--line); background: var(--panel); }
 </style>

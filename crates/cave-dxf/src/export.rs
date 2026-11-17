@@ -358,11 +358,7 @@ fn draw_scene(g: &mut Geometry, doc: &Document, scene: &Scene) {
         g.tags(&shot_tags(doc, &l.shot));
     }
     for (n, s) in scene.splays.iter().enumerate() {
-        let key = if scene.splay_sweep.get(n).copied().unwrap_or(false) {
-            "sweep"
-        } else {
-            "splay"
-        };
+        let key = scene.splay_type.get(n).map_or("splay", String::as_str);
         g.line(key, [s[0], s[1], s[2]], [s[3], s[4], s[5]]);
         let mut tags = scene
             .splay_shots

@@ -161,6 +161,7 @@ export class WebBleInstrument implements Instrument {
 
   /** Queues a write: one at a time, with a gap, and never throwing (a lost ack is sent again by the instrument). */
   private write(data: Uint8Array) {
+    (globalThis as { __cavecadDlog?: (s: string) => void }).__cavecadDlog?.(`send ${hex(data)}`);
     this.queue = this.queue.then(async () => {
       const c = this.writer;
       if (!c) return;
@@ -191,7 +192,12 @@ export class WebBleInstrument implements Instrument {
 
   /** A frame from the instrument goes to the engine. */
   private frame(kind: string, bytes: Uint8Array) {
-    this.take(this.bridge.frame(kind, bytes));
+    (globalThis as { __cavecadDlog?: (s: string) => void }).__cavecadDlog?.(`recv ${kind} ${hex(bytes)}`);
+    const step = this.bridge.frame(kind, bytes);
+    // what the engine made of it (a leg, a splay, held back), for reading the log afterwards
+    const last = step.snapshot?.log?.[step.snapshot.log.length - 1];
+    (globalThis as { __cavecadDlog?: (s: string) => void }).__cavecadDlog?.(`engine waiting=${step.snapshot?.waiting ?? '?'} stored=${step.snapshot?.stored?.length ?? 0} last=${last ? `${last.label}` : '-'}`);
+    this.take(step);
   }
 
   /** Tells the engine which instrument this is, once. */
