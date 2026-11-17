@@ -18,7 +18,9 @@ let crc16Table: [UInt16] = (0..<256).map { i in
 func crc8(_ d: [UInt8]) -> UInt8 { d.reduce(0x77) { crc8Table[Int($1 ^ $0)] } }
 func crc16(_ d: [UInt8]) -> UInt16 { d.reduce(0xDF0C) { ($0 >> 8) ^ crc16Table[Int((UInt16($1) ^ $0) & 0xFF)] } }
 
-var seq: UInt16 = 1
+// the OM7 drops a message whose sequence number matches the last one it took (measured 2026-11-16), so a run must
+// not start where the last run started
+var seq = UInt16.random(in: 2...0xFFF0)
 func message(_ set: UInt8, _ cmd: UInt8, _ payload: [UInt8], attr: UInt8 = 0) -> [UInt8] {
     let len = UInt16(13 + payload.count) | (1 << 10)
     var out: [UInt8] = [0x55, UInt8(len & 0xFF), UInt8(len >> 8)]

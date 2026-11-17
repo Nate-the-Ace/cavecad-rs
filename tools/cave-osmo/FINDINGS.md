@@ -34,9 +34,26 @@ not 7P).
 - The same bytes sent earlier from the Rust probe (unbonded link, right after Forget) got no visible reaction, but
   Nathan was not watching that run, so this is not evidence either way.
 
+### One command at a time (2026-11-16, Nathan watching each run)
+
+| Sent | Result |
+|---|---|
+| `04/0c` speed, yaw 30°/s for 1.5 s, refreshed every 100 ms | **turned right slowly** |
+| `04/14` mode 05, yaw 45° (first run after the mixed run above) | turned right ~45°, **never repeated** |
+| `04/14` mode 05, yaw 0° / 45° / −20° (four runs, incl. fresh sequence numbers, incl. after a zero-speed command) | nothing |
+| `04/14` mode 04 (relative), yaw −45° | nothing |
+| `04/0a` (Pocket 3 "angle set"), yaw −20° in the third slot, flags 01 | nothing |
+| `04/0a` yaw −20° in the first slot (payload one byte short by mistake, attributes 0x40) | nothing |
+
+**Conclusion so far: speed control works; no angle command works.** The one 45° swing is unexplained (it may have
+been the end of the earlier mixed run, or a follow-mode drift). Sequence-number reuse was ruled out as the cause.
+So a sweep must steer by speed and time, and know where the gimbal points from the X1's own compass and clino.
+
 ## Still unknown
 
-- Per-command: does absolute angle (`04/14` mode 05) work, and what `time` means.
+- How true a timed speed turn is (30°/s for 3 s = 90°?), and whether it drifts in follow mode vs lock mode.
+- Why angle commands are ignored: maybe a mode the Mimo app sets first, or a different command on the OM7 (sniff
+  Mimo's traffic with an nRF sniffer to find out).
 - Angle limits (pitch up/down reach for an LRUD ring) and how close a commanded angle lands.
 - Any way to read its angles (try `04/02` with other attributes, the `15f1e6…` service, the `fff3` channel).
 - What 0x27 `04/57` wants as a reply.
