@@ -1,4 +1,4 @@
-// Dome scan: the X1 rides an Osmo gimbal (laser out of the clamp's top) and CaveCAD turns it and fires it, so a
+// Ring and dome scans: the X1 rides an Osmo gimbal (laser out of the clamp's top) and CaveCAD turns it and fires it, so a
 // station's cross-section ring is shot evenly with no hand wobble. The shots are an ordinary sweep (live check, splays,
 // 3D), taken at the standing station. Measured behaviour behind every number here: tools/cave-osmo/FINDINGS.md.
 //
@@ -43,8 +43,17 @@ gimbal.onChange = () => {
   dome.name = gimbal.name;
 };
 
-/** Shots and seconds a ring at this spacing takes. */
-export function estimate(step: number) {
+/** How far the dome pans each way from the gimbal's centre (its stops are ~±143°): the ~90° behind is unreached. */
+export const DOME_PAN = 135;
+
+/** Shots and seconds a scan at this spacing takes. Ring: a cross-section across the passage. Dome: the hemisphere
+ * above the horizon, as meridians from straight up to level every `step` of pan. */
+export function estimate(step: number, kind: 'ring' | 'dome' = 'ring') {
+  if (kind === 'dome') {
+    const meridians = Math.floor((2 * DOME_PAN) / step) + 1;
+    const shots = meridians * (Math.floor(90 / step) + 1);
+    return { shots, secs: shots * SHOT_S + (2 * DOME_PAN) / RATE };
+  }
   const perSide = Math.floor(DEEPEST / step);
   const shots = 1 + 2 * perSide;
   const roll = (4 * DEEPEST) / RATE; // down and back, both sides
@@ -129,15 +138,60 @@ async function turnOnly(yaw: number, roll: number, deg: number) {
   await pause(SETTLE_MS);
 }
 
+/** Ring scan: one cross-section at the standing station (see ringBody). */
+export const startRing = () => startScan('ring');
+/** Dome scan: the hemisphere above the horizon at the standing station (see domeBody). */
+export const startDome = () => startScan('dome');
+
+/** Dome: pan to −DOME_PAN, then meridian by meridian: roll from straight up down to level on the long roll side,
+ * pan one step, roll back up, pan one step, … (zig-zag, so no time is spent rolling back), then home. */
+async function domeBody(step: number) {
+  dome.phase = 'Turning to the start';
+  await turnOnly(-RATE, 0, DOME_PAN);
+  let pan = -DOME_PAN;
+  const s0 = await moveAndShoot(0, 0, 0);
+  let depth = s0 ? Math.abs(phiOf(s0)) : 0;
+  let dir = 1, sideSign = 0, learned = false, down = true;
+  while (!stopRequested) {
+    dome.phase = `Pan ${pan}°: ${Math.round(depth)}° from up`;
+    const atEnd = down ? depth >= 90 - step / 2 : depth <= step / 2;
+    if (atEnd) {
+      if (pan + step > DOME_PAN) break;
+      const n = await moveAndShoot(RATE, 0, step);
+      pan += step;
+      if (n) depth = Math.abs(phiOf(n));
+      down = !down;
+      continue;
+    }
+    const n = await moveAndShoot(0, (down ? dir : -dir) * RATE, step);
+    if (!n) {
+      depth += down ? step : -step;
+      continue;
+    }
+    const p = phiOf(n);
+    if (!sideSign && Math.abs(p) > 10) sideSign = Math.sign(p);
+    if (!learned && sideSign && Math.sign(p) !== sideSign && Math.abs(p) > 10) {
+      // snapped over the top on the first meridian: the other way is the long roll side
+      dir = -dir;
+      sideSign = Math.sign(p);
+    }
+    if (Math.abs(p) > 45) learned = true;
+    depth = Math.abs(p);
+  }
+  dome.phase = 'Home';
+  if (depth > 3) await turnOnly(0, -dir * RATE, depth);
+  if (pan) await turnOnly(pan > 0 ? -RATE : RATE, 0, Math.abs(pan));
+}
+
 /** One ring at the standing station: pan −90 to look along the passage, straight up, roll down one wall in `step`
  * steps, roll back, pan 180 (same ring plane, other wall), roll down again, roll back, pan −90 home. */
-export async function startDome() {
+async function startScan(kind: 'ring' | 'dome') {
   if (dome.running || !gimbal.connected || !survey.canTakeShot) return;
   const step = Math.max(2, Math.min(30, dome.step));
   dome.running = true;
   dome.error = '';
   dome.done = 0;
-  dome.total = estimate(step).shots;
+  dome.total = estimate(step, kind).shots;
   stopRequested = false;
   if (!startDrivenSweep('lrud')) {
     dome.running = false;
@@ -145,6 +199,10 @@ export async function startDome() {
     return;
   }
   try {
+    if (kind === 'dome') {
+      await domeBody(step);
+      return;
+    }
     dome.phase = 'Turning to look along the passage';
     await turnOnly(-RATE, 0, 90);
     dome.phase = 'Straight up';

@@ -25,7 +25,7 @@
   import * as live from '../lib/survey.svelte';
   import { survey } from '../lib/survey.svelte';
   import { webBluetoothAvailable } from '../lib/instrument/webble';
-  import { dome, estimate as domeEstimate, connectGimbal, disconnectGimbal, startDome, stopDome, aim, aimHold, aimRelease, AIM_SPEEDS } from '../lib/dome.svelte';
+  import { dome, estimate as domeEstimate, connectGimbal, disconnectGimbal, startDome, startRing, stopDome, aim, aimHold, aimRelease, AIM_SPEEDS } from '../lib/dome.svelte';
 
   let ready = $state(false);
   let showCapture = $state(false);
@@ -209,17 +209,20 @@
           {/if}
         </div>
         {#if dome.connected}
-          {@const est = domeEstimate(dome.step)}
+          {@const ringEst = domeEstimate(dome.step, 'ring')}
+          {@const domeEst = domeEstimate(dome.step, 'dome')}
+          {@const mins = (sec: number) => `${Math.floor(sec / 60) ? `${Math.floor(sec / 60)} min ` : ''}${Math.round(sec % 60)} s`}
           <label class="acc">Ring spacing <strong>{dome.step}°</strong>
             <input type="range" min="2" max="30" step="1" bind:value={dome.step} disabled={dome.running} aria-label="Spacing of the shots round the ring, degrees" />
           </label>
-          <p class="hint">{est.shots} shots · about {Math.floor(est.secs / 60) ? `${Math.floor(est.secs / 60)} min ` : ''}{Math.round(est.secs % 60)} s. Gimbal upright (rotate button), its front facing a wall, X1 connected.</p>
+          <p class="hint">Ring: {ringEst.shots} shots, about {mins(ringEst.secs)} · Dome: {domeEst.shots} shots, about {mins(domeEst.secs)}. Gimbal upright (rotate button), its front facing a wall, X1 connected.</p>
           <div class="row">
             {#if dome.running}
               <button onclick={stopDome}>Stop</button>
               <span class="gname" role="status">{dome.phase} · {dome.done}/{dome.total}</span>
             {:else}
-              <button class="sweepbtn" onclick={startDome} disabled={!survey.canTakeShot || !survey.standing} title="The gimbal turns the X1 round a ring across the passage at this station, firing it every step"><ScanLine size={20} /> Dome scan</button>
+              <button class="sweepbtn" onclick={startRing} disabled={!survey.canTakeShot || !survey.standing} title="A ring across the passage at this station: the cross-section, its walls, roof and as far down as the gimbal reaches"><ScanLine size={20} /> Ring scan</button>
+              <button class="sweepbtn" onclick={startDome} disabled={!survey.canTakeShot || !survey.standing} title="The half-sphere above the horizon at this station, meridian by meridian (about 90° behind the gimbal is out of its reach)"><Radar size={20} /> Dome scan</button>
               {#if dome.phase}<span class="gname">{dome.phase}</span>{/if}
             {/if}
           </div>
