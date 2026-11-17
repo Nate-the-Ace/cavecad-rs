@@ -1,0 +1,16 @@
+[package]
+name = "cave-x1"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "Talks to a Cavway X1 over Bluetooth from a computer: find, connect, laser, shoot, read shots (acknowledged and de-duplicated), with timings. Building blocks for tools and tests."
+
+[dependencies]
+cave-instrument = { path = "../../crates/cave-instrument" }
+btleplug = "0.11"
+futures = "0.3"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync"] }
+uuid = "1"
+
+# Kept out of the main workspace: Bluetooth needs native libraries the web build and CI do not have.
+[workspace]
