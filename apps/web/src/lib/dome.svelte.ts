@@ -167,16 +167,27 @@ export async function aimReset() {
     if (Math.abs(aim.tilt) > 1) await gimbal.turn(0, aim.tilt > 0 ? -10 : 10, 0, (Math.abs(aim.tilt) / 10) * 1000);
     aim.pan = aim.tilt = 0;
     if (survey.canTakeShot) {
-      let sign = Math.sign(aim.roll) || 1; // which roll command takes the laser further from vertical
-      let prev = Infinity;
-      for (let i = 0; i < 3; i++) {
-        const s = await moveAndShoot(0, 0, 0);
-        if (!s) break;
-        const off = Math.abs(phiOf(s));
-        if (off < 3) break;
-        if (off > prev) sign = -sign; // went the wrong way: the other sign is the way back
-        prev = off;
-        await turnOnly(0, -sign * RATE, off);
+      // The laser's lean from vertical, split by the X1's roll figure into a sideways part (the gimbal's roll axis)
+      // and a fore/aft part (its tilt axis). Fix the bigger part each round with 90 % of it; learn from the result
+      // which way each axis moves the laser (a move that changed nothing is just tried again).
+      const lean = (sh: Shot) => {
+        const t = 90 - sh.incl, r = (sh.roll * Math.PI) / 180;
+        return { side: -t * Math.sin(r), fore: t * Math.cos(r) };
+      };
+      const way = { side: aim.longRoll || 1, fore: 1 }; // laser change per + command, by axis
+      let s = await moveAndShoot(0, 0, 0);
+      for (let i = 0; s && i < 6; i++) {
+        const l = lean(s);
+        if (Math.abs(l.side) < 2.5 && Math.abs(l.fore) < 2.5) break;
+        const axis = Math.abs(l.side) >= Math.abs(l.fore) ? 'side' : 'fore';
+        const off = l[axis], cmd = -Math.sign(off) * way[axis], deg = Math.abs(off) * 0.9;
+        if (axis === 'side') await turnOnly(0, cmd * RATE, deg);
+        else await gimbal.turn(0, cmd * 10, 0, (deg / 10) * 1000), await pause(SETTLE_MS);
+        const n = await moveAndShoot(0, 0, 0);
+        if (!n) break;
+        const moved = lean(n)[axis] - off;
+        if (Math.abs(moved) > 2 && Math.sign(moved) !== cmd) way[axis] = -way[axis];
+        s = n;
       }
     } else if (Math.abs(aim.roll) > 1) {
       await turnOnly(0, aim.roll > 0 ? -RATE : RATE, Math.abs(aim.roll));
@@ -209,8 +220,9 @@ let lastShot: Shot | null = null;
   lastShot = { incl, roll: (b[9] | (b[10] << 8)) * a, at: performance.now() };
   if (!dome.running && gimbal.connected) aimFromShot(lastShot);
 };
-/** The laser's angle from straight up, signed by which side of vertical it is (the X1's roll figure: ~270 or ~90). */
-const phiOf = (s: Shot) => (s.roll > 180 ? 1 : -1) * (90 - s.incl);
+/** The laser's sideways angle from straight up (the roll axis), signed by side: the X1's roll figure is ~270 on one
+ * side and ~90 on the other; the sine keeps only the sideways part when the laser also leans fore or aft. */
+const phiOf = (s: Shot) => -(90 - s.incl) * Math.sin((s.roll * Math.PI) / 180);
 
 let stopRequested = false;
 export function stopDome() {
