@@ -344,3 +344,23 @@ it swings the pan motor to keep the heading). Measured with the clamp top's dire
   shots (≤20° apart), comes back home (≤5 steps); between lists leave + enter (enter only, no `04/4c`), at home so the
   re-entry is no move. Medium ring (15 shots, 4 lists) from the Mac: **every stop 0.7–2.5° off, mean 1.6°**, every list
   accepted. Estimated times: ring 15° ~1 min, ring 5° ~3 min, dome 15° ~9 min, dome 5° (1,219 shots, 170 lists) ~79 min.
+
+### Target mode: speed, hand-over, and the X1's weight (2026-11-17, phone and bench)
+
+- **The per-target `60` is the move's duration in 1/100 s.** Timed by status pushes, a 45° roll took: 10 → 1.4 s,
+  60 → 1.9–2.2 s, 300 → 3.5–4.2 s, 1000 → 10.4 s. (Judged earlier by the 1 Hz position report, it looked like it did
+  nothing.) The app now sizes every move to 15°/s, never under 0.6 s; moves are no longer chopped into steps for
+  gentleness, so a 5° dome fits in 98 lists (was 176).
+- **On the phone with the X1 aboard, a quick move to roll −61 (short side) overloaded the gimbal** and it dropped the
+  list and went home. App roll range now −35…+110 (walls from the long side, turning round when needed; ring reaches
+  everything, dome 5° loses ~16% low behind-left).
+- **Target mode ends by itself ~9 s after the last command** (two missed X1 shots took 10 s and ended it). While a
+  shot is taken the app re-sends "go" to the current target every 3 s.
+- **A leave sent while the gimbal is still moving is ignored** (no cleared status), and the next list is then taken as
+  a continuation and refused. Wait for the cleared status (S 0x00) after leaving; send it again if it does not come.
+- Getting ready (home as a one-target list) left that list loaded: the first scan list was refused. Every list now goes
+  in fresh (leave, enter, 2.5 s, upload).
+- The first target of a fresh list once sat "moving" past its time; asking for it again got it there.
+- Bench, timed moves at 15°/s: the 14-target first list of a ring landed every stop within 3°.
+- `PROTOCOL.md` is the clean write-up of all of this for others; the Rust library (`targets` module, `Osmo::targets_*`)
+  rebuilds Mimo's captured panorama lists byte for byte (tests).

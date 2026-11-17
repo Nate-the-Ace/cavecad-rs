@@ -357,6 +357,74 @@ pub fn om7_pan(joint: f64) -> f64 {
     if joint > OM7_PAN_STOPS.1 + 5.0 { joint - 360.0 } else { joint }
 }
 
+/// Target mode: DJI's own positioning (how DJI Mimo runs a panorama; FINDINGS "DJI's positioning protocol"). The
+/// gimbal is sent a list of attitude targets relative to home and told to go to each in turn; it solves its motors
+/// itself, never flips, takes each move in the time it is given, and reports moving / arrived.
+pub mod targets {
+    /// One target: yaw, roll, pitch in degrees relative to home (attitude, not joints), and the move's duration.
+    #[derive(Clone, Copy, Debug, PartialEq)]
+    pub struct Target {
+        pub yaw: f64,
+        pub roll: f64,
+        pub pitch: f64,
+        /// How long the move to this target takes, seconds (sent in 1/100 s; Mimo sends 0.6).
+        pub seconds: f64,
+    }
+
+    /// The gimbal runs at most 15 targets per list (16 or more are taken but never stepped through).
+    pub const LIST_MAX: usize = 15;
+    /// Status states (the fifth byte of the 04/6b push): high nibble 4 moving, 6 arrived (low bits set when the
+    /// gimbal clamped the target), 2 dropped the list and went home (or "ready" right after entering), 0 idle/cleared.
+    pub const MOVING: u8 = 0x40;
+    pub const ARRIVED: u8 = 0x60;
+    pub const ABORTED: u8 = 0x20;
+    pub const IDLE: u8 = 0x00;
+
+    /// Payload of the upload (04/6d): `01, L, 2c 00 00 0a, N, N × (u16 duration cs, i16 yaw, i16 roll, i16 pitch in
+    /// tenths), id`, L = payload length − 2.
+    pub fn upload_payload(list: &[Target], id: u8) -> Option<Vec<u8>> {
+        if list.is_empty() || list.len() > LIST_MAX {
+            return None;
+        }
+        let t = |d: f64| ((d * 10.0).round().clamp(-32768.0, 32767.0) as i16).to_le_bytes();
+        let mut body = vec![0x2c, 0x00, 0x00, 0x0a, list.len() as u8];
+        for p in list {
+            let cs = (p.seconds * 100.0).round().clamp(1.0, 65535.0) as u16;
+            body.extend(cs.to_le_bytes());
+            body.extend(t(p.yaw));
+            body.extend(t(p.roll));
+            body.extend(t(p.pitch));
+        }
+        body.push(id);
+        let mut out = vec![0x01, body.len() as u8];
+        out.extend(body);
+        Some(out)
+    }
+
+    /// Payload of "go to target i" (04/6d).
+    pub fn go_payload(i: u8) -> Vec<u8> {
+        vec![0x00, 0x06, 0x40, 0x00, i, 0x0a, 0x00, 0x00]
+    }
+
+    /// The gimbal's target-mode status push (04/6b, attributes 0): `01 6d 06 01 S 00 i N id`.
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub struct Status {
+        pub state: u8,
+        pub index: u8,
+        pub count: u8,
+        pub id: u8,
+    }
+
+    impl Status {
+        pub fn parse(payload: &[u8]) -> Option<Status> {
+            (payload.len() >= 9 && payload[0] == 0x01 && payload[1] == 0x6d).then(|| Status { state: payload[4], index: payload[6], count: payload[7], id: payload[8] })
+        }
+        pub fn arrived(&self, i: u8, id: u8) -> bool {
+            self.id == id && self.index == i && self.state & 0xf0 == ARRIVED
+        }
+    }
+}
+
 /// One gimbal axis, for commands that drive one at a time.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Axis {
@@ -561,6 +629,7 @@ pub struct Osmo {
     pub characteristics: Vec<String>,
     seq: u16,
     latest: Arc<Mutex<Option<(Instant, Attitude)>>>,
+    target_status: Arc<Mutex<Option<(Instant, targets::Status)>>>,
 }
 
 fn tenths(deg: f64) -> i16 {
@@ -653,7 +722,8 @@ impl Osmo {
         let mut stream = peripheral.notifications().await.map_err(link)?;
         let (tx, heard) = mpsc::unbounded_channel();
         let latest: Arc<Mutex<Option<(Instant, Attitude)>>> = Arc::new(Mutex::new(None));
-        let (p2, w2, l2) = (peripheral.clone(), write.clone(), latest.clone());
+        let target_status: Arc<Mutex<Option<(Instant, targets::Status)>>> = Arc::new(Mutex::new(None));
+        let (p2, w2, l2, ts2) = (peripheral.clone(), write.clone(), latest.clone(), target_status.clone());
         tokio::spawn(async move {
             let mut parsers: std::collections::HashMap<Uuid, Parser> = Default::default();
             while let Some(n) = stream.next().await {
@@ -674,6 +744,11 @@ impl Osmo {
                             let _ = p2.write(&w2, chunk, WriteType::WithoutResponse).await;
                         }
                     }
+                    if message.set == cmd::SET_GIMBAL && message.cmd == 0x6b && message.attributes == 0x00 {
+                        if let Some(st) = targets::Status::parse(&message.payload) {
+                            *ts2.lock().unwrap() = Some((at, st));
+                        }
+                    }
                     if message.set == cmd::SET_GIMBAL && message.cmd == cmd::PUSH_POSITION {
                         if let Some(a) = Attitude::decode(&message.payload) {
                             *l2.lock().unwrap() = Some((at, a));
@@ -683,7 +758,7 @@ impl Osmo {
                 }
             }
         });
-        Ok(Osmo { peripheral, write, heard, name, characteristics, seq: 1, latest })
+        Ok(Osmo { peripheral, write, heard, name, characteristics, seq: 1, latest, target_status })
     }
 
     fn next_seq(&mut self) -> u16 {
@@ -780,6 +855,77 @@ impl Osmo {
             }
         }
         out
+    }
+
+    // ---- target mode
+
+    /// The last target-mode status and when it came.
+    pub fn target_status(&self) -> Option<(Instant, targets::Status)> {
+        *self.target_status.lock().unwrap()
+    }
+
+    /// Into target mode (as Mimo: follow mode, 04/0f, enter). `again`: enter only (between lists). Entering sends the
+    /// gimbal home, so end every list at home. Give it ~2.5 s before uploading.
+    pub async fn targets_enter(&mut self, again: bool) -> Result<(), Error> {
+        if !again {
+            self.send(cmd::SET_GIMBAL, cmd::SET_MODE, vec![0x01, 0x00], 0x40).await?;
+            self.send(cmd::SET_GIMBAL, 0x0f, vec![0x22, 0x01, 0x00], 0x40).await?;
+        }
+        self.send(cmd::SET_GIMBAL, 0x6b, vec![0x00, 0x00, 0x00, 0x6d], 0x40).await.map(|_| ())
+    }
+
+    /// Sends a list (≤ 15); the gimbal sets off for its first target at once.
+    pub async fn targets_upload(&mut self, list: &[targets::Target], id: u8) -> Result<(), Error> {
+        let p = targets::upload_payload(list, id).ok_or_else(|| Error::Link(format!("a target list holds 1 to 15, not {}", list.len())))?;
+        self.send(cmd::SET_GIMBAL, 0x6d, p, 0x40).await.map(|_| ())
+    }
+
+    /// Go to target `i` of the list. Target mode ends by itself after ~9 s without a command: to hold a target longer,
+    /// send this again (it is already there: no move).
+    pub async fn targets_go(&mut self, i: u8) -> Result<(), Error> {
+        self.send(cmd::SET_GIMBAL, 0x6d, targets::go_payload(i), 0x40).await.map(|_| ())
+    }
+
+    /// Waits for "arrived" at target `i` of list `id`; Ok(false) if the gimbal dropped the list or time ran out.
+    pub async fn targets_arrived(&mut self, i: u8, id: u8, wait: Duration) -> Result<bool, Error> {
+        let t0 = Instant::now();
+        while t0.elapsed() < wait {
+            if let Some((at, st)) = self.target_status() {
+                if st.arrived(i, id) {
+                    return Ok(true);
+                }
+                if at > t0 && (st.state == targets::ABORTED || st.state == targets::IDLE) {
+                    return Ok(false);
+                }
+            }
+            tokio::time::sleep(Duration::from_millis(30)).await;
+        }
+        Ok(false)
+    }
+
+    /// Leaves target mode holding where it is, and waits for the gimbal's "cleared" status (a leave sent while it is
+    /// still moving is ignored, so it is sent again, up to 4 times). True once cleared. The way to send a new list:
+    /// leave, enter again, wait, upload — a list sent while another is loaded is refused.
+    pub async fn targets_leave(&mut self) -> Result<bool, Error> {
+        for _ in 0..4 {
+            let t0 = Instant::now();
+            self.send(cmd::SET_GIMBAL, 0x6b, vec![0x00, 0x01, 0x00, 0x6d], 0x40).await?;
+            while t0.elapsed() < Duration::from_millis(1500) {
+                if let Some((at, st)) = self.target_status() {
+                    if at > t0 && st.state == targets::IDLE {
+                        return Ok(true);
+                    }
+                }
+                tokio::time::sleep(Duration::from_millis(30)).await;
+            }
+        }
+        Ok(false)
+    }
+
+    /// Leaves target mode the way Mimo does at the end (the gimbal then goes home: be home already).
+    pub async fn targets_exit(&mut self) -> Result<(), Error> {
+        self.send(cmd::SET_GIMBAL, 0x6b, vec![0x00, 0x01, 0x00, 0x6d], 0x40).await?;
+        self.send(cmd::SET_GIMBAL, 0x6d, vec![0x01, 0x06, 0xc0, 0x00, 0x00, 0x00, 0x00, 0x00], 0x40).await.map(|_| ())
     }
 
     /// The gimbal's latest attitude report and when it came (1 a second once the handshake is answered).
@@ -1003,6 +1149,38 @@ impl Osmo {
 
     pub async fn disconnect(self) {
         let _ = self.peripheral.disconnect().await;
+    }
+}
+
+#[cfg(test)]
+mod target_tests {
+    use super::targets::*;
+    fn hex(s: &str) -> Vec<u8> {
+        s.split_whitespace().map(|b| u8::from_str_radix(b, 16).unwrap()).collect()
+    }
+    #[test]
+    fn rebuilds_mimos_panorama_lists() {
+        // DJI Mimo, 3×3 panorama and 7-stop panorama (capture 2026-11-17, "osmo pano.pklg")
+        let t = |yaw: f64, pitch: f64| Target { yaw, roll: 0.0, pitch, seconds: 0.6 };
+        let grid = [t(-31.3, 28.9), t(0.0, 28.9), t(31.3, 28.9), t(31.3, 0.0), t(0.0, 0.0), t(-31.3, 0.0), t(-31.3, -28.9), t(0.0, -28.9), t(31.3, -28.9)];
+        assert_eq!(
+            upload_payload(&grid, 0xdb).unwrap(),
+            hex("01 4e 2c 00 00 0a 09 3c 00 c7 fe 00 00 21 01 3c 00 00 00 00 00 21 01 3c 00 39 01 00 00 21 01 3c 00 39 01 00 00 00 00 3c 00 00 00 00 00 00 00 3c 00 c7 fe 00 00 00 00 3c 00 c7 fe 00 00 df fe 3c 00 00 00 00 00 df fe 3c 00 39 01 00 00 df fe db")
+        );
+        let row: Vec<Target> = [-85.8, -57.2, -28.6, 0.0, 28.6, 57.2, 85.8].iter().map(|&y| t(y, 0.0)).collect();
+        assert_eq!(
+            upload_payload(&row, 0xdc).unwrap(),
+            hex("01 3e 2c 00 00 0a 07 3c 00 a6 fc 00 00 00 00 3c 00 c4 fd 00 00 00 00 3c 00 e2 fe 00 00 00 00 3c 00 00 00 00 00 00 00 3c 00 1e 01 00 00 00 00 3c 00 3c 02 00 00 00 00 3c 00 5a 03 00 00 00 00 dc")
+        );
+        assert!(upload_payload(&vec![t(0.0, 0.0); 16], 1).is_none());
+    }
+    #[test]
+    fn status_and_go() {
+        assert_eq!(go_payload(5), hex("00 06 40 00 05 0a 00 00"));
+        let st = Status::parse(&hex("01 6d 06 01 60 00 02 09 db")).unwrap();
+        assert!(st.arrived(2, 0xdb) && !st.arrived(2, 0xdc));
+        // arrived with the target clamped (seen at yaw +120)
+        assert!(Status::parse(&hex("01 6d 06 01 6c 00 00 02 56")).unwrap().arrived(0, 0x56));
     }
 }
 
