@@ -25,7 +25,7 @@
   import * as live from '../lib/survey.svelte';
   import { survey } from '../lib/survey.svelte';
   import { webBluetoothAvailable } from '../lib/instrument/webble';
-  import { dome, estimate as domeEstimate, connectGimbal, disconnectGimbal, startDome, stopDome } from '../lib/dome.svelte';
+  import { dome, estimate as domeEstimate, connectGimbal, disconnectGimbal, startDome, stopDome, aim, aimHold, aimRelease, AIM_SPEEDS } from '../lib/dome.svelte';
 
   let ready = $state(false);
   let showCapture = $state(false);
@@ -222,6 +222,28 @@
               <button class="sweepbtn" onclick={startDome} disabled={!survey.canTakeShot || !survey.standing} title="The gimbal turns the X1 round a ring across the passage at this station, firing it every step"><ScanLine size={20} /> Dome scan</button>
               {#if dome.phase}<span class="gname">{dome.phase}</span>{/if}
             {/if}
+          </div>
+          <div class="aim" aria-label="Aim the gimbal by hand">
+            <div class="aimhead"><strong>Aim</strong>
+              <div class="seg" role="radiogroup" aria-label="Aiming speed">
+                {#each Object.keys(AIM_SPEEDS) as sp}
+                  <button role="radio" aria-checked={aim.speed === sp} class:on={aim.speed === sp} onclick={() => (aim.speed = sp as keyof typeof AIM_SPEEDS)}>{sp} {AIM_SPEEDS[sp as keyof typeof AIM_SPEEDS]}°/s</button>
+                {/each}
+              </div>
+            </div>
+            <div class="pad">
+              {#each [['pan', -1, '◀ Pan'], ['pan', 1, 'Pan ▶'], ['roll', -1, '⟲ Roll'], ['roll', 1, 'Roll ⟳'], ['tilt', 1, '▲ Tilt'], ['tilt', -1, 'Tilt ▼']] as [axis, sign, label]}
+                <button class="hold" disabled={dome.running}
+                  onpointerdown={(e) => { e.currentTarget.setPointerCapture(e.pointerId); aimHold(axis as 'pan' | 'roll' | 'tilt', sign as 1 | -1); }}
+                  onpointerup={aimRelease} onpointercancel={aimRelease} onlostpointercapture={aimRelease}
+                  oncontextmenu={(e) => e.preventDefault()}>{label}</button>
+              {/each}
+            </div>
+            <div class="row">
+              <button onclick={() => live.laser(true)} disabled={!survey.canLaser || dome.running}><Flashlight size={18} /> Laser on</button>
+              <button onclick={() => { live.laser(true); setTimeout(() => live.takeShot(), 400); }} disabled={!survey.canTakeShot || dome.running} title="Fire the X1 where the gimbal is pointing"><Crosshair size={18} /> Shoot</button>
+            </div>
+            <p class="hint">Hold a button to turn, let go to stop. Roll swings the laser across the passage; pan turns which way that is.</p>
           </div>
           <p class="hint warn">The gimbal's magnet upsets the X1's compass: bearings of these shots are off; distances and angles up or down are good.</p>
         {/if}
@@ -532,4 +554,8 @@
   .gimbal .gname { font-size: 0.85em; opacity: 0.85; align-self: center; }
   .gimbal input[type='range'] { width: 100%; }
   .hint.warn { color: var(--warn, #b26a00); }
+  .aim { margin-top: 8px; }
+  .aimhead { display: flex; gap: 8px; align-items: center; justify-content: space-between; flex-wrap: wrap; }
+  .aim .pad { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin: 6px 0; }
+  .aim .hold { min-height: 44px; touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
 </style>

@@ -62,6 +62,22 @@ export async function connectGimbal() {
 }
 export const disconnectGimbal = () => gimbal.disconnect();
 
+// ---- manual aiming: press and hold to turn, then shoot
+export const AIM_SPEEDS = { fine: 3, normal: 10, fast: 30 } as const;
+export const aim = $state({ speed: 'normal' as keyof typeof AIM_SPEEDS, moving: '' });
+/** Starts turning one way while a button is held: `axis` pan/roll/tilt, `sign` ±1. */
+export function aimHold(axis: 'pan' | 'roll' | 'tilt', sign: 1 | -1) {
+  if (!gimbal.connected || dome.running) return;
+  const r = AIM_SPEEDS[aim.speed] * sign;
+  aim.moving = axis;
+  gimbal.hold(axis === 'pan' ? r : 0, axis === 'tilt' ? r : 0, axis === 'roll' ? r : 0);
+}
+export function aimRelease() {
+  if (!aim.moving) return;
+  aim.moving = '';
+  gimbal.release();
+}
+
 // ---- the X1's shots as they arrive (raw frames, decoded as crates/cave-instrument/src/cavway.rs does)
 type Shot = { incl: number; roll: number; at: number };
 let lastShot: Shot | null = null;

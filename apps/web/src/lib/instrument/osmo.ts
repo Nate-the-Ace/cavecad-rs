@@ -112,4 +112,18 @@ export class OsmoGimbal {
   async stop() {
     await this.send(speedMessage(this.next(), 0, 0, 0));
   }
+
+  private holdTimer: ReturnType<typeof setInterval> | undefined;
+  /** Keeps turning at these rates (°/s) until `release()`: for a press-and-hold aiming control. */
+  hold(yaw: number, pitch: number, roll: number) {
+    clearInterval(this.holdTimer);
+    const tick = () => void this.send(speedMessage(this.next(), yaw, pitch, roll));
+    tick();
+    this.holdTimer = setInterval(tick, 100);
+  }
+  release() {
+    clearInterval(this.holdTimer);
+    this.holdTimer = undefined;
+    void this.stop();
+  }
 }
