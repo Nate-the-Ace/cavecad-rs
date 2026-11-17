@@ -8,8 +8,8 @@ const SERVICE = '0000fff0-0000-1000-8000-00805f9b34fb';
 const WRITE = '0000fff5-0000-1000-8000-00805f9b34fb';
 const NOTIFY = '0000fff4-0000-1000-8000-00805f9b34fb';
 
-// ---- DUML: reflected CRC-8 (poly 0x31, init 0x77) on the 3-byte header, reflected CRC-16 (poly 0x1021, init 0xDF0C)
-// on the rest. Verified against captured Osmo Mobile messages (tools/cave-osmo/src/lib.rs tests).
+// ---- DUML: reflected CRC-8 (poly 0x31, init 0x77) on the 3-byte header; reflected CRC-16 (poly 0x1021, init 0x3692)
+// over the whole message before it. Verified against a capture of DJI Mimo (tools/cave-osmo FINDINGS, 2026-11-17).
 const CRC8 = Array.from({ length: 256 }, (_, i) => {
   let c = i;
   for (let k = 0; k < 8; k++) c = c & 1 ? (c >> 1) ^ 0x8c : c >> 1;
@@ -21,15 +21,16 @@ const CRC16 = Array.from({ length: 256 }, (_, i) => {
   return c;
 });
 export const crc8 = (d: number[]) => d.reduce((c, b) => CRC8[(b ^ c) & 0xff], 0x77);
-export const crc16 = (d: number[]) => d.reduce((c, b) => (c >> 8) ^ CRC16[(b ^ c) & 0xff], 0xdf0c);
+export const crc16 = (d: number[]) => d.reduce((c, b) => (c >> 8) ^ CRC16[(b ^ c) & 0xff], 0x3692);
 
 /** One message to the gimbal (sender app 0x02, receiver gimbal 0x04). */
 export function duml(seq: number, set: number, cmd: number, payload: number[], attr = 0): Uint8Array {
   const len = (13 + payload.length) | (1 << 10);
   const head = [0x55, len & 0xff, len >> 8];
   const body = [0x02, 0x04, seq & 0xff, (seq >> 8) & 0xff, attr, set, cmd, ...payload];
-  const c = crc16(body);
-  return Uint8Array.from([...head, crc8(head), ...body, c & 0xff, c >> 8]);
+  const frame = [...head, crc8(head), ...body];
+  const c = crc16(frame);
+  return Uint8Array.from([...frame, c & 0xff, c >> 8]);
 }
 
 const le16 = (v: number) => {

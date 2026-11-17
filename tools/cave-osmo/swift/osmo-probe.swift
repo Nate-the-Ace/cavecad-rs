@@ -8,7 +8,7 @@ import Foundation
 
 let FFF0 = CBUUID(string: "FFF0"), FFF4 = CBUUID(string: "FFF4"), FFF5 = CBUUID(string: "FFF5")
 
-// ---- DUML: reflected CRC-8 (0x31, init 0x77) on the header, reflected CRC-16 (0x1021, init 0xDF0C) on the rest
+// ---- DUML: reflected CRC-8 (0x31, init 0x77) on the header, reflected CRC-16 (0x1021, init 0x3692) over the whole message
 let crc8Table: [UInt8] = (0..<256).map { i in
     var c = UInt8(i); for _ in 0..<8 { c = c & 1 != 0 ? (c >> 1) ^ 0x8C : c >> 1 }; return c
 }
@@ -16,7 +16,7 @@ let crc16Table: [UInt16] = (0..<256).map { i in
     var c = UInt16(i); for _ in 0..<8 { c = c & 1 != 0 ? (c >> 1) ^ 0x8408 : c >> 1 }; return c
 }
 func crc8(_ d: [UInt8]) -> UInt8 { d.reduce(0x77) { crc8Table[Int($1 ^ $0)] } }
-func crc16(_ d: [UInt8]) -> UInt16 { d.reduce(0xDF0C) { ($0 >> 8) ^ crc16Table[Int((UInt16($1) ^ $0) & 0xFF)] } }
+func crc16(_ d: [UInt8]) -> UInt16 { d.reduce(0x3692) { ($0 >> 8) ^ crc16Table[Int((UInt16($1) ^ $0) & 0xFF)] } }
 
 // the OM7 drops a message whose sequence number matches the last one it took (measured 2026-11-16), so a run must
 // not start where the last run started
@@ -27,7 +27,7 @@ func message(_ set: UInt8, _ cmd: UInt8, _ payload: [UInt8], attr: UInt8 = 0) ->
     out.append(crc8(out))
     var body: [UInt8] = [0x02, 0x04, UInt8(seq & 0xFF), UInt8(seq >> 8), attr, set, cmd] + payload
     seq &+= 1
-    let c = crc16(body); body += [UInt8(c & 0xFF), UInt8(c >> 8)]
+    let c = crc16(out + body); body += [UInt8(c & 0xFF), UInt8(c >> 8)]
     return out + body
 }
 func le(_ v: Int) -> [UInt8] { let x = UInt16(bitPattern: Int16(clamping: v)); return [UInt8(x & 0xFF), UInt8(x >> 8)] }
@@ -67,7 +67,7 @@ func parse(_ uuid: CBUUID, _ data: [UInt8]) -> [Msg] {
         if len < 13 || crc8(Array(buf[0..<3])) != buf[3] { buf.removeFirst(); continue }
         if buf.count < len { break }
         let raw = Array(buf[0..<len]); buf.removeFirst(len)
-        guard crc16(Array(raw[4..<len - 2])) == UInt16(raw[len - 2]) | UInt16(raw[len - 1]) << 8 else { continue }
+        guard crc16(Array(raw[0..<len - 2])) == UInt16(raw[len - 2]) | UInt16(raw[len - 1]) << 8 else { continue }
         out.append(Msg(sender: raw[4], receiver: raw[5], attr: raw[8], set: raw[9], cmd: raw[10],
                        seq: UInt16(raw[6]) | UInt16(raw[7]) << 8, payload: Array(raw[11..<len - 2])))
     }

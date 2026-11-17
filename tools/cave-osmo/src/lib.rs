@@ -55,7 +55,10 @@ pub enum Rotate {
 }
 
 // ---- checksums: reflected CRC-8 (poly 0x31, init 0x77) over the 3-byte header, reflected CRC-16 (poly 0x1021,
-// init 0xDF0C) over everything after the header checksum.
+// init 0x3692) over the WHOLE message before it, header and header checksum included (DJI's standard; found in a
+// capture of DJI Mimo, 2026-11-17). The community projects seeded it 0xDF0C over the body only, which is the same thing
+// for a 21-byte message (header 55 15 04 a9) and wrong for every other length: every non-speed command we sent before
+// that had a bad checksum and was silently dropped.
 
 const fn crc8_table() -> [u8; 256] {
     let mut t = [0u8; 256];
@@ -97,7 +100,7 @@ pub fn crc8(data: &[u8]) -> u8 {
 }
 
 pub fn crc16(data: &[u8]) -> u16 {
-    data.iter().fold(0xDF0C, |c, &b| (c >> 8) ^ CRC16[((b as u16 ^ c) & 0xFF) as usize])
+    data.iter().fold(0x3692, |c, &b| (c >> 8) ^ CRC16[((b as u16 ^ c) & 0xFF) as usize])
 }
 
 /// One DUML message.
@@ -123,10 +126,9 @@ impl Message {
         let raw_len = (len as u16 & 0x3FF) | (1 << 10);
         let mut out = vec![0x55, raw_len as u8, (raw_len >> 8) as u8];
         out.push(crc8(&out));
-        let body_start = out.len();
         out.extend([self.sender, self.receiver, self.seq as u8, (self.seq >> 8) as u8, self.attributes, self.set, self.cmd]);
         out.extend(&self.payload);
-        let c = crc16(&out[body_start..]);
+        let c = crc16(&out);
         out.extend(c.to_le_bytes());
         out
     }
@@ -182,7 +184,7 @@ impl Parser {
                 break;
             }
             let raw: Vec<u8> = self.buf.drain(..len).collect();
-            if crc16(&raw[4..len - 2]) != u16::from_le_bytes([raw[len - 2], raw[len - 1]]) {
+            if crc16(&raw[..len - 2]) != u16::from_le_bytes([raw[len - 2], raw[len - 1]]) {
                 self.bad += 1;
                 continue;
             }
@@ -549,8 +551,22 @@ mod tests {
             "02047300400414c20100002000050f2f9a",
         ] {
             let b: Vec<u8> = (0..hex.len()).step_by(2).map(|i| u8::from_str_radix(&hex[i..i + 2], 16).unwrap()).collect();
-            let (body, crc) = b.split_at(b.len() - 2);
+            // these are 21-byte rotates: the header in front is always 55 15 04 a9
+            let mut whole = vec![0x55, 0x15, 0x04, 0xa9];
+            whole.extend(&b);
+            let (body, crc) = whole.split_at(whole.len() - 2);
             assert_eq!(crc16(body), u16::from_le_bytes([crc[0], crc[1]]), "{hex}");
+        }
+    }
+
+    // whole messages of other lengths, sent by DJI Mimo to an Osmo Mobile 7 (PacketLogger capture 2026-11-17)
+    #[test]
+    fn crc16_matches_mimo_messages_of_every_length() {
+        for hex in ["550f04a202f050bd40002b0400e5d5", "550d0433021d51bd40ee06ca00", "55110492021c52bd40ee2f0000085a95d5"] {
+            let b: Vec<u8> = (0..hex.len()).step_by(2).map(|i| u8::from_str_radix(&hex[i..i + 2], 16).unwrap()).collect();
+            let mut p = Parser::default();
+            assert_eq!(p.feed(&b).len(), 1, "{hex}");
+            assert_eq!(p.bad, 0, "{hex}");
         }
     }
 
