@@ -49,9 +49,34 @@ not 7P).
 been the end of the earlier mixed run, or a follow-mode drift). Sequence-number reuse was ruled out as the cause.
 So a sweep must steer by speed and time, and know where the gimbal points from the X1's own compass and clino.
 
+## Measured with the phone in the clamp (2026-11-16, `watch/`)
+
+An iPhone in the clamp runs `watch/index.html` (served over Tailscale https, since iOS gives motion data only to
+secure pages) and posts its orientation ~60 times a second to `watch/server.py`; `watch/analyze.py` and
+`watch/roll.py` turn that into still positions and laser angles.
+
+- **Timed speed turns are true:** 10°/s × 4.5 s → +44.3°; −45°/s × 3 s → −131.3°; −30°/s × 3 s → −87.6°;
+  +30°/s × 5 s → +147.2°; roll 30°/s → 15° per 0.5 s. About 2-3 % short (ramp up/down). Units confirmed: tenths of
+  a degree per second.
+- **Pan:** about 287° between its stops, i.e. about ±143° from centre. A turn into a stop just stops there.
+- **Tilt (camera direction):** +34° up, −24° down from level.
+- **Roll** (spin round the camera axis): clean and accurate to −164°, then it snaps back to about −92°. Positive
+  roll goes wrong past about +65-70°: it swings round wildly and settles at +90° (looks like its portrait/landscape
+  flip). **Plans roll negative only** (`sweep::ROLL_LIMIT` = −150°).
+- Drift at rest: about 0.5° a minute in roll (follow mode).
+- Once it re-centred itself (tilt 34° → 0°, pan moved ~49°) a few seconds after a new connection; cause unknown.
+
+## X1 mounted laser out of the top (Nathan, 2026-11-16)
+
+At rest the laser points straight up. Pan barely changes the aim, tilt only ±30°; **roll is the ring axis**: rolling
+−150° takes the laser from straight up down one wall to about −60°. Pan reaches ±90° from centre, which is enough to
+look both ways along the passage, so `sweep::ring` = pan −90°, shoot up, roll down one wall in steps, roll back, pan
+180°, the other wall, pan back. The gimbal is set down with its centre facing a wall. Unreached: ~30° wedge straight
+down.
+
 ## Still unknown
 
-- How true a timed speed turn is (30°/s for 3 s = 90°?), and whether it drifts in follow mode vs lock mode.
+- Whether the gimbal's motors pull the X1's compass, and whether the X1's weight sits well in the clamp.
 - Why angle commands are ignored: maybe a mode the Mimo app sets first, or a different command on the OM7 (sniff
   Mimo's traffic with an nRF sniffer to find out).
 - Angle limits (pitch up/down reach for an LRUD ring) and how close a commanded angle lands.
