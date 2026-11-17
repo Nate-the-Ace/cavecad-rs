@@ -326,6 +326,7 @@ export function disconnect() {
   stopAiming();
   survey.burst = 0;
   clearTimeout(burstTimer);
+  clearTimeout(burstRetry);
   setFiring(false);
   clearTimeout(idleTimer);
   clearTimeout(settleTimer);
@@ -356,11 +357,14 @@ export type ShotKind = 'single' | 'leg';
 /** The X1 makes a leg of three close shots. */
 const LEG_SHOTS = 3;
 /** Pause between the shots of a burst, and how long one may take to come back before the burst gives up. */
-const BURST_GAP_MS = 250;
+const BURST_GAP_MS = 0;
 /** Before each later shot of a burst the laser is turned on again (the X1 turns it off after a shot, and a trigger with
  *  the laser off only lights it, as a first press of DIST does): this long to settle on the target first. TopoDroid
  *  does the same, laser on then measure, for every shot it fires. */
-const BURST_LASER_MS = 700;
+const BURST_LASER_MS = 250;
+/** A burst shot not back after this long is fired once more (laser on, then the trigger) before the burst gives up. */
+const BURST_RETRY_MS = 2000;
+let burstRetry: ReturnType<typeof setTimeout> | undefined;
 const BURST_WAIT_MS = 5000;
 let burstTimer: ReturnType<typeof setTimeout> | undefined;
 /** A Single shot was fired and has not come back yet. */
@@ -368,6 +372,15 @@ let singlePending = false;
 
 function fireInBurst(first = false) {
   clearTimeout(burstTimer);
+  clearTimeout(burstRetry);
+  if (!simulator) {
+    burstRetry = setTimeout(() => {
+      if (survey.burst <= 0) return;
+      (globalThis as { __cavecadDlog?: (s: string) => void }).__cavecadDlog?.('burst: shot not back, firing again');
+      instrument?.laser?.(true);
+      setTimeout(() => survey.burst > 0 && takeShot(), BURST_LASER_MS);
+    }, BURST_RETRY_MS);
+  }
   burstTimer = setTimeout(() => {
     if (survey.burst > 0) {
       survey.burst = 0;
@@ -383,6 +396,7 @@ function nextInBurst() {
   if (survey.burst <= 0) return;
   survey.burst -= 1;
   clearTimeout(burstTimer);
+  clearTimeout(burstRetry);
   if (survey.burst === 0) return; // the last one is in
   setTimeout(() => fireInBurst(), BURST_GAP_MS);
 }
