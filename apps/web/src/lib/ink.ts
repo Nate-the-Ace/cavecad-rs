@@ -5,8 +5,12 @@ import type { TypeStyle } from './engine';
 import { isDark } from './theme';
 import { parseStyle, patternName, drawing } from './line-style.svelte';
 import { dashPx } from './dash';
+import { inkCss } from './ink-colors';
 
 let palette = new Map<string, TypeStyle>();
+
+/** The theme's five colours on white paper (a printed sheet, whatever the screen's theme). */
+const PAPER_THEME = { text: '#111111', muted: '#6b6b6b', accent: '#1565c0', warn: '#c26a00', danger: '#c62828' };
 
 /** Remembers the palette the engine sent (call once the engine has loaded). */
 export function setInkPalette(styles: TypeStyle[]) {
@@ -31,10 +35,13 @@ export interface Look {
  * `pxPerM` (how many pixels one metre of ground is where the line is) and the drawing's scale; `paper` says instead how many pixels a
  * paper millimetre is (a printed sheet), whatever the ground.
  */
-export function looks(paper?: { pxPerMm: number }): (kind: string, style?: string, pxPerM?: number) => Look {
+export function looks(paper?: { pxPerMm: number }, onWhite = false): (kind: string, style?: string, pxPerM?: number) => Look {
   const css = getComputedStyle(document.documentElement);
   const v = (n: string) => css.getPropertyValue(n).trim();
-  const inks: Record<TypeStyle['ink'], string> = { text: v('--text'), muted: v('--muted'), accent: v('--accent'), warn: v('--warn'), danger: v('--danger'), station: v('--text'), geology: isDark() ? '#e57fd0' : '#b0138a' };
+  // a sheet is white paper whatever the theme: its colours are the light ones
+  const theme = onWhite ? PAPER_THEME : { text: v('--text'), muted: v('--muted'), accent: v('--accent'), warn: v('--warn'), danger: v('--danger') };
+  const dark = onWhite ? false : isDark();
+  const ink = (role: TypeStyle['ink']) => inkCss(role, dark, theme);
   return (kind, style, pxPerM) => {
     const st = palette.get(kind);
     const own = style ? parseStyle(style) : null;
@@ -43,8 +50,8 @@ export function looks(paper?: { pxPerMm: number }): (kind: string, style?: strin
     const paperPx = paper ? paper.pxPerMm : pxPerM !== undefined ? (pxPerM * drawing.scale) / 1000 : 0;
     const dash = dashPx(pattern, paperPx, own?.scale ?? 1, drawing.dotMm);
     const custom = patternName(own?.lt);
-    if (custom) return { color: st ? inks[st.ink] : inks.text, weight: st?.weight ?? 1.8, dash: [], alpha: st?.opacity ?? 1, custom, pxPerMm: paperPx * (own?.scale ?? 1) };
-    if (!st) return { color: inks.text, weight: 1.8, dash, alpha: 1 };
-    return { color: inks[st.ink], weight: st.weight, dash, alpha: st.opacity };
+    if (custom) return { color: ink(st ? st.ink : 'text'), weight: st?.weight ?? 1.8, dash: [], alpha: st?.opacity ?? 1, custom, pxPerMm: paperPx * (own?.scale ?? 1) };
+    if (!st) return { color: ink('text'), weight: 1.8, dash, alpha: 1 };
+    return { color: ink(st.ink), weight: st.weight, dash, alpha: st.opacity };
   };
 }

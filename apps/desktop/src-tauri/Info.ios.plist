@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Merged into the iPad app's Info.plist by tauri ios: the Cavway X1 and other instruments connect over Bluetooth. -->
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>CaveCAD connects to your survey instrument (such as a Cavway X1) over Bluetooth to take shots straight into the notebook.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>CaveCAD uses your location to place the cave entrance on the map and find the likely entrance nearby.</string>
+</dict>
+</plist>

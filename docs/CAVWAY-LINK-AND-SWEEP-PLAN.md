@@ -54,6 +54,33 @@ Checklist (the open questions from `CAVWAY-X1.md`, plus the sweep):
 - [ ] Scan speed Low / Medium / High: shots per second and how far apart they land.
 - [ ] Reconnect after the X1 sleeps or walks out of range: are unsent shots re-sent, nothing doubled?
 
+### First contact results (2026-11-13, CavwayX1-0312, desktop test build 0.1.32 with the native Bluetooth bridge)
+
+Capture: `crates/cave-instrument/tests/captures/x1-2026-11-13-reconnect-memory.json` (46 packets).
+
+- [x] **Advertised name:** `CavwayX1-0312` (prefix `CavwayX1-`). Advertises the Nordic UART service `6e400001-…`.
+- [x] **GATT:** device info `180a`; a vendor service `1d14d6ee-…` with two write characteristics (probably firmware
+      update); NUS `6e400001` with `…0002` write, `…0003` notify, and **`…0004` write + notify** (not in our notes).
+- [x] **Packet size over BLE: 64 bytes**, type byte `0x01` on every shot.
+- [x] **Stored shots push on connect:** every shot never acknowledged before (46, going back days) arrived at once.
+      A shot taken while disconnected arrived on reconnect. CaveCAD put them all as splays at the current station:
+      **old memory must not land in today's notebook unasked** (to fix: offer them, by time, instead).
+- [x] **Ack `flag | 0x55` works:** reconnecting again re-sent none of them.
+- [x] **Scan flag (very likely): bit 6 clear.** Twelve shots 1-3 s apart sweeping round (azimuth 85-274°, clino
+      -27 to +75°) all have bit 6 clear (`0xbf`); the first of them also bit 5 clear (`0x9f`), perhaps "sweep start".
+      Ordinary splays are `0xff`. Two `0xf3` shots (bits 2 and 3 clear) look like M-button marks. To confirm with a
+      deliberate sweep.
+- [x] **Scan flag CONFIRMED (second capture, `x1-2026-11-13-legs-and-two-sweeps.json`): bit 6 clear on every sweep
+      shot, and bit 5 clear as well on the FIRST shot of each sweep** (`0x9f` then `0xbf`…). Two sweeps: 51 shots in
+      32 s and 54 in 46 s (about 1.5 a second at the default speed), streamed live one by one, in order, none doubled.
+- [x] **Leg flag CONFIRMED: bit 7 clear** (`0x7f`), set on the THIRD of three close shots (and on a fourth close one);
+      the first two stay `0xff`. Three legs taken; CaveCAD found all three (A14 → A17), none from the sweeps.
+- [x] What CaveCAD does with a sweep today: every shot a plain splay. The cross-section draws a starburst of 100+
+      spokes and the walls / 3D loft go through every point, so they come out jagged. Phase 3 is needed.
+- [ ] Backsight mark; remote trigger; reconnect after sleep.
+- **Bridge note:** leaving the X1's menu dropped the link once; the page's reconnect then hung on a native connect
+  that never finished. Native connect needs a timeout.
+
 ## Phase 2: the bridge and the test builds
 
 - Tauri commands `ble_scan`, `ble_connect`, `ble_write`, plus a notification event, on `btleplug`. The web side gets
@@ -119,6 +146,10 @@ That captures the passage shape at that station far better than four LRUD shots.
 - Proper: a Tauri iOS build of the same app with the native bridge, through TestFlight (Apple's beta channel, so
   admins only, like test builds). Needs an Apple developer account ($99 a year) and offline sign-in, since there's
   no signal in a cave. The offline pass already covers this.
+
+## Next: see `IN-CAVE-ROADMAP.md` (2026-11-16)
+
+The In-Cave Survey layout, Device control, sweeps with live checks, Manual / Digital, the iPad and gimbal plans.
 
 ## Questions for Nathan (product, not code)
 

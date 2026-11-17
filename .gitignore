@@ -7,7 +7,14 @@ node_modules
 /apps/web/public/local
 /apps/desktop/node_modules
 /apps/desktop/src-tauri/target
-/apps/desktop/src-tauri/gen
+/apps/desktop/src-tauri/gen/*
+# the iPad project is kept (Tauri's advice): it carries hand edits such as CoreBluetooth in project.yml
+!/apps/desktop/src-tauri/gen/apple/
+/apps/desktop/src-tauri/gen/apple/build/
+/apps/desktop/src-tauri/gen/apple/Externals/
+/apps/desktop/src-tauri/gen/apple/Pods/
+/apps/desktop/src-tauri/gen/apple/*.xcworkspace/xcuserdata/
+/apps/desktop/src-tauri/gen/apple/*.xcodeproj/xcuserdata/
 
 # local settings and keys: never committed
 .env.local

@@ -4,7 +4,7 @@ import { cave } from './cave.svelte';
 import { engine, type Scene, type SheetPlan, type ProfileSketch3d } from './engine';
 import { looks } from './ink';
 import { drawSheet, drawStoredSheet } from './sheet-draw';
-import { sheet } from './sheet.svelte';
+import { sheet, sheetInk } from './sheet.svelte';
 
 /** The words for the title block's first line: what was typed, else the file's name made readable. */
 export function sheetName(): string {
@@ -43,14 +43,14 @@ export function renderSheet(dpi: number): HTMLCanvasElement {
     c.width = Math.round(stored.w * dpi);
     c.height = Math.round(stored.h * dpi);
     const g = c.getContext('2d');
-    if (g) drawStoredSheet(g, stored, scene, lines, dpi, looks({ pxPerMm: dpi / 25.4 }));
+    if (g) drawStoredSheet(g, stored, scene, lines, dpi, looks({ pxPerMm: dpi / 25.4 }, true), '', sheetInk.colour);
     return c;
   }
   const c = document.createElement('canvas');
   c.width = Math.round(plan.w * dpi);
   c.height = Math.round(plan.h * dpi);
   const g = c.getContext('2d');
-  if (g) drawSheet(g, plan, scene, lines, dpi, looks({ pxPerMm: dpi / 25.4 })); // on paper, a millimetre is a millimetre whatever the ground
+  if (g) drawSheet(g, plan, scene, lines, dpi, looks({ pxPerMm: dpi / 25.4 }, true), sheetInk.colour); // on paper, a millimetre is a millimetre whatever the ground
   return c;
 }
 

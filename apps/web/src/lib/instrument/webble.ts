@@ -83,7 +83,11 @@ export class WebBleInstrument implements Instrument {
   private readonly bridge: LinkBridge;
   private readonly opts: WebBleOptions;
   private readonly cat: Catalog;
+  /** The first reconnect wait (ms); it doubles up to eight times this. Tests make it short. */
+  static retryMs = 500;
   private wanted = false;
+  /** A reconnect loop is running (one at a time). */
+  private retrying = false;
   /** The engine has been told which instrument this is (once per connection: a reconnect keeps the link). */
   private linked = false;
   private settle: ReturnType<typeof setTimeout> | undefined;
@@ -103,7 +107,7 @@ export class WebBleInstrument implements Instrument {
       this.events.status(
         'unsupported',
         inApp
-          ? "The desktop app can't reach Bluetooth yet. For now, connect from Chrome at cavecad.com."
+          ? "This copy of the desktop app has no Bluetooth. Update it, or connect from Chrome at cavecad.com."
           : 'This browser has no Web Bluetooth. On an iPad, open CaveCAD in the Bluefy browser.',
       );
       return;
@@ -136,6 +140,15 @@ export class WebBleInstrument implements Instrument {
     else if (this.kind === 'bric') this.write(Uint8Array.from(c.bric.takeShot));
   }
 
+  /** The X1's laser on or off (other instruments have no such command known). */
+  get canLaser() {
+    return this.kind === 'x1' && this.canTakeShot;
+  }
+
+  laser(on: boolean) {
+    if (this.kind === 'x1') this.write(Uint8Array.from(on ? this.cat.x1.laserOn : this.cat.x1.laserOff));
+  }
+
   /** What the browser's device chooser is asked to show: the known instruments by their names, or everything. */
   private chooser(): unknown {
     const reach = [...allServices(this.cat), ...(this.opts.services ?? [])];
@@ -148,6 +161,7 @@ export class WebBleInstrument implements Instrument {
 
   /** Queues a write: one at a time, with a gap, and never throwing (a lost ack is sent again by the instrument). */
   private write(data: Uint8Array) {
+    (globalThis as { __cavecadDlog?: (s: string) => void }).__cavecadDlog?.(`send ${hex(data)}`);
     this.queue = this.queue.then(async () => {
       const c = this.writer;
       if (!c) return;
@@ -178,7 +192,12 @@ export class WebBleInstrument implements Instrument {
 
   /** A frame from the instrument goes to the engine. */
   private frame(kind: string, bytes: Uint8Array) {
-    this.take(this.bridge.frame(kind, bytes));
+    (globalThis as { __cavecadDlog?: (s: string) => void }).__cavecadDlog?.(`recv ${kind} ${hex(bytes)}`);
+    const step = this.bridge.frame(kind, bytes);
+    // what the engine made of it (a leg, a splay, held back), for reading the log afterwards
+    const last = step.snapshot?.log?.[step.snapshot.log.length - 1];
+    (globalThis as { __cavecadDlog?: (s: string) => void }).__cavecadDlog?.(`engine waiting=${step.snapshot?.waiting ?? '?'} stored=${step.snapshot?.stored?.length ?? 0} last=${last ? `${last.label}` : '-'}`);
+    this.take(step);
   }
 
   /** Tells the engine which instrument this is, once. */
@@ -321,21 +340,32 @@ export class WebBleInstrument implements Instrument {
     }
   }
 
-  /** The link dropped (the instrument went out of range, or into a pocket): try again a few times, quietly. */
+  /**
+   * The link dropped: the instrument went to sleep, out of range, or into a pocket. Keep trying, every few seconds,
+   * for as long as the surveyor has not pressed Disconnect: an X1 asleep for ten minutes comes back by itself the
+   * moment it is woken, with no new pairing. (It used to give up after about 14 seconds, so a sleeping X1 meant
+   * Disconnect and pick it again.)
+   */
   private async lost() {
     this.writer = null;
-    if (!this.wanted) return;
-    this.events.status('lost', 'Reconnecting…');
-    for (const wait of [500, 1500, 4000, 8000]) {
-      await new Promise((r) => setTimeout(r, wait));
-      if (!this.wanted) return;
-      try {
-        await this.attach();
-        return;
-      } catch {
-        /* try the next wait */
+    if (!this.wanted || this.retrying) return;
+    this.retrying = true;
+    let tries = 0;
+    try {
+      while (this.wanted) {
+        this.events.status('lost', tries < 3 ? 'Reconnecting…' : 'Waiting for the instrument: wake it (press any button) and it reconnects by itself.');
+        await new Promise((r) => setTimeout(r, Math.min(WebBleInstrument.retryMs * 2 ** tries, WebBleInstrument.retryMs * 8)));
+        if (!this.wanted) return;
+        try {
+          await this.attach();
+          return;
+        } catch (e) {
+          tries += 1;
+          (globalThis as { __cavecadDlog?: (s: string) => void }).__cavecadDlog?.(`reconnect try ${tries} failed: ${e instanceof Error ? e.message : String(e)}`);
+        }
       }
+    } finally {
+      this.retrying = false;
     }
-    this.events.status('lost', 'Connection lost. Press Connect to try again.');
   }
 }

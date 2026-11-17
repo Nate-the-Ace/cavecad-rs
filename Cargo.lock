@@ -228,6 +228,7 @@ dependencies = [
  "cave-id",
  "cave-instrument",
  "cave-notebook",
+ "cave-sweep",
  "serde",
  "serde_json",
 ]
@@ -302,6 +303,15 @@ version = "0.0.1"
 dependencies = [
  "cave-doc",
  "cave-id",
+ "cave-sweep",
+ "serde_json",
+]
+
+[[package]]
+name = "cave-sweep"
+version = "0.0.1"
+dependencies = [
+ "serde",
  "serde_json",
 ]
 

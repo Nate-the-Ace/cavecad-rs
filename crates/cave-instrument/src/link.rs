@@ -25,6 +25,13 @@ pub enum LinkOut {
         /// The shot.
         reading: Reading,
     },
+    /// A calibration shot (for the calibration guide; never surveyed): where the instrument pointed.
+    Calibration {
+        /// Degrees.
+        azimuth: f64,
+        /// Degrees, up positive.
+        inclination: f64,
+    },
     /// Bytes to write back to the instrument (an acknowledgement).
     Send {
         /// The message, already framed.
@@ -103,6 +110,7 @@ const RECENT: usize = 8;
 pub struct X1Link {
     recent: Vec<String>,
     source: String,
+    tolerance: cavway::Tolerance,
 }
 
 impl X1Link {
@@ -111,7 +119,13 @@ impl X1Link {
         X1Link {
             recent: Vec::new(),
             source: source.into(),
+            tolerance: cavway::Tolerance::default(),
         }
+    }
+
+    /// How touchy to be about the X1's accuracy complaints (see [`cavway::Tolerance`]).
+    pub fn set_tolerance(&mut self, t: cavway::Tolerance) {
+        self.tolerance = t;
     }
 
     /// A notification arrived on the X1's read characteristic.
@@ -144,14 +158,20 @@ impl X1Link {
                 "(calibration shot: acknowledged, not surveyed)",
                 from,
             ));
+            out.push(LinkOut::Calibration {
+                azimuth: tidy(p.azimuth, 3),
+                inclination: tidy(p.inclination, 3),
+            });
             return out;
         }
         out.push(LinkOut::Reading {
             reading: Reading {
                 roll: Some(tidy(p.roll, 3)),
-                leg: Some(p.leg),
+                leg: Some(p.leg && !p.scan),
                 mark: Some(p.mark),
-                error: cavway::describe_errors(&p.errors),
+                scan: p.scan.then_some(true),
+                sweep_start: (p.scan && p.sweep_start).then_some(true),
+                error: cavway::describe_errors(&cavway::beyond(&p.errors, self.tolerance)),
                 quality: p.quality,
                 ..Reading::new(
                     tidy(p.distance, 4),

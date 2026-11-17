@@ -27,6 +27,14 @@ fn norm(v: &Value) -> Value {
                 .collect(),
         ),
         Value::Array(a) => Value::Array(a.iter().map(norm).collect()),
+        // the old code named the X1's accuracy checks; this one adds how far off each was ("absG 5.0 %"): compare names
+        Value::String(t) if t.starts_with("accuracy error: ") => {
+            let names: Vec<&str> = t["accuracy error: ".len()..]
+                .split(", ")
+                .map(|p| p.split_whitespace().next().unwrap_or(""))
+                .collect();
+            Value::String(format!("accuracy error: {}", names.join(", ")))
+        }
         other => other.clone(),
     }
 }
@@ -270,10 +278,12 @@ fn bric_indications() {
 
 fn outs_json(outs: &[LinkOut]) -> Vec<Value> {
     outs.iter()
-        .map(|o| match o {
-            LinkOut::Frame { hex, from } => json!({"k": "frame", "hex": hex, "from": from}),
-            LinkOut::Reading { reading } => json!({"k": "reading", "reading": reading}),
-            LinkOut::Send { bytes } => json!({"k": "send", "hex": hex(bytes)}),
+        .filter_map(|o| match o {
+            LinkOut::Frame { hex, from } => Some(json!({"k": "frame", "hex": hex, "from": from})),
+            LinkOut::Reading { reading } => Some(json!({"k": "reading", "reading": reading})),
+            LinkOut::Send { bytes } => Some(json!({"k": "send", "hex": hex(bytes)})),
+            // the old code had no calibration guide: nothing to compare
+            LinkOut::Calibration { .. } => None,
         })
         .collect()
 }
@@ -298,6 +308,7 @@ fn links() {
     check(Value::Array(got), &g["sap6link"]["log"], "sap6");
 
     let mut link = X1Link::new("sim");
+    link.set_tolerance(cave_instrument::cavway::Tolerance::Strict); // the old code passed on every complaint
     let mut got = Vec::new();
     let all = frames("x1link");
     for b in &all {

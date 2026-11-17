@@ -21,7 +21,7 @@ The Sheet panel only shows the page. You change it from the **Sheets** tab at th
 5. In **Title block**, type the cave's name in **Cave name**, and in **Title block notes** type lines such as location, surveyors and date, separated by semicolons.
 6. In **Show**, tick or untick **Title block**, **Scale bar** and **North**.
 7. Read the note at the lower left of the panel. It says "Plotted at" followed by the scale.
-8. In **Save**, click **PNG** to save a picture, or **Print** to open the print dialog. Choose "Save as PDF" there for a PDF.
+8. In **Save**, choose **Black** (everything in one ink, best for photocopies and black-and-white printers) or **Colour** (each kind of thing in its map colour: survey legs red, walls slate blue, water blue, formations gold, and so on). Then click **PNG** to save a picture, or **Print** to open the print dialog. Choose "Save as PDF" there for a PDF.
 
 ### Notes on paper and units
 

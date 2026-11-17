@@ -15,6 +15,8 @@ export interface Reading {
   error?: string;
   quality?: number;
   lrud?: 'left' | 'right' | 'up' | 'down';
+  /** Taken in the instrument's scan mode (a sweep). */
+  scan?: boolean;
 }
 
 export type LinkStatus = 'idle' | 'connecting' | 'connected' | 'lost' | 'unsupported' | 'error';
@@ -42,6 +44,17 @@ export interface LogEntry {
   label: string;
   reading: Reading;
   warnings: string[];
+  /** The shot written (an id), when it made one. */
+  shot?: string | null;
+}
+
+/** Where a feature shot hit: from the station, metres east, north, up. */
+export interface FeatureHit {
+  n: number;
+  station: string;
+  offset: [number, number, number];
+  symbol: string;
+  label: string;
 }
 
 export interface HeldView {
@@ -71,11 +84,61 @@ export interface Snapshot {
   held: HeldView[];
   waiting: number;
   last: Reading | null;
+  /** Shots the instrument had stored, sent as it connected: waiting to be added at a station or discarded. */
+  stored: Reading[];
+  /** The instrument has just connected and may still be sending what it had stored. */
+  reading_memory: boolean;
+  /** The next shot is a feature shot: its symbol and label. */
+  feature: { symbol: string; label: string } | null;
+  /** Feature shots taken lately, newest last: each places its symbol once. */
+  feature_hits: FeatureHit[];
   log: LogEntry[];
   message: string;
   warnings: string[];
   standing_walls: StandingWalls | null;
   edits: number;
+  /** The sweep being taken, with its live check. */
+  sweep: SweepView | null;
+  /** The sweep finished last. */
+  last_sweep: SweepView | null;
+  /** What a sweep the instrument starts on its own is checked as. */
+  sweep_kind: SweepKind;
+  /** How much a sweep is asked for. */
+  standard: SurveyStandard;
+}
+
+/** Manual: mostly sketched by hand, LRUD needs only the four walls. Digital: the instrument captures the detail. */
+export type SurveyStandard = 'manual' | 'digital';
+
+/** What a sweep is meant to capture: a ring across the passage (cross-section and LRUD), or level all the way round a room. */
+export type SweepKind = 'lrud' | 'room';
+
+/** How a sweep stands (cave-sweep's `Check`). */
+export interface SweepCheck {
+  kind: SweepKind;
+  standard: SurveyStandard;
+  shots: number;
+  usable: number;
+  wanted: number;
+  /** Shots in each of 12 sectors. LRUD: from the right wall, anticlockwise looking along the passage. Room: from north, clockwise. */
+  sectors: number[];
+  widest_gap: number;
+  /** Percent of the way round covered (no gap wider than the standard allows). Digital shows this, not a shot count. */
+  coverage: number;
+  complete: boolean;
+  todo: string[];
+  notes: string[];
+  /** Left, right, up, down (metres) off the ring so far. */
+  lrud: [number, number, number, number] | null;
+  /** LRUD: the next wall still wanted (left, right, up, down order), to aim at. */
+  aim: { wall: string; angle: number } | null;
+}
+
+export interface SweepView {
+  station: string;
+  /** Started from the screen (every shot until Finish is a sweep shot), not by the instrument's scan mode. */
+  armed: boolean;
+  check: SweepCheck;
 }
 
 /** What every call into the survey engine answers. */
@@ -90,6 +153,31 @@ export interface Step {
   settle_ms: number | null;
   sim_left: boolean;
   sim_note: string | null;
+  /** The calibration guide, while it is open. */
+  calibration: CalibrationView | null;
+}
+
+/** A direction (degrees: magnetic azimuth, clino up positive). */
+export interface CalibrationDir {
+  azimuth: number;
+  inclination: number;
+}
+/** One of the fourteen directions a calibration should cover. */
+export interface CalibrationTarget extends CalibrationDir {
+  label: string;
+  covered: boolean;
+}
+/** The calibration guide (cave-instrument calibrate.rs GuideView). */
+export interface CalibrationView {
+  targets: CalibrationTarget[];
+  groups: CalibrationDir[];
+  current_shots: number;
+  current: CalibrationDir | null;
+  next: CalibrationTarget | null;
+  covered: number;
+  can_compute: boolean;
+  done: boolean;
+  say: string;
 }
 
 export interface Quirk {
@@ -113,7 +201,7 @@ export interface Identified {
 export interface Catalog {
   devices: Device[];
   names: { prefix: string; kind: InstrumentKind; label: string }[];
-  x1: { service: string; write: string; notify: string; takeShot: number[] };
+  x1: { service: string; write: string; notify: string; takeShot: number[]; laserOn: number[]; laserOff: number[] };
   sap5: { service: string; write: string; notify: string };
   sap6: { service: string; name: string; command: string; leg: string; takeShot: number[] };
   bric: { measureService: string; primary: string; meta: string; errors: string; controlService: string; control: string; takeShot: number[]; batteryService: string; deviceInfoService: string; settleMs: number };
@@ -144,4 +232,7 @@ export interface Instrument {
   connect(): Promise<void>;
   disconnect(): void;
   takeShot(): void;
+  /** The laser can be switched on and off from the screen. */
+  readonly canLaser?: boolean;
+  laser?(on: boolean): void;
 }

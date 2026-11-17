@@ -430,6 +430,12 @@
   .row { display: flex; gap: 6px; }
   .row button { flex: 1; }
   .detail { flex: 1; min-width: 0; padding: 16px 20px; display: flex; flex-direction: column; gap: 8px; }
+  /* a phone: the shelf is the whole screen, the list above the chosen cave */
+  @media (max-width: 600px), (max-height: 500px) {
+    .box { width: 100vw; height: 100dvh; border-radius: 0; border: 0; flex-direction: column; padding-top: env(safe-area-inset-top); padding-bottom: env(safe-area-inset-bottom); box-sizing: border-box; }
+    .rail { width: auto; max-height: 42%; border-right: 0; border-bottom: 1px solid var(--line); }
+    .detail { overflow: auto; padding: 12px; }
+  }
   h2 { margin: 0; font-size: 22px; }
   .stats { margin: 0; color: var(--text); font-size: 13px; }
   .health { text-decoration: underline dotted; cursor: help; }

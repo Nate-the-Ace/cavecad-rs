@@ -7,6 +7,7 @@
 use crate::{DOC, record_edit};
 use cave_doc::{Action, Document};
 use cave_id::IdSource;
+use cave_instrument::calibrate::{Guide, GuideView};
 use cave_instrument::identify::{NAMES, identify};
 use cave_instrument::link::{BricKind, BricLink, LegLink, LinkOut, Sap5Link, X1Link};
 use cave_instrument::sim::{
@@ -30,6 +31,8 @@ thread_local! {
     static SESSION: RefCell<Session> = RefCell::new(Session::new());
     static LINK: RefCell<Option<Link>> = const { RefCell::new(None) };
     static SIM: RefCell<Option<Simulator>> = const { RefCell::new(None) };
+    /// The calibration guide, while it is open.
+    static GUIDE: RefCell<Option<Guide>> = const { RefCell::new(None) };
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -95,6 +98,8 @@ struct Step {
     sim_left: bool,
     /// What the simulator is pretending, for the panel's note.
     sim_note: Option<String>,
+    /// The calibration guide, while it is open.
+    calibration: Option<GuideView>,
 }
 
 /// Runs `f` on the session and the open cave, and answers with the step it filled in.
@@ -103,6 +108,8 @@ fn with_session(f: impl FnOnce(&mut Session, &mut WasmHost, &mut Step)) -> Strin
         ok: true,
         ..Step::default()
     };
+    // calibration has nothing to do with the cave: the guide shows with no cave open too
+    step.calibration = GUIDE.with(|g| g.borrow().as_ref().map(Guide::view));
     DOC.with(|d| {
         let mut slot = d.borrow_mut();
         let Some(doc) = slot.as_mut() else {
@@ -145,6 +152,14 @@ fn route(outs: Vec<LinkOut>, session: &mut Session, host: &mut WasmHost, step: &
             LinkOut::Frame { hex, from } => step.frames.push(FrameLine { hex, from }),
             LinkOut::Send { bytes } => step.sends.push(bytes),
             LinkOut::Reading { reading } => session.reading(host, reading),
+            LinkOut::Calibration {
+                azimuth,
+                inclination,
+            } => GUIDE.with(|g| {
+                if let Some(g) = g.borrow_mut().as_mut() {
+                    g.shot(azimuth, inclination);
+                }
+            }),
         }
     }
 }
@@ -183,7 +198,11 @@ pub fn survey_connect(kind: &str, options: &str) -> String {
         SIM.with(|m| *m.borrow_mut() = None);
         let groups = kind != "capture";
         match kind.as_str() {
-            "x1" => LINK.with(|l| *l.borrow_mut() = Some(Link::X1(X1Link::new("x1")))),
+            "x1" => LINK.with(|l| {
+                let mut link = X1Link::new("x1");
+                link.set_tolerance(TOLERANCE.with(|t| *t.borrow()));
+                *l.borrow_mut() = Some(Link::X1(link));
+            }),
             "sap6" => LINK.with(|l| *l.borrow_mut() = Some(Link::Sap6(LegLink::new("sap6")))),
             "sap5" => LINK.with(|l| *l.borrow_mut() = Some(Link::Sap5(Sap5Link::new("sap5")))),
             "bric" => LINK.with(|l| *l.borrow_mut() = Some(Link::Bric(BricLink::new("bric")))),
@@ -231,7 +250,51 @@ pub fn survey_connect(kind: &str, options: &str) -> String {
             _ => {}
         }
         s.connected(groups);
+        if matches!(kind.as_str(), "x1" | "sap6" | "sap5" | "bric") {
+            // what arrives first is what the instrument had stored (the screen says when it has gone quiet)
+            s.open_memory();
+        } else if kind == "sim" && choice.quirk == "memory" {
+            // a pretend X1 with four shots left from another day: a leg and a splay
+            s.open_memory();
+            for (d, a, i) in [(4.2, 131.0, -3.0), (4.21, 131.2, -3.1), (4.19, 130.9, -2.9), (1.8, 40.0, 12.0)] {
+                let mut r = cave_instrument::Reading::new(d, a, i, "sim");
+                r.leg = Some(d > 4.0);
+                s.reading(host, r);
+            }
+        }
     })
+}
+
+/// The instrument has gone quiet after connecting (or the surveyor has started shooting): what arrives now is live.
+#[wasm_bindgen]
+pub fn survey_memory_done() -> String {
+    with_session(|s, _, _| s.memory_done())
+}
+
+/// The next shot is a feature shot: `symbol` (a palette key) placed where it hits, with `label` beside it; left out of the
+/// legs, walls and splays.
+#[wasm_bindgen]
+pub fn survey_arm_feature(symbol: &str, label: &str) -> String {
+    let (symbol, label) = (symbol.to_string(), label.to_string());
+    with_session(move |s, _, _| s.arm_feature(&symbol, &label))
+}
+
+/// The next shot is an ordinary one again.
+#[wasm_bindgen]
+pub fn survey_cancel_feature() -> String {
+    with_session(|s, _, _| s.cancel_feature())
+}
+
+/// Writes the shots from the instrument's memory at the station the surveyor stands at.
+#[wasm_bindgen]
+pub fn survey_add_stored() -> String {
+    with_session(|s, host, _| s.add_stored(host))
+}
+
+/// Throws the shots from the instrument's memory away.
+#[wasm_bindgen]
+pub fn survey_discard_stored() -> String {
+    with_session(|s, _, _| s.discard_stored())
 }
 
 /// A frame arrived from the instrument. `kind` is `frame` (an X1, SAP6 or SAP5 packet) or, for a BRIC,
@@ -315,6 +378,183 @@ pub fn survey_sim_station(walls: bool) -> String {
         route(outs, s, host, step);
         s.settle_now(host); // the surveyor stops: nothing more is coming, so what is waiting is settled
     })
+}
+
+// ---- sweeps ----
+
+/// Starts a sweep from the screen (`lrud` or `room`): every shot until Finish is a sweep shot at the standing station.
+#[wasm_bindgen]
+pub fn survey_start_sweep(kind: &str) -> String {
+    let kind = cave_session::SweepKind::parse(kind).unwrap_or_default();
+    with_session(move |s, host, _| s.start_sweep(host, kind))
+}
+
+/// Ends the sweep under way.
+#[wasm_bindgen]
+pub fn survey_finish_sweep() -> String {
+    with_session(|s, _, _| s.finish_sweep())
+}
+
+/// What a sweep the instrument starts on its own (the X1's scan mode) is checked as: `lrud` or `room`.
+#[wasm_bindgen]
+pub fn survey_set_sweep_kind(kind: &str) -> String {
+    let kind = cave_session::SweepKind::parse(kind).unwrap_or_default();
+    with_session(move |s, _, _| s.set_sweep_kind(kind))
+}
+
+/// How much a sweep is asked for: `manual` (mostly sketched: the four walls do) or `digital` (the instrument's detail).
+#[wasm_bindgen]
+pub fn survey_set_standard(standard: &str) -> String {
+    let standard = cave_session::Standard::parse(standard).unwrap_or_default();
+    with_session(move |s, _, _| s.set_standard(standard))
+}
+
+thread_local!(static TOLERANCE: RefCell<cavway::Tolerance> = RefCell::new(cavway::Tolerance::default()));
+
+/// How touchy to be about the X1's accuracy complaints: `strict` (every one), `normal`, `relaxed`.
+#[wasm_bindgen]
+pub fn survey_set_accuracy(level: &str) -> String {
+    let t = cavway::Tolerance::parse(level).unwrap_or_default();
+    TOLERANCE.with(|v| *v.borrow_mut() = t);
+    LINK.with(|l| {
+        if let Some(Link::X1(link)) = l.borrow_mut().as_mut() {
+            link.set_tolerance(t);
+        }
+    });
+    with_session(|_, _, _| {})
+}
+
+thread_local!(static SIM_SWEEP: RefCell<u32> = const { RefCell::new(0) });
+
+/// One simulated sweep shot (`kind` `lrud`: a ring across a passage 4 m wide and 2 m high, going round; `room`: about
+/// level, round a room 5 to 8 m across), so a sweep and its checks can be tried with no instrument. Shots go round
+/// in order, so the check has gaps to name until the sweep comes all the way round. `aim` (degrees round the ring,
+/// 0 right wall, 90 ceiling, 180 left wall, 270 floor) points a ring shot at one wall, as a surveyor aiming does;
+/// negative goes round.
+#[wasm_bindgen]
+pub fn survey_sim_sweep_shot(kind: &str, aim: f64) -> String {
+    let room = kind == "room";
+    let n = SIM_SWEEP.with(|c| {
+        let mut c = c.borrow_mut();
+        *c += 1;
+        *c
+    });
+    with_session(move |s, host, _| {
+        let heading = s
+            .state()
+            .last
+            .as_ref()
+            .map(|l| l.reading.azimuth)
+            .unwrap_or(0.0);
+        let wobble = ((n as f64 * 12.9898).sin() * 43758.545).fract(); // 0..1, repeatable
+        let (d, az, inc) = if room {
+            let a = (n as f64 * 13.0 + wobble * 6.0).rem_euclid(360.0);
+            let rad = 5.0 + 3.0 * (0.5 + 0.5 * (a.to_radians() * 2.0).cos());
+            (rad, a, (wobble - 0.5) * 10.0)
+        } else {
+            // round the ring by 14 degrees a shot, looking along the passage: right wall first, then up
+            let t = if aim >= 0.0 {
+                aim + (wobble - 0.5) * 10.0
+            } else {
+                n as f64 * 14.0 + wobble * 5.0
+            }
+            .to_radians();
+            let (w, h) = (2.0 + 0.2 * wobble, 1.0 + 0.1 * wobble);
+            let (x, z) = (w * t.cos(), h * t.sin());
+            let right = (heading + 90.0).to_radians();
+            let v = [x * right.sin(), x * right.cos(), z];
+            let flat = v[0].hypot(v[1]);
+            (
+                flat.hypot(v[2]),
+                v[0].atan2(v[1]).to_degrees().rem_euclid(360.0),
+                v[2].atan2(flat).to_degrees(),
+            )
+        };
+        let mut r = cave_instrument::Reading::new(
+            (d * 1000.0).round() / 1000.0,
+            (az * 10.0).round() / 10.0,
+            (inc * 10.0).round() / 10.0,
+            "simulator",
+        );
+        r.scan = Some(true);
+        s.reading(host, r);
+    })
+}
+
+/// Steps back to the station before the standing one (the Previous station button).
+#[wasm_bindgen]
+pub fn survey_previous_station() -> String {
+    with_session(|s, host, step| step.ok = s.previous_station(host))
+}
+
+/// The simulator fires one shot (the next of its script), as one press of a real instrument's button does.
+#[wasm_bindgen]
+pub fn survey_sim_shot() -> String {
+    with_session(|s, host, step| {
+        let outs = SIM.with(|m| {
+            m.borrow_mut()
+                .as_mut()
+                .map(|sim| sim.take_shot())
+                .unwrap_or_default()
+        });
+        route(outs, s, host, step);
+    })
+}
+
+// ---- guided calibration ----
+
+/// Opens the calibration guide (fresh): the instrument's calibration shots are followed from now on.
+#[wasm_bindgen]
+pub fn survey_calibration_start() -> String {
+    GUIDE.with(|g| *g.borrow_mut() = Some(Guide::new()));
+    with_session(|_, _, _| {})
+}
+
+/// Closes the calibration guide.
+#[wasm_bindgen]
+pub fn survey_calibration_stop() -> String {
+    GUIDE.with(|g| *g.borrow_mut() = None);
+    with_session(|_, _, _| {})
+}
+
+/// The group being taken was reset on the instrument (the X1's > button): forget its shots.
+#[wasm_bindgen]
+pub fn survey_calibration_reset_group() -> String {
+    GUIDE.with(|g| {
+        if let Some(g) = g.borrow_mut().as_mut() {
+            g.reset_group();
+        }
+    });
+    with_session(|_, _, _| {})
+}
+
+thread_local!(static SIM_CAL: RefCell<u32> = const { RefCell::new(0) });
+
+/// A simulated calibration shot, aimed (as a surveyor following the guide would) at the next direction it asks
+/// for, a little off as a hand is, so the guide can be tried with no instrument.
+#[wasm_bindgen]
+pub fn survey_sim_calibration_shot() -> String {
+    let n = SIM_CAL.with(|c| {
+        let mut c = c.borrow_mut();
+        *c += 1;
+        *c
+    });
+    GUIDE.with(|g| {
+        if let Some(g) = g.borrow_mut().as_mut() {
+            let v = g.view();
+            // a finished group stays aimed until the next target is asked for
+            let aim = if v.current_shots > 0 && v.current_shots < 4 {
+                v.current.map(|c| (c.azimuth, c.inclination))
+            } else {
+                v.next.map(|t| (t.azimuth, t.inclination))
+            };
+            if let Some((az, inc)) = aim.or(Some((n as f64 * 37.0 % 360.0, 10.0))) {
+                let wobble = ((n as f64 * 12.9898).sin() * 43758.545).fract() - 0.5;
+                g.shot(az + wobble * 1.5, (inc + wobble).clamp(-90.0, 90.0));
+            }
+        }
+    });
+    with_session(|_, _, _| {})
 }
 
 /// Settle what is waiting as splays now, without waiting for the pause.
@@ -409,7 +649,7 @@ pub fn instrument_catalog() -> String {
     let catalog = serde_json::json!({
         "devices": devices(),
         "names": NAMES.iter().map(|n| serde_json::json!({"prefix": n.prefix, "kind": n.kind, "label": n.label})).collect::<Vec<_>>(),
-        "x1": {"service": cavway::SERVICE, "write": cavway::WRITE, "notify": cavway::NOTIFY, "takeShot": cavway::command(cavway::CMD_TRIGGER)},
+        "x1": {"service": cavway::SERVICE, "write": cavway::WRITE, "notify": cavway::NOTIFY, "takeShot": cavway::command(cavway::CMD_TRIGGER), "laserOn": cavway::command(cavway::CMD_LASER_ON), "laserOff": cavway::command(cavway::CMD_LASER_OFF)},
         "sap5": {"service": sap5::SERVICE, "write": sap5::WRITE, "notify": sap5::NOTIFY},
         "sap6": {"service": caveble::SERVICE, "name": caveble::NAME_CHARACTERISTIC, "command": caveble::COMMAND_CHARACTERISTIC, "leg": caveble::LEG_CHARACTERISTIC, "takeShot": [caveble::CMD_TAKE_SHOT]},
         "bric": {
@@ -571,6 +811,7 @@ mod tests {
         let trip = new_cave();
         json(survey_sync_trip(&trip));
         json(survey_connect("x1", "{}"));
+        json(survey_memory_done()); // the instrument had nothing stored: what comes now is live
         let packet = cavway::encode_packet(&cavway::PacketSpec {
             distance: 6.5,
             azimuth: 120.0,
@@ -595,10 +836,86 @@ mod tests {
     }
 
     #[test]
+    fn stored_shots_wait_and_a_marked_splay_keeps_its_class() {
+        let trip = new_cave();
+        json(survey_sync_trip(&trip));
+        json(survey_connect("x1", "{}"));
+        let packet = |d: f64, mark| {
+            cavway::encode_packet(&cavway::PacketSpec {
+                distance: d,
+                azimuth: 30.0,
+                inclination: 2.0,
+                mark,
+                time: 9,
+                ..cavway::PacketSpec::default()
+            })
+        };
+        // sent as it connects: acknowledged but kept aside
+        let v = json(survey_frame("frame", &packet(2.0, cave_instrument::Mark::None)));
+        assert_eq!(v["sends"].as_array().unwrap().len(), 1);
+        assert_eq!(v["snapshot"]["stored"].as_array().unwrap().len(), 1);
+        assert!(v["snapshot"]["log"].as_array().unwrap().is_empty());
+        let v = json(survey_memory_done());
+        assert_eq!(v["snapshot"]["reading_memory"], false);
+        // live: a splay marked Feature on the X1 is written with its class
+        json(survey_frame("frame", &packet(3.3, cave_instrument::Mark::Feature)));
+        let v = json(survey_settle_now());
+        assert_eq!(v["snapshot"]["log"].as_array().unwrap().len(), 1);
+        let scene: Value = json(crate::scene(false, "{}"));
+        assert!(
+            scene["types"].to_string().contains("splay-feature"),
+            "{}",
+            scene["types"]
+        );
+        // discarding the stored one writes nothing more
+        let v = json(survey_discard_stored());
+        assert!(v["snapshot"]["stored"].as_array().unwrap().is_empty());
+        assert_eq!(v["snapshot"]["log"].as_array().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn a_feature_shot_places_a_symbol_and_writes_nothing() {
+        let trip = new_cave();
+        json(survey_sync_trip(&trip));
+        json(survey_connect("x1", "{}"));
+        json(survey_memory_done());
+        let rows_before = cave_wasm_page(&trip)["rows"].as_array().unwrap().len();
+        let v = json(survey_arm_feature("sym-bat", "Bat roost"));
+        assert_eq!(v["snapshot"]["feature"]["symbol"], "sym-bat");
+        let packet = cavway::encode_packet(&cavway::PacketSpec {
+            distance: 4.0,
+            azimuth: 90.0,
+            inclination: 0.0,
+            time: 3,
+            ..cavway::PacketSpec::default()
+        });
+        let v = json(survey_frame("frame", &packet));
+        assert!(v["snapshot"]["log"].as_array().unwrap().is_empty(), "no shot written");
+        assert!(v["snapshot"]["feature"].is_null(), "used up");
+        let hit = &v["snapshot"]["feature_hits"][0];
+        assert_eq!(hit["symbol"], "sym-bat");
+        assert_eq!(hit["label"], "Bat roost");
+        assert!((hit["offset"][0].as_f64().unwrap() - 4.0).abs() < 1e-6, "{hit}");
+        assert_eq!(cave_wasm_page(&trip)["rows"].as_array().unwrap().len(), rows_before, "the notebook is untouched");
+        // the next shot is an ordinary splay again
+        let packet = cavway::encode_packet(&cavway::PacketSpec {
+            distance: 2.0,
+            azimuth: 200.0,
+            inclination: 0.0,
+            time: 4,
+            ..cavway::PacketSpec::default()
+        });
+        json(survey_frame("frame", &packet));
+        let v = json(survey_settle_now());
+        assert_eq!(v["snapshot"]["log"][0]["kind"], "splay");
+    }
+
+    #[test]
     fn a_bric_shot_waits_for_its_flush() {
         let trip = new_cave();
         json(survey_sync_trip(&trip));
         json(survey_connect("bric", "{}"));
+        json(survey_memory_done());
         let (p, m, _) = bric::encode_shot(&bric::ShotSpec {
             distance: 5.0,
             azimuth: 100.0,

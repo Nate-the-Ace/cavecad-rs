@@ -7,7 +7,7 @@
   import { openHandbook } from '../lib/handbook-open';
   import { cave, changed } from '../lib/cave.svelte';
   import { engine, type GeoStatus } from '../lib/engine';
-  import { fetchSurface, surface } from '../lib/surface.svelte';
+  import { fetchSurface, pickEntrance, surface } from '../lib/surface.svelte';
   import { FOOT, inUnits, metresPer, formatLength } from '../lib/units';
   import LengthField from './LengthField.svelte';
   import LocationPicker from './LocationPicker.svelte';
@@ -43,7 +43,7 @@
 
   const label = (id: string) => status?.stations.find((s) => s.id === id)?.label ?? id;
   const coord = (p: { lat: number; lon: number }) => `${p.lat.toFixed(6)}, ${p.lon.toFixed(6)}`;
-  const SOURCES: Record<string, string> = { import: 'from the imported survey', map: 'picked on the map', typed: 'typed in', pick: 'picked on the surface', 'surface-pick': 'picked on the surface' };
+  const SOURCES: Record<string, string> = { import: 'from the imported survey', map: 'picked on the map', typed: 'typed in', pick: 'picked on the surface', 'surface-pick': 'picked on the surface', device: "this device's location" };
 
   /** Stores the contour spacing when it changed (metres, rounded to 3 decimals in the display unit). */
   function applyInterval() {
@@ -68,12 +68,29 @@
     return true;
   }
 
-  async function download() {
+  async function download(): Promise<boolean> {
     lines = ['Downloading…'];
     const r = await fetchSurface({ photo, elevation });
     lines = r.lines;
     refresh();
+    return r.ok;
   }
+
+  /** How far off a location taken from the device may be (metres), from its stored source (`device:18`), or null. */
+  const deviceAccuracy = (source: string | undefined): number | null => {
+    if (!source?.startsWith('device')) return null;
+    const n = Number(source.split(':')[1]);
+    return Number.isFinite(n) && n > 0 ? n : 20;
+  };
+  const sourceText = (source: string) => {
+    const acc = deviceAccuracy(source);
+    return acc !== null ? `this device's location, within about ${acc} m` : (SOURCES[source] ?? source);
+  };
+  /** The ground has been downloaded for where the entrance is now (not for an older spot). */
+  const groundHere = () => {
+    const st = status;
+    return !!(st?.location && st.surface?.elevation && st.surface.for_at.lat === st.location.lat && st.surface.for_at.lon === st.location.lon);
+  };
 
   async function ok() {
     problem = '';
@@ -101,12 +118,37 @@
     picker = { start: start ? { lat: start.lat, lon: start.lon } : null, station, thenDownload: false };
   }
 
-  async function picked(p: { lat: number; lon: number; station: string; source: 'map' | 'typed' }) {
+  async function picked(p: { lat: number; lon: number; station: string; source: 'map' | 'typed' | 'device'; accuracy?: number }) {
     const then = picker?.thenDownload;
     picker = null;
-    if (!setLocation(p)) return;
+    // From the device, the accuracy is kept with it (`device:18`), so the entrance can still be looked for later: GPS
+    // works with no signal (at the cave), the ground download needs one (back out)
+    const acc = p.source === 'device' ? Math.round(p.accuracy ?? 20) : null;
+    if (!setLocation({ ...p, source: acc !== null ? `device:${acc}` : p.source })) return;
+    if (acc !== null) return void findNear(acc);
     if (then) await download();
     else lines = ['The location changed. Download to fetch the surface for it.'];
+  }
+
+  /**
+   * The device's location is only roughly the entrance (GPS is off by metres, more under trees): download the ground
+   * there, then move the entrance to the lowest ground within the GPS's uncertainty, as Pick entrance does with a
+   * circle dragged on the Map. The circle is at least 10 m and at most 60 m across from the centre.
+   */
+  async function findNear(accuracyM: number) {
+    elevation = true;
+    await download();
+    if (!surface.tiff || !groundHere()) {
+      lines = [...lines, `Your location is saved as the entrance (within about ${accuracyM} m). The ground elevation could not be downloaded here, so the likely entrance has not been looked for yet: when you have a connection, open Surface Data and press Find the likely entrance.`];
+      return;
+    }
+    const xyz = engine.geoEntranceXyz(cave.adjusted);
+    if (xyz.length < 2) return;
+    const r = Math.min(60, Math.max(10, accuracyM * 1.5));
+    lines = [...lines, `Looking for the likely entrance within ${formatLength(r, cave.units, 0)} of your location…`];
+    const said = await pickEntrance(xyz[0], xyz[1], r);
+    lines = [...lines.slice(0, -1), said, 'Not right? Pick entrance on the Map, or Change location.'];
+    refresh(); // the entrance line above shows where it moved to
   }
 
   const close = () => {
@@ -126,7 +168,10 @@
       {#if status}
         <section class="where">
           {#if status.location}
-            <div><b>Entrance:</b> station {label(status.location.station)}, {coord(status.location)} <span class="muted">({SOURCES[status.location.source] ?? status.location.source})</span></div>
+            <div><b>Entrance:</b> station {label(status.location.station)}, {coord(status.location)} <span class="muted">({sourceText(status.location.source)})</span></div>
+            {#if deviceAccuracy(status.location.source) !== null}
+              <div><button class="find" onclick={() => findNear(deviceAccuracy(status?.location?.source) ?? 20)}>Find the likely entrance</button> <span class="muted">near this location (needs a connection for the ground elevation)</span></div>
+            {/if}
             {#if status.location.ground_m !== undefined && Number.isFinite(status.location.ground_m)}<div><b>Ground at the entrance:</b> {formatLength(status.location.ground_m, cave.units, 1)} (NAVD88)</div>{/if}
           {:else if status.candidate.kind === 'imported'}
             <div><b>Entrance:</b> the imported survey fixes station {label(status.candidate.station)} at {coord(status.candidate)}. It will be used when you download.</div>
@@ -170,6 +215,7 @@
 
 <style>
   .veil { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.5); display: grid; place-items: center; z-index: 50; }
+  .find { font: inherit; padding: 6px 12px; min-height: 36px; border: 1px solid var(--accent); border-radius: var(--radius); background: var(--panel-2); color: var(--text); cursor: pointer; }
   .box { width: min(480px, 92vw); max-height: 92vh; overflow: auto; background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 10px; padding: 18px 20px; display: flex; flex-direction: column; gap: 12px; outline: none; box-sizing: border-box; }
   h2 { margin: 0; font-size: 17px; }
   .where { display: flex; flex-direction: column; gap: 4px; font-size: 13px; }

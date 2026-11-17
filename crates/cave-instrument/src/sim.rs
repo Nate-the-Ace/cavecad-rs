@@ -309,6 +309,16 @@ pub fn devices() -> Vec<Device> {
                     "Accuracy errors",
                     "The same survey, with some shots carrying an \"accuracy error\" warning.",
                 ),
+                q(
+                    "marks",
+                    "Shots marked on the X1",
+                    "Some splays come marked Feature or Ridge: they are coloured by their mark, and draw what the X1 marks settings say.",
+                ),
+                q(
+                    "memory",
+                    "Old shots in memory",
+                    "Four shots left in the X1 from another day arrive as it connects: they wait in a card to be added or discarded, not written at your station.",
+                ),
             ],
         },
         Device {
@@ -546,7 +556,12 @@ impl Simulator {
             kind: opts.kind,
             quirks,
             shots,
-            x1: X1Link::new("sim"),
+            x1: {
+                // the pretend X1 passes on every accuracy complaint, so its accuracy quirk always shows
+                let mut l = X1Link::new("sim");
+                l.set_tolerance(crate::cavway::Tolerance::Strict);
+                l
+            },
             sap6: LegLink::new("sim"),
             sap5: Sap5Link::new("sim"),
             bric: BricLink::new("sim"),
@@ -668,9 +683,19 @@ impl Simulator {
         }
         let errors = (self.quirks.contains("accuracy") && self.fired.is_multiple_of(5))
             .then_some(ACCURACY_ERRORS);
+        // the "marks" quirk: the surveyor classes some splays on the X1 (a Feature, then two Ridge hits)
+        let mark = if self.quirks.contains("marks") && !s.is_leg && s.mark == Mark::None {
+            match self.fired % 4 {
+                1 => Mark::Feature,
+                2 | 3 => Mark::Ridge,
+                _ => Mark::None,
+            }
+        } else {
+            s.mark
+        };
         let packet = cavway::encode_packet(&PacketSpec {
             leg: s.leg,
-            mark: s.mark,
+            mark,
             distance: s.distance,
             azimuth: s.azimuth,
             inclination: s.inclination,

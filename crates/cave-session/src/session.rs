@@ -14,11 +14,12 @@ use crate::rules::{
 use cave_doc::{Action, Document};
 use cave_id::{Id, IdSource};
 use cave_instrument::legs::{LegAssembler, LegEvent};
-use cave_instrument::{Reading, Side};
+use cave_instrument::{Mark, Reading, Side};
 use cave_notebook::{
     EditError, Measured, Reading as Cell, add_measured_shot, remove_shot, set_readings,
     set_station_wall, set_station_walls, station_walls, stations_in_use,
 };
+use cave_sweep::{Check, Kind as SweepKind, Standard, splay_vector};
 use serde::Serialize;
 use std::collections::{BTreeMap, HashSet};
 
@@ -90,6 +91,32 @@ pub struct EntryView {
     pub reading: Reading,
     /// Worth a look.
     pub warnings: Vec<String>,
+    /// The shot written (an id), when it made one: for the screen to find it on the map.
+    pub shot: Option<String>,
+}
+
+/// A feature shot waiting for its shot.
+#[derive(Clone, Debug, Serialize)]
+pub struct FeatureArm {
+    /// The symbol (a palette key, `sym-…`).
+    pub symbol: String,
+    /// The words beside it.
+    pub label: String,
+}
+
+/// Where a feature shot hit, for the screen to place its symbol.
+#[derive(Clone, Debug, Serialize)]
+pub struct FeatureHit {
+    /// A counter: each hit is placed once.
+    pub n: u32,
+    /// The station it was shot from.
+    pub station: String,
+    /// From the station to the hit, metres: east, north, up (true north).
+    pub offset: [f64; 3],
+    /// The symbol (a palette key, `sym-…`).
+    pub symbol: String,
+    /// The words beside it.
+    pub label: String,
 }
 
 /// A held thing as the screen shows it, for the Accept card.
@@ -141,6 +168,15 @@ pub struct Snapshot {
     pub waiting: usize,
     /// The latest reading, written or not, for the big display.
     pub last: Option<Reading>,
+    /// The next shot will be a feature shot: its symbol and label.
+    pub feature: Option<FeatureArm>,
+    /// Feature shots taken lately (the last 20), newest last: each places its symbol once.
+    pub feature_hits: Vec<FeatureHit>,
+    /// Shots the instrument had stored and sent as it connected (taken before this link, maybe days ago): kept
+    /// out of the notebook until the surveyor adds them at a station or discards them. Oldest first.
+    pub stored: Vec<Reading>,
+    /// The instrument has just connected and may still be sending what it had stored.
+    pub reading_memory: bool,
     /// The last 50 things written, oldest first.
     pub log: Vec<EntryView>,
     /// Why the last thing was refused (or the last edit failed). Empty when all is well.
@@ -151,6 +187,35 @@ pub struct Snapshot {
     pub standing_walls: Option<StandingWalls>,
     /// How many edits the session has made to the cave: the screen refreshes when it grows.
     pub edits: u64,
+    /// The sweep being taken, with its live check.
+    pub sweep: Option<SweepView>,
+    /// The sweep finished last, with how it ended up.
+    pub last_sweep: Option<SweepView>,
+    /// What a sweep the instrument starts on its own is checked as (the surveyor's choice).
+    pub sweep_kind: SweepKind,
+    /// How much a sweep is asked for: Manual (mostly sketched, four walls do) or Digital (the instrument's detail).
+    pub standard: Standard,
+}
+
+/// A sweep as the screen shows it.
+#[derive(Clone, Debug, Serialize)]
+pub struct SweepView {
+    /// The station it is shot at.
+    pub station: String,
+    /// Started from the screen (every shot until Finish is a sweep shot), not by the instrument's scan mode.
+    pub armed: bool,
+    /// How it stands.
+    pub check: Check,
+}
+
+/// A sweep being taken.
+#[derive(Clone, Debug)]
+struct SweepPlan {
+    kind: SweepKind,
+    station: String,
+    armed: bool,
+    /// The shots so far, as vectors from the station (metres; compass as the instrument gave it).
+    vectors: Vec<[f64; 3]>,
 }
 
 fn describe(e: EditError) -> String {
@@ -209,6 +274,26 @@ pub struct Session {
     /// name: written once it has one. `None` inside is untouched, `Some(None)` a clear.
     pending: BTreeMap<(Id, String), [Option<Option<f64>>; 4]>,
     edits: u64,
+    /// The sweep being taken (an instrument's scan mode): its id (its first shot's) and the station it is at.
+    sweep: Option<(String, String)>,
+    /// The sweep being checked, if one is under way.
+    plan: Option<SweepPlan>,
+    /// The sweep finished last.
+    last_sweep: Option<SweepView>,
+    /// What a sweep the instrument starts is checked as.
+    sweep_kind: SweepKind,
+    /// How much a sweep is asked for.
+    standard: Standard,
+    /// The last leg written: the station it arrives at and its direction (for which way the passage runs there).
+    passage: Option<(String, [f64; 3])>,
+    /// Shots from the instrument's memory, waiting for the surveyor (see [`Snapshot::stored`]).
+    stored: Vec<Reading>,
+    /// What arrives now is from the instrument's memory, not a shot just taken.
+    memory_open: bool,
+    /// The next shot is a feature shot: its symbol and label.
+    feature: Option<(String, String)>,
+    /// The feature shots taken lately, for the screen to place their symbols.
+    feature_hits: Vec<FeatureHit>,
 }
 
 impl Default for Session {
@@ -239,6 +324,16 @@ impl Session {
             warnings: Vec::new(),
             pending: BTreeMap::new(),
             edits: 0,
+            sweep: None,
+            plan: None,
+            last_sweep: None,
+            sweep_kind: SweepKind::Lrud,
+            standard: Standard::Digital,
+            passage: None,
+            stored: Vec::new(),
+            memory_open: false,
+            feature: None,
+            feature_hits: Vec::new(),
         }
     }
 
@@ -303,6 +398,80 @@ impl Session {
             self.state.mode
         };
         self.assembler.reset();
+    }
+
+    /// The next shot (from the screen or the instrument's own button) is a feature shot: it points at something worth
+    /// a symbol, and places it: it is not written to the notebook, so it is no leg, wall or splay.
+    pub fn arm_feature(&mut self, symbol: &str, label: &str) {
+        self.feature = Some((symbol.trim().to_string(), label.trim().to_string()));
+    }
+
+    /// The next shot is an ordinary one again.
+    pub fn cancel_feature(&mut self) {
+        self.feature = None;
+    }
+
+    /// A feature shot places a symbol, nothing more: no shot is written to the notebook, so no survey format ever sees
+    /// it. Where it hit is worked out here (true bearing: the trip's declination applied) and handed to the screen.
+    fn write_feature(&mut self, host: &mut dyn Host, r: &Reading, symbol: &str, label: &str) {
+        let from = standing(&self.state);
+        if from.trim().is_empty() {
+            self.fail("Name the station you are at first.");
+            return;
+        }
+        let declination = self
+            .trip
+            .and_then(|t| cave_notebook::page(host.doc(), t))
+            .and_then(|p| p.declination)
+            .unwrap_or(0.0);
+        let v = splay_vector(r.distance, r.azimuth + declination, r.inclination);
+        self.counter += 1;
+        self.feature_hits.push(FeatureHit {
+            n: self.counter,
+            station: from.trim().to_string(),
+            offset: v,
+            symbol: symbol.to_string(),
+            label: label.to_string(),
+        });
+        if self.feature_hits.len() > 20 {
+            self.feature_hits.remove(0);
+        }
+        self.message.clear();
+        self.warnings.clear();
+    }
+
+    /// A real instrument connected: what it sends before [`Session::memory_done`] is what it had stored (shots
+    /// taken while nothing was connected, perhaps another day), so it is kept aside, not written at the station
+    /// the surveyor happens to stand at now. Stored shots kept from an earlier connection stay.
+    pub fn open_memory(&mut self) {
+        self.memory_open = true;
+    }
+
+    /// The instrument has gone quiet after connecting, or the surveyor has started shooting: what arrives from
+    /// now on is live.
+    pub fn memory_done(&mut self) {
+        self.memory_open = false;
+    }
+
+    /// Writes the stored shots at the station the surveyor stands at, in the order they were taken, as if they
+    /// had just been shot (three close ones still make a leg).
+    pub fn add_stored(&mut self, host: &mut dyn Host) {
+        self.memory_open = false;
+        let stored = std::mem::take(&mut self.stored);
+        if stored.is_empty() {
+            return;
+        }
+        for r in stored {
+            self.reading(host, r);
+        }
+        if self.groups_legs {
+            self.settle_now(host);
+        }
+    }
+
+    /// Throws the stored shots away (they stay in the instrument's own memory).
+    pub fn discard_stored(&mut self) {
+        self.stored.clear();
     }
 
     /// The link went down (idle, error, unsupported): nothing held survives it.
@@ -438,9 +607,47 @@ impl Session {
             ..Measured::default()
         };
         let (doc, ids) = host.doc_and_ids();
-        let (shot, actions) =
+        let (shot, mut actions) =
             add_measured_shot(doc, ids, trip, from, to, splay, measured).map_err(describe)?;
+        // A sweep's splays carry the sweep's id: a new sweep at its first shot, at another station, or after any
+        // other shot; one sweep otherwise.
+        if splay && r.scan == Some(true) {
+            let same = self.sweep.as_ref().is_some_and(|(_, at)| at == from)
+                && r.sweep_start != Some(true);
+            if !same {
+                self.sweep = Some((shot.to_string(), from.to_string()));
+            }
+            if let Some((id, _)) = &self.sweep {
+                actions.push(Action::Set {
+                    id: shot,
+                    field: cave_doc::Field::ShotSweep,
+                    value: cave_doc::Value::Text(id.clone()),
+                });
+            }
+        } else {
+            self.sweep = None;
+        }
+        // the class the surveyor gave the shot on the instrument (its M button while the laser is on)
+        if let Some(class) = match r.mark {
+            Some(Mark::Feature) => Some("feature"),
+            Some(Mark::Ridge) => Some("ridge"),
+            Some(Mark::Generic) => Some("generic"),
+            Some(Mark::Backsight) if splay => Some("backsight"),
+            _ => None,
+        } {
+            actions.push(Action::Set {
+                id: shot,
+                field: cave_doc::Field::ShotClass,
+                value: cave_doc::Value::Text(class.into()),
+            });
+        }
         self.commit_actions(host, actions)?;
+        if !splay {
+            self.passage = Some((
+                to.to_string(),
+                splay_vector(r.distance, r.azimuth, r.inclination),
+            ));
+        }
         Ok(Written {
             target: Target::Shot(shot),
             label: if splay {
@@ -454,7 +661,7 @@ impl Session {
     /// Writes one thing to the notebook. Returns true when it was written (or an earlier leg was refined).
     pub fn commit(&mut self, host: &mut dyn Host, incoming: &Incoming) -> bool {
         let Some(trip) = self.trip else {
-            return self.fail("Open a cave first.");
+            return self.fail("No trip to write to: choose one in the Notebook.");
         };
         if let Incoming::Event(LegEvent::LegUpdate { group, reading, .. }) = incoming {
             return self.refine(host, trip, *group, reading);
@@ -590,7 +797,22 @@ impl Session {
     }
 
     /// A shot arrived from the instrument.
-    pub fn reading(&mut self, host: &mut dyn Host, reading: Reading) {
+    pub fn reading(&mut self, host: &mut dyn Host, mut reading: Reading) {
+        if self.memory_open {
+            self.stored.push(reading);
+            return;
+        }
+        if reading.scan != Some(true)
+            && reading.lrud.is_none()
+            && let Some((symbol, label)) = self.feature.take()
+        {
+            // shots the grouping was waiting on are what they were before this one
+            self.settle_now(host);
+            self.write_feature(host, &reading, &symbol, &label);
+            self.last = Some(reading);
+            return;
+        }
+        self.tag_sweep(&mut reading);
         self.last = Some(reading.clone());
         if !self.groups_legs {
             self.handle(host, Incoming::Single(reading));
@@ -634,7 +856,7 @@ impl Session {
         let result: Result<(), String> = match &entry.target {
             Target::Wall { station, side } => match trip {
                 Some(t) => self.set_wall(host, t, station, *side, None),
-                None => Err("Open a cave first.".into()),
+                None => Err("No trip to write to: choose one in the Notebook.".into()),
             },
             Target::Shot(shot) if entry.kind == PlanKind::Back => set_readings(
                 host.doc(),
@@ -693,6 +915,161 @@ impl Session {
         );
     }
 
+    // ---- sweeps ----
+
+    /// Starts a sweep from the screen: every shot from now until [`Self::finish_sweep`] is a sweep shot at the
+    /// standing station (a splay, never part of a leg), checked as `kind`. Whatever the grouping was holding is
+    /// settled first.
+    pub fn start_sweep(&mut self, host: &mut dyn Host, kind: SweepKind) {
+        self.settle_now(host);
+        self.close_sweep();
+        self.sweep_kind = kind;
+        self.plan = Some(SweepPlan {
+            kind,
+            station: standing(&self.state),
+            armed: true,
+            vectors: Vec::new(),
+        });
+    }
+
+    /// Ends the sweep under way (it is kept as the last sweep, with its check).
+    pub fn finish_sweep(&mut self) {
+        self.close_sweep();
+    }
+
+    /// What a sweep the instrument starts on its own (the X1's scan mode) is checked as.
+    pub fn set_sweep_kind(&mut self, kind: SweepKind) {
+        self.sweep_kind = kind;
+        if let Some(p) = self.plan.as_mut().filter(|p| p.vectors.is_empty()) {
+            p.kind = kind;
+        }
+    }
+
+    /// How much a sweep is asked for (the Manual / Digital switch). Applies to the sweep under way too.
+    pub fn set_standard(&mut self, standard: Standard) {
+        self.standard = standard;
+    }
+
+    fn close_sweep(&mut self) {
+        if let Some(p) = self.plan.take()
+            && !p.vectors.is_empty()
+        {
+            self.last_sweep = Some(self.view(&p));
+        }
+    }
+
+    fn view(&self, p: &SweepPlan) -> SweepView {
+        let passage = self
+            .passage
+            .as_ref()
+            .filter(|(at, _)| *at == p.station)
+            .map(|(_, v)| *v);
+        SweepView {
+            station: p.station.clone(),
+            armed: p.armed,
+            check: cave_sweep::check(p.kind, self.standard, &p.vectors, passage),
+        }
+    }
+
+    /// Follows sweeps as readings come in: a sweep started from the screen marks every shot as a sweep shot; the
+    /// instrument's own scan shots start one (or a new one at another station, or at its sweep-start flag); any
+    /// other shot ends one the instrument started.
+    fn tag_sweep(&mut self, r: &mut Reading) {
+        if r.lrud.is_some() {
+            return;
+        }
+        let here = standing(&self.state);
+        // Manual LRUD: four aimed shots, called left, right, up, down; each is written as that wall's dimension at
+        // the station (what a hand-sketched survey uses), not as a splay
+        if let Some(p) = self
+            .plan
+            .as_ref()
+            .filter(|p| p.armed && p.kind == SweepKind::Lrud && self.standard == Standard::Manual)
+            && let Some(aim) = self.view(p).check.aim
+        {
+            r.lrud = Some(side_at(aim.angle));
+            let v = splay_vector(r.distance, r.azimuth, r.inclination);
+            if let Some(p) = self.plan.as_mut() {
+                p.vectors.push(v);
+            }
+            return;
+        }
+        if let Some(p) = self.plan.as_ref().filter(|p| p.armed) {
+            let first = p.vectors.is_empty();
+            r.scan = Some(true);
+            if first {
+                r.sweep_start = Some(true);
+            } else {
+                r.sweep_start = None; // one sweep until Finish, whatever the instrument says
+            }
+        } else if r.scan == Some(true) {
+            let fresh = match &self.plan {
+                None => true,
+                Some(p) => {
+                    p.station != here || (r.sweep_start == Some(true) && !p.vectors.is_empty())
+                }
+            };
+            if fresh {
+                self.close_sweep();
+                self.plan = Some(SweepPlan {
+                    kind: self.sweep_kind,
+                    station: here,
+                    armed: false,
+                    vectors: Vec::new(),
+                });
+            }
+        } else {
+            self.close_sweep();
+            return;
+        }
+        if let Some(p) = self.plan.as_mut() {
+            p.vectors
+                .push(splay_vector(r.distance, r.azimuth, r.inclination));
+        }
+    }
+
+    /// Steps back to the station before the one the surveyor stands at, in the order of the page (the Previous
+    /// station button): standing there, with the next leg going to the station that was being stood at. From a
+    /// station not on the page yet (the next one, before its leg is shot) it goes back to the last one that is.
+    /// False when there is nothing before it.
+    pub fn previous_station(&mut self, host: &dyn Host) -> bool {
+        let Some(trip) = self.trip else {
+            return false;
+        };
+        let Some(page) = cave_notebook::page(host.doc(), trip) else {
+            return false;
+        };
+        let mut order: Vec<String> = Vec::new();
+        for r in &page.rows {
+            if r.kind == cave_notebook::RowKind::Station
+                && !r.label.is_empty()
+                && order.last() != Some(&r.label)
+            {
+                order.push(r.label.clone());
+            }
+        }
+        let here = self.state.from.trim().to_string();
+        let back = match order.iter().position(|l| *l == here) {
+            Some(0) => None,
+            Some(i) => Some(order[i - 1].clone()),
+            None => order.last().filter(|l| **l != here).cloned(),
+        };
+        let Some(back) = back else {
+            return false;
+        };
+        self.state = SessionState {
+            to: if order.contains(&here) {
+                here
+            } else {
+                self.state.to.clone()
+            },
+            from: back,
+            awaiting: None,
+            ..self.state.clone()
+        };
+        true
+    }
+
     /// The passage dimensions at the standing station, or `None` before the page has a line for it.
     pub fn standing_walls(&self, host: &dyn Host) -> Option<StandingWalls> {
         let trip = self.trip?;
@@ -715,7 +1092,7 @@ impl Session {
         value: Option<f64>,
     ) -> bool {
         let Some(trip) = self.trip else {
-            return self.fail("Open a cave first.");
+            return self.fail("No trip to write to: choose one in the Notebook.");
         };
         let station = standing(&self.state);
         let planned = match set_station_wall(host.doc(), trip, &station, nb_side(side), value) {
@@ -785,6 +1162,13 @@ impl Session {
             held: self.held.iter().map(|h| self.preview(host, h)).collect(),
             waiting: self.assembler.waiting(),
             last: self.last.clone(),
+            stored: self.stored.clone(),
+            reading_memory: self.memory_open,
+            feature: self.feature.as_ref().map(|(symbol, label)| FeatureArm {
+                symbol: symbol.clone(),
+                label: label.clone(),
+            }),
+            feature_hits: self.feature_hits.clone(),
             log: self
                 .log
                 .iter()
@@ -794,13 +1178,31 @@ impl Session {
                     label: e.label.clone(),
                     reading: e.reading.clone(),
                     warnings: e.warnings.clone(),
+                    shot: match &e.target {
+                        Target::Shot(id) => Some(id.to_string()),
+                        Target::Wall { .. } => None,
+                    },
                 })
                 .collect(),
             message: self.message.clone(),
             warnings: self.warnings.clone(),
             standing_walls: self.standing_walls(host),
             edits: self.edits,
+            sweep: self.plan.as_ref().map(|p| self.view(p)),
+            last_sweep: self.last_sweep.clone(),
+            sweep_kind: self.sweep_kind,
+            standard: self.standard,
         }
+    }
+}
+
+/// The wall at a place round an LRUD ring (0 right, 90 ceiling, 180 left, 270 floor).
+fn side_at(angle: f64) -> Side {
+    match ((angle.rem_euclid(360.0) + 45.0) / 90.0) as u32 % 4 {
+        0 => Side::Right,
+        1 => Side::Up,
+        2 => Side::Left,
+        _ => Side::Down,
     }
 }
 

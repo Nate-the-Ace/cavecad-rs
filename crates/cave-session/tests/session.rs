@@ -781,3 +781,289 @@ fn the_session_follows_a_real_cave_and_never_reuses_a_name() {
     assert_eq!(s.snapshot(&book).message, "");
     assert_eq!(s.snapshot(&book).log[0].label, format!("{last} to {next}"));
 }
+
+/// The packets of a capture taken from a real Cavway X1 (crates/cave-instrument/tests/captures).
+fn capture(name: &str) -> Vec<Vec<u8>> {
+    let path = format!(
+        "{}/../cave-instrument/tests/captures/{name}",
+        env!("CARGO_MANIFEST_DIR")
+    );
+    let v: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+    v["records"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|r| r["t"] == "notify")
+        .map(|r| {
+            let h = r["hex"].as_str().unwrap();
+            (0..h.len())
+                .step_by(2)
+                .map(|i| u8::from_str_radix(&h[i..i + 2], 16).unwrap())
+                .collect()
+        })
+        .collect()
+}
+
+#[test]
+fn a_real_x1_sweep_is_splays_in_two_sweeps_and_its_legs_are_still_found() {
+    use cave_instrument::link::X1Link;
+    let packets = capture("x1-2026-11-13-legs-and-two-sweeps.json");
+    // packets before index 52 are the first capture's (old memory): this test is the session after them
+    let mut book = Book::new();
+    let mut s = session(&book, true, false);
+    let mut link = X1Link::new("x1");
+    for p in &packets[52..] {
+        feed(&mut s, &mut book, link.on_frame(p, "notify"));
+    }
+    s.settle_now(&mut book);
+    // the three legs the surveyor shot before sweeping, and no leg made from a sweep
+    assert_eq!(book.legs().len(), 3, "{}", book.leg_names());
+    let sweeps: Vec<String> = book
+        .doc
+        .ids_of(cave_doc::Kind::Shot)
+        .into_iter()
+        .filter_map(
+            |id| match book.doc.entity(id)?.get(cave_doc::Field::ShotSweep) {
+                cave_doc::Value::Text(t) if !t.is_empty() => Some(t),
+                _ => None,
+            },
+        )
+        .collect();
+    let mut counts: Vec<usize> = {
+        let mut m = std::collections::BTreeMap::<String, usize>::new();
+        for t in &sweeps {
+            *m.entry(t.clone()).or_default() += 1;
+        }
+        m.into_values().collect()
+    };
+    counts.sort_unstable();
+    assert_eq!(
+        counts,
+        vec![51, 54],
+        "two sweeps, every shot of each tagged"
+    );
+}
+
+#[test]
+fn the_real_x1_sweeps_are_checked_as_they_come() {
+    use cave_instrument::link::X1Link;
+    let packets = capture("x1-2026-11-13-legs-and-two-sweeps.json");
+    let mut book = Book::new();
+    let mut s = session(&book, true, false);
+    let mut link = X1Link::new("x1");
+    let mut seen = 0;
+    for p in &packets[52..] {
+        feed(&mut s, &mut book, link.on_frame(p, "notify"));
+        if let Some(w) = s.snapshot(&book).sweep {
+            seen = seen.max(w.check.shots);
+            assert!(!w.armed, "started by the instrument");
+        }
+    }
+    assert_eq!(seen, 54, "the longer sweep, counted live");
+    s.finish_sweep();
+    let last = s.snapshot(&book).last_sweep.expect("a last sweep");
+    assert_eq!(last.check.shots, 54);
+    assert!(s.snapshot(&book).sweep.is_none());
+}
+
+/// A ring of `n` shots across a passage running north, half-width 2 m, half-height 1 m.
+fn ring_readings(n: usize) -> Vec<Reading> {
+    (0..n)
+        .map(|i| {
+            let a = (i as f64 / n as f64 * 360.0).to_radians();
+            let (x, z) = (2.0 * a.cos(), a.sin());
+            let d = x.hypot(z);
+            r(
+                d,
+                if x >= 0.0 { 90.0 } else { 270.0 },
+                z.atan2(x.abs()).to_degrees(),
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn a_sweep_started_from_the_screen_never_makes_a_leg_and_says_when_it_is_done() {
+    let mut book = Book::new();
+    let mut s = session(&book, true, false);
+    // a leg first, so the passage direction is known at A2
+    for _ in 0..3 {
+        s.reading(&mut book, r(5.0, 0.0, 0.0));
+    }
+    s.settle_now(&mut book);
+    assert_eq!(book.leg_names(), "A1-A2");
+    s.start_sweep(&mut book, cave_session::SweepKind::Lrud);
+    // three identical close shots: would be a leg outside a sweep
+    for _ in 0..3 {
+        s.reading(&mut book, r(2.0, 90.0, 0.0));
+    }
+    let w = s.snapshot(&book).sweep.expect("sweep under way");
+    assert!(w.armed);
+    assert_eq!(w.station, "A2");
+    assert!(!w.check.complete);
+    for reading in ring_readings(24) {
+        s.reading(&mut book, reading);
+    }
+    let w = s.snapshot(&book).sweep.unwrap();
+    assert!(w.check.complete, "{:?}", w.check.todo);
+    assert_eq!(w.check.shots, 27);
+    s.finish_sweep();
+    assert_eq!(book.leg_names(), "A1-A2", "no leg from the sweep");
+    assert_eq!(book.splays().len(), 27);
+    assert!(book.splays().iter().all(|st| st == "A2"));
+    let last = s.snapshot(&book).last_sweep.unwrap();
+    assert!(last.check.complete);
+    // the next close shots are a leg again
+    for _ in 0..3 {
+        s.reading(&mut book, r(4.0, 10.0, 0.0));
+    }
+    s.settle_now(&mut book);
+    assert_eq!(book.leg_names(), "A1-A2 A2-A3");
+}
+
+#[test]
+fn manual_standard_finishes_a_ring_on_the_four_walls() {
+    let mut book = Book::new();
+    let mut s = session(&book, false, false);
+    // a leg north, A1 to A2: the passage runs north at A2
+    s.reading(&mut book, r(5.0, 0.0, 0.0));
+    s.set_standard(cave_session::Standard::Manual);
+    s.start_sweep(&mut book, cave_session::SweepKind::Lrud);
+    assert_eq!(
+        s.snapshot(&book).sweep.unwrap().check.aim.unwrap().wall,
+        "the left wall"
+    );
+    // aimed as called: left (west), right (east), up
+    for (d, az, inc) in [(1.8, 270.0, 0.0), (2.2, 90.0, 0.0), (1.2, 0.0, 89.0)] {
+        s.reading(&mut book, r(d, az, inc));
+    }
+    let w = s.snapshot(&book).sweep.unwrap();
+    assert!(!w.check.complete);
+    assert_eq!(w.check.aim.unwrap().wall, "the floor");
+    s.reading(&mut book, r(0.9, 0.0, -89.0));
+    let w = s.snapshot(&book).sweep.unwrap();
+    assert!(w.check.complete, "{:?}", w.check.todo);
+    // written as the station's LRUD, in order, not as splays
+    let walls = s.snapshot(&book).standing_walls.expect("walls at A2");
+    assert_eq!(walls.station, "A2");
+    assert!(
+        near(walls.left, 1.8, 0.01) && near(walls.right, 2.2, 0.01),
+        "{walls:?}"
+    );
+    assert!(
+        near(walls.up, 1.2, 0.01) && near(walls.down, 0.9, 0.01),
+        "{walls:?}"
+    );
+    assert!(book.splays().is_empty(), "{:?}", book.splays());
+    // the same four shots are not enough for Digital
+    s.set_standard(cave_session::Standard::Digital);
+    assert!(!s.snapshot(&book).sweep.unwrap().check.complete);
+}
+
+#[test]
+fn a_screen_sweep_with_an_instrument_that_does_not_group_writes_splays_not_legs() {
+    let mut book = Book::new();
+    let mut s = session(&book, false, false);
+    s.start_sweep(&mut book, cave_session::SweepKind::Room);
+    for i in 0..30 {
+        s.reading(&mut book, r(6.0, i as f64 * 12.0, 2.0));
+    }
+    let w = s.snapshot(&book).sweep.unwrap();
+    assert!(w.check.complete, "{:?}", w.check.todo);
+    assert_eq!(book.legs().len(), 0);
+    assert_eq!(book.splays().len(), 30);
+}
+
+#[test]
+fn previous_station_steps_back_along_the_page() {
+    let mut book = Book::new();
+    let mut s = session(&book, false, false);
+    for az in [0.0, 10.0, 20.0] {
+        s.reading(&mut book, r(5.0, az, 0.0));
+    }
+    assert_eq!(book.leg_names(), "A1-A2 A2-A3 A3-A4");
+    assert_eq!(
+        (s.state().from.as_str(), s.state().to.as_str()),
+        ("A4", "A5")
+    );
+    assert!(s.previous_station(&book));
+    assert_eq!(
+        (s.state().from.as_str(), s.state().to.as_str()),
+        ("A3", "A4")
+    );
+    assert!(s.previous_station(&book));
+    assert!(s.previous_station(&book));
+    assert_eq!(
+        (s.state().from.as_str(), s.state().to.as_str()),
+        ("A1", "A2")
+    );
+    assert!(
+        !s.previous_station(&book),
+        "nothing before the first station"
+    );
+    s.next_station(&book);
+    assert_eq!(s.state().from, "A2");
+}
+
+#[test]
+fn accuracy_complaints_are_said_in_plain_words() {
+    let m = cave_session::rules::accuracy_advice("accuracy error: absM, dip");
+    assert!(m.contains("magnetic") && m.contains("MagSafe"), "{m}");
+    assert!(m.contains("calibrate"), "{m}");
+    let g = cave_session::rules::accuracy_advice("accuracy error: absG");
+    assert!(
+        g.contains("hold it still") && !g.contains("magnetic"),
+        "{g}"
+    );
+    let n = cave_session::rules::accuracy_advice("accuracy error: absM 6.1 %, dip 7.0°");
+    assert!(n.contains("magnetic") && n.contains("6.1 %"), "{n}");
+    let a = cave_session::rules::accuracy_advice("accuracy error: angle");
+    assert!(a.contains("disagree"), "{a}");
+}
+
+#[test]
+fn shots_from_the_instruments_memory_wait_for_the_surveyor() {
+    let mut book = Book::new();
+    let mut s = session(&book, true, false);
+    s.open_memory();
+    // what the X1 had stored arrives as it connects: nothing is written at the station the surveyor stands at
+    let before = book.rows().len();
+    for x in [r(3.0, 10.0, 1.0), r(3.0, 10.2, 1.1), r(3.0, 10.1, 0.9), r(2.0, 200.0, 5.0)] {
+        s.reading(&mut book, x);
+    }
+    assert_eq!(book.rows().len(), before, "nothing written");
+    let snap = s.snapshot(&book);
+    assert_eq!(snap.stored.len(), 4);
+    assert!(snap.reading_memory);
+    // the surveyor starts shooting: live shots are written as usual, the stored ones stay aside
+    s.memory_done();
+    s.reading(&mut book, r(1.5, 90.0, 0.0));
+    s.settle_now(&mut book);
+    assert_eq!(book.splays().len(), 1, "the live splay is written");
+    assert_eq!(s.snapshot(&book).stored.len(), 4);
+    // a reconnect keeps them
+    s.link_down();
+    s.connected(true);
+    s.open_memory();
+    assert_eq!(s.snapshot(&book).stored.len(), 4);
+    // added: three close ones make a leg, the fourth a splay
+    s.add_stored(&mut book);
+    let snap = s.snapshot(&book);
+    assert!(snap.stored.is_empty() && !snap.reading_memory);
+    assert_eq!(book.legs().len(), 1, "the stored leg");
+    assert_eq!(book.splays().len(), 2);
+}
+
+#[test]
+fn discarded_memory_shots_write_nothing() {
+    let mut book = Book::new();
+    let mut s = session(&book, true, false);
+    s.open_memory();
+    s.reading(&mut book, r(2.0, 200.0, 5.0));
+    let before = book.rows().len();
+    s.discard_stored();
+    s.memory_done();
+    assert!(s.snapshot(&book).stored.is_empty());
+    assert_eq!(book.rows().len(), before);
+}

@@ -218,6 +218,12 @@ pub enum Field {
     ShotSplay,
     /// Position the stations but draw nothing.
     ShotExcludeFromPlot,
+    /// The sweep a splay belongs to (an instrument's scan mode: many splays taken in one go at a station): the id of
+    /// the sweep's first shot. Empty for an ordinary splay.
+    ShotSweep,
+    /// The class the surveyor gave the shot on the instrument (the X1's mark): `feature`, `ridge`, `generic` or
+    /// `backsight`. Empty for none.
+    ShotClass,
     /// The traced line itself.
     FeaturePath,
     /// What the feature is (`wall`, `ledge`, `pit`, ...).
@@ -345,6 +351,8 @@ impl Field {
             ShotDownOpen => (K::Shot, V::Flag),
             ShotSplay => (K::Shot, V::Flag),
             ShotExcludeFromPlot => (K::Shot, V::Flag),
+            ShotSweep => (K::Shot, V::Text),
+            ShotClass => (K::Shot, V::Text),
             FeaturePath => (K::Feature, V::Path),
             FeatureType => (K::Feature, V::Text),
             FeatureShape => (K::Feature, V::Text),

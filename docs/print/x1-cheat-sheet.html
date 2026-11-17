@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Cavway X1 Cheat Sheet</title>
+<!-- A double-sided 6 x 4 inch card for the X1's hard case. Sources: Cavway X1 User Manual Rev. C (Mar. 2026,
+     firmware 1.1.6) and CaveCAD's own Capture panel. Print both pages, double-sided, flip on the short edge. -->
+<style>
+  @page { size: 6in 4in; margin: 0; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: #fff; color: #111; }
+  body { font: 7pt/1.22 "Helvetica Neue", Helvetica, Arial, sans-serif; }
+  .card { width: 6in; height: 4in; padding: 0.16in 0.18in 0.12in; display: flex; flex-direction: column; page-break-after: always; overflow: hidden; }
+  .card:last-child { page-break-after: auto; }
+  header { display: flex; justify-content: space-between; align-items: baseline; border-bottom: 1.6pt solid #111; padding-bottom: 2pt; margin-bottom: 4pt; }
+  h1 { margin: 0; font-size: 10pt; letter-spacing: 0.02em; }
+  header span { font-size: 6.5pt; color: #444; }
+  .cols { flex: 1; display: grid; grid-template-columns: 1fr 1fr; gap: 0 0.16in; min-height: 0; }
+  h2 { margin: 2.6pt 0 1pt; font-size: 7.2pt; text-transform: uppercase; letter-spacing: 0.06em; border-bottom: 0.6pt solid #888; padding-bottom: 0.5pt; }
+  h2:first-child { margin-top: 0; }
+  p, ul, ol { margin: 0 0 2pt; }
+  ul, ol { padding-left: 1.05em; }
+  li { margin: 0 0 0.6pt; }
+  .k { display: inline-block; min-width: 1.5em; padding: 0 2pt; border: 0.6pt solid #111; border-radius: 2pt; font-weight: 700; font-size: 6.2pt; text-align: center; line-height: 1.25; }
+  .keys { display: grid; grid-template-columns: auto 1fr; gap: 1.2pt 5pt; align-items: baseline; margin-bottom: 2pt; }
+  table { border-collapse: collapse; width: 100%; margin: 0 0 2pt; }
+  td, th { border: 0.5pt solid #999; padding: 0.8pt 3pt; text-align: left; vertical-align: top; }
+  th { background: #eee; font-weight: 700; }
+  .warn { border: 1pt solid #111; padding: 2pt 4pt; margin: 2pt 0; }
+  .muted { color: #555; }
+  footer { font-size: 5.8pt; color: #555; border-top: 0.5pt solid #aaa; padding-top: 1.5pt; margin-top: 2pt; display: flex; justify-content: space-between; }
+</style>
+</head>
+<body>
+
+<section class="card">
+  <header><h1>CAVWAY X1 · CONTROLS</h1><span>Manual Rev. C · firmware 1.1.6</span></header>
+  <div class="cols">
+    <div>
+      <h2>Buttons</h2>
+      <div class="keys">
+        <span class="k">DIST</span><span>Measure (top). Also powers on.</span>
+        <span class="k">M</span><span>Menu / Enter · marks while laser on</span>
+        <span class="k">&lt;</span><span>Left · memory (newer)</span>
+        <span class="k">&gt;</span><span>Right · memory (older)</span>
+        <span class="k">CLR</span><span>Clear / back · hold = off</span>
+      </div>
+      <h2>Power</h2>
+      <ul>
+        <li><b>On:</b> press <span class="k">DIST</span>.  <b>Off:</b> hold <span class="k">CLR</span>.</li>
+        <li><b>Lock + off:</b> hold <span class="k">CLR</span> + press <span class="k">&gt;</span>. Unlock: <span class="k">M</span> within 2 s of turning on.</li>
+        <li>Sleeps after Idle time-off (60 s default, Options).</li>
+      </ul>
+      <h2>Shooting</h2>
+      <ul>
+        <li><span class="k">DIST</span> once = laser on; again = shot (beep).</li>
+        <li>Hold <span class="k">DIST</span> 2 s = delayed shot.</li>
+        <li><b>Leg = 3 close shots</b> in a row: double beep, <b>LEG</b> shows. Any other shot is a splay.</li>
+        <li><b>Mark</b> (laser on): <span class="k">M</span> cycles None → Feature → Ridge → <b>Backsight</b> → Generic.</li>
+              </ul>
+      <h2>Scan mode (sweeps)</h2>
+      <ul>
+        <li>Hold <span class="k">DIST</span>+<span class="k">M</span> 2 s (or <span class="k">&gt;</span>, set in Scan options): <b>SCAN MODE</b>.</li>
+        <li>Laser stays on; hold still a moment and it shoots by itself.</li>
+        <li>Ends: <span class="k">CLR</span>, the time limit (default 2 min), or 200 shots.</li>
+      </ul>
+    </div>
+    <div>
+      <h2>Memory</h2>
+      <p><span class="k">&lt;</span> / <span class="k">&gt;</span> from measuring opens memory, newest on top. <span class="k">M</span> = shot detail (4 pages: readings, errors, H/V, G/M/dip).</p>
+      <table>
+        <tr><th>E</th><td>accuracy error</td><th>*</th><td>not sent yet</td></tr>
+        <tr><th>C</th><td>calibration shot</td><th>_</th><td>has a mark</td></tr>
+        <tr><th>S</th><td>scan shot</td><th>bold</th><td>leg</td></tr>
+      </table>
+      <h2>Menu (<span class="k">M</span>)</h2>
+      <ul>
+        <li><b>Calibration</b> · <b>Clr. Unsent</b> · <b>Options</b> · <b>Information</b> · <b>Advan. Menu</b></li>
+        <li>Options: reference, delay, backlight, beep, idle off.</li>
+        <li>Information p.2: last calibration's errors and dip.</li>
+      </ul>
+      <div class="warn"><b>ACC ERR</b> = the two sensor sets disagree. Move away from metal and magnets first (phone, watch, headlamp, batteries, steel, cars, rebar). Still frequent: <b>recalibrate</b> (overleaf).</div>
+      <h2>With CaveCAD</h2>
+      <ul>
+        <li><b>Connect</b>, pick <b>CavwayX1-…</b>; a sleeping X1 rejoins when woken.</li>
+        <li><b>Single shot</b> / <b>Station to station</b>: press = laser on, press again = 1 or 3 shots.</li>
+        <li>Keep the phone 30 cm+ from the X1 while shooting.</li>
+      </ul>
+      <p class="muted">Hold <span class="k">&gt;</span>: clears all "not sent" flags.</p>
+    </div>
+  </div>
+  <footer><span>Front · controls</span><span>Calibration and accuracy limits overleaf</span></footer>
+</section>
+
+<section class="card">
+  <header><h1>CALIBRATION · ACCURACY</h1><span>Calibrate away from all metal, outdoors if possible</span></header>
+  <div class="cols">
+    <div>
+      <h2>Calibrate</h2>
+      <ol>
+        <li>Magnetically quiet spot: no steel, cars, rebar; phone, watch, headlamp, batteries well away.</li>
+        <li>Turn on, <span class="k">M</span> → <b>Calibration</b>.</li>
+        <li>Rear of the X1 fixed at point <b>A</b>, laser on a target <b>B</b> 5 m+ away.</li>
+        <li><span class="k">DIST</span> to shoot, <b>roll the X1 90°</b> about the laser, shoot again. <b>4 shots</b> per group: double beep when complete.</li>
+        <li>Choose a new direction and repeat. Cover <b>all directions</b>: level all round, steeply up, steeply down, in between.</li>
+        <li>Both circles (up / down half) darken as covered; <b>x</b> done, <b>+</b> current. Fill both: <b>14+ groups</b> (25 max).</li>
+        <li>Bad shot in a group: <span class="k">&gt;</span> resets that group.</li>
+        <li>8+ groups: <span class="k">M</span> computes; read the report per sensor set.</li>
+        <li><span class="k">M</span> = apply, <span class="k">CLR</span> = discard and keep shooting groups.</li>
+      </ol>
+      <h2>Good result</h2>
+      <p>Rule of thumb: average error <b>0.3° or less</b> (the manual's example: average 0.25°, max 1.28°). Much worse: discard, check for nearby metal, take more groups.</p>
+    </div>
+    <div>
+      <h2>Tips</h2>
+      <ul>
+                <li>By hand is recommended; a jig must keep the dot still while rolling.</li>
+        <li>Firmware upgrades erase calibration: save coefficients first (Cavway Assistant).</li>
+      </ul>
+      <h2>Accuracy limits on the X1</h2>
+      <p><span class="k">M</span> → <b>Advan. Menu</b> → <b>Shot Options</b> (<span class="k">M</span> changes a value):</p>
+      <table>
+        <tr><th>Setting</th><th>Factory</th><th>Loosest</th></tr>
+        <tr><td>Err Detect</td><td>ON</td><td>OFF (no checks)</td></tr>
+        <tr><td>Angle Diff</td><td>0.4°</td><td>1.0°</td></tr>
+        <tr><td>ABS Lim (G and M)</td><td>1.0 %</td><td>3.0 %</td></tr>
+        <tr><td>dip Lim</td><td>1.0°</td><td>3.0°</td></tr>
+      </table>
+      <p>Looser limits = fewer ACC ERR, not better shots.</p>
+      <h2>CaveCAD's own check</h2>
+      <p>Capture → <b>Accuracy check</b>: Strict (every X1 complaint), <b>Normal</b> (2 % G, 5 % M, 5° dip, 2° angle), Relaxed (×2).</p>
+      <h2>Firmware boot mode</h2>
+      <p>Off, USB to PC, hold <span class="k">&lt;</span>+<span class="k">&gt;</span> and press <span class="k">DIST</span>; then Cavway Assistant → Firmware.</p>
+    </div>
+  </div>
+  <footer><span>Back · calibration</span><span>CaveCAD · cavecad.com</span></footer>
+</section>
+
+</body>
+</html>

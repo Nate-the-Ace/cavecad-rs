@@ -2111,12 +2111,20 @@ export class CaveView {
     const legType = walls ? 'centerline-behind' : 'centerline';
     lines(sh.splays_over, 'splay');
     lines(sh.splays_under, 'splay', true);
+    lines(sh.sweeps_over ?? [], 'sweep');
+    lines(sh.sweeps_under ?? [], 'sweep', true);
+    // splays the surveyor marked on the X1 (Feature, Ridge, Generic): each mark its own type and colour
+    for (const [type, [over, under]] of Object.entries(sh.marked ?? {})) {
+      lines(over, type);
+      lines(under, type, true);
+    }
     lines(sh.legs_over, legType);
     lines(sh.legs_under, legType, true);
     if (walls && !this.inkWalls) {
       // (in Ink style the walls are drawn by hand in the overlay instead)
-      lines(sh.walls_over, 'wall');
-      lines(sh.walls_under, 'wall', true);
+      // the walls built from the survey: their own type and colour, apart from walls drawn by hand
+      lines(sh.walls_over, 'passage-wall');
+      lines(sh.walls_under, 'passage-wall', true);
     }
     lines(legs('tie'), 'tie');
     lines(legs('closure'), 'closure');
@@ -2187,7 +2195,7 @@ export class CaveView {
     if (this.depthShade) this.drawDepthShade(g);
     if (this.inkWalls && this.showWalls && s.walls.length) {
       // Ink style: the survey's walls inked by hand like every drawn line
-      this.strokeLines(g, s.walls.map((w, i) => ({ id: `survey-wall-${i}`, closed: false, kind: 'wall', run: '', widths: null, points: w })));
+      this.strokeLines(g, s.walls.map((w, i) => ({ id: `survey-wall-${i}`, closed: false, kind: 'passage-wall', run: '', widths: null, points: w })));
     }
     const circle = this.circlePick;
     if (circle) {

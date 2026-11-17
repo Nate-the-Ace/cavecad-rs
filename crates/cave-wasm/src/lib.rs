@@ -1775,7 +1775,25 @@ pub fn fill_pattern_marks_named(
 /// The type palette (colour role, weight, linetype per type) as JSON, for the viewer.
 #[wasm_bindgen]
 pub fn palette() -> String {
-    serde_json::to_string(cave_style::PALETTE).unwrap_or_else(|_| "[]".to_string())
+    // the line types, then every point symbol in the colour of its family of lines (cave_style::symbol_ink)
+    let mut all: Vec<serde_json::Value> = cave_style::PALETTE
+        .iter()
+        .filter_map(|s| serde_json::to_value(s).ok())
+        .collect();
+    for sym in cave_symbols::catalogue() {
+        all.push(serde_json::json!({
+            "key": sym.key, // already "sym-…"
+            "label": sym.name,
+            "ink": cave_style::symbol_ink(&sym.category),
+            "weight": 1.4,
+            "linetype": "solid",
+            "pattern": [],
+            "opacity": 1.0,
+            "under_opacity": 0.4,
+            "layer": sym.layer,
+        }));
+    }
+    serde_json::to_string(&all).unwrap_or_else(|_| "[]".to_string())
 }
 
 /// The over/under split of the drawn lines for a camera looking from `(x, y, z)` toward the cave
@@ -2858,4 +2876,28 @@ pub fn folder_plan(inside: &str, backups: &str, stem: &str, now: &str) -> String
         "prune": cave_folder::prune(stem, &backups),
     })
     .to_string()
+}
+
+#[cfg(test)]
+mod palette_colour_tests {
+    #[test]
+    fn every_symbol_has_a_palette_colour_by_its_category() {
+        let all: Vec<serde_json::Value> = serde_json::from_str(&super::palette()).unwrap();
+        for sym in cave_symbols::catalogue() {
+            let e = all
+                .iter()
+                .find(|p| p["key"] == sym.key.as_str())
+                .unwrap_or_else(|| panic!("{} has no palette entry", sym.key));
+            assert_eq!(
+                e["ink"],
+                serde_json::to_value(cave_style::symbol_ink(&sym.category)).unwrap(),
+                "{}",
+                sym.key
+            );
+        }
+        let pit = all.iter().find(|p| p["key"] == "pit").unwrap();
+        assert_eq!(pit["ink"], "relief", "pit lines are relief");
+        let water = all.iter().find(|p| p["key"] == "sym-drip-seep").unwrap();
+        assert_eq!(water["ink"], "water", "a water symbol is water-coloured");
+    }
 }

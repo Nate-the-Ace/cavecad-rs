@@ -25,13 +25,19 @@ tauri = { version = "2", features = [] }
 tauri-plugin-dialog = "2"
 tauri-plugin-opener = "2"
 tauri-plugin-deep-link = "2"
-tauri-plugin-updater = "2"
 cave-folder = { path = "../../../crates/cave-folder" }
+# Bluetooth for surveying instruments (src/ble.rs): the app's web view has no Web Bluetooth.
+btleplug = "0.11"
+futures = "0.3"
+tokio = { version = "1", features = ["time", "sync"] }
 
-[target."cfg(any(target_os = \"macos\", windows, target_os = \"linux\"))".dependencies]
-tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+
+# Desktop only: the iPad build (tauri ios) installs through Xcode or the App Store, and is one app per device.
+[target."cfg(any(target_os = \"macos\", windows, target_os = \"linux\"))".dependencies]
+tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
+tauri-plugin-updater = "2"
 
 [target."cfg(target_os = \"macos\")".dependencies]
 objc2 = "0.6"

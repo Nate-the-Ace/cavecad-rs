@@ -341,7 +341,9 @@ fn lrud_plan(
 /// Decides what a reading is: the next leg, a splay, a wall dimension, or the backsight being waited for.
 pub fn decide(state: &SessionState, reading: &Reading) -> Decision {
     let lrud = state.mode == Mode::Lrud || reading.lrud.is_some();
-    let splay = (state.mode == Mode::Splay && state.awaiting.is_none()) || lrud;
+    // a sweep shot is always a splay at the station the surveyor stands at
+    let sweep = reading.scan == Some(true) && !lrud;
+    let splay = (state.mode == Mode::Splay && state.awaiting.is_none()) || lrud || sweep;
     let mut warnings = match check_reading(reading, splay) {
         Ok(w) => w,
         Err(why) => return Decision::reject(why, Vec::new()),
@@ -349,6 +351,19 @@ pub fn decide(state: &SessionState, reading: &Reading) -> Decision {
     if lrud {
         let heading = state.last.as_ref().map(|l| l.reading.azimuth);
         return lrud_plan(&standing(state), reading, heading, warnings);
+    }
+    if sweep {
+        let here = standing(state);
+        if here.trim().is_empty() {
+            return Decision::reject("Say which station you are standing at.", warnings);
+        }
+        return Decision::plan(
+            Plan::Splay {
+                from: here.trim().into(),
+                reading: reading.clone(),
+            },
+            warnings,
+        );
     }
     if let Some(a) = &state.awaiting {
         warnings.extend(backsight_warnings(&a.reading, reading));
@@ -557,13 +572,15 @@ pub fn decide_event(
         }
     };
     let as_wall = matches!(event, LegEvent::Lrud { .. })
-        || (matches!(event, LegEvent::Splay { .. }) && state.mode == Mode::Lrud);
+        || (matches!(event, LegEvent::Splay { .. })
+            && state.mode == Mode::Lrud
+            && reading.scan != Some(true));
     let mut warnings = match check_reading(reading, !is_leg || as_wall) {
         Ok(w) => w,
         Err(why) => return (state.clone(), Decision::reject(why, Vec::new())),
     };
     if let Some(e) = reading.error.as_deref().filter(|e| !e.is_empty()) {
-        warnings.push(format!("The instrument reports an {e}."));
+        warnings.push(accuracy_advice(e));
     }
     let moved = |s: &SessionState| {
         if s.awaiting.is_some() {
@@ -669,5 +686,43 @@ pub fn decide_event(
             },
             warnings,
         ),
+    )
+}
+
+/// The instrument's accuracy complaint ("accuracy error: absM, dip") in plain words: what it means and what to do.
+/// The shot is still written; this only says why it may be off.
+pub fn accuracy_advice(error: &str) -> String {
+    let codes: Vec<&str> = error
+        .rsplit(':')
+        .next()
+        .unwrap_or("")
+        .split(',')
+        .map(|c| c.split_whitespace().next().unwrap_or(""))
+        .filter(|c| !c.is_empty())
+        .collect();
+    let has = |c: &str| codes.iter().any(|x| x.eq_ignore_ascii_case(c));
+    let mut parts: Vec<&str> = Vec::new();
+    if has("absM") || has("dip") {
+        parts.push(
+            "the compass sees a disturbed magnetic field: keep the phone (MagSafe magnets), headlamp, batteries and \
+             metal at least 30 cm from the instrument",
+        );
+    }
+    if has("absG") {
+        parts.push("the instrument was moving as it shot: hold it still");
+    }
+    if has("angle") {
+        parts.push("its two sets of sensors disagree on the direction");
+    }
+    let what = if parts.is_empty() {
+        format!("The instrument reports an {error}.")
+    } else {
+        format!(
+            "The instrument says this shot may be off: {}.",
+            parts.join("; ")
+        )
+    };
+    format!(
+        "{what} If it happens on every shot, wherever you stand, calibrate the instrument. ({error})"
     )
 }

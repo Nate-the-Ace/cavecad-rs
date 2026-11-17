@@ -50,6 +50,47 @@ pub struct Splay {
     pub offset: Vec3,
     /// Left out of the plot (and so out of the walls).
     pub exclude_from_plot: bool,
+    /// The sweep it belongs to (an instrument's scan mode), if any: an id made from the sweep's own (`ShotSweep`).
+    pub sweep: Option<Id>,
+    /// The class the surveyor gave it on the instrument (the X1's mark), if any.
+    pub class: Option<ShotClass>,
+}
+
+/// The class a surveyor gives a shot on the instrument (the Cavway X1's M button while the laser is on): what the
+/// shot points at, for the drawing to follow.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum ShotClass {
+    /// A feature: a point worth a symbol (a formation, a pit, a drip).
+    Feature,
+    /// A ridge: a point on an edge (a ledge, a ridge, a floor step).
+    Ridge,
+    /// The surveyor's own meaning.
+    Generic,
+    /// Marked as a backsight but kept as a splay.
+    Backsight,
+}
+
+impl ShotClass {
+    /// The class stored as text (`feature`, `ridge`, `generic`, `backsight`).
+    pub fn parse(t: &str) -> Option<ShotClass> {
+        match t {
+            "feature" => Some(ShotClass::Feature),
+            "ridge" => Some(ShotClass::Ridge),
+            "generic" => Some(ShotClass::Generic),
+            "backsight" => Some(ShotClass::Backsight),
+            _ => None,
+        }
+    }
+
+    /// The class as stored.
+    pub fn name(self) -> &'static str {
+        match self {
+            ShotClass::Feature => "feature",
+            ShotClass::Ridge => "ridge",
+            ShotClass::Generic => "generic",
+            ShotClass::Backsight => "backsight",
+        }
+    }
 }
 
 /// Passage dimensions measured at a station (metres). `None` means not measured, which is not
@@ -190,6 +231,10 @@ pub fn extract(doc: &Document) -> Extracted {
                     reading,
                     offset: o.v,
                     exclude_from_plot: e.flag(Field::ShotExcludeFromPlot),
+                    sweep: Some(e.text(Field::ShotSweep))
+                        .filter(|t| !t.is_empty())
+                        .map(|t| Id::from_name(&format!("sweep:{t}"))),
+                    class: ShotClass::parse(&e.text(Field::ShotClass)),
                 });
             }
             continue;
@@ -345,6 +390,9 @@ pub fn extract(doc: &Document) -> Extracted {
         take(first_of_trip.get(&Some(*t)).copied(), start_of(*t));
     }
 
+    // A sweep's many splays become its clean ring for everything drawn from them; LRUD it gives fills sides no
+    // tape measured.
+    let splays = crate::sweeps::ring_sweeps(splays, &legs, &mut lruds, &mut first_arrival_lruds);
     Extracted {
         legs,
         fixed,

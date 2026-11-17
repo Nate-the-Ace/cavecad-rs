@@ -164,6 +164,7 @@ fn with_patterns() -> Document {
             },
             Element::Gap { mm: 2.0 },
         ],
+        rows: Vec::new(),
     };
     let fill = FillDef {
         name: "Hatchy".into(),
