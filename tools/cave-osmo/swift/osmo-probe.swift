@@ -105,7 +105,7 @@ final class Probe: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
     let steps: [String]
     init(steps: [String]) {
         self.steps = steps
-        wantX1 = steps.contains { $0.hasPrefix("shoot") || $0.hasPrefix("measure") }
+        wantX1 = steps.contains { $0.hasPrefix("shoot") || $0.hasPrefix("measure") || $0.hasPrefix("ring") }
         super.init(); central = CBCentralManager(delegate: self, queue: nil)
     }
     func startIfReady() {
@@ -188,6 +188,93 @@ final class Probe: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
         while i < b.count { p.writeValue(Data(b[i..<min(i + 20, b.count)]), for: w, type: .withoutResponse); i += 20 }
     }
 
+
+    // MARK: closed-loop LRUD ring (X1 laser out of the clamp's top; FINDINGS.md "Weight, step size and speed")
+    // phi = the laser's angle from straight up, positive toward the gimbal's long roll side (B). The X1's own roll
+    // figure says which side it is on (~270 on B, ~90 on A); its inclination says how far.
+    let RATE = 30.0, SETTLE = 0.3
+    var timeGain = 0.87      // move time per degree asked, learned as it goes (short moves run long: 10° → 11.5°)
+    func phi(_ s: X1Shot) -> Double { (s.roll > 180 ? 1 : -1) * (90 - s.incl) }
+    func wrap(_ d: Double) -> Double { var x = d.truncatingRemainder(dividingBy: 360); if x > 180 { x -= 360 }; if x < -180 { x += 360 }; return x }
+    func pause(_ s: Double) async { try? await Task.sleep(nanoseconds: UInt64(max(0, s) * 1e9)) }
+    func laserOn() { if let p = x1, let w = x1Write { p.writeValue(Data(x1Frame([0x36])), for: w, type: .withoutResponse) } }
+    func turn(yaw: Double = 0, roll: Double = 0, secs: Double) async {
+        let end = Date().addingTimeInterval(secs)
+        while Date() < end {
+            send(rotate(Int((yaw * 10).rounded()), 0, roll: Int((roll * 10).rounded()), mode: 0x80, time: 2))
+            await pause(min(0.1, end.timeIntervalSinceNow))
+        }
+        send(rotate(0, 0, mode: 0x80, time: 1))
+    }
+    func measure() async -> X1Shot? {
+        guard let p = x1, let w = x1Write else { return nil }
+        return await withCheckedContinuation { (c: CheckedContinuation<X1Shot?, Never>) in
+            var done = false
+            onShot = { s in if !done { done = true; c.resume(returning: s) } }
+            p.writeValue(Data(x1Frame([0x38])), for: w, type: .withoutResponse)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 4) { if !done { done = true; self.onShot = nil; c.resume(returning: nil) } }
+        }
+    }
+    /// Laser on, then the move (the X1 warms up meanwhile), settle, measure; one retry if the X1 stays silent.
+    func moveAndShoot(yaw: Double = 0, roll: Double = 0, secs: Double) async -> X1Shot? {
+        laserOn()
+        if secs > 0 { await turn(yaw: yaw, roll: roll, secs: secs) }
+        await pause(SETTLE)
+        if let s = await measure() { return s }
+        print("\(stamp()) no shot, retrying"); laserOn(); await pause(0.3)
+        return await measure()
+    }
+    var ringShots: [(X1Shot, Double)] = []
+    /// Rolls to `target` phi from `from`; returns the shot (and learns the time gain).
+    var snapped = false
+    func rollTo(_ target: Double, from: Double) async -> (X1Shot, Double)? {
+        let asked = target - from
+        guard let s = await moveAndShoot(roll: asked >= 0 ? RATE : -RATE, secs: abs(asked) / RATE * timeGain) else { return nil }
+        let now = phi(s), got = now - from
+        if abs(asked) > 3, got.sign != asked.sign, abs(got) > 15 { snapped = true; print(String(format: "  SNAPPED back to phi %.1f (asked %+.1f): end of this side's reach", now, asked)) }
+        if abs(asked) > 3, abs(got) > 2, asked.sign == got.sign { timeGain = max(0.5, min(1.6, timeGain * (0.5 + 0.5 * asked / got))) }
+        print(String(format: "  phi %6.1f (asked %+5.1f, got %+5.1f, gain %.2f)  %.2f m", now, asked, got, timeGain, s.dist))
+        ringShots.append((s, now))
+        return (s, now)
+    }
+    func ring(step: Double) async {
+        // deepest: with the X1's weight the long side snaps back past about phi 130-140 (laser ~45° below level)
+        let t0 = Date(), deepest = 130.0
+        print("ring: \(step)° steps")
+        // look along the passage: pan -90 (the gimbal was set down with its centre facing a wall)
+        guard let s0 = await moveAndShoot(yaw: -RATE, secs: 3.0) else { print("ring: X1 silent"); return }
+        var at = phi(s0); ringShots.append((s0, at)); print(String(format: "  start phi %.1f  %.2f m", at, s0.dist))
+        // side 1: down the long side
+        var target = (at / step).rounded(.down) * step + step
+        snapped = false
+        while target <= deepest && !snapped { if let r = await rollTo(target, from: at) { at = r.1 }; target += step }
+        guard let level = ringShots.min(by: { abs($0.1 - 90) < abs($1.1 - 90) }) else { return }
+        let az1 = level.0.az
+        // back to level, pan 180, steer the pan by the X1's compass
+        if let r = await rollTo(90, from: at) { at = r.1 }
+        var yawSign = 1.0, err = 0.0
+        if let s = await moveAndShoot(yaw: RATE, secs: 6.0) {
+            at = phi(s); err = wrap(az1 + 180 - s.az); ringShots.append((s, at))
+            print(String(format: "  after pan: azimuth %.1f, want %.1f (off %+.1f)", s.az, wrap(az1 + 180) < 0 ? wrap(az1 + 180) + 360 : wrap(az1 + 180), err))
+        }
+        for _ in 0..<4 where abs(err) > 4 {
+            guard let s = await moveAndShoot(yaw: (err >= 0 ? RATE : -RATE) * yawSign, secs: abs(err) / RATE) else { break }
+            let e2 = wrap(az1 + 180 - s.az); at = phi(s); ringShots.append((s, at))
+            print(String(format: "  pan fix: azimuth %.1f (off %+.1f)", s.az, e2))
+            if abs(e2) > abs(err) { yawSign = -yawSign }
+            err = e2
+        }
+        // side 2: down from level to the deepest, then back up to vertical, shooting both ways
+        target = (at / step).rounded(.down) * step + step
+        snapped = false
+        while target <= deepest && !snapped { if let r = await rollTo(target, from: at) { at = r.1 }; target += step }
+        target = 90 - step
+        while target >= 0 { if let r = await rollTo(target, from: at) { at = r.1 }; target -= step }
+        // home: pan back
+        laserOn(); await turn(yaw: -RATE, secs: 3.0)
+        print(String(format: "ring done: %d shots in %.0f s (%.1f s a shot), pan off by %.1f°, final gain %.2f", ringShots.count, Date().timeIntervalSince(t0), Date().timeIntervalSince(t0) / Double(max(1, ringShots.count)), err, timeGain))
+    }
+
     func run(_ i: Int) {
         guard i < steps.count else {
             print("--- counts: " + counts.sorted { $0.key < $1.key }.map { "\($0.key) ×\($0.value)" }.joined(separator: ", "))
@@ -214,6 +301,8 @@ final class Probe: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
                 else { t.invalidate(); self.send(rotate(0, 0, mode: 0x80, time: 1)); next(0) }
             }
         case "mode": send(message(0x04, 0x4C, [UInt8(n(1, 0)), 0])); next(2)
+        case "ring":  // ring[:<step°>]: closed-loop LRUD ring with the X1 (see ring())
+            Task { @MainActor in await self.ring(step: Double(n(1, 10))); next(0) }
         case "laser":  // laser on now (send before a move: the X1 warms up while the gimbal turns)
             guard let p = x1, let w = x1Write else { print("no X1"); next(0); return }
             p.writeValue(Data(x1Frame([0x36])), for: w, type: .withoutResponse); next(0)

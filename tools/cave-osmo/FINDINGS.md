@@ -120,6 +120,16 @@ The four deepest (−41° to −59°) fit **height ≈ 0.30 m, offset ≈ −0.0
 give 0.31-0.32 m. Too narrow an angle range to pin the offset; check with a tape (surface to roll-motor centre).
 Shallower shots hit other things (desk clutter, wall).
 
+## First closed-loop ring (2026-11-16, `ring:10`, swift probe)
+
+36 shots in 111 s. Steady stretches ran **1.5 s a shot**; the average was 3.1 s because of one X1 retry and the pan.
+- Roll steps steered by the X1's inclination landed 7.5-12.5° for 10° asked (gain learned 0.86-1.11).
+- **The long side snaps back past phi ~130** (laser ~40° below level) with the X1 aboard (the phone reached 162°):
+  a +10° step went −63°. The ring now stops a side when a step snaps back, and plans to phi 130.
+- **The 180° pan failed:** after it the level shot read azimuth 187° against 41° wanted; four corrections flipped
+  between 187° and 217° (the pan is stuck at a stop or fighting the weight). Also the laser's inclination changed
+  during pure pans (phi 66 → 30 → 107), so pan and roll are not independent with the X1 aboard. Unresolved.
+
 ## Still unknown
 
 - Whether the gimbal's motors pull the X1's compass, and whether the X1's weight sits well in the clamp.

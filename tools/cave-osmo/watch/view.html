@@ -8,15 +8,25 @@
   #c { position:fixed; inset:0; width:100%; height:100%; display:block; }
   #hud { position:fixed; left:12px; top:12px; background:var(--panel); padding:10px 12px; border-radius:10px; max-width:calc(100vw - 48px); }
   #hud b { font-size:16px; } .mut { color:var(--mut); } .num { font-variant-numeric:tabular-nums; }
+  .ring { margin-top:10px; padding-top:8px; border-top:1px solid var(--mut); }
+  .ring input { width:100%; max-width:260px; display:block; }
   button { font:inherit; padding:4px 10px; border-radius:6px; border:1px solid var(--mut); background:transparent; color:var(--fg); margin-top:6px; cursor:pointer; }
 </style></head><body>
 <canvas id="c"></canvas>
 <div id="hud"><b>Sweep live</b> <span class="mut">gimbal + X1, home office</span><br>
-  <span class="num" id="count">0 shots</span> · <span class="num mut" id="last">waiting for a shot…</span><br>
+  <span class="num" id="count">0 shots</span> · <span class="num" id="vol">shell —</span> · <span class="num mut" id="last">waiting for a shot…</span><br>
   <span class="mut">drag to orbit · scroll to zoom · grid 1 m · red line = north</span><br>
-  <button id="clear">Clear view</button> <button id="fit">Fit</button></div>
+  <button id="clear">Clear view</button> <button id="fit">Fit</button>
+  <div class="ring">
+    <label>Ring spacing <span class="num" id="stepv">10°</span>
+      <input id="step" type="range" min="2" max="30" step="1" value="10"></label>
+    <div class="num" id="est"></div>
+    <button id="go">Start ring</button> <span class="mut num" id="rs"></span>
+  </div></div>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/math/ConvexHull.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/geometries/ConvexGeometry.js"></script>
 <script>
 // Shots come from ../shots (the probe's --shots log). Each is a splay from the gimbal: distance, azimuth (from
 // north, clockwise), inclination. World: x east, y up, z south (three.js is y-up).
@@ -40,15 +50,39 @@ let since = 0, shown = 0, lastObj = null;
 try { since = +localStorage.getItem('sweep.since') || 0; } catch (_) {}
 const dotMat = new THREE.MeshBasicMaterial({ color: 0x1f8a70 }), newMat = new THREE.MeshBasicMaterial({ color: 0xe8a33d });
 const lineMat = new THREE.LineBasicMaterial({ color: dark ? 0x6fc4ad : 0x5a9e8c });
+// Transparent shell: convex hull of every hit (and the gimbal), rebuilt as points arrive; its volume in the HUD.
+// Convex, so a room with alcoves or bends reads larger than it is.
+const pts = [new THREE.Vector3()];
+const shellMat = new THREE.MeshBasicMaterial({ color: 0x4aa3df, transparent: true, opacity: 0.16, side: THREE.DoubleSide, depthWrite: false });
+const edgeMat = new THREE.LineBasicMaterial({ color: 0x4aa3df, transparent: true, opacity: 0.35 });
+let shell = null, edges = null;
+function rebuildShell() {
+  if (shell) { scene.remove(shell); scene.remove(edges); shell.geometry.dispose(); edges.geometry.dispose(); shell = edges = null; }
+  if (pts.length < 4) return;
+  let g;
+  try { g = new THREE.ConvexGeometry(pts); } catch (_) { return; }
+  const a = g.attributes.position; let v = 0;
+  for (let i = 0; i < a.count; i += 3) {
+    const p0 = new THREE.Vector3().fromBufferAttribute(a, i), p1 = new THREE.Vector3().fromBufferAttribute(a, i + 1), p2 = new THREE.Vector3().fromBufferAttribute(a, i + 2);
+    v += p0.dot(p1.clone().cross(p2)) / 6;
+  }
+  shell = new THREE.Mesh(g, shellMat); edges = new THREE.LineSegments(new THREE.EdgesGeometry(g, 1), edgeMat);
+  scene.add(shell); scene.add(edges);
+  document.getElementById('vol').textContent = `shell ${Math.abs(v).toFixed(2)} m³`;
+}
 function add(s) {
   const p = vec(s);
+  pts.push(p);
   group.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), p]), lineMat));
   if (lastObj) lastObj.material = dotMat;
   const dot = new THREE.Mesh(new THREE.SphereGeometry(0.035), newMat); dot.position.copy(p); group.add(dot); lastObj = dot;
   shown++;
   document.getElementById('count').textContent = shown + (shown === 1 ? ' shot' : ' shots');
   document.getElementById('last').textContent = `last: ${s.d.toFixed(2)} m · az ${s.az.toFixed(1)}° · incl ${s.inc.toFixed(1)}°`;
+  shellDirty = true;
 }
+let shellDirty = false;
+setInterval(() => { if (shellDirty) { shellDirty = false; rebuildShell(); } }, 300);
 let seen = 0;
 async function poll() {
   try {
@@ -62,7 +96,7 @@ async function poll() {
 setInterval(poll, 400); poll();
 document.getElementById('clear').onclick = () => {
   since = Date.now(); try { localStorage.setItem('sweep.since', since); } catch (_) {}
-  group.clear(); lastObj = null; shown = 0;
+  group.clear(); lastObj = null; shown = 0; pts.length = 1; rebuildShell(); document.getElementById('vol').textContent = 'shell —';
   document.getElementById('count').textContent = '0 shots'; document.getElementById('last').textContent = 'waiting for a shot…';
 };
 document.getElementById('fit').onclick = () => {
@@ -70,5 +104,38 @@ document.getElementById('fit').onclick = () => {
   const c = box.getCenter(new THREE.Vector3()), r = box.getSize(new THREE.Vector3()).length();
   controls.target.copy(c); camera.position.copy(c.clone().add(new THREE.Vector3(r * 0.7, r * 0.6, r * 0.9)));
 };
+// Ring estimate: shots = start + every <step>° down one side to −60° (phi 0→150) + level + pan check (+~1 fix) +
+// the other side down to −60° and back up to vertical (60 + 90 = 150° more); time from measured cycle times.
+// Measured 2026-11-16 (ring at 10°): 1.5 s a shot when the X1 is quick, ~3.4 s when slow, 2.0 s on average; the long
+// roll side reaches phi ~130 (laser ~40° below level) with the X1's weight.
+const SHOT_S = 2.0, PAN_S = 3 + 6 + 3, MOVE_DPS = 30;
+function estimate(step) {
+  const shots = 1 + Math.floor(130 / step) + 3 + Math.floor(40 / step) + Math.floor(90 / step) + 1;
+  const moveS = 300 / MOVE_DPS * 0.87;   // total roll travel, partly hidden inside the laser's warm-up
+  return { shots, secs: shots * SHOT_S + PAN_S + moveS * 0.3 };
+}
+const stepEl = document.getElementById('step');
+function showEst() {
+  const st = +stepEl.value, e = estimate(st);
+  document.getElementById('stepv').textContent = st + '°';
+  const m = Math.floor(e.secs / 60), sec = Math.round(e.secs % 60);
+  document.getElementById('est').textContent = `${e.shots} shots · about ${m ? m + ' min ' : ''}${sec} s`;
+  try { localStorage.setItem('sweep.step', st); } catch (_) {}
+}
+try { const v = localStorage.getItem('sweep.step'); if (v) stepEl.value = v; } catch (_) {}
+stepEl.oninput = showEst; showEst();
+document.getElementById('go').onclick = async () => {
+  const r = await fetch('ring?step=' + stepEl.value, { method: 'POST' }).catch(() => null);
+  document.getElementById('rs').textContent = !r ? 'could not start' : r.status === 409 ? 'a ring is already running' : 'starting…';
+};
+setInterval(async () => {
+  try {
+    const st = await (await fetch('ringstatus', { cache: 'no-store' })).json();
+    const go = document.getElementById('go'); go.disabled = st.running;
+    const last = st.lines[st.lines.length - 1] || '';
+    document.getElementById('rs').textContent = st.running ? ('running · ' + last.trim()) : (last.startsWith('ring done') ? last : '');
+  } catch (_) {}
+}, 1000);
+
 (function loop() { controls.update(); renderer.render(scene, camera); requestAnimationFrame(loop); })();
 </script></body></html>
