@@ -82,8 +82,8 @@ ok(solutions({ az: -150, inc: 10 }, home, home).length === 0, 'behind-left low')
     ok(Math.abs(last.yaw) < 0.01 && Math.abs(last.roll) < 0.01, 'every list ends home');
     let at = { yaw: 0, roll: 0 };
     for (const st of l) {
-      // out and back legs stretch up to ~37°; between shots at most 20
-      ok(Math.abs(st.t.yaw - at.yaw) <= 38 && Math.abs(st.t.roll - at.roll) <= 38 && st.t.yaw >= OM7_TARGETS.yaw[0] && st.t.yaw <= OM7_TARGETS.yaw[1], `step ${JSON.stringify(at)} -> ${JSON.stringify(st.t)}`);
+      // out and back legs stretch up to ~40° (the farthest, 200° of yaw, in 5); between shots at most 12
+      ok(Math.abs(st.t.yaw - at.yaw) <= 40 && Math.abs(st.t.roll - at.roll) <= 40 && st.t.yaw >= OM7_TARGETS.yaw[0] && st.t.yaw <= OM7_TARGETS.yaw[1], `step ${JSON.stringify(at)} -> ${JSON.stringify(st.t)}`);
       at = st.t;
     }
   }
@@ -97,7 +97,7 @@ ok(solutions({ az: -150, inc: 10 }, home, home).length === 0, 'behind-left low')
   ok(dl.every((l) => l.length <= LIST_MAX), 'dome lists fit');
   console.log(`  ring 15°: ${p.steps.length} shots in ${lists.length} lists; dome 5°: ${dp.steps.length} shots in ${dl.length} lists, ${dl.flat().length} targets`);
   ok(Date.now() - t0 < 300, `dome 5° plans fast: ${Date.now() - t0} ms`);
-  ok(dp.unreachable.length < domeDirections(5).length / 10, `dome reach: ${dp.unreachable.length} missed`);
+  ok(dp.unreachable.length < domeDirections(5).length / 5, `dome reach: ${dp.unreachable.length} missed`);
 }
 
 if (fails) {

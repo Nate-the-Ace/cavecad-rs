@@ -183,11 +183,13 @@ export interface Target {
   roll: number;
 }
 
-/** What target mode allows: roll −75…+110 (the gimbal caps the − side at ~77°; + tested to 110 = 20° below level);
+/** What target mode allows with the X1 aboard: roll −35…+110 (empty, the gimbal goes to ~−77 on the − side, but that
+ * is the short side, where the X1 hangs out sideways: on the phone a move to −61 overloaded it and it went home;
+ * + tested to 110 = 20° below level);
  * yaw −200…+95 (lopsided like the pan stops: −195 and −184 run, +120 is taken clamped, +176…180 is refused with 0x90;
  * a yaw past +95 is asked for 360° lower); big moves split into steps of at most `maxStep` (each takes ~1 s, so small
- * steps are gentle with the X1's weight). */
-export const OM7_TARGETS = { roll: [-75, 110] as [number, number], yaw: [-200, 95] as [number, number], maxStep: 20 };
+ * steps are gentle with the X1's weight; 20 was too quick on the phone). */
+export const OM7_TARGETS = { roll: [-35, 110] as [number, number], yaw: [-200, 95] as [number, number], maxStep: 12 };
 
 /** The home sag measured on the bench with the X1 aboard (°): used to plan before the gimbal reports its own. */
 export const NOMINAL_SAG = 16;
