@@ -53,6 +53,21 @@ Examples (BLE, as written to the Write characteristic):
 Single-byte commands (length 1): `30` leave calibration, `31` enter calibration, `32` toggle calibration,
 `34` power off, `36` laser on, `37` laser off, `38` laser trigger (take a shot).
 
+Multi-byte, from TopoDroid's driver (not used by CaveCAD): `39 addrLo addrHi d0 d1 d2 d3` writes 4 bytes to memory,
+`3e addrLo addrHi n data…` writes n bytes, `3a`/`3b`/`3c` are firmware read/write and hardware signature (bootloader).
+Never send these by hand.
+
+### Remote shots, measured (tools/cave-x1, x1-timing, 2026-11-17, firmware 1.1.6)
+
+- The laser goes off after every remote shot. `38` with the laser off does nothing (0 of 5).
+- Laser on, then `38` after 0 to 1000 ms: the reading arrives 1.40 to 1.50 s after the laser on, whatever the delay
+  (30 of 30). The X1 waits internally; triggering sooner gains nothing.
+- Laser on and settled (1.5 s), then `38`: usually 0.36 to 0.39 s, sometimes 2.2 s, once no answer (of 5).
+- A laser on sent 50 or 150 ms after `38` (while it measures) loses the next shot (8 of 8); at 300 ms it works, no gain.
+- So three remote shots (a leg) take about 3.3 s at best (5 of 5 legs, all flagged LEG by the X1).
+- Probed for a remote scan start (laser off, 5 s listening): `35` and `3f` do nothing. `39` was also sent alone by
+  mistake (it is TopoDroid's memory write); the X1 answered nothing and measured normally afterwards.
+
 ## Memory map (read with `3d addrLo addrHi n`; reply is `3d addrLo addrHi n data...`)
 
 | Address | What | Bytes |

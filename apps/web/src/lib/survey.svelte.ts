@@ -358,12 +358,13 @@ export type ShotKind = 'single' | 'leg';
 const LEG_SHOTS = 3;
 /** Pause between the shots of a burst, and how long one may take to come back before the burst gives up. */
 const BURST_GAP_MS = 0;
-/** Before each later shot of a burst the laser is turned on again (the X1 turns it off after a shot, and a trigger with
- *  the laser off only lights it, as a first press of DIST does): this long to settle on the target first. TopoDroid
- *  does the same, laser on then measure, for every shot it fires. */
+/** Before each later shot of a burst the laser is turned on again: the X1 turns it off after every remote shot, and a
+ *  trigger with the laser off does nothing (measured with tools/cave-x1, 2026-11-17). From laser on, the reading takes the
+ *  X1 about 1.45 s however soon the trigger follows, so this wait costs nothing; a laser on sent while the last shot is
+ *  still measuring breaks the next one, so it waits for the reading. TopoDroid also fires laser on, then measure. */
 const BURST_LASER_MS = 250;
 /** A burst shot not back after this long is fired once more (laser on, then the trigger) before the burst gives up. */
-const BURST_RETRY_MS = 2000;
+const BURST_RETRY_MS = 3000; // the X1 takes up to 1.5 s from laser on, sometimes 2.2 s (measured): 2 s fired a second shot early
 let burstRetry: ReturnType<typeof setTimeout> | undefined;
 const BURST_WAIT_MS = 5000;
 let burstTimer: ReturnType<typeof setTimeout> | undefined;
