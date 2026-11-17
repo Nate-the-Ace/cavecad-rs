@@ -246,7 +246,7 @@ async function playTargets(lists: ProgramStep[][], onArrive: (st: ProgramStep) =
       await gimbal.targetsLeave();
       await pause(400);
       await gimbal.targetsEnter(true);
-      await pause(1500);
+      await pause(2500);
       const id = (listId = ((listId + 1) & 0x7f) | 0x30);
       if (list[0].shot !== undefined) laser(true);
       await gimbal.targetsUpload(list.map((st) => st.t), id);
@@ -257,10 +257,22 @@ async function playTargets(lists: ProgramStep[][], onArrive: (st: ProgramStep) =
           if (list[k].shot !== undefined) laser(true);
           await gimbal.targetsGo(k);
         }
-        const r = await gimbal.targetsArrived(k, id, 5000);
+        let r = await gimbal.targetsArrived(k, id, 5000);
+        if (r === 'timeout') {
+          // seen once on the phone: the first target of a fresh list sat "moving"; asking again got it there
+          await gimbal.targetsGo(k);
+          r = await gimbal.targetsArrived(k, id, 5000);
+        }
         dlog(`gimbal list ${li + 1}/${lists.length} target ${k + 1}/${list.length} yaw ${list[k].t.yaw.toFixed(1)} roll ${list[k].t.roll.toFixed(1)}: ${r} (status ${JSON.stringify(gimbal.targets)})`);
         if (r !== 'arrived') break;
-        await onArrive(list[k]);
+        // target mode ends by itself after ~9 s without a command: while the shot is taken, ask for this target again
+        // every 3 s (it is already there: no move)
+        const hold = setInterval(() => void gimbal.targetsGo(k), 3000);
+        try {
+          await onArrive(list[k]);
+        } finally {
+          clearInterval(hold);
+        }
       }
       if (k === list.length) break;
       if (attempt >= 1) throw new Error('The gimbal keeps dropping its targets (too much weight? let it settle and try again)');
@@ -423,6 +435,7 @@ async function startScan(kind: 'ring' | 'dome') {
     dome.sag = home.sag;
     // the program for this sag: worked out before (cached) unless the sag is new
     const prog = program(kind, dome.level, home.sag);
+    let missedInARow = 0;
     dome.missed = prog.missed;
     dome.total = prog.shots;
     await playTargets(prog.lists, async (st) => {
@@ -432,7 +445,12 @@ async function startScan(kind: 'ring' | 'dome') {
       dome.phase = `${kind === 'dome' ? 'Dome' : 'Ring'} ${st.shot + 1}/${prog.shots}`;
       await pause(SETTLE_S * 1000);
       const t = performance.now();
-      if (await shoot()) {
+      if (!(await shoot())) {
+        missedInARow++;
+        dlog(`gimbal scan: no shot came back (${missedInARow} in a row)`);
+        if (missedInARow >= 2) throw new Error("The X1 isn't answering (no shot came back twice): wake it, check it is connected, then start again");
+      } else {
+        missedInARow = 0;
         dome.done++;
         dome.taken = [...dome.taken, dirKey(planned)];
         const r = await gimbal.freshAttitude(t, 1500);
