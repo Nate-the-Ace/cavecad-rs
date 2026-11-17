@@ -79,6 +79,5 @@ down.
 - Whether the gimbal's motors pull the X1's compass, and whether the X1's weight sits well in the clamp.
 - Why angle commands are ignored: maybe a mode the Mimo app sets first, or a different command on the OM7 (sniff
   Mimo's traffic with an nRF sniffer to find out).
-- Angle limits (pitch up/down reach for an LRUD ring) and how close a commanded angle lands.
 - Any way to read its angles (try `04/02` with other attributes, the `15f1e6…` service, the `fff3` channel).
 - What 0x27 `04/57` wants as a reply.
