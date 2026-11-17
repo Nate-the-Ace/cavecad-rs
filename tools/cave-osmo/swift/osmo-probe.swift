@@ -105,7 +105,7 @@ final class Probe: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
     let steps: [String]
     init(steps: [String]) {
         self.steps = steps
-        wantX1 = steps.contains { $0.hasPrefix("shoot") }
+        wantX1 = steps.contains { $0.hasPrefix("shoot") || $0.hasPrefix("measure") }
         super.init(); central = CBCentralManager(delegate: self, queue: nil)
     }
     func startIfReady() {
@@ -211,9 +211,18 @@ final class Probe: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
             print("sent \(hex(rotate(n(1, 0), n(2, 0), roll: n(4, 0), mode: 0x80, time: 2))) every 100 ms")
             Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { t in
                 if Date() < end { self.send(rotate(n(1, 0), n(2, 0), roll: n(4, 0), mode: 0x80, time: 2)) }
-                else { t.invalidate(); self.send(rotate(0, 0, mode: 0x80, time: 1)); next(2) }
+                else { t.invalidate(); self.send(rotate(0, 0, mode: 0x80, time: 1)); next(0) }
             }
         case "mode": send(message(0x04, 0x4C, [UInt8(n(1, 0)), 0])); next(2)
+        case "laser":  // laser on now (send before a move: the X1 warms up while the gimbal turns)
+            guard let p = x1, let w = x1Write else { print("no X1"); next(0); return }
+            p.writeValue(Data(x1Frame([0x36])), for: w, type: .withoutResponse); next(0)
+        case "measure":  // measure with the laser already on; wait for the shot
+            guard let p = x1, let w = x1Write else { print("no X1"); next(0); return }
+            var done = false
+            onShot = { _ in if !done { done = true; next(0) } }
+            p.writeValue(Data(x1Frame([0x38])), for: w, type: .withoutResponse)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 4) { if !done { done = true; self.onShot = nil; print("\(stamp()) X1 no shot"); next(0) } }
         case "shoot":  // laser on + measure, wait for the shot (X1 FINDINGS: ~1.45 s, give up at 4 s)
             guard let p = x1, let w = x1Write else { print("no X1"); next(0); return }
             var done = false

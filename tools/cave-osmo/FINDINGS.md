@@ -92,6 +92,34 @@ X1 rubber-banded in the clamp, laser out of the top; `osmo-plan -- ring 30 0 fli
   Fix: check the pan with a level shot's azimuth (X1 compass) and keep turning until it is 180° from side one.
 - Laser near vertical: the X1's azimuth swings wildly (334°, 280°, 232°) and means nothing there.
 
+## Weight, step size and speed with the X1 (2026-11-16, X1 inclination as truth)
+
+| Move | Asked | Got |
+|---|---|---|
+| 15°/s × 2 s | 30° | 29.9°, 27.7° |
+| 30°/s × 1 s | 30° | 27.7°, 25.5°, 26.7° |
+| 30°/s × 3 s / × 2 s | 90° / 60° | 86.6° / 57.3° |
+| 60°/s × 0.5 s | 30° | 23.7°, 22.5° |
+| 30°/s × 0.45 s ("10°"), settle 0.5 s, ×8 | — | 11.4-11.7° every step (±0.2°) |
+| same, settle 0.2 s, ×8 | — | 10.6-12.3° |
+| 30°/s × 0.23 s ("5°"), settle 0.3 s, ×11 | — | 5-8°, mostly ~6° |
+| holding still 5 s | 0° | 0.0° (no sag) |
+
+- Longer moves lose ~0.1 s of their start (fast short moves lose most: 60°/s loses ~7°). Short moves at 30°/s run
+  slightly LONG (10° → 11.5°). Steps are very repeatable, so a fixed table of move times per step size works, with the
+  X1's inclination as the check.
+- The weight does not make it sag once still. Rolling the short way past ~40° from vertical snaps back (seen again).
+- **Overlap the laser with the move:** send laser on (`36`) as the move starts, measure (`38`) once settled. Shots
+  then come every **1.46 s** (the X1's own laser-on-to-reading time is the floor); about half the time the X1 takes
+  ~3.4 s instead (its known slow reading). The probe's old fixed 2 s pause after every move is gone.
+
+## Height of the pivot (2026-11-16, floor sweep)
+
+Shots straight down hit the surface the gimbal stands on: for each, (distance + offset) × sin(angle down) = height.
+The four deepest (−41° to −59°) fit **height ≈ 0.30 m, offset ≈ −0.02 m** (residuals ≤ 5 mm); with offset 0 they
+give 0.31-0.32 m. Too narrow an angle range to pin the offset; check with a tape (surface to roll-motor centre).
+Shallower shots hit other things (desk clutter, wall).
+
 ## Still unknown
 
 - Whether the gimbal's motors pull the X1's compass, and whether the X1's weight sits well in the clamp.

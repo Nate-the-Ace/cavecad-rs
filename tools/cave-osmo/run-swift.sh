@@ -5,7 +5,11 @@ set -e
 cd "$(dirname "$0")"
 app=target/osmo-probe-swift.app
 mkdir -p "$app/Contents/MacOS"
-swiftc -O swift/osmo-probe.swift -o "$app/Contents/MacOS/osmo-probe-swift"
+# rebuild only when the source changed: every rebuild is a new binary, and macOS asks for Bluetooth again
+if [ ! -x "$app/Contents/MacOS/osmo-probe-swift" ] || [ swift/osmo-probe.swift -nt "$app/Contents/MacOS/osmo-probe-swift" ]; then
+  swiftc -O swift/osmo-probe.swift -o "$app/Contents/MacOS/osmo-probe-swift"
+  rebuilt=1
+fi
 cat > "$app/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -18,7 +22,12 @@ cat > "$app/Contents/Info.plist" <<PLIST
   <key>NSBluetoothAlwaysUsageDescription</key><string>Talks to a DJI Osmo Mobile gimbal to turn it.</string>
 </dict></plist>
 PLIST
-codesign --force --sign - "$app" 2>/dev/null
+# a stable identity (Apple Development, if there is one) so macOS remembers the Bluetooth permission across rebuilds;
+# otherwise ad hoc, which macOS treats as a new app after each rebuild
+if [ -n "$rebuilt" ]; then
+  id=$(security find-identity -v -p codesigning 2>/dev/null | sed -n 's/.*"\(Apple Development[^"]*\)".*/\1/p' | head -1)
+  codesign --force --sign "${id:--}" --identifier app.cavecad.tools.osmo-probe-swift "$app" 2>/dev/null || codesign --force --sign - "$app"
+fi
 out=$(mktemp -t osmo-probe-swift)
 open -W --stdout "$out" --stderr "$out" "$app" --args "$@"
 cat "$out"
