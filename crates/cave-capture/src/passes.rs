@@ -3,6 +3,7 @@
 
 use crate::bundle::{BundleError, CardSeen, Keyframe, Shot};
 use serde::{Deserialize, Serialize};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 /// One scanning pass of a shot.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -203,4 +204,116 @@ pub fn add_pass(old: &Shot, p: NewPass) -> Result<Shot, BundleError> {
         cards,
     });
     Ok(out)
+}
+
+/// A scan made light for drawing over a live view: a simplified mesh and its hole outlines.
+#[derive(Clone, Debug, PartialEq, Default)]
+pub struct Ghost {
+    /// Vertex positions, xyz per vertex.
+    pub positions: Vec<f32>,
+    /// Triangle indices, three per triangle.
+    pub indices: Vec<u32>,
+    /// Open edges of the simplified mesh joined into polylines (a closed loop repeats its first
+    /// point at the end); each at least `min_outline_m` long.
+    pub outlines: Vec<Vec<[f32; 3]>>,
+}
+
+/// Simplifies a mesh by vertex clustering on a `cell_m` grid (each cell's vertices become their
+/// mean; triangles that collapse or repeat are dropped), then outlines its holes: edges used by one
+/// triangle only, chained, dropping chains shorter than `min_outline_m`. Clustering also welds the
+/// seams between ARKit's mesh anchors, so only real gaps and the scan's edge are outlined.
+/// Deterministic: outlines come out in the same order every run.
+pub fn ghost(positions: &[f32], indices: &[u32], cell_m: f32, min_outline_m: f32) -> Ghost {
+    let n = positions.len() / 3;
+    if cell_m <= 0.0 || n == 0 {
+        return Ghost::default();
+    }
+    // Lookup only; ids are assigned in vertex order so the map's order never reaches the output.
+    let mut cell_of: HashMap<(i32, i32, i32), u32> = HashMap::new();
+    let mut sums: Vec<([f64; 3], u32)> = Vec::new();
+    let mut map = vec![0u32; n];
+    for (v, p) in positions.as_chunks::<3>().0.iter().enumerate() {
+        let key = (
+            (p[0] / cell_m).floor() as i32,
+            (p[1] / cell_m).floor() as i32,
+            (p[2] / cell_m).floor() as i32,
+        );
+        let id = *cell_of.entry(key).or_insert_with(|| {
+            sums.push(([0.0; 3], 0));
+            (sums.len() - 1) as u32
+        });
+        let s = &mut sums[id as usize];
+        for (acc, x) in s.0.iter_mut().zip(p) {
+            *acc += *x as f64;
+        }
+        s.1 += 1;
+        map[v] = id;
+    }
+    let mut out = Ghost::default();
+    for (s, c) in &sums {
+        out.positions
+            .extend(s.iter().map(|x| (*x / *c as f64) as f32));
+    }
+    let mut seen = HashSet::new();
+    for t in indices.as_chunks::<3>().0 {
+        if t.iter().any(|&i| i as usize >= n) {
+            continue;
+        }
+        let (a, b, c) = (map[t[0] as usize], map[t[1] as usize], map[t[2] as usize]);
+        if a == b || b == c || a == c {
+            continue;
+        }
+        let mut key = [a, b, c];
+        key.sort_unstable();
+        if !seen.insert(key) {
+            continue;
+        }
+        out.indices.extend([a, b, c]);
+    }
+    // Open edges: used by exactly one triangle.
+    let mut uses: BTreeMap<(u32, u32), u32> = BTreeMap::new();
+    for t in out.indices.as_chunks::<3>().0 {
+        for (a, b) in [(t[0], t[1]), (t[1], t[2]), (t[2], t[0])] {
+            *uses.entry((a.min(b), a.max(b))).or_insert(0) += 1;
+        }
+    }
+    let mut next: BTreeMap<u32, Vec<u32>> = BTreeMap::new();
+    for (&(a, b), &u) in &uses {
+        if u == 1 {
+            next.entry(a).or_default().push(b);
+            next.entry(b).or_default().push(a);
+        }
+    }
+    let at = |v: u32| {
+        let i = v as usize * 3;
+        [out.positions[i], out.positions[i + 1], out.positions[i + 2]]
+    };
+    let dist = |a: [f32; 3], b: [f32; 3]| {
+        ((a[0] - b[0]).powi(2) + (a[1] - b[1]).powi(2) + (a[2] - b[2]).powi(2)).sqrt()
+    };
+    let mut outlines = Vec::new();
+    while let Some((&start, _)) = next.iter().find(|(_, v)| !v.is_empty()) {
+        let mut line = vec![at(start)];
+        let mut len = 0.0f32;
+        let mut cur = start;
+        while let Some(nb) = next.get_mut(&cur).and_then(|v| v.pop()) {
+            if let Some(back) = next.get_mut(&nb)
+                && let Some(k) = back.iter().position(|&x| x == cur)
+            {
+                back.swap_remove(k);
+            }
+            let p = at(nb);
+            len += dist(*line.last().unwrap(), p);
+            line.push(p);
+            cur = nb;
+            if cur == start {
+                break;
+            }
+        }
+        if len >= min_outline_m {
+            outlines.push(line);
+        }
+    }
+    out.outlines = outlines;
+    out
 }

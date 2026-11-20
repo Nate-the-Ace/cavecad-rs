@@ -200,3 +200,105 @@ fn duplicate_new_card_ids_keep_the_last() {
     assert_eq!(c26[0].point[0], 2.0);
     assert_eq!(out.header.passes[1].cards.len(), 1);
 }
+
+use cave_capture::ghost;
+
+/// A flat sheet in x/z at y = 0, `n` x `n` cells of `step` m, skipping cells whose centre falls in
+/// the square hole `[h0, h1)` on both axes. Starts at `x0`.
+fn sheet(n: usize, step: f32, x0: f32, hole: Option<(f32, f32)>) -> (Vec<f32>, Vec<u32>) {
+    let mut pos = Vec::new();
+    for j in 0..=n {
+        for i in 0..=n {
+            pos.extend([x0 + i as f32 * step, 0.0, j as f32 * step]);
+        }
+    }
+    let mut idx = Vec::new();
+    let w = (n + 1) as u32;
+    for j in 0..n {
+        for i in 0..n {
+            let (cx, cz) = (x0 + (i as f32 + 0.5) * step, (j as f32 + 0.5) * step);
+            if let Some((a, b)) = hole
+                && cx >= a
+                && cx < b
+                && cz >= a
+                && cz < b
+            {
+                continue;
+            }
+            let v = j as u32 * w + i as u32;
+            idx.extend([v, v + w, v + 1, v + 1, v + w, v + w + 1]);
+        }
+    }
+    (pos, idx)
+}
+
+fn length(o: &[[f32; 3]]) -> f32 {
+    o.windows(2)
+        .map(|w| {
+            ((w[1][0] - w[0][0]).powi(2)
+                + (w[1][1] - w[0][1]).powi(2)
+                + (w[1][2] - w[0][2]).powi(2))
+            .sqrt()
+        })
+        .sum()
+}
+
+#[test]
+fn ghost_outlines_the_hole_and_the_edge() {
+    let (p, i) = sheet(100, 0.01, 0.0, Some((0.35, 0.65)));
+    let g = ghost(&p, &i, 0.05, 0.15);
+    assert!(
+        g.indices.len() / 3 <= 2 * 21 * 21,
+        "{} triangles",
+        g.indices.len() / 3
+    );
+    let mut lens: Vec<f32> = g.outlines.iter().map(|o| length(o)).collect();
+    lens.sort_by(f32::total_cmp);
+    println!("outline lengths: {lens:?}");
+    assert_eq!(lens.len(), 2, "{lens:?}");
+    assert!(
+        (lens[0] - 1.2).abs() < 0.2 && (lens[1] - 4.0).abs() < 0.15,
+        "{lens:?}"
+    );
+}
+
+#[test]
+fn ghost_welds_anchor_seams() {
+    let (mut p, mut i) = sheet(50, 0.01, 0.0, None);
+    let (p2, i2) = sheet(50, 0.01, 0.5, None);
+    let base = (p.len() / 3) as u32;
+    p.extend(p2);
+    i.extend(i2.iter().map(|v| v + base));
+    let g = ghost(&p, &i, 0.05, 0.15);
+    assert_eq!(g.outlines.len(), 1);
+    assert!((length(&g.outlines[0]) - 3.0).abs() < 0.15);
+}
+
+#[test]
+fn closed_box_has_no_outline() {
+    let p: Vec<f32> = [
+        [0., 0., 0.],
+        [1., 0., 0.],
+        [1., 1., 0.],
+        [0., 1., 0.],
+        [0., 0., 1.],
+        [1., 0., 1.],
+        [1., 1., 1.],
+        [0., 1., 1.],
+    ]
+    .iter()
+    .flatten()
+    .copied()
+    .collect();
+    let i = vec![
+        0, 2, 1, 0, 3, 2, 4, 5, 6, 4, 6, 7, 0, 1, 5, 0, 5, 4, 3, 7, 6, 3, 6, 2, 0, 4, 7, 0, 7, 3,
+        1, 2, 6, 1, 6, 5,
+    ];
+    assert!(ghost(&p, &i, 0.05, 0.15).outlines.is_empty());
+}
+
+#[test]
+fn ghost_is_deterministic() {
+    let (p, i) = sheet(100, 0.01, 0.0, Some((0.35, 0.65)));
+    assert_eq!(ghost(&p, &i, 0.05, 0.15), ghost(&p, &i, 0.05, 0.15));
+}
