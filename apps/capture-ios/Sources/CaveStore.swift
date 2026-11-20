@@ -88,6 +88,7 @@ final class CaveStore: ObservableObject {
         } catch {
             offline = true
             caves = kept().map { CaveInfo(id: $0.id, name: $0.name) }
+            Log.write("caves", "offline (\((error as? URLError)?.code.rawValue ?? 0)): listing \(caves.count) kept cave(s)")
         }
     }
 

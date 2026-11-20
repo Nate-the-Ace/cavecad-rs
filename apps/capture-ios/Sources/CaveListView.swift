@@ -34,7 +34,7 @@ struct CaveListView: View {
     /// A cave not kept yet is downloaded first.
     private func open(_ cave: CaveInfo) {
         store.problem = nil
-        if store.keptIds.contains(cave.id), let k = store.load(cave.id) { opened = k; return }
+        if store.keptIds.contains(cave.id), let k = store.load(cave.id) { Log.write("caves", "opened kept copy (\(k.entries.count) entries)"); opened = k; return }
         Task {
             busy = cave.id
             defer { busy = nil }
