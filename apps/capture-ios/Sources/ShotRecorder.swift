@@ -67,8 +67,30 @@ final class ShotRecorder: NSObject, ObservableObject, ARSessionDelegate {
     static func readyMessage(resume: Bool) -> String {
         "Put the CURRENT card on this station (or stand the gimbal on it), FORWARD and REAR on the next and previous ones, then press \(resume ? "Resume" : "Start")."
     }
-    static let capturingMessage = "Capturing. Walk or turn slowly and look at each card; Pause to save."
-    static let savedMessage = "Saved. Resume to fill gaps."
+    static let capturingMessage = "Capturing. Walk or turn slowly and look at each card. Pause to save; Stop to finish."
+    static let savedMessage = "Saved. Resume to fill gaps; Stop to finish."
+
+    /// A button on the capture screen.
+    enum Control: Equatable, Sendable { case start, resume, pause, stop, viewShot }
+
+    /// The buttons for a phase, in screen order: Start or Resume when ready (Resume when there is a shot to add
+    /// to); Pause and Stop while capturing; View shot, Resume and Stop while paused; Resume after a failed save.
+    nonisolated static func controls(_ phase: Phase, hasParent: Bool) -> [Control] {
+        switch phase {
+        case .ready: [hasParent ? .resume : .start]
+        case .capturing: [.pause, .stop]
+        case .saving: []
+        case .saved: [.viewShot, .resume, .stop]
+        case .failed: [.resume]
+        }
+    }
+
+    /// ARKit's live mesh is drawn only while capturing; paused, the scan shows as its ghost instead (ARKit keeps
+    /// tracking and reconstructing underneath, unseen).
+    nonisolated static func showsLiveMesh(_ phase: Phase) -> Bool {
+        if case .capturing = phase { return true }
+        return false
+    }
     static let separateMessage = "Saved as a separate scan: it couldn't be lined up with the earlier one."
     /// Seconds between compass lines in the log while capturing (drift shows there).
     static let compassLogEvery: TimeInterval = 5
@@ -107,6 +129,12 @@ final class ShotRecorder: NSObject, ObservableObject, ARSessionDelegate {
     private var parentData: Data?
     /// Bumped per ghost load and whenever the loaded one is dropped, so a late load is not used.
     private var ghostLoad = 0
+    /// The file a ghost load is running for (nil: none running), so Resume does not start a second one.
+    private var ghostLoading: URL?
+    /// The saved shot to open in the viewer after Stop (drives the capture screen's navigation).
+    @Published var viewing: URL?
+    /// The pass being saved was ended with Stop: once saved, the scan ends and the viewer opens.
+    private var stopAfterSave = false
     /// Cards already warned about as moved this pass.
     private var warnedCards: Set<StationCard> = []
     /// The settled cards (id: position) the last check or line-up ran with; it runs again only when they change.
@@ -343,7 +371,9 @@ final class ShotRecorder: NSObject, ObservableObject, ARSessionDelegate {
         } else if parent != sessionShot {
             dropFrame("the station's shot changed")
         }
-        dropGhost()
+        // Back from viewing the shot in the same session: the paused scan's ghost stays; otherwise it goes.
+        if !(sameScreen && resumeNext && parent != nil && parent == sessionShot) { dropGhost() }
+        if !sameScreen { viewing = nil; stopAfterSave = false }
         if case .saving = phase {
             // the save lands (or is let go) when it finishes
         } else if !sameScreen {
@@ -471,7 +501,8 @@ final class ShotRecorder: NSObject, ObservableObject, ARSessionDelegate {
         Log.write("compass", "at start: \(compass.latest.logLine) (aligned with \(compassAtAlignment.logLine))")
         phase = .capturing
         UIApplication.shared.isIdleTimerDisabled = true
-        if let p = parent, parentData == nil { loadGhost(p) }
+        // After a Pause the saved file's ghost is loaded (or loading) already: it is this pass's parent.
+        if let p = parent, parentData == nil, ghostLoading != p { loadGhost(p) }
         // An unsure compass does not stop the shot, but it must be seen.
         let going = parent != nil && sessionToShot == nil
             ? Self.lookForGhostMessage
@@ -479,10 +510,12 @@ final class ShotRecorder: NSObject, ObservableObject, ARSessionDelegate {
         message = compassAtAlignment.warning.map { "\($0) \(going)" } ?? going
     }
 
-    /// Reads the parent and builds its ghost off the main actor (once per pass; the file changes with each save).
+    /// Reads the parent and builds its ghost off the main actor (once per saved file: after each save, and at a
+    /// pass's start when none is loaded).
     private func loadGhost(_ p: URL) {
         ghostLoad += 1
         let n = ghostLoad
+        ghostLoading = p
         Task {
             let t0 = Date()
             let (data, g, coarse) = await Task.detached { () -> (Data?, Core.GhostMesh?, Bool) in
@@ -499,6 +532,7 @@ final class ShotRecorder: NSObject, ObservableObject, ARSessionDelegate {
                 return (d, g, coarse)
             }.value
             guard n == ghostLoad, p == parent else { return }
+            ghostLoading = nil
             parentData = data
             ghost = g
             ghostKey += 1
@@ -515,6 +549,7 @@ final class ShotRecorder: NSObject, ObservableObject, ARSessionDelegate {
     /// Forgets the loaded parent and its ghost (the file changed, or another parent): the next pass reloads.
     private func dropGhost() {
         ghostLoad += 1
+        ghostLoading = nil
         parentData = nil
         if ghost != nil { ghost = nil; ghostKey += 1 }
     }
@@ -804,7 +839,9 @@ final class ShotRecorder: NSObject, ObservableObject, ARSessionDelegate {
         }
     }
 
-    func stop(cave: KeptCave, over: Station) {
+    /// Pause: saves the pass (into the station's shot, or as a new or separate one); tracking keeps running for
+    /// Resume.
+    func pause(cave: KeptCave, over: Station) {
         guard case .capturing = phase else { return }
         // Never refused for want of a line-up: a pass the cards did not line up becomes a separate shot.
         let mode = Self.saveMode(hasParent: parent != nil, sessionToShot: sessionToShot)
@@ -859,20 +896,61 @@ final class ShotRecorder: NSObject, ObservableObject, ARSessionDelegate {
                 if mode == .newShot || separate, epoch == trackingEpoch { sessionToShot = Self.identity }
                 if epoch == trackingEpoch, sessionToShot != nil { sessionShot = url }
                 Log.write("shot", separate ? "saved as a separate shot (no line-up)" : "saved pass \(max(passes, 1))")
+                let thenEnd = stopAfterSave
+                stopAfterSave = false
                 guard screen == preparedStation else {
                     phase = .ready; message = readyText
                     return
                 }
                 parent = url
                 parentMade = separate ? Date() : (parentMade ?? Date())
-                // The file changed: the next pass loads its new ghost.
+                // The file changed: its new ghost replaces the old one.
                 dropGhost()
+                if thenEnd { end(); viewing = url; return }
+                // Shown while paused (ARKit's live mesh is hidden then) and kept as the next pass's parent.
+                loadGhost(url)
                 phase = .saved(url); message = separate ? Self.separateMessage : Self.savedMessage
             case .failure(let m):
+                stopAfterSave = false
                 guard screen == preparedStation else { phase = .ready; message = readyText; return }
                 phase = .failed(m.message); message = m.message
             }
         }
+    }
+
+    /// Stop: capturing, saves the pass exactly as Pause does and then ends; paused, ends at once. Ending opens the
+    /// saved shot in the viewer (`viewing`). A pass with no mesh yet is refused as Pause refuses it.
+    func finish(cave: KeptCave, over: Station) {
+        switch phase {
+        case .capturing:
+            stopAfterSave = true
+            pause(cave: cave, over: over)
+            // refused (no mesh yet): still capturing
+            if case .capturing = phase { stopAfterSave = false }
+        case .saved(let url):
+            end()
+            viewing = url
+        default:
+            break
+        }
+    }
+
+    /// Ends the scan at this station: ARKit pauses and the line-up with the shot is forgotten (the next visit
+    /// starts tracking afresh), the ghost and the pass are dropped, and the screen is ready again.
+    private func end() {
+        Log.write("shot", "stopped, opening the viewer")
+        runSerial += 1
+        findingNorth = false
+        session.pause()
+        compass.stop()
+        UIApplication.shared.isIdleTimerDisabled = false
+        sessionStation = nil
+        resumeNext = false
+        dropFrame("stopped")
+        dropGhost()
+        clearPass()
+        phase = .ready
+        message = readyText
     }
 
     /// Ready for another pass at the same station, in the same ARKit session (tracking and the line-up with the

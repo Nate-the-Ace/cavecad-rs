@@ -178,6 +178,20 @@ final class ShotRecorderTests: XCTestCase {
         XCTAssertEqual(ShotRecorder.saveMode(hasParent: true, sessionToShot: fit), .cards(fit))
     }
 
+    /// Start/Resume when ready; Pause and Stop while capturing; Resume and Stop while paused. ARKit's live mesh
+    /// shows only while capturing (paused, the scan shows as its ghost).
+    func testButtonsAndLiveMeshPerPhase() {
+        let u = URL(fileURLWithPath: "/tmp/x.cvcap")
+        XCTAssertEqual(ShotRecorder.controls(.ready, hasParent: false), [.start])
+        XCTAssertEqual(ShotRecorder.controls(.ready, hasParent: true), [.resume])
+        XCTAssertEqual(ShotRecorder.controls(.capturing, hasParent: true), [.pause, .stop])
+        XCTAssertEqual(ShotRecorder.controls(.saving, hasParent: true), [])
+        XCTAssertEqual(ShotRecorder.controls(.saved(u), hasParent: true), [.viewShot, .resume, .stop])
+        XCTAssertEqual(ShotRecorder.controls(.failed("x"), hasParent: true), [.resume])
+        XCTAssertTrue(ShotRecorder.showsLiveMesh(.capturing))
+        for p: ShotRecorder.Phase in [.ready, .saving, .saved(u), .failed("x")] { XCTAssertFalse(ShotRecorder.showsLiveMesh(p)) }
+    }
+
     func testParentShotAndSafeReplace() throws {
         let cave = "test-cave-parent"
         defer { try? FileManager.default.removeItem(at: ShotFiles.folder(cave: cave)) }

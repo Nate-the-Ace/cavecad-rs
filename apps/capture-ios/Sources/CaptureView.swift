@@ -17,6 +17,8 @@ struct ARMeshView: UIViewRepresentable {
     var ghost: Core.GhostMesh?
     var ghostKey = 0
     var ghostTransform: simd_float4x4?
+    /// ARKit's live, still-growing mesh is drawn (only while capturing; ARKit keeps reconstructing either way).
+    var liveMesh = true
 
     /// Which ghost the view built, so it is built once and afterwards only moved.
     final class Coordinator { var builtGhost: Int? }
@@ -25,10 +27,13 @@ struct ARMeshView: UIViewRepresentable {
     func makeUIView(context: Context) -> ARView {
         let v = ARView(frame: .zero, cameraMode: .ar, automaticallyConfigureSession: false)
         v.session = session
-        v.debugOptions.insert(.showSceneUnderstanding)
+        if liveMesh { v.debugOptions.insert(.showSceneUnderstanding) }
         return v
     }
     func updateUIView(_ uiView: ARView, context: Context) {
+        if liveMesh != uiView.debugOptions.contains(.showSceneUnderstanding) {
+            if liveMesh { uiView.debugOptions.insert(.showSceneUnderstanding) } else { uiView.debugOptions.remove(.showSceneUnderstanding) }
+        }
         updateGhost(uiView, context.coordinator)
         let existing = uiView.scene.anchors.filter { $0.name.hasPrefix("card-") }
         let wanted = Set(markers.map { "card-\($0.card.rawValue)" })
@@ -92,7 +97,7 @@ struct CaptureView: View {
     var body: some View {
         ZStack {
             if ShotRecorder.hasLiDAR { ARMeshView(session: rec.session, markers: rec.cardMarkers, ghost: rec.ghost, ghostKey: rec.ghostKey,
-                           ghostTransform: rec.ghostTransform).ignoresSafeArea() }
+                           ghostTransform: rec.ghostTransform, liveMesh: ShotRecorder.showsLiveMesh(rec.phase)).ignoresSafeArea() }
             VStack {
                 Text("Over \(over.label)").padding(8).background(.thinMaterial, in: .capsule)
                 if let d = rec.parentMade {
@@ -103,25 +108,39 @@ struct CaptureView: View {
                 Text(rec.message).padding(8).background(.thinMaterial, in: .rect(cornerRadius: 8))
                 HStack(spacing: 16) {
                     switch rec.phase {
-                    case .ready:
-                        Button(rec.parent == nil ? "Start" : "Resume") { rec.start() }
-                            .buttonStyle(.borderedProminent).disabled(rec.findingNorth)
-                    case .capturing:
-                        Text("\(rec.keyframeCount) photos")
-                        Button("Pause") { rec.stop(cave: cave, over: over) }.buttonStyle(.borderedProminent).tint(.red)
+                    case .capturing: Text("\(rec.keyframeCount) photos")
                     case .saving: ProgressView()
-                    case .saved(let url):
-                        NavigationLink("View shot") { ShotView(url: url, stations: [over]) }
-                        Button("Resume") { rec.scanMore(); rec.start() }.buttonStyle(.borderedProminent)
-                    case .failed(let m):
-                        Text(m).foregroundStyle(.red)
-                        // a failed save keeps the session (and the earlier scan): another pass can try again
-                        if ShotRecorder.hasLiDAR { Button("Resume") { rec.scanMore(); rec.start() }.buttonStyle(.bordered) }
+                    // a failed save keeps the session (and the earlier scan): another pass can try again
+                    case .failed(let m): Text(m).foregroundStyle(.red)
+                    default: EmptyView()
                     }
+                    ForEach(ShotRecorder.controls(rec.phase, hasParent: rec.parent != nil), id: \.self) { button($0) }
                 }.padding()
             }
         }
+        .navigationDestination(item: $rec.viewing) { url in ShotView(url: url, stations: [over]) }
         .onAppear { rec.prepare(cave: cave, over: over); rec.run() }
         .onDisappear { rec.leave() }
+    }
+
+    @ViewBuilder private func button(_ c: ShotRecorder.Control) -> some View {
+        switch c {
+        case .start, .resume:
+            // paused or failed: the next pass in the same session; ready: the pass the screen is ready for
+            let ready: Bool = { if case .ready = rec.phase { true } else { false } }()
+            if ShotRecorder.hasLiDAR || ready {
+                Button(c == .start ? "Start" : "Resume") {
+                    if !ready { rec.scanMore() }
+                    rec.start()
+                }
+                .buttonStyle(.borderedProminent).disabled(rec.findingNorth)
+            }
+        case .pause:
+            Button("Pause") { rec.pause(cave: cave, over: over) }.buttonStyle(.borderedProminent).tint(.red)
+        case .stop:
+            Button("Stop") { rec.finish(cave: cave, over: over) }.buttonStyle(.bordered)
+        case .viewShot:
+            if case .saved(let url) = rec.phase { NavigationLink("View shot") { ShotView(url: url, stations: [over]) } }
+        }
     }
 }
