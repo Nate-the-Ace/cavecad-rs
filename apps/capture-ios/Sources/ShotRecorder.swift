@@ -1,4 +1,5 @@
 import ARKit
+import AudioToolbox
 import CoreImage
 import Foundation
 import simd
@@ -284,6 +285,43 @@ final class ShotRecorder: NSObject, ObservableObject, ARSessionDelegate {
     /// Mesh anchors whose origin is this far from every card are not copied for the card passes, metres.
     nonisolated static let meshAnchorReach = 4.0
     private static let meshQueue = DispatchQueue(label: "app.cavecad.capture.cards.mesh", qos: .utility)
+    // MARK: gimbal state
+    /// Start runs a gimbal pass (the switch on the capture screen). On: connects and polls the gimbal at 4 Hz.
+    @Published var gimbalMode = false { didSet { if gimbalMode != oldValue { gimbalModeChanged() } } }
+    /// The gimbal's last polled status.
+    @Published private(set) var gimbalStatus = GimbalStatus()
+    /// One line for the screen while the switch is on ("Gimbal connected", "Sweeping 4/11", …).
+    @Published private(set) var gimbalLine = ""
+    /// The gimbal (the Rust core's; a fake in tests).
+    var gimbal: GimbalDriver = CoreGimbal()
+    private var gimbalTimer: Timer?
+    /// The gimbal pass running now (nil: none, or a hand pass).
+    private var gimbalRun: GimbalRun?
+    /// A connect was asked for and has not yet answered (connected, or an error).
+    private var gimbalConnecting = false
+    private var gimbalWasConnected = false
+    private var gimbalStartTime: TimeInterval = 0
+    /// The camera at Start (the gimbal's pivot, near enough) and its forward (−z): home for the coverage.
+    private var gimbalPivot = SIMD3<Double>(0, 0, 0), gimbalHome = SIMD3<Double>(0, 0, -1)
+    /// The directions (yaw, pitch from home) the scan still misses, refreshed every few seconds off the main actor.
+    private var gimbalMissing: [(Double, Double)] = []
+    private var gimbalCoverage: (covered: Int, cells: Int)?
+    private var coverageRunning = false, lastCoverage: TimeInterval = 0
+    /// One reconnect after the gimbal is lost.
+    private var gimbalReconnectTried = false
+    /// The next save is a finished gimbal pass: chime and vibrate when it lands.
+    private var chimeAfterSave = false
+    /// The cave and station the screen is over (from `prepare`), for the save a finished gimbal pass makes itself.
+    private var preparedPlace: (cave: KeptCave, over: Station)?
+    /// Seconds between coverage refreshes during a gimbal pass.
+    static let coverageEvery: TimeInterval = 5
+    /// Mesh anchors whose origin is farther than this from the pivot are left out of the coverage, metres.
+    nonisolated static let coverageAnchorReach = 6.0
+    /// Cells in the coverage grid (`Coverage`'s band of elevations by 360° of azimuth).
+    nonisolated static var coverageCells: Int {
+        Int(((Coverage.elevations.1 - Coverage.elevations.0) / Coverage.cell).rounded(.up)) * Int((360 / Coverage.cell).rounded())
+    }
+
     /// The highest camera format is in use (a failed start falls back to the default for the app's run).
     private var usingBestFormat = false
     private var bestFormatFailed = false
@@ -361,6 +399,7 @@ final class ShotRecorder: NSObject, ObservableObject, ARSessionDelegate {
     /// the saved or failed state, the message) is cleared; a save still running finishes and is then let go.
     func prepare(cave: KeptCave, over: Station) {
         let key = Self.stationKey(cave: cave.id, station: over.id)
+        preparedPlace = (cave, over)
         parent = ShotFiles.parent(cave: cave.id, station: over.id)
         parentMade = parent.flatMap { try? $0.resourceValues(forKeys: [.creationDateKey]).creationDate }
         let sameScreen = preparedStation == key
@@ -410,6 +449,7 @@ final class ShotRecorder: NSObject, ObservableObject, ARSessionDelegate {
             return
         }
         compass.start()
+        if gimbalMode { startGimbalTimer() }
         runSerial += 1
         if resumeNext {
             // ARKit keeps its world, mesh and anchors over a pause and relocalizes; north was fixed at the first run.
@@ -473,8 +513,18 @@ final class ShotRecorder: NSObject, ObservableObject, ARSessionDelegate {
     /// After an interruption ARKit relocalizes into the same world, so the frame (and `sessionToShot`) holds.
     nonisolated func sessionShouldAttemptRelocalization(_ session: ARSession) -> Bool { true }
 
+    /// Start (or Resume): a pass by hand, or with the Gimbal switch on a gimbal pass, which first checks the
+    /// gimbal, tracking, light and battery and says why when it cannot go.
     func start() {
-        guard !findingNorth, let f = session.currentFrame else { return }
+        guard !findingNorth else { return }
+        if gimbalMode, let why = gimbalRefusal() { message = why; return }
+        startPass()
+        guard gimbalMode, case .capturing = phase else { return }
+        startGimbalRun()
+    }
+
+    private func startPass() {
+        guard let f = session.currentFrame else { return }
         if (f.lightEstimate?.ambientIntensity ?? 0) < 150 { message = "Too dark to track. Turn the light on."; return }
         guard case .normal = f.camera.trackingState else { message = "Hold still until tracking settles."; return }
         // Warn once when space is short; a second tap on Start goes ahead.
@@ -840,8 +890,20 @@ final class ShotRecorder: NSObject, ObservableObject, ARSessionDelegate {
     }
 
     /// Pause: saves the pass (into the station's shot, or as a new or separate one); tracking keeps running for
-    /// Resume.
+    /// Resume. A gimbal pass holds the gimbal where it is first.
     func pause(cave: KeptCave, over: Station) {
+        guard case .capturing = phase else { return }
+        guard let run = gimbalRun else { save(cave: cave, over: over, flags: []); return }
+        gimbal.hold()
+        gimbalRun = nil
+        Log.write("gimbal", "paused: holding where it is")
+        save(cave: cave, over: over, flags: ["gimbal"])
+        // refused (no mesh yet): the gimbal pass carries on
+        if case .capturing = phase { gimbal.goOn(); gimbalRun = run }
+    }
+
+    /// Saves the pass with `flags` (into the station's shot, or as a new or separate one).
+    private func save(cave: KeptCave, over: Station, flags: [String]) {
         guard case .capturing = phase else { return }
         // Never refused for want of a line-up: a pass the cards did not line up becomes a separate shot.
         let mode = Self.saveMode(hasParent: parent != nil, sessionToShot: sessionToShot)
@@ -862,7 +924,9 @@ final class ShotRecorder: NSObject, ObservableObject, ARSessionDelegate {
         logCards("at stop", time: lastFrameTime)
         let job = ShotJob(caveId: cave.id, over: over, parts: parts, keyframes: keyframes, startCamera: startCamera,
                           tracking: worstTracking, systemVersion: UIDevice.current.systemVersion, compass: compassAtAlignment,
-                          cards: cardTracker)
+                          cards: cardTracker, flags: flags)
+        let chime = chimeAfterSave
+        chimeAfterSave = false
         keyframes = []  // the job now holds the only reference, and drops each photo as it is written
         let into = parent
         // A tracking reset while saving means this session's frame is no longer the shot's.
@@ -896,6 +960,10 @@ final class ShotRecorder: NSObject, ObservableObject, ARSessionDelegate {
                 if mode == .newShot || separate, epoch == trackingEpoch { sessionToShot = Self.identity }
                 if epoch == trackingEpoch, sessionToShot != nil { sessionShot = url }
                 Log.write("shot", separate ? "saved as a separate shot (no line-up)" : "saved pass \(max(passes, 1))")
+                if chime {
+                    AudioServicesPlaySystemSound(1025)
+                    UINotificationFeedbackGenerator().notificationOccurred(.success)
+                }
                 let thenEnd = stopAfterSave
                 stopAfterSave = false
                 guard screen == preparedStation else {
@@ -923,8 +991,15 @@ final class ShotRecorder: NSObject, ObservableObject, ARSessionDelegate {
     func finish(cave: KeptCave, over: Station) {
         switch phase {
         case .capturing:
+            var flags: [String] = []
+            if gimbalRun != nil {
+                gimbal.stopHome()
+                gimbalRun = nil
+                flags = ["gimbal"]
+                Log.write("gimbal", "stopped: going home")
+            }
             stopAfterSave = true
-            pause(cave: cave, over: over)
+            save(cave: cave, over: over, flags: flags)
             // refused (no mesh yet): still capturing
             if case .capturing = phase { stopAfterSave = false }
         case .saved(let url):
@@ -971,6 +1046,12 @@ final class ShotRecorder: NSObject, ObservableObject, ARSessionDelegate {
     /// The capture screen went away. The session pauses (battery) and a pass in hand is dropped; the recorder,
     /// the session's world and the line-up are kept for coming back to the same station.
     func leave() {
+        if gimbalRun != nil {
+            gimbal.stopHome()
+            gimbalRun = nil
+            Log.write("gimbal", "left the capture screen: going home")
+        }
+        stopGimbalTimer()
         if case .capturing = phase {
             Log.write("shot", "left the capture screen mid-pass: the pass is dropped")
             clearPass()
@@ -982,6 +1063,195 @@ final class ShotRecorder: NSObject, ObservableObject, ARSessionDelegate {
         session.pause()
         compass.stop()
         UIApplication.shared.isIdleTimerDisabled = false
+    }
+
+    // MARK: gimbal passes
+
+    /// ARKit's tracking as a gimbal pass reads it.
+    nonisolated static func gimbalTracking(_ s: ARCamera.TrackingState) -> GimbalRun.Tracking {
+        switch s {
+        case .normal: .normal
+        case .limited: .limited
+        case .notAvailable: .lost
+        }
+    }
+
+    /// The light estimate in lumens; none yet reads as dark.
+    nonisolated static func lux(_ ambient: CGFloat?) -> Double { ambient.map { Double($0) } ?? 0 }
+
+    /// The battery as a fraction; unknown (−1: the simulator, or monitoring off) reads as full.
+    nonisolated static func batteryFraction(_ level: Float) -> Double { level < 0 ? 1 : Double(level) }
+
+    /// The gimbal is still busy with a plan (moving, held, or going home).
+    nonisolated static func gimbalBusy(_ s: GimbalStatus) -> Bool { ["moving", "holding", "homing"].contains(s.state) }
+
+    /// The gimbal line for the screen: the run's stage when one runs, else the connection.
+    static func gimbalLine(_ s: GimbalStatus, connecting: Bool, stage: GimbalRun.Stage?, holdReason: String?) -> String {
+        if let stage {
+            if let holdReason { return "Holding: \(holdReason)" }
+            switch stage {
+            case .sweep: return s.steps > 0 ? "Sweeping \(s.step)/\(s.steps)" : "Sweeping…"
+            case .fill: return "Filling holes…"
+            case .ending: return "Going home…"
+            }
+        }
+        if s.connected { return s.mountOK ? "Gimbal connected" : "Gimbal connected: put the phone upright" }
+        if connecting { return "Gimbal: connecting…" }
+        if s.state == "error" { return "Gimbal not found: \(s.error ?? "unknown")" }
+        return "Gimbal not connected"
+    }
+
+    private func gimbalModeChanged() {
+        if gimbalMode {
+            UIDevice.current.isBatteryMonitoringEnabled = true
+            gimbalConnecting = true
+            gimbalWasConnected = false
+            Log.write("gimbal", "connecting")
+            gimbal.connect()
+            startGimbalTimer()
+        } else {
+            if gimbalRun != nil { gimbal.stopHome(); gimbalRun = nil }
+            gimbalConnecting = false
+            stopGimbalTimer()
+            gimbalLine = ""
+            Log.write("gimbal", "switched off")
+        }
+    }
+
+    private func startGimbalTimer() {
+        guard gimbalTimer == nil else { return }
+        gimbalTimer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.gimbalTick() }
+        }
+        gimbalTick()
+    }
+
+    private func stopGimbalTimer() {
+        gimbalTimer?.invalidate()
+        gimbalTimer = nil
+    }
+
+    /// Why a gimbal pass cannot start now, or nil. A gimbal still busy with an earlier plan (say held after a
+    /// Pause) is sent home first.
+    private func gimbalRefusal() -> String? {
+        let s = gimbal.status()
+        gimbalStatus = s
+        let f = session.currentFrame
+        let tracking = f.map { Self.gimbalTracking($0.camera.trackingState) } ?? .lost
+        if let why = GimbalRun.check(s, tracking: tracking, lux: Self.lux(f?.lightEstimate?.ambientIntensity)) { return why }
+        if Self.gimbalBusy(s) {
+            gimbal.stopHome()
+            return "The gimbal is going home first. Press Start again when it stops."
+        }
+        if Self.batteryFraction(UIDevice.current.batteryLevel) < GimbalRun.lowBattery { return "Phone battery under 15%: charge it first." }
+        return nil
+    }
+
+    /// The pass has started (capturing): the gimbal starts its sweep from here.
+    private func startGimbalRun() {
+        guard let f = session.currentFrame else { return }
+        let t = f.camera.transform
+        gimbalPivot = SIMD3(Double(t.columns.3.x), Double(t.columns.3.y), Double(t.columns.3.z))
+        gimbalHome = -SIMD3(Double(t.columns.2.x), Double(t.columns.2.y), Double(t.columns.2.z))
+        let now = ProcessInfo.processInfo.systemUptime
+        let run = GimbalRun(gimbal: gimbal)
+        if let e = run.start(at: now) {
+            // the pass is running already: it carries on by hand
+            message = "The gimbal could not start (\(e)). Capturing by hand."
+            Log.write("gimbal", "could not start: \(e)")
+            return
+        }
+        gimbalRun = run
+        gimbalStartTime = now
+        gimbalMissing = []; gimbalCoverage = nil
+        coverageRunning = false; lastCoverage = now
+        gimbalReconnectTried = false
+        Log.write("gimbal", "sweep \(run.planned) steps")
+        gimbalTick()
+    }
+
+    /// 4 Hz while the switch is on: polls the gimbal and, during a gimbal pass, feeds the run.
+    private func gimbalTick() {
+        let s = gimbal.status()
+        if s != gimbalStatus { gimbalStatus = s }
+        if s.connected, !gimbalWasConnected {
+            gimbalConnecting = false
+            Log.write("gimbal", "connected")
+        } else if !s.connected, gimbalConnecting, s.state == "error" {
+            gimbalConnecting = false
+            Log.write("gimbal", "not found: \(s.error ?? "unknown")")
+        } else if !s.connected, gimbalWasConnected {
+            Log.write("gimbal", "disconnected")
+        }
+        gimbalWasConnected = s.connected
+        if let run = gimbalRun, case .capturing = phase { tickGimbalRun(run) }
+        let r = gimbalRun
+        let line = Self.gimbalLine(gimbalStatus, connecting: gimbalConnecting, stage: r?.stage, holdReason: r?.holdReason)
+        if line != gimbalLine { gimbalLine = line }
+    }
+
+    private func tickGimbalRun(_ run: GimbalRun) {
+        let f = session.currentFrame
+        let now = ProcessInfo.processInfo.systemUptime
+        let inputs = GimbalRun.Inputs(time: now,
+                                      tracking: f.map { Self.gimbalTracking($0.camera.trackingState) } ?? .lost,
+                                      lux: Self.lux(f?.lightEstimate?.ambientIntensity),
+                                      battery: Self.batteryFraction(UIDevice.current.batteryLevel),
+                                      missing: gimbalMissing)
+        let (wasStage, wasHolding) = (run.stage, run.holding)
+        let out = run.tick(inputs)
+        if run.holding != wasHolding, run.stage != .ending {
+            Log.write("gimbal", run.holding ? "hold (\(run.holdReason ?? "?"))" : "go on")
+        }
+        if wasStage == .sweep, run.stage == .fill {
+            let c = gimbalCoverage.map { "\($0.covered)/\($0.cells)" } ?? "unknown"
+            Log.write("gimbal", "fill \(run.planned) targets (coverage \(c) cells)")
+        }
+        if wasStage != .ending, run.stage == .ending { Log.write("gimbal", "ending the pass: going home") }
+        if case .finished(let flags) = out { gimbalFinished(flags, now: now); return }
+        refreshCoverage(now: now)
+    }
+
+    /// The gimbal pass is over: save it (flags `gimbal` and the run's own), then chime.
+    private func gimbalFinished(_ flags: [String], now: TimeInterval) {
+        gimbalRun = nil
+        if let c = gimbalCoverage { Log.write("gimbal", "coverage \(c.covered)/\(c.cells) cells at the end") }
+        Log.write("gimbal", "finished [\(flags.joined(separator: ", "))] in \(Int((now - gimbalStartTime).rounded())) s")
+        if flags.contains(where: { $0.hasPrefix("gimbal lost") }), !gimbalReconnectTried {
+            gimbalReconnectTried = true
+            gimbalConnecting = true
+            Log.write("gimbal", "trying one reconnect")
+            gimbal.connect()
+        }
+        guard let place = preparedPlace else { return }
+        chimeAfterSave = true
+        save(cave: place.cave, over: place.over, flags: ["gimbal"] + flags)
+        // refused (no mesh yet): the pass carries on by hand
+        if case .capturing = phase { chimeAfterSave = false }
+    }
+
+    /// Every few seconds during a gimbal pass: which directions around the pivot the scan still misses. Only the
+    /// anchor list is taken here; the mesh copy and the ray tests run on the mesh queue.
+    private func refreshCoverage(now: TimeInterval) {
+        guard !coverageRunning, now - lastCoverage >= Self.coverageEvery else { return }
+        lastCoverage = now
+        coverageRunning = true
+        let held = MeshAnchors(anchors: session.currentFrame?.anchors.compactMap { $0 as? ARMeshAnchor } ?? [])
+        let pivot = gimbalPivot, home = gimbalHome, serial = shotSerial
+        Self.meshQueue.async { [weak self] in
+            let parts = held.anchors.filter { a in
+                let o = SIMD3<Double>(Double(a.transform.columns.3.x), Double(a.transform.columns.3.y), Double(a.transform.columns.3.z))
+                return simd_distance(o, pivot) <= Self.coverageAnchorReach
+            }.compactMap(Self.part)
+            let missing = Coverage.missing(mesh: MeshSnapshot(parts), pivot: pivot, homeForward: home).map { ($0.yaw, $0.pitch) }
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.coverageRunning = false
+                guard serial == self.shotSerial, self.gimbalRun != nil else { return }
+                self.gimbalMissing = missing
+                self.gimbalCoverage = (max(0, Self.coverageCells - missing.count), Self.coverageCells)
+            }
+        }
     }
 
     /// One ARKit mesh anchor as plain arrays; nil for a layout this code does not read (LiDAR meshes are

@@ -1,3 +1,4 @@
+import ARKit
 import XCTest
 import simd
 @testable import CaveCAD_Capture
@@ -327,5 +328,53 @@ final class ShotRecorderTests: XCTestCase {
         let w = ShotRecorder.moved(offsets: [["id": 2, "m": 0.07], ["id": 12, "m": 0.02], ["id": 26, "m": 0.2]], warned: [.rear])
         XCTAssertEqual(w.map(\.card), [.current])
         XCTAssertEqual(w.first?.m ?? 0, 0.07, accuracy: 1e-9)
+    }
+
+    /// Gimbal mode: Start refuses with the check's reason when the gimbal is not connected; nothing starts.
+    @MainActor func testGimbalStartRefusesWhenNotConnected() {
+        let rec = ShotRecorder(), g = FakeGimbal()
+        g.st.connected = false
+        rec.gimbal = g
+        rec.gimbalMode = true
+        rec.start()
+        XCTAssertEqual(rec.message, "Gimbal not connected.")
+        guard case .ready = rec.phase else { return XCTFail("phase \(rec.phase)") }
+        XCTAssertTrue(g.runs.isEmpty)
+        XCTAssertEqual(rec.gimbalLine, "Gimbal: connecting…")
+        rec.gimbalMode = false
+    }
+
+    /// A gimbal still busy with a plan (moving, held after a Pause, going home) is sent home before a new pass.
+    func testGimbalBusy() {
+        for (state, busy) in [("idle", false), ("done", false), ("error", false), ("moving", true), ("holding", true), ("homing", true)] {
+            XCTAssertEqual(ShotRecorder.gimbalBusy(GimbalStatus(connected: true, state: state)), busy, state)
+        }
+    }
+
+    func testGimbalInputsFromARKit() {
+        XCTAssertEqual(ShotRecorder.gimbalTracking(.normal), .normal)
+        XCTAssertEqual(ShotRecorder.gimbalTracking(.limited(.initializing)), .limited)
+        XCTAssertEqual(ShotRecorder.gimbalTracking(.limited(.relocalizing)), .limited)
+        XCTAssertEqual(ShotRecorder.gimbalTracking(.notAvailable), .lost)
+        XCTAssertEqual(ShotRecorder.lux(nil), 0)
+        XCTAssertEqual(ShotRecorder.lux(850), 850)
+        XCTAssertEqual(ShotRecorder.batteryFraction(-1), 1)
+        XCTAssertEqual(ShotRecorder.batteryFraction(0.5), 0.5)
+        XCTAssertEqual(ShotRecorder.coverageCells, 11 * 36)
+    }
+
+    @MainActor func testGimbalLine() {
+        var s = GimbalStatus()
+        XCTAssertEqual(ShotRecorder.gimbalLine(s, connecting: true, stage: nil, holdReason: nil), "Gimbal: connecting…")
+        s.state = "error"; s.error = "no gimbal found"
+        XCTAssertEqual(ShotRecorder.gimbalLine(s, connecting: false, stage: nil, holdReason: nil), "Gimbal not found: no gimbal found")
+        s = GimbalStatus(connected: true, state: "idle", mountOK: true)
+        XCTAssertEqual(ShotRecorder.gimbalLine(s, connecting: false, stage: nil, holdReason: nil), "Gimbal connected")
+        s.mountOK = false
+        XCTAssertEqual(ShotRecorder.gimbalLine(s, connecting: false, stage: nil, holdReason: nil), "Gimbal connected: put the phone upright")
+        s = GimbalStatus(connected: true, state: "moving", step: 4, steps: 11, mountOK: true)
+        XCTAssertEqual(ShotRecorder.gimbalLine(s, connecting: false, stage: .sweep, holdReason: nil), "Sweeping 4/11")
+        XCTAssertEqual(ShotRecorder.gimbalLine(s, connecting: false, stage: .sweep, holdReason: "too dark"), "Holding: too dark")
+        XCTAssertEqual(ShotRecorder.gimbalLine(s, connecting: false, stage: .fill, holdReason: nil), "Filling holes…")
     }
 }

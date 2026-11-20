@@ -336,12 +336,20 @@ pub fn connect(ms: u32) {
         .send(Cmd::Connect(Duration::from_millis(ms as u64)));
 }
 
-/// Queues a plan (see [`parse_plan`]); a bad plan is refused here and nothing is sent.
+/// Queues a plan (see [`parse_plan`]); a bad plan is refused here and nothing is sent. The status reads
+/// `moving` at once, so a poll right after never sees the last run's `done`.
 pub fn run_plan(json: &str) -> Result<(), String> {
     let p = parse_plan(json)?;
     let r = runner();
     r.hold.store(false, Ordering::SeqCst);
     r.stop.store(false, Ordering::SeqCst);
+    let steps: u32 = p.iter().map(|l| l.len() as u32).sum();
+    set(&r.status, |s| {
+        s.state = State::Moving;
+        s.step = 0;
+        s.steps = steps;
+        s.error = None;
+    });
     r.tx.send(Cmd::Run(p)).map_err(|e| e.to_string())
 }
 

@@ -20,10 +20,16 @@ final class GimbalRun {
     /// Sweep speed, degrees per second (bench-tuned).
     static var speed = 10.0
 
-    private enum Stage { case sweep, fill, ending }
+    /// Where the pass is: sweeping, filling holes, or going home to end.
+    enum Stage: Equatable { case sweep, fill, ending }
     private let gimbal: GimbalDriver
-    private var stage = Stage.sweep
-    private var holding = false
+    private(set) var stage = Stage.sweep
+    /// The gimbal is held (tracking not normal, or too dark).
+    private(set) var holding = false
+    /// Why it is held ("too dark", "tracking"), nil when it is not.
+    private(set) var holdReason: String?
+    /// Targets in the plan last sent (the sweep, then the fill).
+    private(set) var planned = 0
     private var darkSince: Double?, lostSince: Double?, fillStart: Double?
     private var flags: [String] = []
     /// What to show the user.
@@ -44,6 +50,7 @@ final class GimbalRun {
     func start(at t: Double) -> String? {
         let lists = Core.cameraSweep(speed: Self.speed)
         if let e = gimbal.run(lists) { return e }
+        planned = lists.reduce(0) { $0 + $1.count }
         stage = .sweep; holding = false; message = "Sweeping…"
         return nil
     }
@@ -69,6 +76,7 @@ final class GimbalRun {
             holding = shouldHold
             if holding { gimbal.hold() } else { gimbal.goOn() }
         }
+        holdReason = holding ? (tooDark ? "too dark" : "tracking") : nil
         message = tooDark ? "Too dark: check the lights" : (i.tracking != .normal ? "Holding: tracking" : (stage == .sweep ? "Sweeping…" : "Filling holes…"))
         // stage changes
         if s.state == "done" {
@@ -77,6 +85,7 @@ final class GimbalRun {
                 let lists = Core.cameraFill(missing: i.missing, speed: Self.speed)
                 if lists.isEmpty { return .finished(flags: flags) }
                 if let e = gimbal.run(lists) { return .finished(flags: flags + ["gimbal lost: \(e)"]) }
+                planned = lists.reduce(0) { $0 + $1.count }
                 stage = .fill; fillStart = i.time
             case .fill: return .finished(flags: flags)
             case .ending: break
@@ -87,7 +96,7 @@ final class GimbalRun {
 
     private func end(_ flag: String?) -> Outcome {
         if let flag { flags.append(flag) }
-        holding = false
+        holding = false; holdReason = nil
         gimbal.stopHome(); stage = .ending; message = "Going home…"
         return .running
     }

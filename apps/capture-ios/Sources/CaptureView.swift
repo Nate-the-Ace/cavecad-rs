@@ -108,6 +108,13 @@ struct CaptureView: View {
                 // The controls sit on a solid dark panel with big, solid buttons: the live view behind is busy
                 // with mesh lines and coloured markers.
                 VStack(spacing: 12) {
+                    // the switch is set between passes only
+                    Toggle(isOn: $rec.gimbalMode) { Text("Gimbal").font(.title2.weight(.bold)).foregroundStyle(.white) }
+                        .tint(.green).disabled(gimbalLocked)
+                    if rec.gimbalMode {
+                        Text(rec.gimbalLine).font(.headline).foregroundStyle(.white).lineLimit(1).minimumScaleFactor(0.7)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
                     Text(rec.message).font(.body.weight(.medium)).foregroundStyle(.white).multilineTextAlignment(.center)
                     switch rec.phase {
                     case .capturing: Text("\(rec.keyframeCount) photos").font(.subheadline).foregroundStyle(.white.opacity(0.8))
@@ -129,6 +136,11 @@ struct CaptureView: View {
         .navigationDestination(item: $rec.viewing) { url in ShotView(url: url, stations: [over]) }
         .onAppear { rec.prepare(cave: cave, over: over); rec.run() }
         .onDisappear { rec.leave() }
+    }
+
+    /// Capturing or saving: the Gimbal switch cannot change mid-pass.
+    private var gimbalLocked: Bool {
+        switch rec.phase { case .capturing, .saving: true; default: false }
     }
 
     @ViewBuilder private func button(_ c: ShotRecorder.Control) -> some View {

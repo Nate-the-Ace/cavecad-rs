@@ -44,9 +44,13 @@ final class GimbalTests: XCTestCase {
         let g = FakeGimbal(), r = GimbalRun(gimbal: g)
         XCTAssertNil(r.start(at: 0))
         XCTAssertEqual(g.runs.count, 1)                  // sweep
+        XCTAssertEqual(r.stage, .sweep)
+        XCTAssertEqual(r.planned, g.runs[0].reduce(0) { $0 + $1.count })
         g.st.state = "done"
         _ = r.tick(inputs(t: 60, missing: [(10, 5)]))    // sweep done: fill planned and started
         XCTAssertEqual(g.runs.count, 2)
+        XCTAssertEqual(r.stage, .fill)
+        XCTAssertEqual(r.planned, g.runs[1].reduce(0) { $0 + $1.count })
         g.st.state = "done"
         XCTAssertEqual(r.tick(inputs(t: 90)), .finished(flags: []))
     }
@@ -74,7 +78,9 @@ final class GimbalTests: XCTestCase {
         let g = FakeGimbal(), r = GimbalRun(gimbal: g)
         _ = r.start(at: 0)
         _ = r.tick(inputs(t: 1, tracking: .limited)); XCTAssertEqual(g.holds, 1)
+        XCTAssertTrue(r.holding); XCTAssertEqual(r.holdReason, "tracking")
         _ = r.tick(inputs(t: 2, tracking: .normal)); XCTAssertEqual(g.goOns, 1)
+        XCTAssertFalse(r.holding); XCTAssertNil(r.holdReason)
         _ = r.tick(inputs(t: 3, tracking: .lost))
         XCTAssertEqual(r.tick(inputs(t: 9, tracking: .lost)), .running)
         _ = r.tick(inputs(t: 14, tracking: .lost))
