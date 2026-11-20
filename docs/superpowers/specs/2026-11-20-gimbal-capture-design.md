@@ -49,10 +49,12 @@ OM7 portrait windows (FINDINGS, target mode): yaw about -198..+84 (about 280 deg
 behind cannot be reached), tilt -11..+31. The 4K camera's vertical view (about 65 deg) widens coverage to
 roughly -45..+65 deg elevation; straight up and down are not reached.
 
-- **Sweep:** two tilt rows (-10 and +30 deg), each panning the full yaw window in steps of about 30 deg,
-  slow moves (about 15 deg/s) with a dwell at each step (default 1.5 s) so frames are sharp and LiDAR fills.
-  About 3-4 minutes. Expressed as target-mode lists, each returning home. Rows, step, speed and dwell are
-  parameters; defaults tuned on the bench before the cave.
+- **Sweep (Nathan: LiDAR is continuous, so just sweep the full range slowly):** one continuous slow pass
+  over the gimbal's whole reachable range, no stops: tilt at the bottom of its window, pan the full yaw
+  window; tilt to the top; pan back; home. Speed is the one parameter (default about 10 deg/s, bench-tuned
+  so frames stay sharp and the mesh keeps up), about 1 minute for the two pans. Driven as target-mode moves
+  between the window's ends with the move time set from the speed (no dwell), each list returning home.
+  A middle tilt row is added only if the bench shows a gap between the two rows.
 - **Facing:** the rig's forward faces a wall; the unreachable wedge goes where the person came in from.
 - **Fill:** after the sweep, directions around the pivot are binned into 10 deg cells; a cell is missing
   when no mesh is hit within 5 m along that direction from the pivot (the existing `MeshSnapshot` sight-line
@@ -66,7 +68,7 @@ roughly -45..+65 deg elevation; straight up and down are not reached.
   (cards, passes in one file, ghost, Pause, Resume, Stop). Hand and gimbal passes mix freely.
 - Before moving: gimbal connected and `mount_ok`; ARKit tracking normal; light estimate above a threshold
   (`ambientIntensity`, default 400 lm, bench-tuned). Any failing check says which and does not start.
-- Sweep -> Fill -> home -> save the pass -> chime and vibrate. The screen stays awake throughout (ARKit
+- Sweep -> Fill (patch the holes) -> home -> save the pass -> chime and vibrate. The screen stays awake throughout (ARKit
   needs the app in front).
 - **Pause** holds the gimbal where it is and saves the pass (as now). **Stop** returns home, saves, opens
   the viewer.
@@ -93,7 +95,7 @@ connect time.
 
 ## Testing
 
-- `cave-osmo`: sweep lists within joint windows, <= 15 targets, each home to home; durations; fill
+- `cave-osmo`: the continuous sweep stays within the joint windows, <= 15 targets a list, each home to home, move times match the speed; fill
   clustering and aim choices from a synthetic coverage grid.
 - App: the run's state machine (checks, sweep, fill, holds, failures) against a fake gimbal in simulator
   tests; status JSON parsing.
