@@ -91,7 +91,7 @@ struct ShotView: View {
     var body: some View {
         VStack(spacing: 0) {
             if let scene {
-                SceneView(scene: scene, options: [.allowsCameraControl, .autoenablesDefaultLighting]).frame(maxHeight: .infinity)
+                OrbitView(scene: scene).frame(maxHeight: .infinity)
             } else if let summary {
                 Spacer()
                 Text(Self.problem(summary, placeable: placeable)).multilineTextAlignment(.center).padding()
