@@ -85,6 +85,8 @@ final class GimbalRun {
                 let lists = Core.cameraFill(missing: i.missing, speed: Self.speed)
                 if lists.isEmpty { return .finished(flags: flags) }
                 if let e = gimbal.run(lists) { return .finished(flags: flags + ["gimbal lost: \(e)"]) }
+                // a new plan clears the runner's hold: keep holding while the run is
+                if holding { gimbal.hold() }
                 planned = lists.reduce(0) { $0 + $1.count }
                 stage = .fill; fillStart = i.time
             case .fill: return .finished(flags: flags)

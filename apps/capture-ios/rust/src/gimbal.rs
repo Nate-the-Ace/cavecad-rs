@@ -55,6 +55,9 @@ pub struct Status {
     pub step: u32,
     /// Targets in the running plan.
     pub steps: u32,
+    /// The running plan has entered target mode and the gimbal is home (set after the post-enter wait, before
+    /// the first move); false from the moment a plan is queued.
+    pub entered: bool,
     /// The gimbal's joints (pan, tilt, roll; degrees) from its last attitude report.
     pub joints: Option<[f64; 3]>,
     /// The last failure, readable.
@@ -66,6 +69,7 @@ impl Status {
     pub fn json(&self) -> String {
         serde_json::json!({
             "connected": self.connected, "state": self.state.name(), "step": self.step, "steps": self.steps,
+            "entered": self.entered,
             "mount_ok": mount_ok(self.joints), "joints": self.joints, "error": self.error,
         })
         .to_string()
@@ -233,13 +237,21 @@ async fn drive(
                 };
                 set(&status, |s| s.error = None);
                 let r = run(o, &lists, &status, &hold, &stop).await;
-                set(&status, |s| match r {
-                    Ok(()) => s.state = State::Done,
-                    Err(e) => {
-                        s.state = State::Error;
-                        s.error = Some(e);
+                let mut lost = false;
+                set(&status, |s| {
+                    match r {
+                        Ok(()) => s.state = State::Done,
+                        Err(e) => {
+                            s.state = State::Error;
+                            s.error = Some(e);
+                        }
                     }
+                    lost = !s.connected;
                 });
+                // a failed send means the link is gone: the next connect starts afresh
+                if lost {
+                    osmo = None;
+                }
             }
             // a stop only means something inside `run` (the flag); between runs there is nothing to stop
             Cmd::StopHome => {}
@@ -253,12 +265,17 @@ async fn drive(
     }
 }
 
-fn link(e: cave_osmo::Error) -> String {
-    e.to_string()
+/// A failed send: the link is taken as lost (`connected` false), and the error ends the run.
+fn lost(status: &Mutex<Status>) -> impl Fn(cave_osmo::Error) -> String + '_ {
+    move |e| {
+        set(status, |s| s.connected = false);
+        format!("gimbal link lost: {e}")
+    }
 }
 
 /// Runs each list: enter (sends home), upload, step through. Hold waits on a reached target, re-sending its "go"
-/// every 5 s so target mode (which ends ~9 s after the last command) stays alive; stop goes home and ends.
+/// at once and then every 5 s so target mode (which ends ~9 s after the last command) stays alive; stop goes
+/// home and ends. A failed send marks the link lost.
 async fn run(
     o: &mut Osmo,
     lists: &[Vec<Target>],
@@ -266,32 +283,35 @@ async fn run(
     hold: &AtomicBool,
     stop: &AtomicBool,
 ) -> Result<(), String> {
+    let link = lost(status);
     let steps: u32 = lists.iter().map(|l| l.len() as u32).sum();
     set(status, |s| {
         s.steps = steps;
         s.step = 0;
+        s.entered = false;
         s.state = State::Moving;
     });
-    o.targets_enter(false).await.map_err(link)?;
+    o.targets_enter(false).await.map_err(&link)?;
     tokio::time::sleep(Duration::from_millis(2500)).await;
+    set(status, |s| s.entered = true);
     let mut done = 0u32;
     for (n, list) in lists.iter().enumerate() {
         let id = (n % 200) as u8 + 1;
         if n > 0 {
-            o.targets_leave().await.map_err(link)?;
-            o.targets_enter(true).await.map_err(link)?;
+            o.targets_leave().await.map_err(&link)?;
+            o.targets_enter(true).await.map_err(&link)?;
             tokio::time::sleep(Duration::from_millis(2500)).await;
         }
-        o.targets_upload(list, id).await.map_err(link)?;
+        o.targets_upload(list, id).await.map_err(&link)?;
         for (i, t) in list.iter().enumerate() {
             let i = i as u8;
             if i > 0 {
-                o.targets_go(i).await.map_err(link)?;
+                o.targets_go(i).await.map_err(&link)?;
             }
             let arrived = o
                 .targets_arrived(i, id, Duration::from_secs_f64(t.seconds + 5.0))
                 .await
-                .map_err(link)?;
+                .map_err(&link)?;
             if !arrived {
                 // a dropped list sends the gimbal home by itself
                 let _ = o.targets_exit().await;
@@ -303,12 +323,13 @@ async fn run(
                 s.step = done;
                 s.joints = j.or(s.joints);
             });
-            let mut last = Instant::now();
+            // the keep-alive goes at once when a hold begins: the move to this target may have taken up to 8 s
+            let mut last: Option<Instant> = None;
             while hold.load(Ordering::SeqCst) && !stop.load(Ordering::SeqCst) {
                 set(status, |s| s.state = State::Holding);
-                if last.elapsed() > Duration::from_secs(5) {
-                    let _ = o.targets_go(i).await;
-                    last = Instant::now();
+                if last.is_none_or(|l| l.elapsed() > Duration::from_secs(5)) {
+                    o.targets_go(i).await.map_err(&link)?;
+                    last = Some(Instant::now());
                     let j = joints(o);
                     set(status, |s| s.joints = j.or(s.joints));
                 }
@@ -348,6 +369,7 @@ pub fn run_plan(json: &str) -> Result<(), String> {
         s.state = State::Moving;
         s.step = 0;
         s.steps = steps;
+        s.entered = false;
         s.error = None;
     });
     r.tx.send(Cmd::Run(p)).map_err(|e| e.to_string())
@@ -424,6 +446,7 @@ mod tests {
         assert_eq!(j["state"], "idle");
         assert_eq!(j["connected"], false);
         assert_eq!(j["mount_ok"], false);
+        assert_eq!(j["entered"], false);
         assert!(j["joints"].is_null());
         assert!(j["error"].is_null());
         assert!(!mount_ok(None));

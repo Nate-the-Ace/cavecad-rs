@@ -351,6 +351,17 @@ final class ShotRecorderTests: XCTestCase {
         }
     }
 
+    /// Home (pivot and heading) is taken once, when the runner reports it has entered target mode.
+    func testHomeTakenOnceTheRunnerHasEntered() {
+        var s = GimbalStatus(connected: true, state: "moving", steps: 11, mountOK: true)
+        XCTAssertFalse(ShotRecorder.takesHome(taken: false, s))
+        s.entered = true
+        XCTAssertTrue(ShotRecorder.takesHome(taken: false, s))
+        XCTAssertFalse(ShotRecorder.takesHome(taken: true, s))
+        XCTAssertTrue(GimbalStatus(["entered": true]).entered)
+        XCTAssertFalse(GimbalStatus([:]).entered)
+    }
+
     func testGimbalInputsFromARKit() {
         XCTAssertEqual(ShotRecorder.gimbalTracking(.normal), .normal)
         XCTAssertEqual(ShotRecorder.gimbalTracking(.limited(.initializing)), .limited)

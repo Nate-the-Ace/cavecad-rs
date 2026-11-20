@@ -3,8 +3,9 @@ import XCTest
 
 final class FakeGimbal: GimbalDriver {
     var st = GimbalStatus(connected: true, state: "idle", mountOK: true)
-    var runs: [[[[String: Double]]]] = [], holds = 0, goOns = 0, stops = 0
+    var runs: [[[[String: Double]]]] = [], holds = 0, goOns = 0, stops = 0, disconnects = 0
     func connect() {}
+    func disconnect() { disconnects += 1; st = GimbalStatus() }
     func run(_ l: [[[String: Double]]]) -> String? { runs.append(l); st.state = "moving"; return nil }
     func hold() { holds += 1 }
     func goOn() { goOns += 1 }
@@ -53,6 +54,19 @@ final class GimbalTests: XCTestCase {
         XCTAssertEqual(r.planned, g.runs[1].reduce(0) { $0 + $1.count })
         g.st.state = "done"
         XCTAssertEqual(r.tick(inputs(t: 90)), .finished(flags: []))
+    }
+
+    /// A fill started while held stays held (a new plan clears the runner's hold).
+    func testHoldCarriesIntoTheFill() {
+        let g = FakeGimbal(), r = GimbalRun(gimbal: g)
+        _ = r.start(at: 0)
+        _ = r.tick(inputs(t: 1, tracking: .limited)); XCTAssertEqual(g.holds, 1)
+        g.st.state = "done"
+        _ = r.tick(inputs(t: 2, tracking: .limited, missing: [(10, 5)]))
+        XCTAssertEqual(g.runs.count, 2)
+        XCTAssertEqual(r.stage, .fill)
+        XCTAssertEqual(g.holds, 2)
+        XCTAssertTrue(r.holding)
     }
 
     func testNoReachableHolesSkipsFill() {

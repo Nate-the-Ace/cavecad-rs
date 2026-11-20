@@ -5,6 +5,14 @@ enum Coverage {
     /// +1 when target yaw turns the camera clockwise seen from above (right); the bench test sets it.
     nonisolated(unsafe) static var yawSign = 1.0
     static let cell = 10.0, reach = 5.0, elevations = (-45.0, 65.0)
+    /// Target-mode yaw the OM7 reaches (portrait), degrees from home: about −195…+80.
+    static let yawLow = -195.0, yawHigh = 80.0
+
+    /// A yaw (−180…180, sign applied) as the gimbal reaches it: past the high end, the same direction the other
+    /// way round (165…180 is reachable as −195…−180).
+    static func reachableYaw(_ yaw: Double) -> Double {
+        yaw > yawHigh && yaw - 360 >= yawLow ? yaw - 360 : yaw
+    }
 
     struct Direction: Equatable { let yaw: Double; let pitch: Double }
 
@@ -24,7 +32,7 @@ enum Coverage {
                 if !hit {
                     var yaw = az - homeAz
                     yaw = (yaw + 540).truncatingRemainder(dividingBy: 360) - 180
-                    out.append(Direction(yaw: yaw * yawSign, pitch: el))
+                    out.append(Direction(yaw: reachableYaw(yaw * yawSign), pitch: el))
                 }
                 az += cell
             }

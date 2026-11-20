@@ -37,4 +37,19 @@ final class CoverageTests: XCTestCase {
         let m = Coverage.missing(mesh: box(without: 2), pivot: .zero, homeForward: SIMD3(0, 0, -1))
         XCTAssertTrue(m.allSatisfy { $0.yaw < -30 && $0.yaw > -150 }, "\(m)")
     }
+
+    /// 165…180 is reachable the other way round (−195…−180); 80…165 stays as it is (out of reach either way).
+    func testYawPastTheHighEndWrapsWhenReachable() {
+        XCTAssertEqual(Coverage.reachableYaw(175), -185)
+        XCTAssertEqual(Coverage.reachableYaw(165), -195)
+        XCTAssertEqual(Coverage.reachableYaw(155), 155)
+        XCTAssertEqual(Coverage.reachableYaw(60), 60)
+        XCTAssertEqual(Coverage.reachableYaw(-175), -175)
+        // the back wall (+z) gone: the cells just behind on the left come out as −185 and −195
+        let m = Coverage.missing(mesh: box(without: 1), pivot: .zero, homeForward: SIMD3(0, 0, -1))
+        let yaws = Set(m.map(\.yaw))
+        XCTAssertTrue(yaws.contains(-185) && yaws.contains(-195), "\(yaws.sorted())")
+        XCTAssertFalse(yaws.contains { $0 > 160 }, "\(yaws.sorted())")
+        XCTAssertTrue(yaws.contains(155))
+    }
 }

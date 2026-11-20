@@ -301,7 +301,9 @@ final class ShotRecorder: NSObject, ObservableObject, ARSessionDelegate {
     private var gimbalConnecting = false
     private var gimbalWasConnected = false
     private var gimbalStartTime: TimeInterval = 0
-    /// The camera at Start (the gimbal's pivot, near enough) and its forward (−z): home for the coverage.
+    /// The camera once the gimbal is home in target mode (its pivot, near enough) and its forward (−z): home for
+    /// the coverage. Taken on the first poll after the runner reports `entered`.
+    private var gimbalHomeTaken = false
     private var gimbalPivot = SIMD3<Double>(0, 0, 0), gimbalHome = SIMD3<Double>(0, 0, -1)
     /// The directions (yaw, pitch from home) the scan still misses, refreshed every few seconds off the main actor.
     private var gimbalMissing: [(Double, Double)] = []
@@ -1003,6 +1005,8 @@ final class ShotRecorder: NSObject, ObservableObject, ARSessionDelegate {
             // refused (no mesh yet): still capturing
             if case .capturing = phase { stopAfterSave = false }
         case .saved(let url):
+            // a gimbal held by the Pause goes home
+            if gimbalMode, Self.gimbalBusy(gimbal.status()) { gimbal.stopHome() }
             end()
             viewing = url
         default:
@@ -1046,7 +1050,7 @@ final class ShotRecorder: NSObject, ObservableObject, ARSessionDelegate {
     /// The capture screen went away. The session pauses (battery) and a pass in hand is dropped; the recorder,
     /// the session's world and the line-up are kept for coming back to the same station.
     func leave() {
-        if gimbalRun != nil {
+        if gimbalRun != nil || (gimbalMode && Self.gimbalBusy(gimbal.status())) {
             gimbal.stopHome()
             gimbalRun = nil
             Log.write("gimbal", "left the capture screen: going home")
@@ -1110,7 +1114,11 @@ final class ShotRecorder: NSObject, ObservableObject, ARSessionDelegate {
             gimbal.connect()
             startGimbalTimer()
         } else {
-            if gimbalRun != nil { gimbal.stopHome(); gimbalRun = nil }
+            // a gimbal held after a Pause (or still running) goes home before it is let go
+            if gimbalRun != nil || Self.gimbalBusy(gimbal.status()) { gimbal.stopHome() }
+            gimbalRun = nil
+            gimbal.disconnect()
+            UIDevice.current.isBatteryMonitoringEnabled = false
             gimbalConnecting = false
             stopGimbalTimer()
             gimbalLine = ""
@@ -1149,10 +1157,6 @@ final class ShotRecorder: NSObject, ObservableObject, ARSessionDelegate {
 
     /// The pass has started (capturing): the gimbal starts its sweep from here.
     private func startGimbalRun() {
-        guard let f = session.currentFrame else { return }
-        let t = f.camera.transform
-        gimbalPivot = SIMD3(Double(t.columns.3.x), Double(t.columns.3.y), Double(t.columns.3.z))
-        gimbalHome = -SIMD3(Double(t.columns.2.x), Double(t.columns.2.y), Double(t.columns.2.z))
         let now = ProcessInfo.processInfo.systemUptime
         let run = GimbalRun(gimbal: gimbal)
         if let e = run.start(at: now) {
@@ -1163,7 +1167,7 @@ final class ShotRecorder: NSObject, ObservableObject, ARSessionDelegate {
         }
         gimbalRun = run
         gimbalStartTime = now
-        gimbalMissing = []; gimbalCoverage = nil
+        gimbalMissing = []; gimbalCoverage = nil; gimbalHomeTaken = false
         coverageRunning = false; lastCoverage = now
         gimbalReconnectTried = false
         Log.write("gimbal", "sweep \(run.planned) steps")
@@ -1190,9 +1194,21 @@ final class ShotRecorder: NSObject, ObservableObject, ARSessionDelegate {
         if line != gimbalLine { gimbalLine = line }
     }
 
+    /// The pivot and home heading are taken once per pass, on the first poll after the runner has entered target
+    /// mode (which sends the gimbal home) and before its first move.
+    nonisolated static func takesHome(taken: Bool, _ s: GimbalStatus) -> Bool { !taken && s.entered }
+
     private func tickGimbalRun(_ run: GimbalRun) {
         let f = session.currentFrame
         let now = ProcessInfo.processInfo.systemUptime
+        if Self.takesHome(taken: gimbalHomeTaken, gimbalStatus), let f {
+            let t = f.camera.transform
+            gimbalPivot = SIMD3(Double(t.columns.3.x), Double(t.columns.3.y), Double(t.columns.3.z))
+            gimbalHome = -SIMD3(Double(t.columns.2.x), Double(t.columns.2.y), Double(t.columns.2.z))
+            gimbalHomeTaken = true
+            lastCoverage = now
+            Log.write("gimbal", "home taken")
+        }
         let inputs = GimbalRun.Inputs(time: now,
                                       tracking: f.map { Self.gimbalTracking($0.camera.trackingState) } ?? .lost,
                                       lux: Self.lux(f?.lightEstimate?.ambientIntensity),
@@ -1233,7 +1249,7 @@ final class ShotRecorder: NSObject, ObservableObject, ARSessionDelegate {
     /// Every few seconds during a gimbal pass: which directions around the pivot the scan still misses. Only the
     /// anchor list is taken here; the mesh copy and the ray tests run on the mesh queue.
     private func refreshCoverage(now: TimeInterval) {
-        guard !coverageRunning, now - lastCoverage >= Self.coverageEvery else { return }
+        guard gimbalHomeTaken, !coverageRunning, now - lastCoverage >= Self.coverageEvery else { return }
         lastCoverage = now
         coverageRunning = true
         let held = MeshAnchors(anchors: session.currentFrame?.anchors.compactMap { $0 as? ARMeshAnchor } ?? [])

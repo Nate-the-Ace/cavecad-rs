@@ -8,6 +8,8 @@ protocol GimbalDriver: AnyObject {
     func hold()
     func goOn()
     func stopHome()
+    /// Lets the gimbal go (after any running plan ends).
+    func disconnect()
     func status() -> GimbalStatus
 }
 
@@ -18,10 +20,14 @@ struct GimbalStatus: Equatable, Sendable {
     var state = "idle"
     var step = 0, steps = 0
     var mountOK = false
+    /// The running plan has entered target mode and the gimbal is home (before its first move).
+    var entered = false
     var error: String?
 
-    init(connected: Bool = false, state: String = "idle", step: Int = 0, steps: Int = 0, mountOK: Bool = false, error: String? = nil) {
-        self.connected = connected; self.state = state; self.step = step; self.steps = steps; self.mountOK = mountOK; self.error = error
+    init(connected: Bool = false, state: String = "idle", step: Int = 0, steps: Int = 0, mountOK: Bool = false,
+         entered: Bool = false, error: String? = nil) {
+        self.connected = connected; self.state = state; self.step = step; self.steps = steps; self.mountOK = mountOK
+        self.entered = entered; self.error = error
     }
 
     init(_ d: [String: Any]) {
@@ -30,6 +36,7 @@ struct GimbalStatus: Equatable, Sendable {
         step = (d["step"] as? NSNumber)?.intValue ?? 0
         steps = (d["steps"] as? NSNumber)?.intValue ?? 0
         mountOK = d["mount_ok"] as? Bool ?? false
+        entered = d["entered"] as? Bool ?? false
         error = d["error"] as? String
     }
 }
@@ -41,5 +48,6 @@ final class CoreGimbal: GimbalDriver {
     func hold() { Core.gimbalHold() }
     func goOn() { Core.gimbalGoOn() }
     func stopHome() { Core.gimbalStopHome() }
+    func disconnect() { Core.gimbalDisconnect() }
     func status() -> GimbalStatus { GimbalStatus(Core.gimbalStatus()) }
 }
