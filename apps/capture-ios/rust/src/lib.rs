@@ -9,6 +9,7 @@ use cave_capture::{
 use cave_survey::Vec3;
 use serde::Deserialize;
 use std::ffi::{CStr, c_char};
+use std::panic::{AssertUnwindSafe, catch_unwind};
 
 /// Bytes owned by Rust.
 #[repr(C)]
@@ -37,12 +38,29 @@ fn err(msg: &str) -> CcBuf {
     give_json(serde_json::json!({ "error": msg }))
 }
 
-unsafe fn text<'a>(p: *const c_char) -> Option<&'a str> {
+/// `Ok(None)` for NULL, `Err` for text that is not UTF-8.
+unsafe fn text<'a>(p: *const c_char) -> Result<Option<&'a str>, ()> {
     if p.is_null() {
-        None
+        Ok(None)
     } else {
-        unsafe { CStr::from_ptr(p) }.to_str().ok()
+        unsafe { CStr::from_ptr(p) }
+            .to_str()
+            .map(Some)
+            .map_err(|_| ())
     }
+}
+
+/// Runs a body so a panic never crosses the C boundary; `bad` is what the caller gets instead.
+fn guard(body: impl FnOnce() -> CcBuf, bad: fn() -> CcBuf) -> CcBuf {
+    catch_unwind(AssertUnwindSafe(body)).unwrap_or_else(|_| bad())
+}
+
+fn internal() -> CcBuf {
+    err("internal")
+}
+
+fn empty() -> CcBuf {
+    give(Vec::new())
 }
 
 unsafe fn slice<'a, T>(p: *const T, n: usize) -> &'a [T] {
@@ -73,24 +91,32 @@ pub unsafe extern "C" fn cc_stations(
     snapshot: *const c_char,
     entries_json: *const c_char,
 ) -> CcBuf {
-    let snap = unsafe { text(snapshot) };
-    let entries: Vec<String> = match unsafe { text(entries_json) } {
-        None => Vec::new(),
-        Some(t) => match serde_json::from_str(t) {
-            Ok(v) => v,
-            Err(_) => return err("entries are not a JSON array of texts"),
+    guard(
+        || {
+            let Ok(snap) = (unsafe { text(snapshot) }) else {
+                return err("snapshot is not valid UTF-8");
+            };
+            let entries: Vec<String> = match unsafe { text(entries_json) } {
+                Err(()) => return err("entries are not valid UTF-8"),
+                Ok(None) => Vec::new(),
+                Ok(Some(t)) => match serde_json::from_str(t) {
+                    Ok(v) => v,
+                    Err(_) => return err("entries are not a JSON array of texts"),
+                },
+            };
+            let refs: Vec<&str> = entries.iter().map(String::as_str).collect();
+            match document_from_room(snap, &refs) {
+                Err(e) => err(&e),
+                Ok(doc) => give_json(serde_json::Value::Array(
+                    stations(&doc)
+                        .into_iter()
+                        .map(|s| serde_json::json!({ "id": s.id.to_string(), "label": s.label, "x": s.pos.x, "y": s.pos.y, "z": s.pos.z }))
+                        .collect(),
+                )),
+            }
         },
-    };
-    let refs: Vec<&str> = entries.iter().map(String::as_str).collect();
-    match document_from_room(snap, &refs) {
-        Err(e) => err(&e),
-        Ok(doc) => give_json(serde_json::Value::Array(
-            stations(&doc)
-                .into_iter()
-                .map(|s| serde_json::json!({ "id": s.id.to_string(), "label": s.label, "x": s.pos.x, "y": s.pos.y, "z": s.pos.z }))
-                .collect(),
-        )),
-    }
+        internal,
+    )
 }
 
 #[derive(Deserialize)]
@@ -126,44 +152,61 @@ pub unsafe extern "C" fn cc_shot_encode(
     jpegs: *const u8,
     n_jpegs: usize,
 ) -> CcBuf {
-    let Some(h) =
-        (unsafe { text(header_json) }).and_then(|t| serde_json::from_str::<HeaderIn>(t).ok())
-    else {
-        return give(Vec::new());
-    };
-    let jpeg_bytes = unsafe { slice(jpegs, n_jpegs) };
-    let mut at = 0usize;
-    let mut keyframes = Vec::new();
-    for k in h.keyframes {
-        let (Ok(pose), Ok(intrinsics)) = (
-            <[f32; 16]>::try_from(k.pose),
-            <[f32; 9]>::try_from(k.intrinsics),
-        ) else {
-            return give(Vec::new());
-        };
-        let Some(jpeg) = jpeg_bytes.get(at..at + k.jpeg_len) else {
-            return give(Vec::new());
-        };
-        at += k.jpeg_len;
-        keyframes.push(Keyframe {
-            pose,
-            intrinsics,
-            width: k.width,
-            height: k.height,
-            jpeg: jpeg.to_vec(),
-        });
-    }
-    let shot = Shot {
-        header: h.header,
-        positions: unsafe { slice(positions, n_positions) }.to_vec(),
-        normals: unsafe { slice(normals, n_normals) }.to_vec(),
-        indices: unsafe { slice(indices, n_indices) }.to_vec(),
-        keyframes,
-    };
-    match encode(&shot) {
-        Ok(bytes) if decode(&bytes).is_ok() => give(bytes),
-        _ => give(Vec::new()),
-    }
+    guard(
+        || {
+            // Pointer/count pairs: a NULL pointer with a count is a caller bug, refuse it.
+            if (positions.is_null() && n_positions > 0)
+                || (normals.is_null() && n_normals > 0)
+                || (indices.is_null() && n_indices > 0)
+                || (jpegs.is_null() && n_jpegs > 0)
+            {
+                return empty();
+            }
+            let Ok(Some(htext)) = (unsafe { text(header_json) }) else {
+                return empty();
+            };
+            let Ok(h) = serde_json::from_str::<HeaderIn>(htext) else {
+                return empty();
+            };
+            let jpeg_bytes = unsafe { slice(jpegs, n_jpegs) };
+            let mut at = 0usize;
+            let mut keyframes = Vec::new();
+            for k in h.keyframes {
+                let (Ok(pose), Ok(intrinsics)) = (
+                    <[f32; 16]>::try_from(k.pose),
+                    <[f32; 9]>::try_from(k.intrinsics),
+                ) else {
+                    return empty();
+                };
+                let Some(end) = at.checked_add(k.jpeg_len) else {
+                    return empty();
+                };
+                let Some(jpeg) = jpeg_bytes.get(at..end) else {
+                    return empty();
+                };
+                at = end;
+                keyframes.push(Keyframe {
+                    pose,
+                    intrinsics,
+                    width: k.width,
+                    height: k.height,
+                    jpeg: jpeg.to_vec(),
+                });
+            }
+            let shot = Shot {
+                header: h.header,
+                positions: unsafe { slice(positions, n_positions) }.to_vec(),
+                normals: unsafe { slice(normals, n_normals) }.to_vec(),
+                indices: unsafe { slice(indices, n_indices) }.to_vec(),
+                keyframes,
+            };
+            match encode(&shot) {
+                Ok(bytes) if decode(&bytes).is_ok() => give(bytes),
+                _ => empty(),
+            }
+        },
+        empty,
+    )
 }
 
 fn place(shot: &Shot, st: &[f64]) -> Option<cave_capture::Placement> {
@@ -189,13 +232,16 @@ fn place(shot: &Shot, st: &[f64]) -> Option<cave_capture::Placement> {
 
 fn placed_points(shot: &Shot, st: &[f64]) -> Option<(Vec<Vec3>, f64)> {
     let p = place(shot, st)?;
-    let pts = shot
+    let pts: Vec<Vec3> = shot
         .positions
         .as_chunks::<3>()
         .0
         .iter()
         .map(|c| p.apply([c[0] as f64, c[1] as f64, c[2] as f64]))
         .collect();
+    if pts.is_empty() {
+        return None;
+    }
     Some((pts, p.turn_deg))
 }
 
@@ -209,6 +255,10 @@ pub unsafe extern "C" fn cc_shot_summary(
     len: usize,
     station_and_target: *const f64,
 ) -> CcBuf {
+    guard(|| summary(bundle, len, station_and_target), internal)
+}
+
+fn summary(bundle: *const u8, len: usize, station_and_target: *const f64) -> CcBuf {
     let shot = match decode(unsafe { slice(bundle, len) }) {
         Ok(s) => s,
         Err(e) => return err(&format!("{e:?}")),
@@ -249,6 +299,10 @@ pub unsafe extern "C" fn cc_shot_placed_positions(
     len: usize,
     station_and_target: *const f64,
 ) -> CcBuf {
+    guard(|| positions_of(bundle, len, station_and_target), empty)
+}
+
+fn positions_of(bundle: *const u8, len: usize, station_and_target: *const f64) -> CcBuf {
     let st = unsafe { slice(station_and_target, 6) };
     let Ok(shot) = decode(unsafe { slice(bundle, len) }) else {
         return give(Vec::new());
@@ -357,5 +411,92 @@ mod tests {
         }))
         .unwrap();
         assert!(out["error"].is_string());
+    }
+
+    #[test]
+    fn invalid_utf8_is_refused() {
+        let bad = c"\xff\xfe";
+        let out: serde_json::Value = serde_json::from_slice(&read(unsafe {
+            cc_stations(bad.as_ptr(), std::ptr::null())
+        }))
+        .unwrap();
+        assert!(out["error"].is_string());
+        let out: serde_json::Value = serde_json::from_slice(&read(unsafe {
+            cc_stations(std::ptr::null(), bad.as_ptr())
+        }))
+        .unwrap();
+        assert!(out["error"].is_string());
+        let none = std::ptr::null();
+        assert!(
+            read(unsafe {
+                cc_shot_encode(
+                    bad.as_ptr(),
+                    none,
+                    0,
+                    none,
+                    0,
+                    std::ptr::null(),
+                    0,
+                    std::ptr::null(),
+                    0,
+                )
+            })
+            .is_empty()
+        );
+    }
+
+    const BARE: &str = r#"{"shot_id":"s","cave_id":"c","station_id":"a","station_label":"A","captured_at_ms":0,"device":"t",
+        "instrument_height_m":0.0,"start_camera":[0,0,0],
+        "taps":[{"target_station_id":"b","target_label":"B","origin":[0,0,0],"dir":[0,0,-1]}],
+        "tracking":"normal","arkit_version":"26.1","gravity":[0,-1,0],"keyframes":[]}"#;
+
+    #[test]
+    fn null_pointer_with_count_is_empty() {
+        let header = CString::new(BARE).unwrap();
+        let n = std::ptr::null();
+        let out = read(unsafe {
+            cc_shot_encode(
+                header.as_ptr(),
+                n,
+                9,
+                n,
+                9,
+                std::ptr::null(),
+                0,
+                std::ptr::null(),
+                0,
+            )
+        });
+        assert!(out.is_empty());
+    }
+
+    #[test]
+    fn empty_mesh_is_not_placed() {
+        let header = CString::new(BARE).unwrap();
+        let n = std::ptr::null();
+        let bundle = read(unsafe {
+            cc_shot_encode(
+                header.as_ptr(),
+                n,
+                0,
+                n,
+                0,
+                std::ptr::null(),
+                0,
+                std::ptr::null(),
+                0,
+            )
+        });
+        assert!(!bundle.is_empty());
+        let st = [0.0, 0.0, 0.0, 10.0, 0.0, 0.0];
+        let sum: serde_json::Value = serde_json::from_slice(&read(unsafe {
+            cc_shot_summary(bundle.as_ptr(), bundle.len(), st.as_ptr())
+        }))
+        .unwrap();
+        assert_eq!(sum["placed"], false);
+        assert!(
+            read(unsafe { cc_shot_placed_positions(bundle.as_ptr(), bundle.len(), st.as_ptr()) })
+                .is_empty()
+        );
     }
 }

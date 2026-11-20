@@ -49,7 +49,7 @@ impl Placement {
 /// Places a shot from a heading tap: the tap ray (capture frame) pointed at `target`, the rig stood
 /// over `station`, the phone `height_m` above the mark, the shot started with the camera at `start`.
 /// `None` when the ray is within 2° of vertical, or the target is under 1 cm sideways of the
-/// station (neither has a bearing).
+/// station (neither has a bearing), or when any input is not finite.
 pub fn heading_from_tap(
     station: Vec3,
     target: Vec3,
@@ -57,6 +57,16 @@ pub fn heading_from_tap(
     start: [f64; 3],
     height_m: f64,
 ) -> Option<Placement> {
+    let finite = [
+        station.x, station.y, station.z, target.x, target.y, target.z, height_m,
+    ]
+    .into_iter()
+    .chain(dir)
+    .chain(start)
+    .all(f64::is_finite);
+    if !finite {
+        return None;
+    }
     let d = capture_to_survey(dir);
     let horiz = (d.x * d.x + d.y * d.y).sqrt();
     let len = (horiz * horiz + d.z * d.z).sqrt();

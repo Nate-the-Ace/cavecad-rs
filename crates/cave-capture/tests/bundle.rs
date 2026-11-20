@@ -123,3 +123,18 @@ fn ragged_input_refused_on_encode() {
     s.indices.push(0);
     assert_eq!(encode(&s), Err(BundleError::BadMesh));
 }
+
+#[test]
+fn normal_count_mismatch_refused() {
+    let b = encode(&sample()).unwrap();
+    let at = MAGIC.len() + 2;
+    let len = u32::from_le_bytes(b[at..at + 4].try_into().unwrap()) as usize;
+    let json = std::str::from_utf8(&b[at + 4..at + 4 + len]).unwrap();
+    assert!(json.contains("\"normal_count\":3"));
+    let lie = json.replace("\"normal_count\":3", "\"normal_count\":2");
+    let mut out = b[..at].to_vec();
+    out.extend_from_slice(&(lie.len() as u32).to_le_bytes());
+    out.extend_from_slice(lie.as_bytes());
+    out.extend_from_slice(&b[at + 4 + len..]);
+    assert_eq!(decode(&out), Err(BundleError::BadMesh));
+}

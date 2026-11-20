@@ -45,8 +45,10 @@ pub fn document_from_room(snapshot: Option<&str>, entries: &[&str]) -> Result<Do
     Ok(doc)
 }
 
-/// Every station the survey places, in survey order, at the adjusted position the app displays
-/// (raw when the adjustment does not converge, as in the scene).
+/// Every station the survey places, in survey order. Positions are always the loop-closure
+/// adjusted ones, falling back to raw only where the adjustment does not converge. The CaveCAD
+/// map's "adjustment off" view is deliberately not followed: a capture room is tied to the
+/// adjusted survey.
 pub fn stations(doc: &Document) -> Vec<StationSeed> {
     let ex = extract(doc);
     let r = resolve(&ex.legs, &ex.fixed);

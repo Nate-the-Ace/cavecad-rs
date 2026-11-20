@@ -135,3 +135,34 @@ fn target_straight_above_refused() {
         None::<Placement>
     );
 }
+
+#[test]
+fn non_finite_input_refused() {
+    let ok = Vec3 {
+        x: 0.0,
+        y: 10.0,
+        z: 0.0,
+    };
+    let nan = Vec3 {
+        x: f64::NAN,
+        y: 0.0,
+        z: 0.0,
+    };
+    let o = Vec3 {
+        x: 0.0,
+        y: 0.0,
+        z: 0.0,
+    };
+    let d = [0.0, 0.0, -1.0];
+    assert_eq!(heading_from_tap(nan, ok, d, [0.0; 3], 0.0), None);
+    assert_eq!(heading_from_tap(o, nan, d, [0.0; 3], 0.0), None);
+    assert_eq!(
+        heading_from_tap(o, ok, [f64::NAN, 0.0, -1.0], [0.0; 3], 0.0),
+        None
+    );
+    assert_eq!(
+        heading_from_tap(o, ok, d, [0.0, f64::INFINITY, 0.0], 0.0),
+        None
+    );
+    assert_eq!(heading_from_tap(o, ok, d, [0.0; 3], f64::NAN), None);
+}
