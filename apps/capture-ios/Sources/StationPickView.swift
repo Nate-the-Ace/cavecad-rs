@@ -77,7 +77,6 @@ struct StationPickView: View {
                 }
             }
             if let problem { Text(problem).foregroundStyle(.red) }
-            Section { Text("Kept \(cave.keptAt.formatted(date: .abbreviated, time: .shortened))").font(.caption).foregroundStyle(.secondary) }
         }
         .navigationTitle(cave.name)
         .confirmationDialog("Delete all \(saved.count) shots of \(cave.name) from this phone?", isPresented: $askDeleteAll,
