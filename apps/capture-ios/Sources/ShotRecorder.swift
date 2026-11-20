@@ -57,10 +57,15 @@ final class ShotRecorder: NSObject, ObservableObject, ARSessionDelegate {
     @Published var phase: Phase = .ready { didSet { Log.write("shot", "phase \(phase)") } }
     @Published var message = readyMessage { didSet { if message != oldValue { Log.write("shot", message) } } }
     @Published var keyframeCount = 0
+    /// Waiting for a heading before the session runs (Start is off meanwhile).
+    @Published var findingNorth = false
 
     let session = ARSession()
     private let compass = CompassWatcher()
-    private var compassAtStart = CompassReading.none
+    /// The compass when ARKit fixed north (the session's run): what the shot's frame really used.
+    private var compassAtAlignment = CompassReading.none
+    /// Bumped on every run and leave, so a late heading wait does not start a session that was left.
+    private var runSerial = 0
     private var lastCompassLog: TimeInterval = 0
     private var startCamera = SIMD3<Float>(0, 0, 0)
     private var keyframes: [ShotKeyframe] = []
@@ -119,6 +124,30 @@ final class ShotRecorder: NSObject, ObservableObject, ARSessionDelegate {
             message = "This phone has no LiDAR."
             return
         }
+        // .gravityAndHeading fixes north when the session runs: start the compass first and wait (up to 3 s)
+        // for a valid heading, so the alignment has one and the header records that very reading.
+        compass.start()
+        runSerial += 1
+        let serial = runSerial
+        findingNorth = true
+        message = "Finding north…"
+        Task {
+            let found = await compass.firstValid(timeout: 3)
+            guard serial == runSerial else { return }
+            findingNorth = false
+            if let found {
+                compassAtAlignment = found
+                Log.write("compass", "at alignment: \(found.logLine)")
+            } else {
+                compassAtAlignment = CompassReading(trueNorth: false, accuracyDeg: -1, headingDeg: compass.latest.headingDeg)
+                Log.write("compass", "no heading at alignment")
+            }
+            message = Self.readyMessage
+            runSession()
+        }
+    }
+
+    private func runSession() {
         let c = ARWorldTrackingConfiguration()
         c.sceneReconstruction = .mesh
         c.frameSemantics = [.sceneDepth]
@@ -126,12 +155,11 @@ final class ShotRecorder: NSObject, ObservableObject, ARSessionDelegate {
         // x east, y up, z south: the compass turns the shot, no heading tap needed
         c.worldAlignment = .gravityAndHeading
         session.delegate = self
-        compass.start()
         session.run(c, options: [.resetTracking, .removeExistingAnchors])
     }
 
     func start() {
-        guard let f = session.currentFrame else { return }
+        guard !findingNorth, let f = session.currentFrame else { return }
         if (f.lightEstimate?.ambientIntensity ?? 0) < 150 { message = "Too dark to track. Turn the light on."; return }
         guard case .normal = f.camera.trackingState else { message = "Hold still until tracking settles."; return }
         // Warn once when space is short; a second tap on Start goes ahead.
@@ -147,13 +175,12 @@ final class ShotRecorder: NSObject, ObservableObject, ARSessionDelegate {
         keyframes = []; keyframeCount = 0; lastYaw = .nan; lastTime = 0; worstTracking = "normal"
         photoLimitShown = false
         shotSerial += 1
-        compassAtStart = compass.latest
         lastCompassLog = f.timestamp
-        Log.write("compass", "at start: \(compassAtStart.logLine)")
+        Log.write("compass", "at start: \(compass.latest.logLine) (aligned with \(compassAtAlignment.logLine))")
         phase = .capturing
         UIApplication.shared.isIdleTimerDisabled = true
         // An unsure compass does not stop the shot, but it must be seen.
-        message = compassAtStart.warning ?? "Capturing. Turn slowly; Stop when the room is covered."
+        message = compassAtAlignment.warning ?? "Capturing. Turn slowly; Stop when the room is covered."
     }
 
     // ARSession calls this on the main queue (no delegateQueue is set).
@@ -226,7 +253,7 @@ final class ShotRecorder: NSObject, ObservableObject, ARSessionDelegate {
         shotSerial += 1
         Log.write("compass", "at stop: \(compass.latest.logLine)")
         let job = ShotJob(caveId: cave.id, over: over, parts: parts, keyframes: keyframes, startCamera: startCamera,
-                          tracking: worstTracking, systemVersion: UIDevice.current.systemVersion, compass: compassAtStart)
+                          tracking: worstTracking, systemVersion: UIDevice.current.systemVersion, compass: compassAtAlignment)
         keyframes = []  // the job now holds the only reference, and drops each photo as it is written
         Task {
             let result = await Task.detached { job.write() }.value
@@ -250,6 +277,8 @@ final class ShotRecorder: NSObject, ObservableObject, ARSessionDelegate {
     /// The capture screen went away.
     func leave() {
         shotSerial += 1
+        runSerial += 1
+        findingNorth = false
         session.pause()
         compass.stop()
         UIApplication.shared.isIdleTimerDisabled = false

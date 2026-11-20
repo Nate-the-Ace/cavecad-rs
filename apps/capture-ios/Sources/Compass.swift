@@ -35,6 +35,13 @@ struct CompassReading: Equatable, Sendable {
         return "Compass unsure (±\(n)°). The gimbal's magnet may be pulling it; the shot will still save."
     }
 
+    /// How a shot's compass is shown: never silent.
+    var label: String {
+        if warning != nil { return "compass unsure" }
+        let n = "±\(Int(accuracyDeg.rounded()))°"
+        return trueNorth ? "true north \(n)" : "magnetic north \(n) (no location)"
+    }
+
     var logLine: String {
         String(format: "heading %.1f° %@ ±%@", headingDeg, trueNorth ? "true" : "magnetic",
                accuracyDeg < 0 ? "invalid" : String(format: "%.0f°", accuracyDeg))
@@ -60,6 +67,16 @@ final class CompassWatcher: NSObject, CLLocationManagerDelegate {
         if manager.authorizationStatus == .notDetermined { manager.requestWhenInUseAuthorization() }
         manager.startUpdatingLocation()
         manager.startUpdatingHeading()
+    }
+
+    /// The first heading iOS calls valid (accuracy known), waiting up to `timeout` seconds; nil when none came.
+    func firstValid(timeout: TimeInterval) async -> CompassReading? {
+        let until = Date().addingTimeInterval(timeout)
+        while Date() < until {
+            if latest.accuracyDeg >= 0 { return latest }
+            try? await Task.sleep(for: .milliseconds(100))
+        }
+        return latest.accuracyDeg >= 0 ? latest : nil
     }
 
     func stop() {

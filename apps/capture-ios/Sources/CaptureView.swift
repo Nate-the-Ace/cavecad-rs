@@ -27,7 +27,7 @@ struct CaptureView: View {
                 HStack(spacing: 16) {
                     switch rec.phase {
                     case .ready:
-                        Button("Start") { rec.start() }.buttonStyle(.borderedProminent)
+                        Button("Start") { rec.start() }.buttonStyle(.borderedProminent).disabled(rec.findingNorth)
                     case .capturing:
                         Text("\(rec.keyframeCount) photos")
                         Button("Stop") { rec.stop(cave: cave, over: over) }.buttonStyle(.borderedProminent).tint(.red)

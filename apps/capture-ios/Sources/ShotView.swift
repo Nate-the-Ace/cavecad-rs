@@ -12,6 +12,10 @@ struct ShotSummary: Equatable, Sendable {
     var targetStationId: String?
     /// A compass shot (placed from its station alone); false for the older heading-tap shots.
     var isCompass = false
+    /// A compass shot's compass at alignment (heading not stored: only true/magnetic and accuracy).
+    var compass: CompassReading?
+    /// What to show for the compass; nil for a tap shot.
+    var compassLabel: String? { compass?.label }
 
     init(vertices: Int, triangles: Int, keyframes: Int, placed: Bool, turnDeg: Double?, error: String?,
          stationId: String?, targetStationId: String?, isCompass: Bool) {
@@ -30,6 +34,10 @@ struct ShotSummary: Equatable, Sendable {
         stationId = d["station_id"] as? String
         targetStationId = d["target_station_id"] as? String
         isCompass = d["compass"] is [String: Any]
+        if let c = d["compass"] as? [String: Any] {
+            compass = CompassReading(trueNorth: c["true_north"] as? Bool ?? false,
+                                     accuracyDeg: (c["accuracy_deg"] as? NSNumber)?.doubleValue ?? -1, headingDeg: 0)
+        }
     }
 
     /// The shot's own stations among the cave's: nil when the station it stood on is gone. `forward` is the
@@ -75,6 +83,9 @@ struct ShotView: View {
                     Text("\(summary.triangles) triangles")
                     Text("\(summary.keyframes) photos")
                     if !summary.isCompass, let t = summary.turnDeg { Text(String(format: "turned %.1f°", t)) }
+                    if let c = summary.compass {
+                        Text(c.label).foregroundStyle(c.warning == nil ? Color.secondary : Color.orange)
+                    }
                 }.font(.caption).padding(8)
             }
         }

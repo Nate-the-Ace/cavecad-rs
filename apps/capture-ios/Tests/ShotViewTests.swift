@@ -39,4 +39,17 @@ final class ShotViewTests: XCTestCase {
         XCTAssertNil(t.pair(in: [a]))  // its target is gone: cannot place
         XCTAssertNil(c.stations(in: [b]))  // its own station is gone
     }
+
+    /// The compass state is never silent: every compass shot carries one of three labels; tap shots none.
+    func testCompassLabel() {
+        func label(_ c: [String: Any]?) -> String? {
+            ShotSummary(c.map { ["station_id": "a", "compass": $0] } ?? ["station_id": "a"]).compassLabel
+        }
+        XCTAssertEqual(label(["true_north": true, "accuracy_deg": 7.6]), "true north ±8°")
+        XCTAssertEqual(label(["true_north": false, "accuracy_deg": 12.0]), "magnetic north ±12° (no location)")
+        XCTAssertEqual(label(["true_north": true, "accuracy_deg": 25.0]), "compass unsure")
+        XCTAssertEqual(label(["true_north": false, "accuracy_deg": -1.0]), "compass unsure")
+        XCTAssertEqual(label(["true_north": true, "accuracy_deg": 20.0]), "true north ±20°")
+        XCTAssertNil(label(nil))
+    }
 }

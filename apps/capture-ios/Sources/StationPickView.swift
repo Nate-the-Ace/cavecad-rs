@@ -7,6 +7,8 @@ struct SavedShot: Identifiable, Sendable {
     let made: Date?
     let over: Station?
     let forward: Station?
+    /// The compass state, for compass shots ("true north ±5°", "compass unsure", …).
+    let compassLabel: String?
     var id: URL { url }
 
     var title: String {
@@ -39,7 +41,8 @@ struct StationPickView: View {
                 // Each shot is shown with its own station, whatever is picked above.
                 Section("Saved shots") {
                     ForEach(saved) { s in
-                        let made = s.made?.formatted(date: .abbreviated, time: .shortened) ?? ""
+                        let made = [s.made?.formatted(date: .abbreviated, time: .shortened), s.compassLabel]
+                            .compactMap { $0 }.joined(separator: " · ")
                         if let o = s.over {
                             NavigationLink { ShotView(url: s.url, stations: [o] + (s.forward.map { [$0] } ?? [])) } label: {
                                 LabeledContent(s.title, value: made)
@@ -84,7 +87,7 @@ struct StationPickView: View {
                 let head = (try? Data(contentsOf: u, options: .alwaysMapped))
                     .map { ShotSummary(Core.summary(bundle: $0, pair: nil)) }
                 let found = head?.stations(in: all)
-                return SavedShot(url: u, made: made, over: found?.over, forward: found?.forward)
+                return SavedShot(url: u, made: made, over: found?.over, forward: found?.forward, compassLabel: head?.compassLabel)
             }
         }.value
     }
