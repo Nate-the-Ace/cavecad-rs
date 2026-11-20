@@ -311,6 +311,8 @@ final class ShotRecorder: NSObject, ObservableObject, ARSessionDelegate {
     private var coverageRunning = false, lastCoverage: TimeInterval = 0
     /// One reconnect after the gimbal is lost.
     private var gimbalReconnectTried = false
+    /// The runner step last written to the log (each step is logged once, to find where a sweep stops).
+    private var gimbalLoggedStep = -1
     /// The next save is a finished gimbal pass: chime and vibrate when it lands.
     private var chimeAfterSave = false
     /// The cave and station the screen is over (from `prepare`), for the save a finished gimbal pass makes itself.
@@ -1169,7 +1171,7 @@ final class ShotRecorder: NSObject, ObservableObject, ARSessionDelegate {
         gimbalStartTime = now
         gimbalMissing = []; gimbalCoverage = nil; gimbalHomeTaken = false
         coverageRunning = false; lastCoverage = now
-        gimbalReconnectTried = false
+        gimbalReconnectTried = false; gimbalLoggedStep = -1
         Log.write("gimbal", "sweep \(run.planned) steps")
         gimbalTick()
     }
@@ -1215,6 +1217,10 @@ final class ShotRecorder: NSObject, ObservableObject, ARSessionDelegate {
                                       battery: Self.batteryFraction(UIDevice.current.batteryLevel),
                                       missing: gimbalMissing)
         let (wasStage, wasHolding) = (run.stage, run.holding)
+        if gimbalStatus.step != gimbalLoggedStep {
+            gimbalLoggedStep = gimbalStatus.step
+            Log.write("gimbal", "step \(gimbalStatus.step)/\(gimbalStatus.steps) (\(gimbalStatus.state))")
+        }
         let out = run.tick(inputs)
         if run.holding != wasHolding, run.stage != .ending {
             Log.write("gimbal", run.holding ? "hold (\(run.holdReason ?? "?"))" : "go on")
@@ -1233,6 +1239,10 @@ final class ShotRecorder: NSObject, ObservableObject, ARSessionDelegate {
         gimbalRun = nil
         if let c = gimbalCoverage { Log.write("gimbal", "coverage \(c.covered)/\(c.cells) cells at the end") }
         Log.write("gimbal", "finished [\(flags.joined(separator: ", "))] in \(Int((now - gimbalStartTime).rounded())) s")
+        if flags.contains(where: { $0.hasPrefix("gimbal lost") }) {
+            let s = gimbalStatus
+            Log.write("gimbal", "lost at step \(s.step)/\(s.steps): state \(s.state), connected \(s.connected), error \(s.error ?? "none")")
+        }
         if flags.contains(where: { $0.hasPrefix("gimbal lost") }), !gimbalReconnectTried {
             gimbalReconnectTried = true
             gimbalConnecting = true
