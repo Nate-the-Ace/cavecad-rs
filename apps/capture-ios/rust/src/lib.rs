@@ -13,6 +13,8 @@ use serde::Deserialize;
 use std::ffi::{CStr, c_char};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
+mod gimbal;
+
 /// Bytes owned by Rust.
 #[repr(C)]
 pub struct CcBuf {
@@ -602,6 +604,63 @@ pub unsafe extern "C" fn cc_cards_fit(
         },
         internal,
     )
+}
+
+// ---- the gimbal (one runner; see gimbal.rs). The doors only queue commands or flip flags and return at once.
+
+/// Looks for the gimbal for `timeout_ms` and connects; poll `cc_gimbal_status`.
+#[unsafe(no_mangle)]
+pub extern "C" fn cc_gimbal_connect(timeout_ms: u32) {
+    let _ = catch_unwind(|| gimbal::connect(timeout_ms));
+}
+
+/// Queues a plan: `[[{"yaw","roll","pitch","seconds"}, ...], ...]`, each list 1 to 15 targets. `{"ok":true}` or
+/// `{"error"}` for a plan that is refused.
+///
+/// # Safety
+/// `plan_json` is NUL-terminated UTF-8 or null.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn cc_gimbal_run(plan_json: *const c_char) -> CcBuf {
+    guard(
+        || match unsafe { text(plan_json) } {
+            Ok(Some(t)) => match gimbal::run_plan(t) {
+                Ok(()) => give_json(serde_json::json!({"ok": true})),
+                Err(e) => err(&e),
+            },
+            _ => err("plan is not text"),
+        },
+        internal,
+    )
+}
+
+/// Pauses the running plan on its next reached target (target mode kept alive).
+#[unsafe(no_mangle)]
+pub extern "C" fn cc_gimbal_hold() {
+    let _ = catch_unwind(gimbal::hold);
+}
+
+/// Ends a hold.
+#[unsafe(no_mangle)]
+pub extern "C" fn cc_gimbal_go_on() {
+    let _ = catch_unwind(gimbal::go_on);
+}
+
+/// Stops the running plan at its next reached target and sends the gimbal home.
+#[unsafe(no_mangle)]
+pub extern "C" fn cc_gimbal_stop_home() {
+    let _ = catch_unwind(gimbal::stop_home);
+}
+
+/// Disconnects the gimbal (after a running plan ends).
+#[unsafe(no_mangle)]
+pub extern "C" fn cc_gimbal_disconnect() {
+    let _ = catch_unwind(gimbal::disconnect);
+}
+
+/// The gimbal status JSON.
+#[unsafe(no_mangle)]
+pub extern "C" fn cc_gimbal_status() -> CcBuf {
+    guard(|| give(gimbal::status().into_bytes()), internal)
 }
 
 #[cfg(test)]

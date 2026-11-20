@@ -86,5 +86,34 @@ CcBuf cc_shot_ghost(const uint8_t *bundle, size_t len, float cell_m, float min_o
 /// {"error"} on a bad bundle or JSON.
 CcBuf cc_cards_fit(const uint8_t *bundle, size_t len, const char *cards_json, uint8_t same_session);
 
+/// The gimbal (Osmo Mobile 7 over Bluetooth): one runner on its own thread. The doors below queue a
+/// command or flip a flag and return at once; poll cc_gimbal_status for what happened.
+///
+/// Looks for the gimbal for timeout_ms and connects (state connecting, then idle, or error with a
+/// message, e.g. with no Bluetooth).
+void cc_gimbal_connect(uint32_t timeout_ms);
+
+/// Queues a plan: JSON [[{"yaw","roll","pitch","seconds"}, ...], ...], target-mode targets in degrees
+/// relative to home and move seconds, each list 1 to 15 targets ending at home. Returns {"ok":true},
+/// or {"error"} for a refused plan (nothing sent). A run ends in state done or error.
+CcBuf cc_gimbal_run(const char *plan_json);
+
+/// Pauses the running plan on its next reached target (state holding; target mode kept alive).
+void cc_gimbal_hold(void);
+
+/// Ends a hold.
+void cc_gimbal_go_on(void);
+
+/// Stops the running plan at its next reached target and sends the gimbal home (state homing, then done).
+void cc_gimbal_stop_home(void);
+
+/// Disconnects the gimbal (after a running plan ends) and resets the status.
+void cc_gimbal_disconnect(void);
+
+/// {"connected":bool,"state":"idle"|"connecting"|"moving"|"holding"|"homing"|"done"|"error",
+/// "step":targets reached,"steps":targets in the plan,"mount_ok":bool (joints known and the roll
+/// joint within 80..112: portrait upright),"joints":[pan,tilt,roll] degrees|null,"error":string|null}.
+CcBuf cc_gimbal_status(void);
+
 /// Releases a CcBuf. Call exactly once per returned buffer.
 void cc_free(CcBuf buf);

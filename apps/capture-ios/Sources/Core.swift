@@ -143,4 +143,24 @@ enum Core {
         } }
         return (try? JSONSerialization.jsonObject(with: d) as? [String: Any]) ?? ["error": "unreadable"]
     }
+
+    // MARK: gimbal (cc_gimbal_*: one runner in the core; these return at once, poll gimbalStatus)
+
+    /// Looks for the gimbal for `timeoutMs` and connects.
+    static func gimbalConnect(timeoutMs: UInt32 = 15000) { cc_gimbal_connect(timeoutMs) }
+    /// Queues a plan (lists of `["yaw","roll","pitch","seconds"]` targets). nil on success, else the core's error text.
+    static func gimbalRun(_ lists: [[[String: Double]]]) -> String? {
+        guard let d = try? JSONSerialization.data(withJSONObject: lists), let t = String(data: d, encoding: .utf8) else { return "plan" }
+        let out = t.withCString { take(cc_gimbal_run($0)) }
+        let j = (try? JSONSerialization.jsonObject(with: out) as? [String: Any]) ?? [:]
+        return j["ok"] as? Bool == true ? nil : (j["error"] as? String ?? "gimbal")
+    }
+    static func gimbalHold() { cc_gimbal_hold() }
+    static func gimbalGoOn() { cc_gimbal_go_on() }
+    static func gimbalStopHome() { cc_gimbal_stop_home() }
+    static func gimbalDisconnect() { cc_gimbal_disconnect() }
+    /// `{"connected","state","step","steps","mount_ok","joints","error"}` (see capture_core.h).
+    static func gimbalStatus() -> [String: Any] {
+        (try? JSONSerialization.jsonObject(with: take(cc_gimbal_status())) as? [String: Any]) ?? [:]
+    }
 }

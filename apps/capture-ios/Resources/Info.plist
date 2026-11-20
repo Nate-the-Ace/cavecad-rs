@@ -8,6 +8,7 @@
   <key>CFBundleIdentifier</key><string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>NSLocationWhenInUseUsageDescription</key><string>Location lets the compass point at true north.</string>
+  <key>NSBluetoothAlwaysUsageDescription</key><string>CaveCAD Capture drives your gimbal to sweep the phone while scanning.</string>
   <key>NSCameraUsageDescription</key><string>The camera and LiDAR capture the cave room.</string>
   <key>UIRequiredDeviceCapabilities</key><array><string>arkit</string></array>
   <key>UILaunchScreen</key><dict/>

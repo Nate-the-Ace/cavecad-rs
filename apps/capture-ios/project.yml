@@ -21,6 +21,8 @@ targets:
     dependencies:
       - framework: CaptureCore.xcframework
         embed: false
+      # the core's Bluetooth (btleplug, for the gimbal) calls CoreBluetooth; a static library does not bring it
+      - sdk: CoreBluetooth.framework
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: app.cavecad.capture
