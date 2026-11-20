@@ -166,3 +166,38 @@ fn non_finite_input_refused() {
     );
     assert_eq!(heading_from_tap(o, ok, d, [0.0; 3], f64::NAN), None);
 }
+
+#[test]
+fn compass_shot_lands_north_of_the_station() {
+    use cave_capture::frame::{PIVOT_HEIGHT_M, from_compass};
+    let st = cave_survey::Vec3 {
+        x: 100.0,
+        y: 200.0,
+        z: 50.0,
+    };
+    let p = from_compass(st, [1.0, 0.5, 2.0], 0.0).unwrap();
+    assert_eq!(p.turn_deg, 0.0);
+    // 5 m along -z from the start camera is 5 m north (ARKit .gravityAndHeading: x east, y up, z south)
+    let q = p.apply([1.0, 0.5, 2.0 - 5.0]);
+    assert!((q.x - 100.0).abs() < 1e-9 && (q.y - 205.0).abs() < 1e-9 && (q.z - 50.0).abs() < 1e-9);
+    // 3 m along +x is east
+    let e = p.apply([4.0, 0.5, 2.0]);
+    assert!((e.x - 103.0).abs() < 1e-9 && (e.y - 200.0).abs() < 1e-9);
+    // the pivot height lifts everything
+    let h = from_compass(st, [0.0; 3], PIVOT_HEIGHT_M).unwrap();
+    assert!((h.apply([0.0; 3]).z - 50.30).abs() < 1e-9);
+}
+
+#[test]
+fn compass_refuses_non_finite() {
+    use cave_capture::frame::from_compass;
+    let st = cave_survey::Vec3 {
+        x: 0.0,
+        y: 0.0,
+        z: 0.0,
+    };
+    assert!(from_compass(st, [f64::NAN, 0.0, 0.0], 0.3).is_none());
+    assert!(from_compass(st, [0.0; 3], f64::INFINITY).is_none());
+    let bad = cave_survey::Vec3 { x: f64::NAN, ..st };
+    assert!(from_compass(bad, [0.0; 3], 0.3).is_none());
+}

@@ -24,6 +24,7 @@ fn sample() -> Shot {
             tracking: "normal".into(),
             arkit_version: "26.1".into(),
             gravity: [0.0, -1.0, 0.0],
+            compass: None,
         },
         positions: vec![0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0],
         normals: vec![0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0],
@@ -198,4 +199,30 @@ fn check_header_reads_header_and_counts_only() {
     longer.push(0);
     assert_eq!(check_header(&longer), Err(BundleError::Truncated));
     assert_eq!(check_header(b"nope"), Err(BundleError::NotACapture));
+}
+
+#[test]
+fn compass_round_trips() {
+    use cave_capture::bundle::Compass;
+    let mut s = sample();
+    s.header.taps.clear();
+    s.header.compass = Some(Compass {
+        true_north: true,
+        accuracy_deg: 7.5,
+    });
+    assert_eq!(decode(&encode(&s).unwrap()), Ok(s));
+}
+
+/// The two shots already on the phone were written before `compass` existed (and a compass shot
+/// writes no taps): both must still read.
+#[test]
+fn header_without_compass_or_taps_still_reads() {
+    let h: ShotHeader = serde_json::from_str(
+        r#"{"shot_id":"s","cave_id":"c","station_id":"a","station_label":"A","captured_at_ms":0,
+            "device":"t","instrument_height_m":1.0,"start_camera":[0,0,0],"tracking":"normal",
+            "arkit_version":"26.1","gravity":[0,-1,0]}"#,
+    )
+    .unwrap();
+    assert!(h.taps.is_empty());
+    assert_eq!(h.compass, None);
 }

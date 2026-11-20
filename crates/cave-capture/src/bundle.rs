@@ -23,6 +23,16 @@ pub struct HeadingTap {
     pub dir: [f64; 3],
 }
 
+/// How the phone's compass stood when a shot started. A compass shot's capture frame is ARKit's
+/// `.gravityAndHeading` (x east, y up, z south), so it needs no heading tap.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Compass {
+    /// The heading was true north (location allowed); false means magnetic north.
+    pub true_north: bool,
+    /// iOS's heading accuracy, degrees; negative when iOS said the heading was invalid.
+    pub accuracy_deg: f64,
+}
+
 /// Everything about a shot except its bulk arrays.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ShotHeader {
@@ -42,7 +52,8 @@ pub struct ShotHeader {
     pub instrument_height_m: f64,
     /// Camera position in the capture frame when the shot started.
     pub start_camera: [f64; 3],
-    /// Heading taps, first one wins.
+    /// Heading taps, first one wins. Compass shots write none; absent in a file means none.
+    #[serde(default)]
     pub taps: Vec<HeadingTap>,
     /// How tracking went: `normal`, `limited` or `lost`.
     pub tracking: String,
@@ -50,6 +61,10 @@ pub struct ShotHeader {
     pub arkit_version: String,
     /// Gravity direction in the capture frame (ARKit's gravity alignment makes it `(0,-1,0)`).
     pub gravity: [f64; 3],
+    /// The compass at the start of a compass shot; `None` for a tap shot (and for shots written
+    /// before compass shots existed).
+    #[serde(default)]
+    pub compass: Option<Compass>,
 }
 
 /// One kept camera frame, for colouring the mesh later.

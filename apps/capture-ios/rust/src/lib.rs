@@ -5,7 +5,7 @@
 
 use cave_capture::{
     KeyframeRef, Shot, ShotHeader, check_header, decode, document_from_room, encode_parts,
-    heading_from_tap, stations,
+    from_compass, heading_from_tap, stations,
 };
 use cave_survey::Vec3;
 use serde::Deserialize;
@@ -216,13 +216,22 @@ pub unsafe extern "C" fn cc_shot_encode(
     )
 }
 
+/// A compass shot places from its station alone (the target half of `st` is ignored); an older tap
+/// shot needs its target.
 fn place(shot: &Shot, st: &[f64]) -> Option<cave_capture::Placement> {
-    let tap = shot.header.taps.first()?;
     let station = Vec3 {
         x: st[0],
         y: st[1],
         z: st[2],
     };
+    if shot.header.compass.is_some() {
+        return from_compass(
+            station,
+            shot.header.start_camera,
+            shot.header.instrument_height_m,
+        );
+    }
+    let tap = shot.header.taps.first()?;
     let target = Vec3 {
         x: st[3],
         y: st[4],
@@ -279,6 +288,7 @@ fn summary(bundle: *const u8, len: usize, station_and_target: *const f64) -> CcB
         "placed": false,
         "station_id": info.header.station_id,
         "target_station_id": info.header.taps.first().map(|t| t.target_station_id.clone()),
+        "compass": info.header.compass.map(|c| serde_json::json!({ "true_north": c.true_north, "accuracy_deg": c.accuracy_deg })),
     });
     let st = unsafe { slice(station_and_target, 6) };
     if st.len() != 6 {
@@ -572,5 +582,69 @@ mod tests {
         // the first vertex is 5 m along the tap, which points at the target due east
         assert!((pts[0] - 5.0).abs() < 1e-4, "{pts:?}");
         assert!(pts[1].abs() < 1e-4 && pts[2].abs() < 1e-4, "{pts:?}");
+    }
+
+    const COMPASS: &str = r#"{"shot_id":"s","cave_id":"c","station_id":"a","station_label":"A","captured_at_ms":0,"device":"t",
+        "instrument_height_m":0.3,"start_camera":[0,0,0],"taps":[],
+        "compass":{"true_north":true,"accuracy_deg":6.0},
+        "tracking":"normal","arkit_version":"26.1","gravity":[0,-1,0],"keyframes":[]}"#;
+
+    fn bundle_of(header: &str) -> Vec<u8> {
+        let header = CString::new(header).unwrap();
+        let pos = [0f32, 0.0, -5.0, 1.0, 0.0, -5.0, 0.0, 1.0, -5.0];
+        let nor = [0f32; 9];
+        let idx = [0u32, 1, 2];
+        read(unsafe {
+            cc_shot_encode(
+                header.as_ptr(),
+                pos.as_ptr(),
+                9,
+                nor.as_ptr(),
+                9,
+                idx.as_ptr(),
+                3,
+                std::ptr::null(),
+                0,
+            )
+        })
+    }
+
+    #[test]
+    fn compass_shot_places_from_its_station_alone() {
+        let b = bundle_of(COMPASS);
+        assert!(!b.is_empty());
+        // the target half is ignored for a compass shot: give it the station itself
+        let st = [100.0, 200.0, 50.0, 100.0, 200.0, 50.0];
+        let sum: serde_json::Value = serde_json::from_slice(&read(unsafe {
+            cc_shot_summary(b.as_ptr(), b.len(), st.as_ptr())
+        }))
+        .unwrap();
+        assert_eq!(sum["placed"], true, "{sum}");
+        assert_eq!(sum["turn_deg"], 0.0);
+        assert_eq!(sum["compass"]["true_north"], true);
+        assert_eq!(sum["compass"]["accuracy_deg"], 6.0);
+        assert!(sum["target_station_id"].is_null());
+        let raw = read(unsafe { cc_shot_placed_positions(b.as_ptr(), b.len(), st.as_ptr()) });
+        let pts: Vec<f32> = raw
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|c| f32::from_le_bytes(*c))
+            .collect();
+        // (0,0,-5) is 5 m north of the start camera, which sits 0.3 m above the station
+        assert!(
+            pts[0].abs() < 1e-5 && (pts[1] - 5.0).abs() < 1e-5 && (pts[2] - 0.3).abs() < 1e-5,
+            "{pts:?}"
+        );
+    }
+
+    #[test]
+    fn tap_shot_summary_has_no_compass() {
+        let b = bundle_of(BARE);
+        let sum: serde_json::Value = serde_json::from_slice(&read(unsafe {
+            cc_shot_summary(b.as_ptr(), b.len(), std::ptr::null())
+        }))
+        .unwrap();
+        assert!(sum["compass"].is_null());
     }
 }

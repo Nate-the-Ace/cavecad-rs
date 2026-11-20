@@ -4,6 +4,11 @@
 
 use cave_survey::Vec3;
 
+/// Height of the gimbal's roll pivot above the surface its tripod stands on, metres: the DJI Osmo
+/// Mobile 7, measured in the 2026-11-16 floor sweep (`tools/cave-osmo/FINDINGS.md`, "Height of the
+/// pivot", branch `ble-bridge`). Capture uses the same gimbal, so this is a shot's instrument height.
+pub const PIVOT_HEIGHT_M: f64 = 0.30;
+
 /// A capture-frame point in survey axes (before any turn): `(x, -z, y)`.
 pub fn capture_to_survey(p: [f64; 3]) -> Vec3 {
     Vec3 {
@@ -81,6 +86,26 @@ pub fn heading_from_tap(
     let have = bearing_deg(d.x, d.y);
     Some(Placement {
         turn_deg: (want - have).rem_euclid(360.0),
+        origin: Vec3 {
+            x: station.x,
+            y: station.y,
+            z: station.z + height_m,
+        },
+        start,
+    })
+}
+
+/// Places a compass shot: its capture frame is ARKit `.gravityAndHeading` (x east, y up, z south),
+/// so [`capture_to_survey`] already gives east, north, up and no turn is needed. The rig stood over
+/// `station`, the phone `height_m` above the mark, the shot started with the camera at `start`.
+/// `None` when any input is not finite.
+pub fn from_compass(station: Vec3, start: [f64; 3], height_m: f64) -> Option<Placement> {
+    let finite = [station.x, station.y, station.z, height_m]
+        .into_iter()
+        .chain(start)
+        .all(f64::is_finite);
+    finite.then_some(Placement {
+        turn_deg: 0.0,
         origin: Vec3 {
             x: station.x,
             y: station.y,
