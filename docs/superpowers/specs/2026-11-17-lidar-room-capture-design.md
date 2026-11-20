@@ -36,6 +36,31 @@ means a scanned notebook page.
   the suite corrects it from the cave's location (`cave-geomag`). Until then such shots are placed as
   they are and labelled, never silently. Shots taken with a heading tap (two exist) still place as before.
 
+## Station cards (Nathan, 2026-11-20)
+
+Three reusable, business-card-sized cards (85 × 55 mm), each one simplified glyph plus a printed word:
+**CURRENT**, **FORWARD** and **REAR**. The same three cards are used at every station; nothing is printed
+per station.
+
+- **Placing:** CURRENT on the mark of the station chosen in the app, FORWARD on the next station, REAR on
+  the previous one. Propped up facing the rig where possible (a card lying flat seen at a shallow angle from
+  metres away will not read).
+- **Which stations they mean:** the app already knows: the chosen station is CURRENT; FORWARD and REAR are
+  its neighbours along the surveyed legs. Only where that is ambiguous (a junction, an end) does the app ask,
+  so the controls stay the station chooser and Start/Stop.
+- **Marking while scanning:** the app looks for the glyphs in the camera frames during the sweep, finds each
+  card's 3D point with the LiDAR depth, and marks it in the live view. Nothing to tap.
+- **What they give:** CURRENT puts the station point where it really is, so the rig need not stand exactly
+  on the mark and its height stops mattering. CURRENT plus FORWARD or REAR gives the shot's heading from the
+  survey itself; the compass becomes the fallback (it is still recorded). All three over-determine it and
+  show a bad card placement as a misfit.
+- **Recorded in the shot:** each card seen, its glyph, its 3D point in the capture frame, and how many frames
+  saw it. Placement prefers cards, then the compass; the shot says which was used.
+- **Limits:** cards need the rig's light on them; a ~45 mm glyph reads to about 4 m from the phone's camera
+  frames. Glyph family and detector are chosen in the plan (a fiducial tag family with a small, permissively
+  licensed detector, so no network or heavy library); the printable card sheet ships with the app and,
+  later, from CaveCAD.
+
 ## Hard limits (stated, not solved)
 
 - **Range.** iPhone LiDAR is good to about 5 m. Bigger rooms need more shots. The app shows where nothing
@@ -180,12 +205,14 @@ has one gimbal implementation shared with the Mac tools, not a third copy in Swi
 
 1. **Capture app shell:** sign in, pick cave and station, one handheld shot saved as a bundle on the phone,
    viewable in the app.
-2. **Gimbal-driven shot:** capture pattern, live holes view, Fill pass, tracking and light holds.
-3. **Multi-shot stitch on the phone:** `cave-capture` seed, ICP, pose graph, quality statuses.
-4. **Into CaveCAD:** App Group hand-off, server capture storage and upload, capture room record, Capture
+2. **Station cards:** the three glyph cards, detection and 3D marking during the scan, placement from
+   cards (compass as fallback), printable card sheet.
+3. **Gimbal-driven shot:** capture pattern, live holes view, Fill pass, tracking and light holds.
+4. **Multi-shot stitch on the phone:** `cave-capture` seed (cards first), ICP, pose graph, quality statuses.
+5. **Into CaveCAD:** App Group hand-off, server capture storage and upload, capture room record, Capture
    rooms panel, 3D view layer, GLB/PLY export.
-5. **Walls on the map:** slicing and the capture walls layer.
-6. **LiDAR suite in CaveCAD** (own spec, later): pick a shot's station, turn and move a capture by hand,
+6. **Walls on the map:** slicing and the capture walls layer.
+7. **LiDAR suite in CaveCAD** (own spec, later): pick a shot's station, turn and move a capture by hand,
    and whatever else working with captures on the desktop needs.
 
 ## Not in this version
