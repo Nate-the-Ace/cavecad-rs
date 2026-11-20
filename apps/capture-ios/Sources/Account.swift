@@ -77,28 +77,59 @@ final class Account: NSObject, ObservableObject, ASWebAuthenticationPresentation
     }
 
     func loadMe() async {
-        guard let data = try? await get("api/me"),
+        guard let data = try? await get("api/me", device: false),
               let me = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
         email = (me["member"] as? [String: Any])?["email"] as? String ?? me["email"] as? String
     }
 
-    func signOut() { Keychain.delete(); token = nil; email = nil }
+    func signOut() { Keychain.delete(); token = nil; email = nil; deviceId = nil }
 
-    /// An authenticated GET. Throws on no connection; a 401 signs out.
-    func get(_ path: String, query: [URLQueryItem] = []) async throws -> Data {
+    /// This phone's id as a CaveCAD device. The server's cave calls all name one (`X-Cave-Device`); it is
+    /// registered from an X25519 key kept in the Keychain, so the phone stays the same device across launches.
+    private var deviceId: String?
+
+    private func device() async throws -> String {
+        if let deviceId { return deviceId }
+        let key: Curve25519.KeyAgreement.PrivateKey
+        if let raw = Keychain.load(service: Keychain.deviceKey).flatMap({ Data(base64Encoded: $0) }),
+           let k = try? Curve25519.KeyAgreement.PrivateKey(rawRepresentation: raw) {
+            key = k
+        } else {
+            key = Curve25519.KeyAgreement.PrivateKey()
+            Keychain.save(key.rawRepresentation.base64EncodedString(), service: Keychain.deviceKey)
+        }
+        var req = URLRequest(url: Self.server.appendingPathComponent("api/devices"))
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.setValue("Bearer \(token ?? "")", forHTTPHeaderField: "Authorization")
+        req.httpBody = try JSONSerialization.data(withJSONObject: ["publicKey": PKCE.base64url(key.publicKey.rawRepresentation)])
+        let data = try await checked(URLSession.shared.data(for: req))
+        guard let id = ((try JSONSerialization.jsonObject(with: data) as? [String: Any])?["device"] as? [String: Any])?["id"] as? String
+        else { throw URLError(.badServerResponse) }
+        deviceId = id
+        return id
+    }
+
+    /// A request to the server with the bearer token and this phone's device id.
+    func authorized(_ path: String, query: [URLQueryItem] = [], device needsDevice: Bool = true) async throws -> URLRequest {
         var c = URLComponents(url: Self.server.appendingPathComponent(path), resolvingAgainstBaseURL: false)!
         if !query.isEmpty { c.queryItems = query }
         var req = URLRequest(url: c.url!)
         req.setValue("Bearer \(token ?? "")", forHTTPHeaderField: "Authorization")
-        let (data, resp) = try await URLSession.shared.data(for: req)
-        if (resp as? HTTPURLResponse)?.statusCode == 401 { signOut() }
-        return data
+        if needsDevice { req.setValue(try await device(), forHTTPHeaderField: "X-Cave-Device") }
+        return req
     }
 
-    func authorized(_ url: URL) -> URLRequest {
-        var req = URLRequest(url: url)
-        req.setValue("Bearer \(token ?? "")", forHTTPHeaderField: "Authorization")
-        return req
+    /// An authenticated GET. Throws on no connection or a refusal; a 401 signs out.
+    func get(_ path: String, query: [URLQueryItem] = [], device: Bool = true) async throws -> Data {
+        try await checked(URLSession.shared.data(for: authorized(path, query: query, device: device)))
+    }
+
+    private func checked(_ r: (Data, URLResponse)) throws -> Data {
+        let status = (r.1 as? HTTPURLResponse)?.statusCode ?? 0
+        if status == 401 { signOut() }
+        guard (200..<300).contains(status) else { throw URLError(.badServerResponse) }
+        return r.0
     }
 
     nonisolated func presentationAnchor(for session: ASWebAuthenticationSession) -> ASPresentationAnchor {

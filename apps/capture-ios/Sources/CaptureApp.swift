@@ -6,7 +6,7 @@ struct CaptureApp: App {
     var body: some Scene {
         WindowGroup {
             Group {
-                if account.token == nil { SignInView() } else { Text(account.email ?? "Signed in").task { await account.loadMe() } }
+                if account.token == nil { SignInView() } else { CaveListView(store: CaveStore(account: account)) }
             }.environmentObject(account)
         }
     }

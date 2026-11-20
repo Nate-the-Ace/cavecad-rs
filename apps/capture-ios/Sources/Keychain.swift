@@ -1,19 +1,20 @@
 import Foundation
 import Security
 
-/// The sign-in token, kept in the Keychain (this device only).
+/// Secrets kept in the Keychain (this device only): the sign-in token, and this phone's device key.
 enum Keychain {
-    private static let service = "app.cavecad.capture.token"
+    static let token = "app.cavecad.capture.token"
+    static let deviceKey = "app.cavecad.capture.device-key"
 
-    static func save(_ token: String) {
-        delete()
+    static func save(_ value: String, service: String = token) {
+        delete(service: service)
         let q: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service,
                                 kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
-                                kSecValueData as String: Data(token.utf8)]
+                                kSecValueData as String: Data(value.utf8)]
         SecItemAdd(q as CFDictionary, nil)
     }
 
-    static func load() -> String? {
+    static func load(service: String = token) -> String? {
         let q: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service,
                                 kSecReturnData as String: true, kSecMatchLimit as String: kSecMatchLimitOne]
         var out: CFTypeRef?
@@ -21,7 +22,7 @@ enum Keychain {
         return String(data: d, encoding: .utf8)
     }
 
-    static func delete() {
+    static func delete(service: String = token) {
         SecItemDelete([kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service] as CFDictionary)
     }
 }
