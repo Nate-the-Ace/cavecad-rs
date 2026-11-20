@@ -13,6 +13,18 @@ name = "cave-brush"
 version = "0.0.1"
 
 [[package]]
+name = "cave-capture"
+version = "0.0.1"
+dependencies = [
+ "cave-doc",
+ "cave-fixture",
+ "cave-id",
+ "cave-survey",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "cave-doc"
 version = "0.0.1"
 dependencies = [
