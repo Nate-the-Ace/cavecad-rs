@@ -103,8 +103,9 @@ final class ShotRecorder: NSObject, ObservableObject, ARSessionDelegate {
     private var cardTracker = CardTracker()
     /// One card detection in flight at most; a frame that arrives meanwhile is skipped.
     private var detectingCards = false
-    private var backedOff = false
-    private var frameCount = 0, lastFpsTime: TimeInterval = 0
+    /// Every card seen is settled: detection runs slowly. Refreshed only where the tracker changes.
+    private var calm = false
+    private var frameCount = 0, lastFpsTime: TimeInterval = 0, lastFrameTime: TimeInterval = 0
     private var lastCardTime: TimeInterval = -1, lastCardLog: TimeInterval = 0
     private var cardRuns = 0, cardMillis = 0.0, cardMaxMillis = 0.0
     private var cardFrameLogged = false
@@ -262,7 +263,7 @@ final class ShotRecorder: NSObject, ObservableObject, ARSessionDelegate {
         shotSerial += 1
         cardTracker = CardTracker(); cardMarkers = []
         detectingCards = false; lastCardTime = -1; lastCardLog = f.timestamp
-        backedOff = false; frameCount = 0; lastFpsTime = 0
+        calm = false; frameCount = 0; lastFpsTime = f.timestamp; lastFrameTime = f.timestamp
         cardRuns = 0; cardMillis = 0; cardMaxMillis = 0; cardFrameLogged = false
         meshing = false; lastMeshTime = f.timestamp; meshRuns = 0; meshMillis = 0; meshCopyMillis = 0; weakReads = [:]
         removeCardAnchors()
@@ -305,7 +306,7 @@ final class ShotRecorder: NSObject, ObservableObject, ARSessionDelegate {
         let confidenceBuffer = frame.sceneDepth?.confidenceMap.map { PixelBuffer(buffer: $0) }
         MainActor.assumeIsolated {
             guard case .capturing = phase else { return }
-            frameCount += 1
+            frameCount += 1; lastFrameTime = time
             switch state {
             case .normal: break
             case .notAvailable: worstTracking = "lost"
@@ -347,12 +348,7 @@ final class ShotRecorder: NSObject, ObservableObject, ARSessionDelegate {
                              pose: simd_float4x4, time: TimeInterval) {
         if time - lastCardLog >= Self.cardLogEvery {
             lastCardLog = time
-            logCards("summary")
-        }
-        let calm = cardTracker.allSettled
-        if calm != backedOff {
-            backedOff = calm
-            Log.write("cards", calm ? "settled, backing off" : "searching at full rate")
+            logCards("summary", time: time)
         }
         guard !detectingCards, time - lastCardTime >= (calm ? 2.0 : Self.cardEvery) else { return }
         detectingCards = true
@@ -389,6 +385,15 @@ final class ShotRecorder: NSObject, ObservableObject, ARSessionDelegate {
             }
         }
         if !r.found.isEmpty { pinNewCards(); updateCardMarkers() }
+        refreshCalm()
+    }
+
+    /// Re-reads whether every card is settled; call wherever the tracker changes, not every frame.
+    private func refreshCalm() {
+        let now = cardTracker.allSettled
+        guard now != calm else { return }
+        calm = now
+        Log.write("cards", now ? "settled, backing off" : "searching at full rate")
     }
 
     /// Gives each newly seen card an ARKit anchor where it is placed now.
@@ -425,7 +430,7 @@ final class ShotRecorder: NSObject, ObservableObject, ARSessionDelegate {
                 let d = cardTracker.moveAnchor(card, Self.double(m))
                 if d > 0 { anchorMoves[card, default: 0] += d; any = true }
             }
-            if any { updateCardMarkers() }
+            if any { updateCardMarkers(); refreshCalm() }
         }
     }
 
@@ -467,16 +472,17 @@ final class ShotRecorder: NSObject, ObservableObject, ARSessionDelegate {
                 self.meshRuns += 1; self.meshMillis += ms; self.meshCopyMillis += copyMs
                 self.cardTracker.applyMesh(ranges, pass: self.meshRuns)
                 self.updateCardMarkers()
+                self.refreshCalm()
             }
         }
     }
 
     /// The card summary in the log: every seen card, then how the detector is doing.
-    private func logCards(_ when: String) {
-        if let t = session.currentFrame?.timestamp, t > lastFpsTime, lastFpsTime > 0 {
-            Log.write("cards", String(format: "%@: ARKit %.0f fps", when, Double(frameCount) / (t - lastFpsTime)))
+    private func logCards(_ when: String, time: TimeInterval) {
+        if time > lastFpsTime, lastFpsTime > 0 {
+            Log.write("cards", String(format: "%@: ARKit %.0f fps", when, Double(frameCount) / (time - lastFpsTime)))
         }
-        lastFpsTime = session.currentFrame?.timestamp ?? 0; frameCount = 0
+        lastFpsTime = time; frameCount = 0
         let lines = cardTracker.logLines
         if lines.isEmpty { Log.write("cards", "\(when): none seen yet") } else { lines.forEach { Log.write("cards", "\(when): \($0)") } }
         if cardRuns > 0 {
@@ -513,7 +519,7 @@ final class ShotRecorder: NSObject, ObservableObject, ARSessionDelegate {
         message = "Saving the shot…"
         shotSerial += 1
         Log.write("compass", "at stop: \(compass.latest.logLine)")
-        logCards("at stop")
+        logCards("at stop", time: lastFrameTime)
         let job = ShotJob(caveId: cave.id, over: over, parts: parts, keyframes: keyframes, startCamera: startCamera,
                           tracking: worstTracking, systemVersion: UIDevice.current.systemVersion, compass: compassAtAlignment,
                           cards: cardTracker)
@@ -531,7 +537,7 @@ final class ShotRecorder: NSObject, ObservableObject, ARSessionDelegate {
     func reset() {
         shotSerial += 1
         keyframes = []; keyframeCount = 0
-        cardTracker = CardTracker(); cardMarkers = []
+        cardTracker = CardTracker(); cardMarkers = []; calm = false
         photoLimitShown = false
         phase = .ready
         message = Self.readyMessage

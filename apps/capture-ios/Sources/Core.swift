@@ -67,4 +67,65 @@ enum Core {
         _ = out.withUnsafeMutableBytes { d.copyBytes(to: $0) }
         return out
     }
+
+    /// A shot's ghost: simplified mesh and hole outlines, capture frame.
+    struct GhostMesh: Sendable { var positions: [SIMD3<Float>]; var indices: [UInt32]; var outlines: [[SIMD3<Float>]] }
+
+    static func addPass(bundle: Data, pass: Data, positions: [Float], normals: [Float], indices: [UInt32], jpegs: Data) -> Data {
+        guard let pj = String(data: pass, encoding: .utf8) else { return Data() }
+        return bundle.withUnsafeBytes { b in pj.withCString { pp in
+            positions.withUnsafeBufferPointer { p in normals.withUnsafeBufferPointer { n in
+                indices.withUnsafeBufferPointer { i in jpegs.withUnsafeBytes { j in
+                    take(cc_shot_add_pass(b.bindMemory(to: UInt8.self).baseAddress, b.count, pp,
+                                          p.baseAddress, p.count, n.baseAddress, n.count, i.baseAddress, i.count,
+                                          j.bindMemory(to: UInt8.self).baseAddress, j.count))
+                } }
+            } }
+        } }
+    }
+
+    /// The ghost of a shot (`cc_shot_ghost`), parsed in one bounds-checked pass over the bytes; nil
+    /// when the core gave nothing or the counts do not add up.
+    static func ghost(bundle: Data, cellM: Float = 0.05, minOutlineM: Float = 0.15) -> GhostMesh? {
+        let d = bundle.withUnsafeBytes { b in take(cc_shot_ghost(b.bindMemory(to: UInt8.self).baseAddress, b.count, cellM, minOutlineM)) }
+        guard d.count >= 12 else { return nil }
+        return d.withUnsafeBytes { raw -> GhostMesh? in
+            var at = 0
+            func u32() -> UInt32? {
+                guard raw.count - at >= 4 else { return nil }
+                defer { at += 4 }
+                return UInt32(littleEndian: raw.loadUnaligned(fromByteOffset: at, as: UInt32.self))
+            }
+            /// `count` words ahead, or nil when fewer remain (checked before any allocation).
+            func words(_ count: Int) -> Bool { count >= 0 && count <= (raw.count - at) / 4 }
+            guard let nf = u32(), let ni = u32(), let no = u32(), nf % 3 == 0, words(Int(nf)) else { return nil }
+            var g = GhostMesh(positions: [], indices: [], outlines: [])
+            g.positions.reserveCapacity(Int(nf) / 3)
+            for _ in 0..<(Int(nf) / 3) {
+                g.positions.append(SIMD3(Float(bitPattern: u32()!), Float(bitPattern: u32()!), Float(bitPattern: u32()!)))
+            }
+            guard words(Int(ni)) else { return nil }
+            g.indices.reserveCapacity(Int(ni))
+            for _ in 0..<Int(ni) { g.indices.append(u32()!) }
+            for _ in 0..<Int(no) {
+                guard let n = u32(), words(Int(n) * 3) else { return nil }
+                var line: [SIMD3<Float>] = []
+                line.reserveCapacity(Int(n))
+                for _ in 0..<Int(n) {
+                    line.append(SIMD3(Float(bitPattern: u32()!), Float(bitPattern: u32()!), Float(bitPattern: u32()!)))
+                }
+                g.outlines.append(line)
+            }
+            return g
+        }
+    }
+
+    /// The core's card comparison (`cc_cards_fit`) as parsed JSON.
+    static func cardsFit(bundle: Data, cards: [CardSeenRecord], sameSession: Bool) -> [String: Any] {
+        guard let j = try? JSONSerialization.data(withJSONObject: cards.map(\.json)), let t = String(data: j, encoding: .utf8) else { return ["error": "cards"] }
+        let d = bundle.withUnsafeBytes { b in t.withCString { c in
+            take(cc_cards_fit(b.bindMemory(to: UInt8.self).baseAddress, b.count, c, sameSession ? 1 : 0))
+        } }
+        return (try? JSONSerialization.jsonObject(with: d) as? [String: Any]) ?? ["error": "unreadable"]
+    }
 }

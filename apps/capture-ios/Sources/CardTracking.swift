@@ -420,14 +420,23 @@ struct CardTrack: Sendable {
     var sightings: [CardSighting] { anchor.map { a in local.map { $0.transformed(a) } } ?? local }
     var count: Int { local.count }
     var meanMargin: Double { local.isEmpty ? 0 : marginSum / Double(local.count) }
-    var estimate: CardEstimate? { CardEstimate(sightings) }
-    /// Enough close agreement that more looks will not move it: 8 kept sightings within 1 cm (typical).
-    var settled: Bool { estimate.map { $0.kept >= 8 && $0.spread < 0.01 } ?? false }
+    /// The placed card, worked out again only when the track changes (it is costly, and read every frame).
+    private(set) var estimate: CardEstimate?
+    /// Enough close agreement that more looks will not move it: settles at 8+ kept sightings within 1 cm,
+    /// and stays settled until the spread reaches 1.5 cm or fewer than 8 are kept (no flicker at the edge).
+    private(set) var settled = false
+
+    private mutating func refresh() {
+        estimate = CardEstimate(sightings)
+        guard let e = estimate, e.kept >= 8 else { settled = false; return }
+        settled = settled ? e.spread < 0.015 : e.spread < 0.01
+    }
 
     /// Adds a sighting made in the capture frame as the map stands now.
     mutating func add(_ s: CardSighting) {
         local.append(anchor.map { s.transformed($0.inverse) } ?? s)
         marginSum += s.margin
+        refresh()
     }
 
     /// Ties the sightings to an anchor just placed at `m`, without moving them.
@@ -435,6 +444,7 @@ struct CardTrack: Sendable {
         let world = sightings
         anchor = m
         local = world.map { $0.transformed(m.inverse) }
+        refresh()
     }
 
     /// ARKit moved the anchor to `m`: the sightings move with it. Returns how far its origin moved, metres.
@@ -442,6 +452,7 @@ struct CardTrack: Sendable {
     mutating func moveAnchor(_ m: simd_double4x4) -> Double {
         guard let old = anchor else { return 0 }
         anchor = m
+        refresh()
         return simd_distance(SIMD3(old.columns.3.x, old.columns.3.y, old.columns.3.z), SIMD3(m.columns.3.x, m.columns.3.y, m.columns.3.z))
     }
 
@@ -450,6 +461,7 @@ struct CardTrack: Sendable {
         for i in local.indices {
             if let r = ranges[local[i].seq] { local[i].meshRange = r; local[i].meshedPass = pass }
         }
+        refresh()
     }
 }
 
@@ -491,8 +503,8 @@ struct CardTracker: Sendable {
     mutating func moveAnchor(_ c: StationCard, _ m: simd_double4x4) -> Double { tracks[c]?.moveAnchor(m) ?? 0 }
 
     /// Every sighting so far, for meeting with the mesh.
-    /// Every card seen so far is settled (false before any is seen).
-    var allSettled: Bool { let s = seen; return !s.isEmpty && s.allSatisfy { $0.track.settled } }
+    /// Every card seen so far is settled (false before any is seen, and while any card has been read but not placed).
+    var allSettled: Bool { !tracks.isEmpty && tracks.values.allSatisfy(\.settled) }
     var allSightings: [CardSighting] { tracks.values.flatMap(\.sightings) }
 
     /// Mesh ranges by sighting `seq`, nil where the line met no mesh, from mesh pass `pass`.

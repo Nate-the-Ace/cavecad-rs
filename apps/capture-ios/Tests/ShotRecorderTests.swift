@@ -144,4 +144,27 @@ final class ShotRecorderTests: XCTestCase {
         guard case .failure(let f) = job.write() else { return XCTFail("ragged mesh written") }
         XCTAssertEqual(f.message, "The shot could not be written.")
     }
+
+    func testPassGhostAndFitThroughTheCore() throws {
+        let cave = "test-cave-pass"
+        defer { try? FileManager.default.removeItem(at: ShotFiles.folder(cave: cave)) }
+        let over = Station(id: "a", label: "A1", x: 0, y: 0, z: 0)
+        let job = ShotJob(caveId: cave, over: over, parts: [Self.tri], keyframes: [], startCamera: .zero, tracking: "normal",
+                          systemVersion: "27", compass: CompassReading(trueNorth: true, accuracyDeg: 5, headingDeg: 0))
+        guard case .success(let url) = job.write() else { return XCTFail("not written") }
+        let old = try Data(contentsOf: url)
+        let pass = try JSONSerialization.data(withJSONObject: [
+            "captured_at_ms": 5, "aligned_by": "same_session", "transform": [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1],
+            "replace": true, "tracking": "normal", "cards": [Any](), "keyframes": [Any](),
+        ] as [String: Any])
+        let out = Core.addPass(bundle: old, pass: pass, positions: [0, 0, -2, 1, 0, -2, 0, 1, -2], normals: [Float](repeating: 0, count: 9),
+                               indices: [0, 1, 2], jpegs: Data())
+        XCTAssertFalse(out.isEmpty)
+        let g = try XCTUnwrap(Core.ghost(bundle: out, minOutlineM: 0))
+        XCTAssertEqual(g.indices.count, 3)
+        XCTAssertEqual(g.positions.count, 3)
+        XCTAssertEqual(g.outlines.count, 1)
+        XCTAssertNotNil(Core.cardsFit(bundle: out, cards: [], sameSession: true)["offsets"])
+        XCTAssertNil(Core.ghost(bundle: Data([1, 2, 3])))
+    }
 }

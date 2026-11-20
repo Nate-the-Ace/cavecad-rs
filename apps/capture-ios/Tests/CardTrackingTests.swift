@@ -288,6 +288,37 @@ final class CardTrackingTests: XCTestCase {
         XCTAssertFalse(loose.tracks[.current]!.settled)
         XCTAssertFalse(CardTracker().allSettled)
     }
+
+    func testSettledHasHysteresis() {
+        func look(_ t: inout CardTracker, _ n: Int, _ d: Double) {
+            // sizes ramp over +-2d about 2 m, so the typical distance from the card's place is about d
+            for i in 0..<n {   // taken from both ends in turn, so the spread is wide from the first look
+                let k = i % 2 == 0 ? i / 2 : n - 1 - i / 2
+                t.add(sighting(size: 2 + 2 * d * (Double(k) / Double(max(n - 1, 1)) * 2 - 1)))
+            }
+        }
+        var t = CardTracker()
+        look(&t, 8, 0.005)
+        XCTAssertTrue(t.tracks[.current]!.settled)
+        for _ in 0..<5 { look(&t, 20, 0.011) }   // looks arrive a few at a time
+        let mid = t.tracks[.current]!.estimate!
+        XCTAssertGreaterThan(mid.spread, 0.01); XCTAssertLessThan(mid.spread, 0.015)
+        XCTAssertTrue(t.tracks[.current]!.settled)               // about 1.1 cm: not settled fresh, but stays settled
+        for _ in 0..<5 { look(&t, 60, 0.02) }
+        XCTAssertGreaterThanOrEqual(t.tracks[.current]!.estimate!.spread, 0.015)
+        XCTAssertFalse(t.tracks[.current]!.settled)
+        var fresh = CardTracker()
+        look(&fresh, 100, 0.012)
+        XCTAssertFalse(fresh.tracks[.current]!.settled)
+    }
+
+    func testCardReadWithoutRangeEndsBackoff() {
+        var t = CardTracker()
+        for _ in 0..<8 { t.add(sighting(size: 2)) }
+        XCTAssertTrue(t.allSettled)
+        t.addMissed(.rear)
+        XCTAssertFalse(t.allSettled)
+    }
 }
 
 /// The vendored detector itself, on a synthetic tag, plus the recorder's pure helpers for this build.
