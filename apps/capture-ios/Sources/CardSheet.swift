@@ -102,7 +102,7 @@ struct CardSheetView: View {
         List {
             Section {
                 ForEach(StationCard.allCases, id: \.self) { c in
-                    LabeledContent(c.word, value: c.note)
+                    NavigationLink { CardModelView(card: c) } label: { LabeledContent(c.word, value: c.note) }
                 }
             } footer: {
                 Text("Three cards, used at every station. Print double-sided on Letter paper at 100 % (Actual Size); the black square must measure exactly 3 in. Check with the 100 mm bar on each front, then trim and laminate.")
