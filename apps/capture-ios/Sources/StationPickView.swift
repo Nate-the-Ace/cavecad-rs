@@ -79,6 +79,8 @@ struct StationPickView: View {
             if let problem { Text(problem).foregroundStyle(.red) }
         }
         .navigationTitle(cave.name)
+        // when this cave was last downloaded to the phone (the kept offline copy)
+        .modifier(Subtitle(text: "Last Synced on: \(cave.keptAt.formatted(.dateTime.month(.twoDigits).day(.twoDigits).year(.twoDigits)))"))
         .confirmationDialog("Delete all \(saved.count) shots of \(cave.name) from this phone?", isPresented: $askDeleteAll,
                             titleVisibility: .visible) {
             Button("Delete all shots", role: .destructive) {
@@ -150,6 +152,23 @@ struct StationPickView: View {
         Picker("Station", selection: sel) {
             Text("—").tag(Station?.none)
             ForEach(stations) { Text($0.label).tag(Station?.some($0)) }
+        }
+    }
+}
+
+/// A small line under the navigation title: the system subtitle on iOS 26 and later, else a small caption at the
+/// top of the page.
+struct Subtitle: ViewModifier {
+    let text: String
+
+    func body(content: Content) -> some View {
+        if #available(iOS 26.0, *) {
+            content.navigationSubtitle(text)
+        } else {
+            content.safeAreaInset(edge: .top, spacing: 0) {
+                Text(text).font(.caption).foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 20).padding(.bottom, 4)
+            }
         }
     }
 }
