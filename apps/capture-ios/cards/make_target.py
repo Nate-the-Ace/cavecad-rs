@@ -79,21 +79,22 @@ def back():
     img = Image.new("L", (P, P), 255)
     dr = ImageDraw.Draw(img)
     R = C // 2 - mm(6)
-    # thin rings every 5 mm, heavier every 10 mm, so a laser dot shows on white anywhere and its offset reads off
-    r, k = mm(5), 1
-    while r <= R:
+    # thin rings every 1/4 in, heavier every 1/2 in, so a laser dot shows on white anywhere and its offset reads off
+    q, k = mm(25.4 / 4), 1
+    while q * k <= R:
         w = mm(0.9) if k % 2 == 0 else mm(0.35)
+        r = q * k
         dr.ellipse([cx - r, cy - r, cx + r, cy + r], outline=0, width=w)
-        r, k = mm(5) * (k + 1), k + 1
+        k += 1
     dr.line([(cx - R, cy), (cx + R, cy)], fill=0, width=mm(0.35))
     dr.line([(cx, cy - R), (cx, cy + R)], fill=0, width=mm(0.35))
     c = mm(2.5)                                               # centre: a small ring, white inside
     dr.ellipse([cx - c, cy - c, cx + c, cy + c], fill=255, outline=0, width=mm(0.8))
     dr.ellipse([cx - mm(0.6), cy - mm(0.6), cx + mm(0.6), cy + mm(0.6)], fill=0)
     f = font(mm(2.6), False)
-    for i in (1, 2, 3, 4):                                    # just outside each bold ring, above the line
-        dr.text((cx + mm(10) * i + mm(0.9), cy - mm(3.6)), str(i), font=f, fill=0)
-    note = "rings every 5 mm, bold every 1 cm"
+    for k, label in ((2, "½"), (4, "1"), (6, "1½")):     # just outside each bold ring, above the line
+        dr.text((cx + q * k + mm(0.9), cy - mm(3.6)), label, font=f, fill=0)
+    note = "rings every ¼ in, bold every ½ in"
     dr.text((cx - dr.textlength(note, font=f) / 2, o + C - mm(4.5)), note, font=f, fill=0)
     crop_marks(dr, o, C)
     return img
