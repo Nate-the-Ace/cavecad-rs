@@ -115,5 +115,13 @@ void cc_gimbal_disconnect(void);
 /// joint within 80..112: portrait upright),"joints":[pan,tilt,roll] degrees|null,"error":string|null}.
 CcBuf cc_gimbal_status(void);
 
+/// The slow sweep of the camera window (phone portrait, camera out) at speed degrees per second, as a plan for
+/// cc_gimbal_run: JSON [[{"yaw","roll","pitch","seconds"}, ...], ...]; [] for a non-positive speed.
+CcBuf cc_camera_sweep(double speed);
+
+/// Plan aimed at missing directions: missing_json is [[yaw, pitch], ...] degrees relative to home. Only the
+/// reachable ones are kept, every list ends home; [] when none. {"error"} for unreadable input.
+CcBuf cc_camera_fill(const char *missing_json, double speed);
+
 /// Releases a CcBuf. Call exactly once per returned buffer.
 void cc_free(CcBuf buf);

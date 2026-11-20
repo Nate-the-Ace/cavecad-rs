@@ -163,4 +163,18 @@ enum Core {
     static func gimbalStatus() -> [String: Any] {
         (try? JSONSerialization.jsonObject(with: take(cc_gimbal_status())) as? [String: Any]) ?? [:]
     }
+
+    // MARK: camera plans (cave-osmo's sweep and fill lists)
+
+    private static func lists(_ b: Data) -> [[[String: Double]]] {
+        (try? JSONSerialization.jsonObject(with: b) as? [[[String: Double]]]) ?? []
+    }
+    /// The slow sweep plan at `speed` degrees per second (empty for a bad speed).
+    static func cameraSweep(speed: Double) -> [[[String: Double]]] { lists(take(cc_camera_sweep(speed))) }
+    /// A plan aimed at the reachable `missing` directions (yaw, pitch), ending home; empty when there are none.
+    static func cameraFill(missing: [(Double, Double)], speed: Double) -> [[[String: Double]]] {
+        guard let d = try? JSONSerialization.data(withJSONObject: missing.map { [$0.0, $0.1] }),
+              let t = String(data: d, encoding: .utf8) else { return [] }
+        return lists(t.withCString { take(cc_camera_fill($0, speed)) })
+    }
 }

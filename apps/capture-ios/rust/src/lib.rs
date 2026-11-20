@@ -663,6 +663,64 @@ pub extern "C" fn cc_gimbal_status() -> CcBuf {
     guard(|| give(gimbal::status().into_bytes()), internal)
 }
 
+/// Target lists as the JSON `cc_gimbal_run` takes.
+fn lists_json(lists: Vec<Vec<cave_osmo::targets::Target>>) -> serde_json::Value {
+    serde_json::Value::Array(
+        lists
+            .into_iter()
+            .map(|l| {
+                serde_json::Value::Array(
+                    l.into_iter()
+                        .map(|t| serde_json::json!({ "yaw": t.yaw, "roll": t.roll, "pitch": t.pitch, "seconds": t.seconds }))
+                        .collect(),
+                )
+            })
+            .collect(),
+    )
+}
+
+/// The slow sweep of the whole camera window at `speed` degrees per second, as a gimbal plan (empty list for a
+/// non-positive speed).
+#[unsafe(no_mangle)]
+pub extern "C" fn cc_camera_sweep(speed: f64) -> CcBuf {
+    guard(
+        || {
+            give_json(lists_json(cave_osmo::camera::sweep(
+                cave_osmo::camera::OM7_CAMERA,
+                speed,
+            )))
+        },
+        internal,
+    )
+}
+
+/// Aims at missing directions: `missing_json` is `[[yaw, pitch], ...]` degrees relative to home. The plan keeps
+/// the reachable ones, ending home (empty list when none).
+///
+/// # Safety
+/// `missing_json` is NUL-terminated UTF-8 or null.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn cc_camera_fill(missing_json: *const c_char, speed: f64) -> CcBuf {
+    guard(
+        || {
+            let dirs: Vec<(f64, f64)> = match unsafe { text(missing_json) } {
+                Ok(None) => Vec::new(),
+                Ok(Some(t)) => match serde_json::from_str(t) {
+                    Ok(v) => v,
+                    Err(_) => return err("missing is not a JSON array of [yaw, pitch]"),
+                },
+                Err(()) => return err("missing is not valid UTF-8"),
+            };
+            give_json(lists_json(cave_osmo::camera::fill(
+                &dirs,
+                cave_osmo::camera::OM7_CAMERA,
+                speed,
+            )))
+        },
+        internal,
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1154,5 +1212,27 @@ mod tests {
         }))
         .unwrap();
         assert!(sum["compass"].is_null());
+    }
+
+    #[test]
+    fn camera_sweep_round_trips_through_the_gimbal_plan() {
+        let json = String::from_utf8(read(cc_camera_sweep(10.0))).unwrap();
+        let lists = gimbal::parse_plan(&json).unwrap();
+        let last = lists.last().unwrap().last().unwrap();
+        assert_eq!((last.yaw, last.pitch), (0.0, 0.0), "ends home");
+        assert!(read(cc_camera_sweep(0.0)).starts_with(b"[]"));
+    }
+
+    #[test]
+    fn camera_fill_keeps_reachable_and_refuses_junk() {
+        let m = CString::new("[[10,5],[0,85]]").unwrap();
+        let json = String::from_utf8(read(unsafe { cc_camera_fill(m.as_ptr(), 10.0) })).unwrap();
+        assert!(gimbal::parse_plan(&json).is_ok());
+        let none = CString::new("[[0,85]]").unwrap();
+        assert_eq!(read(unsafe { cc_camera_fill(none.as_ptr(), 10.0) }), b"[]");
+        let bad = CString::new("nope").unwrap();
+        let out: serde_json::Value =
+            serde_json::from_slice(&read(unsafe { cc_camera_fill(bad.as_ptr(), 10.0) })).unwrap();
+        assert!(out["error"].is_string());
     }
 }
