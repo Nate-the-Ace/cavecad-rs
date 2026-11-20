@@ -86,6 +86,10 @@ pub struct ShotHeader {
     /// Station cards seen during the scan; absent in files written before cards were detected.
     #[serde(default)]
     pub cards: Vec<CardSeen>,
+    /// The scanning passes this shot was built from, first one first; absent (empty) in a shot of
+    /// one pass written before passes existed. See [`crate::passes`].
+    #[serde(default)]
+    pub passes: Vec<crate::passes::Pass>,
 }
 
 /// One kept camera frame, for colouring the mesh later.

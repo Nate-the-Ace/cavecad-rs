@@ -1,0 +1,167 @@
+//! Passes in a shot: the pass record and `add_pass`.
+
+use cave_capture::{
+    CardSeen, Keyframe, NewPass, PassMesh, Shot, ShotHeader, add_pass, decode, encode,
+};
+
+fn card(id: u32, p: [f64; 3]) -> CardSeen {
+    CardSeen {
+        id,
+        word: format!("#{id}"),
+        point: p,
+        corners: vec![],
+        sightings: 9,
+        spread_m: 0.005,
+    }
+}
+
+fn header() -> ShotHeader {
+    ShotHeader {
+        shot_id: "s".into(),
+        cave_id: "c".into(),
+        station_id: "a".into(),
+        station_label: "A".into(),
+        captured_at_ms: 1000,
+        device: "t".into(),
+        instrument_height_m: 0.3,
+        start_camera: [0.0; 3],
+        taps: vec![],
+        tracking: "normal".into(),
+        arkit_version: "27".into(),
+        gravity: [0.0, -1.0, 0.0],
+        compass: None,
+        cards: vec![card(2, [0.0, -1.0, -1.0]), card(12, [0.0, -1.0, -4.0])],
+        passes: vec![],
+    }
+}
+
+fn kf(tag: u8) -> Keyframe {
+    let mut pose = [0f32; 16];
+    pose[0] = 1.0;
+    pose[5] = 1.0;
+    pose[10] = 1.0;
+    pose[15] = 1.0;
+    Keyframe {
+        pose,
+        intrinsics: [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0],
+        width: 2,
+        height: 2,
+        jpeg: vec![tag; 5],
+    }
+}
+
+fn shot() -> Shot {
+    Shot {
+        header: header(),
+        positions: vec![0.0, 0.0, -1.0, 1.0, 0.0, -1.0, 0.0, 1.0, -1.0],
+        normals: vec![0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0],
+        indices: vec![0, 1, 2],
+        keyframes: vec![kf(1), kf(2)],
+    }
+}
+
+/// Column-major: turn `yaw` about +y, then shift.
+fn yaw_shift(yaw: f64, t: [f64; 3]) -> [f64; 16] {
+    let (s, c) = yaw.sin_cos();
+    [
+        c, 0.0, -s, 0.0, 0.0, 1.0, 0.0, 0.0, s, 0.0, c, 0.0, t[0], t[1], t[2], 1.0,
+    ]
+}
+
+fn identity() -> [f64; 16] {
+    yaw_shift(0.0, [0.0; 3])
+}
+
+fn new_pass(aligned_by: &str, transform: [f64; 16], mesh: PassMesh) -> NewPass {
+    NewPass {
+        captured_at_ms: 2000,
+        aligned_by: aligned_by.into(),
+        transform,
+        mesh,
+        positions: vec![0.0, 0.0, -2.0, 1.0, 0.0, -2.0, 0.0, 1.0, -2.0],
+        normals: vec![0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0],
+        indices: vec![0, 1, 2],
+        keyframes: vec![kf(9)],
+        cards: vec![card(12, [0.0, -1.0, -4.1]), card(26, [0.0, -1.0, 2.0])],
+        tracking: "limited".into(),
+    }
+}
+
+#[test]
+fn old_header_without_passes_still_reads() {
+    let bytes = encode(&shot()).unwrap();
+    assert!(decode(&bytes).unwrap().header.passes.is_empty());
+}
+
+#[test]
+fn same_session_pass_replaces_the_mesh_and_appends_photos() {
+    let out = add_pass(
+        &shot(),
+        new_pass("same_session", identity(), PassMesh::Replace),
+    )
+    .unwrap();
+    assert_eq!(out.indices, vec![0, 1, 2]);
+    assert_eq!(out.positions[2], -2.0);
+    assert_eq!(out.keyframes.len(), 3);
+    assert_eq!(out.keyframes[0].jpeg, vec![1; 5]);
+    assert_eq!(out.keyframes[2].jpeg, vec![9; 5]);
+    let p = &out.header.passes;
+    assert_eq!(p.len(), 2);
+    assert_eq!(
+        (
+            p[0].aligned_by.as_str(),
+            p[0].first_keyframe,
+            p[0].keyframe_count
+        ),
+        ("first", 0, 2)
+    );
+    assert_eq!(
+        (
+            p[1].aligned_by.as_str(),
+            p[1].first_keyframe,
+            p[1].keyframe_count
+        ),
+        ("same_session", 2, 1)
+    );
+    assert_eq!(p[0].cards.len(), 2);
+    assert_eq!(out.header.tracking, "limited");
+    // cards: 12 replaced by the new pass, 2 kept, 26 added; in id order
+    let ids: Vec<u32> = out.header.cards.iter().map(|c| c.id).collect();
+    assert_eq!(ids, vec![2, 12, 26]);
+    assert!((out.header.cards[1].point[2] + 4.1).abs() < 1e-12);
+    // and it round-trips through the file format
+    assert_eq!(decode(&encode(&out).unwrap()).unwrap(), out);
+}
+
+#[test]
+fn card_pass_is_moved_and_added() {
+    let t = yaw_shift(std::f64::consts::FRAC_PI_2, [1.0, 0.0, 0.0]);
+    let out = add_pass(&shot(), new_pass("cards", t, PassMesh::Add)).unwrap();
+    assert_eq!(out.indices, vec![0, 1, 2, 3, 4, 5]);
+    // new vertex (0,0,-2) turned 90 deg about +y -> (-2,0,0), shifted -> (-1,0,0)
+    assert!((out.positions[9] + 1.0).abs() < 1e-6 && out.positions[11].abs() < 1e-6);
+    // its normal (0,0,1) turns to (1,0,0)
+    assert!((out.normals[9] - 1.0).abs() < 1e-6);
+    // the new photo's pose is moved too: translation column becomes (1,0,0)
+    assert!((out.keyframes[2].pose[12] - 1.0).abs() < 1e-6);
+    // the new pass's card 26 at (0,-1,2) -> (2,-1,0) + (1,0,0) = (3,-1,0)
+    let c26 = out.header.cards.iter().find(|c| c.id == 26).unwrap();
+    assert!((c26.point[0] - 3.0).abs() < 1e-9 && c26.point[2].abs() < 1e-9);
+    assert_eq!(out.header.passes[1].transform, t);
+}
+
+#[test]
+fn third_pass_extends_the_list() {
+    let two = add_pass(
+        &shot(),
+        new_pass("same_session", identity(), PassMesh::Replace),
+    )
+    .unwrap();
+    let three = add_pass(
+        &two,
+        new_pass("same_session", identity(), PassMesh::Replace),
+    )
+    .unwrap();
+    assert_eq!(three.header.passes.len(), 3);
+    assert_eq!(three.header.passes[2].first_keyframe, 3);
+}

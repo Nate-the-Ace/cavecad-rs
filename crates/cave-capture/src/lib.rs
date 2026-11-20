@@ -4,6 +4,7 @@
 
 pub mod bundle;
 pub mod frame;
+pub mod passes;
 pub mod stations;
 
 pub use bundle::{
@@ -13,4 +14,5 @@ pub use bundle::{
 pub use frame::{
     PIVOT_HEIGHT_M, Placement, bearing_deg, capture_to_survey, from_compass, heading_from_tap,
 };
+pub use passes::{IDENTITY, NewPass, Pass, PassMesh, add_pass, apply_dir, apply_point, mul};
 pub use stations::{StationSeed, document_from_room, stations};

@@ -26,6 +26,7 @@ fn sample() -> Shot {
             gravity: [0.0, -1.0, 0.0],
             compass: None,
             cards: vec![],
+            passes: vec![],
         },
         positions: vec![0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0],
         normals: vec![0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0],
