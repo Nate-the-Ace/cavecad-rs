@@ -116,8 +116,14 @@ All shots are in ARKit's gravity-aligned, metric, Y-up frame. Survey frame = `(x
   bent to fit.
 - **Merge:** shots are kept as separate meshes in the room's frame (no remeshing in v1); overlapping
   triangles are allowed. Colour per vertex from the nearest-in-angle keyframe photo.
-- **Walls:** the merged room is sliced by a horizontal plane at each shot station's height (plus any heights
-  the person adds), giving closed or open wall polylines in survey coordinates.
+- **Walls and sections (Nathan, 2026-11-20: plan AND profile, plus cross-sections):** the merged room is
+  sliced into wall polylines in survey coordinates for each view CaveCAD draws:
+  - *Plan walls:* a horizontal plane at each shot station's height (plus any heights the person adds).
+  - *Profile walls:* a vertical plane along the survey leg (or the profile's projection direction), giving
+    the ceiling and floor lines for the Profile view.
+  - *Cross-sections:* a vertical plane across the passage at a station or any point the person picks,
+    giving the passage outline for the Cross Section view.
+  Each slice is closed or open as the scan allows; gaps stay gaps (never invented).
 - **Export:** GLB (coloured mesh) and PLY (points with colour), in survey coordinates, entrance coordinates
   never written unless the cave's own export rules allow it.
 
@@ -211,12 +217,12 @@ has one gimbal implementation shared with the Mac tools, not a third copy in Swi
 4. **Multi-shot stitch on the phone:** `cave-capture` seed (cards first), ICP, pose graph, quality statuses.
 5. **Into CaveCAD:** App Group hand-off, server capture storage and upload, capture room record, Capture
    rooms panel, 3D view layer, GLB/PLY export.
-6. **Walls on the map:** slicing and the capture walls layer.
+6. **Walls and sections from the capture:** plan walls, profile walls and cross-sections sliced from the
+   merged room, as capture layers in the Map, Profile and Cross Section views.
 7. **LiDAR suite in CaveCAD** (own spec, later): pick a shot's station, turn and move a capture by hand,
    and whatever else working with captures on the desktop needs.
 
 ## Not in this version
 
 Remeshing overlapping shots into one surface; textured (not vertex-coloured) meshes; continuous capture
-while walking; capture without a station; Android; other gimbals; cross-sections from the capture (the
-sliced walls cover plan only).
+while walking; capture without a station; Android; other gimbals.
