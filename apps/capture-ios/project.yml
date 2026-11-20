@@ -1,0 +1,38 @@
+name: CaveCADCapture
+options:
+  bundleIdPrefix: app.cavecad
+  deploymentTarget: { iOS: "18.0" }
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    DEVELOPMENT_TEAM: 2ANLK72UUS
+    CODE_SIGN_STYLE: Automatic
+targets:
+  CaveCADCapture:
+    type: application
+    platform: iOS
+    sources: [Sources]
+    resources: [Resources]
+    dependencies:
+      - framework: CaptureCore.xcframework
+        embed: false
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: app.cavecad.capture
+        PRODUCT_NAME: CaveCAD Capture
+        INFOPLIST_FILE: Resources/Info.plist
+        TARGETED_DEVICE_FAMILY: "1"
+  CaveCADCaptureTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources: [Tests]
+    dependencies: [{ target: CaveCADCapture }]
+    settings:
+      base:
+        # The app's product name has a space, so XcodeGen's default (target name) misses the binary.
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/CaveCAD Capture.app/CaveCAD Capture"
+        BUNDLE_LOADER: "$(TEST_HOST)"
+schemes:
+  CaveCADCapture:
+    build: { targets: { CaveCADCapture: all, CaveCADCaptureTests: [test] } }
+    test: { targets: [CaveCADCaptureTests] }
