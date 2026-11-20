@@ -48,7 +48,8 @@ impl Placement {
 
 /// Places a shot from a heading tap: the tap ray (capture frame) pointed at `target`, the rig stood
 /// over `station`, the phone `height_m` above the mark, the shot started with the camera at `start`.
-/// `None` when the ray is within 2° of vertical (it has no bearing).
+/// `None` when the ray is within 2° of vertical, or the target is under 1 cm sideways of the
+/// station (neither has a bearing).
 pub fn heading_from_tap(
     station: Vec3,
     target: Vec3,
@@ -60,6 +61,10 @@ pub fn heading_from_tap(
     let horiz = (d.x * d.x + d.y * d.y).sqrt();
     let len = (horiz * horiz + d.z * d.z).sqrt();
     if len == 0.0 || horiz / len < 2f64.to_radians().sin() {
+        return None;
+    }
+    // A target straight above or below the station has no bearing; never invent one.
+    if (target.x - station.x).hypot(target.y - station.y) < 0.01 {
         return None;
     }
     let want = bearing_deg(target.x - station.x, target.y - station.y);

@@ -117,3 +117,21 @@ fn vertical_tap_refused() {
         None::<Placement>
     );
 }
+
+#[test]
+fn target_straight_above_refused() {
+    let s = Vec3 {
+        x: 0.0,
+        y: 0.0,
+        z: 0.0,
+    };
+    let t = Vec3 {
+        x: 0.001,
+        y: 0.0,
+        z: 8.0,
+    };
+    assert_eq!(
+        heading_from_tap(s, t, [0.0, 0.0, -1.0], [0.0; 3], 0.0),
+        None::<Placement>
+    );
+}

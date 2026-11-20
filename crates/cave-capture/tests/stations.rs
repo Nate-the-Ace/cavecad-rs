@@ -40,3 +40,56 @@ fn unreadable_entry_named() {
     let err = document_from_room(None, &["{not json"]).unwrap_err();
     assert!(err.contains("entry 1"), "{err}");
 }
+
+const LOOP: &str = r#"{"unit":"m","name":"L","shots":[
+    {"from":"A","to":"B","distance":10,"azimuth":0,"inclination":0},
+    {"from":"B","to":"C","distance":10,"azimuth":90,"inclination":0},
+    {"from":"C","to":"D","distance":10,"azimuth":180,"inclination":0},
+    {"from":"D","to":"A","distance":11,"azimuth":270,"inclination":0}]}"#;
+
+#[test]
+fn stations_are_the_adjusted_positions() {
+    let doc = cave_fixture::from_shot_list(LOOP, ActorId(1)).unwrap();
+    let ex = cave_survey::extract(&doc);
+    let raw = cave_survey::resolve(&ex.legs, &ex.fixed);
+    let adj = cave_survey::adjust(&ex.legs, &raw, &cave_survey::Params::default());
+    assert!(adj.adjusted, "loop should adjust");
+    let s = stations(&doc);
+    assert_eq!(s.len(), 4);
+    let mut moved = false;
+    for st in &s {
+        assert_eq!(st.pos, adj.stations[&st.id]);
+        moved |= st.pos != raw.stations[&st.id].pos;
+    }
+    assert!(moved, "adjustment must differ from raw resolve");
+}
+
+#[test]
+fn entry_order_and_duplicates_converge() {
+    let a = format!(r#"{{"c":"d1","ops":{}}}"#, fixture_ops());
+    let doc1 = document_from_room(None, &[a.as_str()]).unwrap();
+    let doc2 = document_from_room(None, &[a.as_str(), a.as_str()]).unwrap();
+    let ops: Vec<serde_json::Value> = serde_json::from_str(&fixture_ops()).unwrap();
+    let mut rev = ops.clone();
+    rev.reverse();
+    let ea = format!(
+        r#"{{"c":"d1","ops":{}}}"#,
+        serde_json::to_string(&ops[..ops.len() / 2]).unwrap()
+    );
+    let eb = format!(
+        r#"{{"c":"d2","ops":{}}}"#,
+        serde_json::to_string(&ops[ops.len() / 2..]).unwrap()
+    );
+    let fwd = document_from_room(None, &[ea.as_str(), eb.as_str()]).unwrap();
+    let bwd = document_from_room(None, &[eb.as_str(), ea.as_str()]).unwrap();
+    let r = format!(
+        r#"{{"c":"d3","ops":{}}}"#,
+        serde_json::to_string(&rev).unwrap()
+    );
+    let reversed = document_from_room(None, &[r.as_str()]).unwrap();
+    let base = stations(&doc1);
+    assert_eq!(base.len(), 3);
+    for d in [&doc2, &fwd, &bwd, &reversed] {
+        assert_eq!(stations(d), base);
+    }
+}

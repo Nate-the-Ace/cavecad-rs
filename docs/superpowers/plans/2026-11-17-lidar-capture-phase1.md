@@ -1872,7 +1872,8 @@ final class ShotRecorder: NSObject, ObservableObject, ARSessionDelegate {
             "taps": [["target_station_id": forward.id, "target_label": forward.label,
                       "origin": [tap.origin.x, tap.origin.y, tap.origin.z].map(Double.init),
                       "dir": [tap.dir.x, tap.dir.y, tap.dir.z].map(Double.init)]],
-            "tracking": worstTracking, "keyframes": kfs,
+            "tracking": worstTracking, "arkit_version": UIDevice.current.systemVersion,
+            "gravity": [0.0, -1.0, 0.0], "keyframes": kfs,
         ]
         let bundle = Core.encodeShot(header: try! JSONSerialization.data(withJSONObject: header),
                                      positions: mesh.positions, normals: mesh.normals, indices: mesh.indices, jpegs: jpegs)

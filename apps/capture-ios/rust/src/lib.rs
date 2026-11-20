@@ -160,11 +160,9 @@ pub unsafe extern "C" fn cc_shot_encode(
         indices: unsafe { slice(indices, n_indices) }.to_vec(),
         keyframes,
     };
-    let bytes = encode(&shot);
-    if decode(&bytes).is_err() {
-        give(Vec::new())
-    } else {
-        give(bytes)
+    match encode(&shot) {
+        Ok(bytes) if decode(&bytes).is_ok() => give(bytes),
+        _ => give(Vec::new()),
     }
 }
 
@@ -317,7 +315,7 @@ mod tests {
             r#"{"shot_id":"s","cave_id":"c","station_id":"a","station_label":"A","captured_at_ms":0,"device":"t",
                "instrument_height_m":0.0,"start_camera":[0,0,0],
                "taps":[{"target_station_id":"b","target_label":"B","origin":[0,0,0],"dir":[0,0,-1]}],
-               "tracking":"normal","keyframes":[{"pose":[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],"intrinsics":[0,0,0,0,0,0,0,0,0],"width":1,"height":1,"jpeg_len":2}]}"#,
+               "tracking":"normal","arkit_version":"26.1","gravity":[0,-1,0],"keyframes":[{"pose":[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],"intrinsics":[0,0,0,0,0,0,0,0,0],"width":1,"height":1,"jpeg_len":2}]}"#,
         )
         .unwrap();
         let pos = [0f32, 0.0, -5.0, 1.0, 0.0, -5.0, 0.0, 1.0, -5.0];

@@ -46,6 +46,10 @@ pub struct ShotHeader {
     pub taps: Vec<HeadingTap>,
     /// How tracking went: `normal`, `limited` or `lost`.
     pub tracking: String,
+    /// The iOS version string the app reported (ARKit behaviour changes with it).
+    pub arkit_version: String,
+    /// Gravity direction in the capture frame (ARKit's gravity alignment makes it `(0,-1,0)`).
+    pub gravity: [f64; 3],
 }
 
 /// One kept camera frame, for colouring the mesh later.
@@ -97,6 +101,7 @@ pub enum BundleError {
 struct Wire {
     header: ShotHeader,
     vertex_count: u32,
+    normal_count: u32,
     triangle_count: u32,
     keyframes: Vec<WireKeyframe>,
 }
@@ -110,11 +115,19 @@ struct WireKeyframe {
     jpeg_len: u32,
 }
 
-/// Writes a shot as bundle bytes.
-pub fn encode(shot: &Shot) -> Vec<u8> {
+/// Writes a shot as bundle bytes. `BadMesh` when the arrays are ragged (positions or indices not a
+/// multiple of three, normals not one per vertex).
+pub fn encode(shot: &Shot) -> Result<Vec<u8>, BundleError> {
+    if !shot.positions.len().is_multiple_of(3)
+        || shot.normals.len() != shot.positions.len()
+        || !shot.indices.len().is_multiple_of(3)
+    {
+        return Err(BundleError::BadMesh);
+    }
     let wire = Wire {
         header: shot.header.clone(),
         vertex_count: (shot.positions.len() / 3) as u32,
+        normal_count: (shot.normals.len() / 3) as u32,
         triangle_count: (shot.indices.len() / 3) as u32,
         keyframes: shot
             .keyframes
@@ -144,7 +157,7 @@ pub fn encode(shot: &Shot) -> Vec<u8> {
     for k in &shot.keyframes {
         out.extend_from_slice(&k.jpeg);
     }
-    out
+    Ok(out)
 }
 
 struct Reader<'a> {
@@ -206,6 +219,15 @@ pub fn decode(bytes: &[u8]) -> Result<Shot, BundleError> {
     let wire: Wire = serde_json::from_slice(r.take(len)?).map_err(|_| BundleError::BadHeader)?;
     let n = wire.vertex_count as usize;
     let m = wire.triangle_count as usize;
+    if wire.normal_count != wire.vertex_count {
+        return Err(BundleError::BadMesh);
+    }
+    // Counts come from the file: size them in u64 and check against what is left before reading,
+    // so a lying header cannot overflow a 32-bit usize or ask for more than the file holds.
+    let need = (u64::from(wire.vertex_count) * 3 * 4) * 2 + u64::from(wire.triangle_count) * 3 * 4;
+    if need > (bytes.len() - r.at) as u64 {
+        return Err(BundleError::Truncated);
+    }
     let positions = r.f32s(n * 3)?;
     let normals = r.f32s(n * 3)?;
     let indices = r.u32s(m * 3)?;
