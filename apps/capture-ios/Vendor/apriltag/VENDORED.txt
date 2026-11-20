@@ -1,0 +1,1 @@
+AprilTag b7c0ebe9aa20f82ec7a828579004f9e706bfecd9 from https://github.com/AprilRobotics/apriltag (BSD-2, see LICENSE.md). Vendored: core detector + tag16h5 only; unmodified.
