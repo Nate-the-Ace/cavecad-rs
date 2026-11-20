@@ -4,8 +4,9 @@
 #![allow(unsafe_code)]
 
 use cave_capture::{
-    KeyframeRef, Shot, ShotHeader, check_header, decode, document_from_room, encode_parts,
-    from_compass, heading_from_tap, stations,
+    CardSeen, Keyframe, KeyframeRef, NewPass, PassMesh, Shot, ShotHeader, add_pass, card_offsets,
+    cards_fit, check_header, decode, document_from_room, encode, encode_parts, from_compass, ghost,
+    heading_from_tap, stations,
 };
 use cave_survey::Vec3;
 use serde::Deserialize;
@@ -285,6 +286,7 @@ fn summary(bundle: *const u8, len: usize, station_and_target: *const f64) -> CcB
         "vertices": info.vertices,
         "triangles": info.triangles,
         "keyframes": info.keyframes,
+        "passes": info.header.passes.len(),
         "placed": false,
         "station_id": info.header.station_id,
         "target_station_id": info.header.taps.first().map(|t| t.target_station_id.clone()),
@@ -369,6 +371,201 @@ fn positions_of(bundle: *const u8, len: usize, station_and_target: *const f64) -
         }
     }
     give(out)
+}
+
+#[derive(Deserialize)]
+struct PassIn {
+    captured_at_ms: i64,
+    aligned_by: String,
+    transform: Vec<f64>,
+    replace: bool,
+    tracking: String,
+    #[serde(default)]
+    cards: Vec<CardSeen>,
+    keyframes: Vec<KeyIn>,
+}
+
+/// See `capture_core.h`.
+///
+/// # Safety
+/// Every pointer must be null or valid for its stated length (strings NUL-terminated).
+#[unsafe(no_mangle)]
+#[allow(clippy::too_many_arguments)]
+pub unsafe extern "C" fn cc_shot_add_pass(
+    bundle: *const u8,
+    len: usize,
+    pass_json: *const c_char,
+    positions: *const f32,
+    n_positions: usize,
+    normals: *const f32,
+    n_normals: usize,
+    indices: *const u32,
+    n_indices: usize,
+    jpegs: *const u8,
+    n_jpegs: usize,
+) -> CcBuf {
+    guard(
+        || {
+            if (positions.is_null() && n_positions > 0)
+                || (normals.is_null() && n_normals > 0)
+                || (indices.is_null() && n_indices > 0)
+                || (jpegs.is_null() && n_jpegs > 0)
+            {
+                return empty();
+            }
+            let Ok(old) = decode(unsafe { slice(bundle, len) }) else {
+                return empty();
+            };
+            let Ok(Some(t)) = (unsafe { text(pass_json) }) else {
+                return empty();
+            };
+            let Ok(p) = serde_json::from_str::<PassIn>(t) else {
+                return empty();
+            };
+            let Ok(transform) = <[f64; 16]>::try_from(p.transform.as_slice()) else {
+                return empty();
+            };
+            let jpeg_bytes = unsafe { slice(jpegs, n_jpegs) };
+            let mut at = 0usize;
+            let mut keyframes = Vec::with_capacity(p.keyframes.len());
+            for k in &p.keyframes {
+                let (Ok(pose), Ok(intrinsics)) = (
+                    <[f32; 16]>::try_from(k.pose.as_slice()),
+                    <[f32; 9]>::try_from(k.intrinsics.as_slice()),
+                ) else {
+                    return empty();
+                };
+                let Some(end) = at.checked_add(k.jpeg_len) else {
+                    return empty();
+                };
+                let Some(jpeg) = jpeg_bytes.get(at..end) else {
+                    return empty();
+                };
+                at = end;
+                keyframes.push(Keyframe {
+                    pose,
+                    intrinsics,
+                    width: k.width,
+                    height: k.height,
+                    jpeg: jpeg.to_vec(),
+                });
+            }
+            let new = NewPass {
+                captured_at_ms: p.captured_at_ms,
+                aligned_by: p.aligned_by,
+                transform,
+                mesh: if p.replace {
+                    PassMesh::Replace
+                } else {
+                    PassMesh::Add
+                },
+                positions: unsafe { slice(positions, n_positions) }.to_vec(),
+                normals: unsafe { slice(normals, n_normals) }.to_vec(),
+                indices: unsafe { slice(indices, n_indices) }.to_vec(),
+                keyframes,
+                cards: p.cards,
+                tracking: p.tracking,
+            };
+            let Ok(shot) = add_pass(&old, new) else {
+                return empty();
+            };
+            match encode(&shot) {
+                Ok(b) if check_header(&b).is_ok() => give(b),
+                _ => empty(),
+            }
+        },
+        empty,
+    )
+}
+
+/// See `capture_core.h`.
+///
+/// # Safety
+/// `bundle` must be null or valid for `len` bytes.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn cc_shot_ghost(
+    bundle: *const u8,
+    len: usize,
+    cell_m: f32,
+    min_outline_m: f32,
+) -> CcBuf {
+    guard(
+        || {
+            let Ok(shot) = decode(unsafe { slice(bundle, len) }) else {
+                return empty();
+            };
+            let g = ghost(&shot.positions, &shot.indices, cell_m, min_outline_m);
+            let mut out = Vec::new();
+            for w in [
+                g.positions.len() as u32,
+                g.indices.len() as u32,
+                g.outlines.len() as u32,
+            ] {
+                out.extend_from_slice(&w.to_le_bytes());
+            }
+            for f in &g.positions {
+                out.extend_from_slice(&f.to_le_bytes());
+            }
+            for i in &g.indices {
+                out.extend_from_slice(&i.to_le_bytes());
+            }
+            for o in &g.outlines {
+                out.extend_from_slice(&(o.len() as u32).to_le_bytes());
+                for p in o {
+                    for f in p {
+                        out.extend_from_slice(&f.to_le_bytes());
+                    }
+                }
+            }
+            give(out)
+        },
+        empty,
+    )
+}
+
+/// See `capture_core.h`.
+///
+/// # Safety
+/// `bundle` valid for `len` bytes; `cards_json` NUL-terminated.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn cc_cards_fit(
+    bundle: *const u8,
+    len: usize,
+    cards_json: *const c_char,
+    same_session: u8,
+) -> CcBuf {
+    guard(
+        || {
+            let Ok(shot) = decode(unsafe { slice(bundle, len) }) else {
+                return err("unreadable shot");
+            };
+            let Ok(Some(t)) = (unsafe { text(cards_json) }) else {
+                return err("cards are not text");
+            };
+            let Ok(new) = serde_json::from_str::<Vec<CardSeen>>(t) else {
+                return err("cards are not JSON");
+            };
+            let pairs = |v: &[(u32, f64)]| {
+                v.iter()
+                    .map(|(id, m)| serde_json::json!({"id": id, "m": m}))
+                    .collect::<Vec<_>>()
+            };
+            if same_session != 0 {
+                return give_json(
+                    serde_json::json!({"offsets": pairs(&card_offsets(&shot.header.cards, &new))}),
+                );
+            }
+            give_json(
+                serde_json::json!({"fit": cards_fit(&shot.header.cards, &new).map(|f| {
+                    serde_json::json!({
+                        "transform": f.transform, "yaw_rad": f.yaw_rad, "worst_m": f.worst_m,
+                        "misfits": pairs(&f.misfits)
+                    })
+                })}),
+            )
+        },
+        internal,
+    )
 }
 
 #[cfg(test)]
@@ -567,6 +764,65 @@ mod tests {
                 0,
             )
         })
+    }
+
+    #[test]
+    fn add_pass_ghost_and_fit_through_the_doors() {
+        let b = sample_bundle();
+        let pass = CString::new(
+            r#"{"captured_at_ms":5,"aligned_by":"same_session","transform":[1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1],
+               "replace":true,"tracking":"normal","cards":[],
+               "keyframes":[{"pose":[1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1],"intrinsics":[1,0,0,0,1,0,0,0,1],"width":1,"height":1,"jpeg_len":3}]}"#,
+        )
+        .unwrap();
+        let pos = [0f32, 0.0, -1.0, 1.0, 0.0, -1.0, 0.0, 1.0, -1.0];
+        let nor = [0f32; 9];
+        let idx = [0u32, 1, 2];
+        let jpg = [7u8, 7, 7];
+        let add = |old: &[u8], n: usize| {
+            read(unsafe {
+                cc_shot_add_pass(
+                    old.as_ptr(),
+                    n,
+                    pass.as_ptr(),
+                    pos.as_ptr(),
+                    9,
+                    nor.as_ptr(),
+                    9,
+                    idx.as_ptr(),
+                    3,
+                    jpg.as_ptr(),
+                    3,
+                )
+            })
+        };
+        let out = add(&b, b.len());
+        let shot = decode(&out).unwrap();
+        assert_eq!(shot.header.passes.len(), 2);
+        assert_eq!(shot.keyframes.last().unwrap().jpeg, vec![7, 7, 7]);
+        assert!(add(&b, 3).is_empty());
+
+        let sum: serde_json::Value = serde_json::from_slice(&read(unsafe {
+            cc_shot_summary(out.as_ptr(), out.len(), std::ptr::null())
+        }))
+        .unwrap();
+        assert_eq!(sum["passes"], 2);
+
+        let g = read(unsafe { cc_shot_ghost(out.as_ptr(), out.len(), 0.05, 0.0) });
+        let word = |i: usize| u32::from_le_bytes(g[i * 4..i * 4 + 4].try_into().unwrap());
+        assert_eq!((word(0), word(1)), (9, 3));
+        assert_eq!(word(2), 1); // the lone triangle's edge is one closed outline
+        assert!(read(unsafe { cc_shot_ghost(out.as_ptr(), 3, 0.05, 0.0) }).is_empty());
+
+        let cards = CString::new(r#"[{"id":2,"word":"CURRENT","point":[0,0,0],"corners":[],"sightings":9,"spread_m":0.0}]"#).unwrap();
+        let fit = |same: u8| -> serde_json::Value {
+            serde_json::from_slice(&read(unsafe {
+                cc_cards_fit(out.as_ptr(), out.len(), cards.as_ptr(), same)
+            }))
+            .unwrap()
+        };
+        assert!(fit(0)["fit"].is_null());
+        assert!(fit(1)["offsets"].is_array());
     }
 
     #[test]

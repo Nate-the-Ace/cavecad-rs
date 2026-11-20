@@ -32,7 +32,8 @@ CcBuf cc_shot_encode(const char *header_json,
 /// first heading tap, aimed at the target. bundle: len BYTES, valid for len.
 /// station_and_target: pointer to exactly 6 doubles (station xyz then target xyz, survey frame);
 /// may be NULL, in which case the shot is not placed.
-/// Returns JSON {"vertices","triangles","keyframes","placed":bool,"station_id","target_station_id",
+/// Returns JSON {"vertices","triangles","keyframes","passes" (the header's scanning-pass count; 0 for
+/// an older one-pass file),"placed":bool,"station_id","target_station_id",
 /// "compass":{"true_north","accuracy_deg"}|null,"min":[3],"max":[3],"turn_deg",
 /// "cards":[{"id","word","point":[3],"sightings","spread_m"}]} or {"error"}.
 /// "cards" (only when placed) are the station cards the scan saw, placed like the mesh; "point" is
@@ -51,6 +52,29 @@ CcBuf cc_shot_summary(const uint8_t *bundle, size_t len, const double *station_a
 /// (Relative keeps millimetres; float32 of a large absolute coordinate does not.) bundle is len BYTES;
 /// station_and_target is 6 doubles as above (NULL allowed). Empty when it cannot be placed.
 CcBuf cc_shot_placed_positions(const uint8_t *bundle, size_t len, const double *station_and_target);
+
+/// Adds a scanning pass to a .cvcap (bundle, len BYTES) and returns the new bundle, or empty on any
+/// error. pass_json: {"captured_at_ms","aligned_by":"same_session"|"cards","transform":[16 column-major,
+/// pass frame to shot frame],"replace":bool (true: the pass mesh replaces the shot's, same session;
+/// false: added),"tracking","cards":[CardSeen],"keyframes":[as cc_shot_encode]}. Mesh and jpegs as
+/// cc_shot_encode (counts are elements; jpegs bytes back to back).
+CcBuf cc_shot_add_pass(const uint8_t *bundle, size_t len, const char *pass_json,
+                       const float *positions, size_t n_positions,
+                       const float *normals, size_t n_normals,
+                       const uint32_t *indices, size_t n_indices,
+                       const uint8_t *jpegs, size_t n_jpegs);
+
+/// The shot's mesh simplified on a cell_m grid, with its hole outlines (shorter than min_outline_m
+/// dropped). Little-endian binary: u32 vertex_floats, u32 index_count, u32 outline_count; then
+/// vertex_floats f32 (xyz per vertex, capture frame); index_count u32; then per outline u32
+/// point_count and point_count*3 f32. Empty on a bad bundle.
+CcBuf cc_shot_ghost(const uint8_t *bundle, size_t len, float cell_m, float min_outline_m);
+
+/// Station cards of a new pass (cards_json: [CardSeen], the pass's capture frame) against the shot's.
+/// same_session != 0: {"offsets":[{"id","m"}]} (plain distances). Else {"fit":{"transform":[16],
+/// "yaw_rad","worst_m","misfits":[{"id","m"}]}} or {"fit":null} with fewer than 2 matched cards.
+/// {"error"} on a bad bundle or JSON.
+CcBuf cc_cards_fit(const uint8_t *bundle, size_t len, const char *cards_json, uint8_t same_session);
 
 /// Releases a CcBuf. Call exactly once per returned buffer.
 void cc_free(CcBuf buf);
