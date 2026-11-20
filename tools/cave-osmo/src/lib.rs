@@ -31,6 +31,8 @@ pub const WRITE: &str = "0000fff5-0000-1000-8000-00805f9b34fb";
 pub const APP: u8 = 0x02;
 pub const GIMBAL: u8 = 0x04;
 
+pub mod camera;
+
 /// Gimbal command set and the commands in it this library knows.
 pub mod cmd {
     pub const SET_GIMBAL: u8 = 0x04;
