@@ -23,7 +23,8 @@ enum CaptureSettings {
     static let heightKey = "instrumentHeightM"
     static let defaultHeight = 1.0
     /// A usable height: 0–3 m; anything not a number goes back to the default.
-    static func clampHeight(_ h: Double) -> Double { h.isFinite ? min(max(h, 0), 3) : defaultHeight }
+    /// Between 0 and 3 m, to the centimetre (the stepper drifts: 0.5 arrived as 0.4999999999999996).
+    static func clampHeight(_ h: Double) -> Double { h.isFinite ? (min(max(h, 0), 3) * 100).rounded() / 100 : defaultHeight }
 }
 
 /// A camera frame's pixels handed to the JPEG queue (only that frame's buffer, never the ARFrame).

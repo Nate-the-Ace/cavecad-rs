@@ -81,6 +81,7 @@ final class ShotRecorderTests: XCTestCase {
         XCTAssertEqual(CaptureSettings.clampHeight(-1), 0)
         XCTAssertEqual(CaptureSettings.clampHeight(5), 3)
         XCTAssertEqual(CaptureSettings.clampHeight(1.4), 1.4)
+        XCTAssertEqual(CaptureSettings.clampHeight(0.4999999999999996), 0.5)  // the stepper drift seen on the phone
         XCTAssertEqual(CaptureSettings.clampHeight(.nan), 1)
     }
 
