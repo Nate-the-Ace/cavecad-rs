@@ -559,7 +559,8 @@ pub unsafe extern "C" fn cc_cards_fit(
                 serde_json::json!({"fit": cards_fit(&shot.header.cards, &new).map(|f| {
                     serde_json::json!({
                         "transform": f.transform, "yaw_rad": f.yaw_rad, "worst_m": f.worst_m,
-                        "misfits": pairs(&f.misfits)
+                        "ok": f.ok, "worst_ratio": f.worst_ratio,
+                        "misfits": pairs(&f.misfits), "limits": pairs(&f.limits)
                     })
                 })}),
             )
@@ -823,6 +824,52 @@ mod tests {
         };
         assert!(fit(0)["fit"].is_null());
         assert!(fit(1)["offsets"].is_array());
+    }
+
+    #[test]
+    fn cards_fit_reports_ok_ratio_and_limits() {
+        let header = CString::new(
+            r#"{"shot_id":"s","cave_id":"c","station_id":"a","station_label":"A","captured_at_ms":0,"device":"t",
+               "instrument_height_m":0.3,"start_camera":[0,0,0],"compass":{"true_north":true,"accuracy_deg":5.0},
+               "tracking":"normal","arkit_version":"26.1","gravity":[0,-1,0],"keyframes":[],
+               "cards":[{"id":2,"word":"CURRENT","point":[0,0,0],"sightings":9,"spread_m":0.01},
+                        {"id":12,"word":"FORWARD","point":[0,0,-4.8],"sightings":9,"spread_m":0.01}]}"#,
+        )
+        .unwrap();
+        let pos = [0f32, 0.0, -1.0, 1.0, 0.0, -1.0, 0.0, 1.0, -1.0];
+        let nor = [0f32; 9];
+        let idx = [0u32, 1, 2];
+        let b = read(unsafe {
+            cc_shot_encode(
+                header.as_ptr(),
+                pos.as_ptr(),
+                9,
+                nor.as_ptr(),
+                9,
+                idx.as_ptr(),
+                3,
+                std::ptr::null(),
+                0,
+            )
+        });
+        let cards = CString::new(
+            r#"[{"id":2,"word":"CURRENT","point":[0,0,0],"corners":[],"sightings":9,"spread_m":0.0},
+                {"id":12,"word":"FORWARD","point":[0,0,-4.92],"corners":[],"sightings":9,"spread_m":0.0}]"#,
+        )
+        .unwrap();
+        let v: serde_json::Value = serde_json::from_slice(&read(unsafe {
+            cc_cards_fit(b.as_ptr(), b.len(), cards.as_ptr(), 0)
+        }))
+        .unwrap();
+        let f = &v["fit"];
+        assert_eq!(f["ok"], true, "{f}");
+        assert!(f["worst_m"].as_f64().unwrap() > 0.05);
+        let r = f["worst_ratio"].as_f64().unwrap();
+        assert!(r > 0.7 && r < 1.0, "{r}");
+        let l = f["limits"].as_array().unwrap();
+        assert_eq!(l.len(), 2);
+        assert!((l[0]["m"].as_f64().unwrap() - 0.072).abs() < 1e-9);
+        assert_eq!(f["misfits"].as_array().unwrap().len(), 2);
     }
 
     #[test]

@@ -72,7 +72,10 @@ CcBuf cc_shot_ghost(const uint8_t *bundle, size_t len, float cell_m, float min_o
 
 /// Station cards of a new pass (cards_json: [CardSeen], the pass's capture frame) against the shot's.
 /// same_session != 0: {"offsets":[{"id","m"}]} (plain distances). Else {"fit":{"transform":[16],
-/// "yaw_rad","worst_m","misfits":[{"id","m"}]}} or {"fit":null} with fewer than 2 matched cards.
+/// "yaw_rad","worst_m","ok","worst_ratio","misfits":[{"id","m"}],"limits":[{"id","m"}]}} or {"fit":null} with fewer than 2 matched cards.
+/// "limits" is the misfit allowed per card, max(0.05, 0.015 x its farthest horizontal distance to
+/// another matched card in the shot), metres; "ok" = every misfit within its limit (the line-up
+/// is accepted); "worst_ratio" = max(misfit / limit), above 1 means refused.
 /// {"error"} on a bad bundle or JSON.
 CcBuf cc_cards_fit(const uint8_t *bundle, size_t len, const char *cards_json, uint8_t same_session);
 

@@ -112,8 +112,18 @@ fn worst(a: &str, b: &str) -> String {
     }
 }
 
+/// Sightings from which a card estimate counts as well established.
+const SOLID_SIGHTINGS: u32 = 8;
+
+/// Whether `new` is a better estimate of a card than `old`: a well-seen one that wandered no more,
+/// or any one with more sightings while `old` is still thinly seen.
+fn better(new: &CardSeen, old: &CardSeen) -> bool {
+    (new.sightings >= SOLID_SIGHTINGS && new.spread_m <= old.spread_m)
+        || (old.sightings < SOLID_SIGHTINGS && new.sightings > old.sightings)
+}
+
 /// The shot with `p` added: photos appended, mesh replaced or added, cards merged (a card the new
-/// pass placed replaces the same id), and the pass recorded. A shot with no pass list gets its
+/// pass placed replaces the same id only if it is the better estimate; the rest are kept or added), and the pass recorded. A shot with no pass list gets its
 /// first pass recorded too. `BadMesh` for ragged new arrays or an index past the new vertices.
 pub fn add_pass(old: &Shot, p: NewPass) -> Result<Shot, BundleError> {
     if !p.positions.len().is_multiple_of(3)
@@ -184,14 +194,17 @@ pub fn add_pass(old: &Shot, p: NewPass) -> Result<Shot, BundleError> {
         }
     }
     cards.reverse();
-    let mut merged: Vec<CardSeen> = out
-        .header
-        .cards
-        .iter()
-        .filter(|c| !cards.iter().any(|n| n.id == c.id))
-        .cloned()
-        .collect();
-    merged.extend(cards.iter().cloned());
+    let mut merged: Vec<CardSeen> = out.header.cards.clone();
+    for n in &cards {
+        match merged.iter_mut().find(|o| o.id == n.id) {
+            Some(o) => {
+                if better(n, o) {
+                    *o = n.clone();
+                }
+            }
+            None => merged.push(n.clone()),
+        }
+    }
     merged.sort_by_key(|c| c.id);
     out.header.cards = merged;
     out.header.tracking = worst(&out.header.tracking, &p.tracking);
@@ -350,6 +363,13 @@ pub struct CardFit {
     pub misfits: Vec<(u32, f64)>,
     /// The largest misfit, metres.
     pub worst_m: f64,
+    /// The misfit each matched card is allowed: (id, metres) = max(0.05, 0.015 x its largest
+    /// horizontal distance to another matched card in the shot).
+    pub limits: Vec<(u32, f64)>,
+    /// Every misfit is within its limit.
+    pub ok: bool,
+    /// The largest misfit / limit; above 1 means a card is off by more than allowed.
+    pub worst_ratio: f64,
 }
 
 fn matched<'a>(old: &'a [CardSeen], new: &'a [CardSeen]) -> Vec<(&'a CardSeen, &'a CardSeen)> {
@@ -427,11 +447,30 @@ pub fn cards_fit(old: &[CardSeen], new: &[CardSeen]) -> Option<CardFit> {
     if !yaw.is_finite() || !worst_m.is_finite() || transform.iter().any(|v| !v.is_finite()) {
         return None;
     }
+    let limits: Vec<(u32, f64)> = m
+        .iter()
+        .map(|(o, n)| {
+            let far = op
+                .iter()
+                .map(|q| (o.point[0] - q[0]).hypot(o.point[2] - q[2]))
+                .fold(0.0, f64::max);
+            (n.id, (0.015 * far).max(0.05))
+        })
+        .collect();
+    let ok = misfits.iter().zip(&limits).all(|(a, l)| a.1 <= l.1);
+    let worst_ratio = misfits
+        .iter()
+        .zip(&limits)
+        .map(|(a, l)| a.1 / l.1)
+        .fold(0.0, f64::max);
     Some(CardFit {
         yaw_rad: yaw,
         transform,
         misfits,
         worst_m,
+        limits,
+        ok,
+        worst_ratio,
     })
 }
 

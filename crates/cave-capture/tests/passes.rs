@@ -400,3 +400,94 @@ fn cards_fit_refuses_non_finite_numbers() {
     ];
     assert!(cards_fit(&huge, &huge).is_none_or(|f| f.transform.iter().all(|v| v.is_finite())));
 }
+
+fn seen(id: u32, x: f64, sightings: u32, spread_m: f64) -> CardSeen {
+    CardSeen {
+        sightings,
+        spread_m,
+        ..card(id, [x, 0.0, 0.0])
+    }
+}
+
+/// The shot's card 2 as `old`, one new card 2 in the same frame; returns the stored card 2.
+fn merged_card(old: CardSeen, new: CardSeen) -> CardSeen {
+    let mut s = shot();
+    s.header.cards = vec![old];
+    let mut np = new_pass("same_session", identity(), PassMesh::Replace);
+    np.cards = vec![new];
+    let out = add_pass(&s, np).unwrap();
+    assert_eq!(out.header.cards.len(), 1);
+    // the pass record keeps the pass's own card either way
+    assert_eq!(out.header.passes[1].cards.len(), 1);
+    out.header.cards[0].clone()
+}
+
+#[test]
+fn worse_new_card_does_not_replace_the_old() {
+    // fewer sightings, and a wider spread at the same count
+    assert_eq!(
+        merged_card(seen(2, 1.0, 4, 0.008), seen(2, 2.0, 1, 0.0)).point[0],
+        1.0
+    );
+    assert_eq!(
+        merged_card(seen(2, 1.0, 9, 0.005), seen(2, 2.0, 9, 0.019)).point[0],
+        1.0
+    );
+    assert_eq!(
+        merged_card(seen(2, 1.0, 9, 0.005), seen(2, 2.0, 4, 0.001)).point[0],
+        1.0
+    );
+}
+
+#[test]
+fn better_new_card_replaces_the_old() {
+    assert_eq!(
+        merged_card(seen(2, 1.0, 4, 0.008), seen(2, 2.0, 5, 0.02)).point[0],
+        2.0
+    );
+    assert_eq!(
+        merged_card(seen(2, 1.0, 9, 0.010), seen(2, 2.0, 12, 0.004)).point[0],
+        2.0
+    );
+    assert_eq!(
+        merged_card(seen(2, 1.0, 9, 0.010), seen(2, 2.0, 9, 0.010)).point[0],
+        2.0
+    );
+}
+
+#[test]
+fn new_card_ids_are_added_and_old_only_kept() {
+    let mut np = new_pass("same_session", identity(), PassMesh::Replace);
+    np.cards = vec![card(26, [1.0, 0.0, 0.0])];
+    let out = add_pass(&shot(), np).unwrap();
+    let ids: Vec<u32> = out.header.cards.iter().map(|c| c.id).collect();
+    assert_eq!(ids, vec![2, 12, 26]);
+}
+
+#[test]
+fn far_card_gets_a_wider_limit() {
+    // two cards 4.8 m apart, the line-up stretched 12 cm: 6 cm misfit each, limit 0.072
+    let old = vec![card(2, [0.0, 0.0, 0.0]), card(12, [0.0, 0.0, -4.8])];
+    let mut new = old.clone();
+    new[1].point[2] -= 0.12;
+    let f = cards_fit(&old, &new).unwrap();
+    assert!(f.worst_m > 0.05);
+    assert!(f.ok, "{f:?}");
+    assert!(
+        f.worst_ratio < 1.0 && f.worst_ratio > 0.7,
+        "{}",
+        f.worst_ratio
+    );
+    assert!(f.limits.iter().all(|(_, l)| (l - 0.072).abs() < 1e-9));
+}
+
+#[test]
+fn near_card_keeps_the_floor_limit() {
+    let old = vec![card(2, [0.0, 0.0, 0.0]), card(12, [0.0, 0.0, -1.0])];
+    let mut new = old.clone();
+    new[1].point[2] -= 0.12;
+    let f = cards_fit(&old, &new).unwrap();
+    assert!(!f.ok, "{f:?}");
+    assert!(f.worst_ratio > 1.0);
+    assert!(f.limits.iter().all(|(_, l)| (l - 0.05).abs() < 1e-9));
+}
