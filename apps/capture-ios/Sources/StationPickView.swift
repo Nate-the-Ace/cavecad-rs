@@ -35,7 +35,7 @@ struct StationPickView: View {
 
     var body: some View {
         List {
-            Section("Station the gimbal stands on") { picker($over) }
+            Section("Station you capture from") { picker($over) }
             if let over {
                 NavigationLink("Capture") { CaptureView(cave: cave, over: over) }.font(.headline)
             }

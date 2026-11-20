@@ -38,6 +38,8 @@ struct CardFrame: Sendable {
 struct CardResult: Sendable {
     let found: [CardSighting]
     let noRange: [StationCard]
+    /// Card ids read too weakly to trust (`StationCard.minMargin`).
+    let weak: [StationCard]
     /// How long the detector took on this frame, milliseconds.
     let millis: Double
     let width: Int, height: Int
@@ -113,7 +115,7 @@ final class CardDetector: @unchecked Sendable {
             let r = CardMath.sightings(from: raw, depth: frame.depth, imageW: w, imageH: h,
                                        intrinsics: frame.intrinsics, camera: frame.camera)
             let ms = Double(DispatchTime.now().uptimeNanoseconds - t0) / 1e6
-            done(CardResult(found: r.found, noRange: r.noRange, millis: ms, width: w, height: h,
+            done(CardResult(found: r.found, noRange: r.noRange, weak: r.weak, millis: ms, width: w, height: h,
                             depthWidth: frame.depth?.width ?? 0, depthHeight: frame.depth?.height ?? 0))
         }
     }

@@ -78,7 +78,7 @@ final class CardTrackingTests: XCTestCase {
 
     func testSightingsCarrySightLineSizeAndLidar() {
         let px = Self.project(centre: SIMD3(0, 0, 2))
-        let det = RawDetection(id: 12, hamming: 0, margin: 40, center: SIMD2(960, 540), corners: px)
+        let det = RawDetection(id: 12, hamming: 0, margin: 120, center: SIMD2(960, 540), corners: px)
         let stray = RawDetection(id: 5, hamming: 0, margin: 50, center: SIMD2(960, 540), corners: px)
         var cam = matrix_identity_float4x4
         cam.columns.3 = SIMD4(1, 0, 0, 1)
@@ -95,7 +95,7 @@ final class CardTrackingTests: XCTestCase {
         XCTAssertEqual(s.range?.source, .size)
         XCTAssertEqual(s.point?.z ?? 0, -2, accuracy: 1e-6)
         XCTAssertEqual(s.corners.count, 4)
-        let none = CardMath.sightings(from: [RawDetection(id: 2, hamming: 0, margin: 9, center: SIMD2(960, 540), corners: [])],
+        let none = CardMath.sightings(from: [RawDetection(id: 2, hamming: 0, margin: 120, center: SIMD2(960, 540), corners: [])],
                                       depth: nil, imageW: 1920, imageH: 1080, intrinsics: Self.k, camera: cam)
         XCTAssertTrue(none.found.isEmpty)
         XCTAssertEqual(none.noRange, [.current])
@@ -139,6 +139,41 @@ final class CardTrackingTests: XCTestCase {
         let moved = MeshSnapshot([MeshPart(positions: [SIMD3(-1, -1, 0), SIMD3(1, -1, 0), SIMD3(0, 1, 0)], normals: [],
                                            indices: [0, 1, 2], transform: simd_float4x4(SIMD4(1, 0, 0, 0), SIMD4(0, 1, 0, 0), SIMD4(0, 0, 1, 0), SIMD4(0, 0, -3, 1)))])
         XCTAssertEqual(moved.hits(origin: .zero, dir: SIMD3(0, 0, -1)).first ?? 0, 3, accuracy: 1e-5)
+    }
+
+    /// The cluttered-desk shot: clutter read as FORWARD with a decision margin under 1; real cards read 77-174.
+    func testWeakReadsAreNotCards() {
+        let px = Self.project(centre: SIMD3(0, 0, 2))
+        let weak = RawDetection(id: 12, hamming: 0, margin: 0.8, center: SIMD2(960, 540), corners: px)
+        let r = CardMath.sightings(from: [weak], depth: nil, imageW: 1920, imageH: 1080, intrinsics: Self.k, camera: matrix_identity_float4x4)
+        XCTAssertTrue(r.found.isEmpty); XCTAssertTrue(r.noRange.isEmpty)
+        XCTAssertEqual(r.weak, [.forward])
+        XCTAssertEqual(StationCard.minMargin, 50)
+    }
+
+    /// Two false reads close to the phone weigh a lot each, but the many real looks win.
+    func testHeaviestGroupWinsOverAFewHeavyFalseReads() {
+        var t = CardTracker()
+        for _ in 0..<2 { t.add(sighting(eye: SIMD3(0, 0, -1), dir: SIMD3(1, 0, 0), size: 0.18)) }    // weight 4 each
+        for i in 0..<12 { t.add(sighting(eye: SIMD3(0, 0, 3), size: 0.7 + 0.001 * Double(i))) }      // ~2 each, at z = 2.3
+        let e = t.tracks[.current]!.estimate!
+        XCTAssertEqual(e.point.z, 2.295, accuracy: 0.01)
+        XCTAssertEqual(e.kept, 12); XCTAssertEqual(e.rejected, 2)
+    }
+
+    /// Each pass meets at most `limit` sightings with the mesh: never-met first, then the longest ago.
+    func testMeshBatchRotates() {
+        var t = CardTracker()
+        for _ in 0..<5 { t.add(sighting()) }
+        let b1 = t.meshBatch(limit: 3)
+        XCTAssertEqual(b1.map(\.seq), [0, 1, 2])
+        t.applyMesh(Dictionary(uniqueKeysWithValues: b1.map { ($0.seq, Optional(1.9)) }), pass: 1)
+        let b2 = t.meshBatch(limit: 3)
+        XCTAssertEqual(b2.map(\.seq), [3, 4, 0])
+        t.applyMesh(Dictionary(uniqueKeysWithValues: b2.map { ($0.seq, Optional(1.9)) }), pass: 2)
+        XCTAssertEqual(t.meshBatch(limit: 3).map(\.seq), [1, 2, 0])
+        t.add(sighting())
+        XCTAssertEqual(t.meshBatch(limit: 2).map(\.seq), [5, 1])
     }
 
     func testSizeGateTightensWithDistanceKnown() {

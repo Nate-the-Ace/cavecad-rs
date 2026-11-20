@@ -22,6 +22,10 @@ enum StationCard: Int, CaseIterable, Sendable {
         }
     }
 
+    /// A read below this decision margin is not a card: on a cluttered desk clutter decoded as FORWARD at
+    /// margin 0.6-0.8, while real cards read 77-174.
+    static let minMargin = 50.0
+
     /// Only these ids, read with no bit errors, are cards; anything else the detector finds is noise
     /// (the range test saw stray ids 5, 14, 15, 27).
     static func accepting(id: Int, hamming: Int) -> StationCard? { hamming == 0 ? StationCard(rawValue: id) : nil }
@@ -93,6 +97,8 @@ struct CardSighting: Equatable, Sendable {
     var meshRange: Double? = nil
     /// Order of arrival in the shot, so mesh results can be matched back.
     var seq: Int = 0
+    /// The mesh pass that last set `meshRange`; nil when none has yet.
+    var meshedPass: Int? = nil
 
     /// Two ranges agree when within 8 % (at least 10 cm): what the printed size can vouch for. At 4K a 3 in
     /// glyph is still about 50 px wide at 4.5 m, so its range holds to a few percent; the retest's 4.6 m card
@@ -199,13 +205,15 @@ enum CardMath {
     }
 
     /// Cards among the detections, as sight lines with their size and LiDAR ranges. `noRange` lists cards seen
-    /// with neither (no usable corners and no confident depth).
+    /// with neither (no usable corners and no confident depth); `weak` card ids read below `minMargin`.
     static func sightings(from dets: [RawDetection], depth: DepthGrid?, imageW: Int, imageH: Int,
-                          intrinsics: simd_float3x3, camera: simd_float4x4) -> (found: [CardSighting], noRange: [StationCard]) {
-        var found: [CardSighting] = [], missed: [StationCard] = []
+                          intrinsics: simd_float3x3, camera: simd_float4x4)
+        -> (found: [CardSighting], noRange: [StationCard], weak: [StationCard]) {
+        var found: [CardSighting] = [], missed: [StationCard] = [], weak: [StationCard] = []
         let eye = eye(camera)
         for d in dets {
             guard let card = StationCard.accepting(id: d.id, hamming: d.hamming) else { continue }
+            guard d.margin >= StationCard.minMargin else { weak.append(card); continue }
             let far = unproject(pixel: d.center, depth: 1, intrinsics: intrinsics, camera: camera)
             let dir = simd_normalize(far - eye)
             guard dir.x.isFinite, dir.y.isFinite, dir.z.isFinite else { continue }
@@ -219,7 +227,7 @@ enum CardMath {
             found.append(CardSighting(card: card, eye: eye, dir: dir, sizeRange: sizeRange, sizeCorners: sizeCorners,
                                       lidarRange: lidarRange, margin: d.margin))
         }
-        return (found, missed)
+        return (found, missed, weak)
     }
 }
 
@@ -357,8 +365,18 @@ struct CardEstimate: Equatable, Sendable {
     init?(_ sightings: [CardSighting]) {
         let placed = sightings.compactMap { s in s.range.flatMap { r in s.point.map { (s, r, $0) } } }
         guard !placed.isEmpty else { return nil }
-        let first = weightedMedianPoint(placed.map { ($0.2, Self.weight($0.1.value)) })
-        var keep = placed.filter { simd_distance($0.2, first) <= Self.reject }
+        let w = placed.map { Self.weight($0.1.value) }
+        // The group with the most weight wins: the sighting with the most weight within `reject` of it is the
+        // seed (a median of everything can sit on a few heavy false reads and throw the real ones out).
+        var best = 0, bestSupport = -1.0
+        for i in placed.indices {
+            var support = 0.0
+            for j in placed.indices where simd_distance(placed[i].2, placed[j].2) <= Self.reject { support += w[j] }
+            if support > bestSupport { bestSupport = support; best = i }
+        }
+        let seed = weightedMedianPoint(placed.indices.filter { simd_distance(placed[$0].2, placed[best].2) <= Self.reject }
+            .map { (placed[$0].2, w[$0]) })
+        var keep = placed.filter { simd_distance($0.2, seed) <= Self.reject }
         if keep.isEmpty { keep = placed }
         let m = weightedMedianPoint(keep.map { ($0.2, Self.weight($0.1.value)) })
         point = m
@@ -394,8 +412,10 @@ struct CardTrack: Sendable {
     }
 
     /// Takes the mesh ranges just worked out (by sighting `seq`); a sighting missing from `ranges` keeps its own.
-    mutating func applyMesh(_ ranges: [Int: Double?]) {
-        for i in sightings.indices { if let r = ranges[sightings[i].seq] { sightings[i].meshRange = r } }
+    mutating func applyMesh(_ ranges: [Int: Double?], pass: Int) {
+        for i in sightings.indices {
+            if let r = ranges[sightings[i].seq] { sightings[i].meshRange = r; sightings[i].meshedPass = pass }
+        }
     }
 }
 
@@ -432,9 +452,15 @@ struct CardTracker: Sendable {
     /// Every sighting so far, for meeting with the mesh.
     var allSightings: [CardSighting] { tracks.values.flatMap(\.sightings) }
 
-    /// Mesh ranges by sighting `seq`, nil where the line met no mesh.
-    mutating func applyMesh(_ ranges: [Int: Double?]) {
-        for k in tracks.keys { tracks[k]?.applyMesh(ranges) }
+    /// Mesh ranges by sighting `seq`, nil where the line met no mesh, from mesh pass `pass`.
+    mutating func applyMesh(_ ranges: [Int: Double?], pass: Int = 0) {
+        for k in tracks.keys { tracks[k]?.applyMesh(ranges, pass: pass) }
+    }
+
+    /// The sightings for the next mesh pass, at most `limit`: never met with the mesh first (oldest first),
+    /// then those met longest ago. Keeps each pass short however long the walk.
+    func meshBatch(limit: Int) -> [CardSighting] {
+        Array(allSightings.sorted { ($0.meshedPass ?? -1, $0.seq) < ($1.meshedPass ?? -1, $1.seq) }.prefix(limit))
     }
 
     /// Meets every sighting with this mesh (call off the main thread for a big mesh).

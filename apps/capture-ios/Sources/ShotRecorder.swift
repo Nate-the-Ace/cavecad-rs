@@ -57,7 +57,7 @@ final class ShotRecorder: NSObject, ObservableObject, ARSessionDelegate {
 
     /// Photos kept per shot at most (memory and file size); the mesh keeps growing after.
     static let maxKeyframes = 240
-    static let readyMessage = "Stand the gimbal on the station, then press Start and let it turn."
+    static let readyMessage = "Put the CURRENT card on this station (or stand the gimbal on it), FORWARD and REAR on the next and previous ones, then press Start."
     /// Seconds between compass lines in the log while capturing (drift shows there).
     static let compassLogEvery: TimeInterval = 5
     /// Keyframe JPEGs are at most this wide (the camera format can be 4K; files must not balloon).
@@ -106,6 +106,10 @@ final class ShotRecorder: NSObject, ObservableObject, ARSessionDelegate {
     private var meshing = false
     private var lastMeshTime: TimeInterval = 0
     private var meshRuns = 0, meshMillis = 0.0, meshCopyMillis = 0.0
+    /// Card reads ignored as too weak this shot, per card.
+    private var weakReads: [StationCard: Int] = [:]
+    /// Sight lines met with the mesh per pass at most.
+    static let meshBatchLimit = 40
     /// Mesh anchors whose origin is this far from every card are not copied for the card passes, metres.
     static let meshAnchorReach = 4.0
     private static let meshQueue = DispatchQueue(label: "app.cavecad.capture.cards.mesh", qos: .utility)
@@ -248,13 +252,13 @@ final class ShotRecorder: NSObject, ObservableObject, ARSessionDelegate {
         cardTracker = CardTracker(); cardMarkers = []
         detectingCards = false; lastCardTime = -1; lastCardLog = f.timestamp
         cardRuns = 0; cardMillis = 0; cardMaxMillis = 0; cardFrameLogged = false
-        meshing = false; lastMeshTime = f.timestamp; meshRuns = 0; meshMillis = 0; meshCopyMillis = 0
+        meshing = false; lastMeshTime = f.timestamp; meshRuns = 0; meshMillis = 0; meshCopyMillis = 0; weakReads = [:]
         lastCompassLog = f.timestamp
         Log.write("compass", "at start: \(compass.latest.logLine) (aligned with \(compassAtAlignment.logLine))")
         phase = .capturing
         UIApplication.shared.isIdleTimerDisabled = true
         // An unsure compass does not stop the shot, but it must be seen.
-        message = compassAtAlignment.warning ?? "Capturing. Turn slowly; Stop when the room is covered."
+        message = compassAtAlignment.warning ?? "Capturing. Walk or turn slowly and look at each card; Stop when the room is covered."
     }
 
     // ARSession calls this on the main queue (no delegateQueue is set).
@@ -358,6 +362,7 @@ final class ShotRecorder: NSObject, ObservableObject, ARSessionDelegate {
         }
         cardRuns += 1; cardMillis += r.millis; cardMaxMillis = max(cardMaxMillis, r.millis)
         for c in r.noRange { cardTracker.addMissed(c) }
+        for c in r.weak { weakReads[c, default: 0] += 1 }
         for s in r.found {
             if cardTracker.add(s) {
                 Log.write("cards", String(format: "first sighting: %d %@, size says %@, lidar says %@, margin %.1f",
@@ -380,7 +385,7 @@ final class ShotRecorder: NSObject, ObservableObject, ARSessionDelegate {
     /// the line tests run on their own queue.
     private func meshCards(time: TimeInterval) {
         guard !meshing, time - lastMeshTime >= Self.cardMeshEvery else { return }
-        let sightings = cardTracker.allSightings
+        let sightings = cardTracker.meshBatch(limit: Self.meshBatchLimit)
         guard !sightings.isEmpty else { return }
         lastMeshTime = time
         let c0 = DispatchTime.now().uptimeNanoseconds
@@ -405,7 +410,7 @@ final class ShotRecorder: NSObject, ObservableObject, ARSessionDelegate {
                 self.meshing = false
                 guard serial == self.shotSerial, case .capturing = self.phase else { return }
                 self.meshRuns += 1; self.meshMillis += ms
-                self.cardTracker.applyMesh(ranges)
+                self.cardTracker.applyMesh(ranges, pass: self.meshRuns)
                 self.updateCardMarkers()
             }
         }
@@ -417,6 +422,10 @@ final class ShotRecorder: NSObject, ObservableObject, ARSessionDelegate {
         if lines.isEmpty { Log.write("cards", "\(when): none seen yet") } else { lines.forEach { Log.write("cards", "\(when): \($0)") } }
         if cardRuns > 0 {
             Log.write("cards", String(format: "%@: detector %d runs, avg %.0f ms, max %.0f ms", when, cardRuns, cardMillis / Double(cardRuns), cardMaxMillis))
+        }
+        if !weakReads.isEmpty {
+            let w = weakReads.sorted { $0.key.rawValue < $1.key.rawValue }.map { "\($0.key.word) \($0.value)" }.joined(separator: ", ")
+            Log.write("cards", "\(when): weak reads ignored: \(w)")
         }
         if meshRuns > 0 {
             Log.write("cards", String(format: "%@: mesh passes %d, avg %.0f ms (+ %.0f ms copying on the main thread)", when, meshRuns,

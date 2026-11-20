@@ -64,9 +64,9 @@ final class ShotRecorderTests: XCTestCase {
         let magnetic = CompassReading(trueHeading: -1, magneticHeading: 90, accuracy: 5)
         XCTAssertEqual(magnetic, CompassReading(trueNorth: false, accuracyDeg: 5, headingDeg: 90))
         XCTAssertEqual(CompassReading(trueHeading: 10, magneticHeading: 9, accuracy: 25).warning,
-                       "Compass unsure (±25°). The gimbal's magnet may be pulling it; the shot will still save.")
+                       "Compass unsure (±25°). A magnet or metal nearby may be pulling it; the shot will still save.")
         XCTAssertEqual(CompassReading(trueHeading: -1, magneticHeading: 0, accuracy: -1).warning,
-                       "Compass unsure (±?°). The gimbal's magnet may be pulling it; the shot will still save.")
+                       "Compass unsure (±?°). A magnet or metal nearby may be pulling it; the shot will still save.")
         XCTAssertNotNil(CompassReading.none.warning)
     }
 

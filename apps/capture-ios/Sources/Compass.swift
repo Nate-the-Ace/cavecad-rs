@@ -32,7 +32,7 @@ struct CompassReading: Equatable, Sendable {
     var warning: String? {
         guard accuracyDeg < 0 || accuracyDeg > Self.unsureAboveDeg else { return nil }
         let n = accuracyDeg < 0 ? "?" : String(Int(accuracyDeg.rounded()))
-        return "Compass unsure (±\(n)°). The gimbal's magnet may be pulling it; the shot will still save."
+        return "Compass unsure (±\(n)°). A magnet or metal nearby may be pulling it; the shot will still save."
     }
 
     /// How a shot's compass is shown: never silent.
