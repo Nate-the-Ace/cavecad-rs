@@ -165,3 +165,38 @@ fn third_pass_extends_the_list() {
     assert_eq!(three.header.passes.len(), 3);
     assert_eq!(three.header.passes[2].first_keyframe, 3);
 }
+
+#[test]
+fn nan_transform_is_refused() {
+    let mut t = identity();
+    t[12] = f64::NAN;
+    let r = add_pass(&shot(), new_pass("cards", t, PassMesh::Add));
+    assert!(matches!(r, Err(cave_capture::BundleError::BadMesh)));
+}
+
+#[test]
+fn encode_refuses_nan_pose_and_nan_card() {
+    let mut s = shot();
+    s.keyframes[0].pose[3] = f32::NAN;
+    assert!(matches!(
+        encode(&s),
+        Err(cave_capture::BundleError::BadMesh)
+    ));
+    let mut s = shot();
+    s.header.cards[0].point[1] = f64::NAN;
+    assert!(matches!(
+        encode(&s),
+        Err(cave_capture::BundleError::BadMesh)
+    ));
+}
+
+#[test]
+fn duplicate_new_card_ids_keep_the_last() {
+    let mut np = new_pass("same_session", identity(), PassMesh::Replace);
+    np.cards = vec![card(26, [1.0, 0.0, 0.0]), card(26, [2.0, 0.0, 0.0])];
+    let out = add_pass(&shot(), np).unwrap();
+    let c26: Vec<_> = out.header.cards.iter().filter(|c| c.id == 26).collect();
+    assert_eq!(c26.len(), 1);
+    assert_eq!(c26[0].point[0], 2.0);
+    assert_eq!(out.header.passes[1].cards.len(), 1);
+}

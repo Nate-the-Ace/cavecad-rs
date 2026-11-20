@@ -121,6 +121,9 @@ pub fn add_pass(old: &Shot, p: NewPass) -> Result<Shot, BundleError> {
     {
         return Err(BundleError::BadMesh);
     }
+    if !p.transform.iter().all(|v| v.is_finite()) {
+        return Err(BundleError::BadMesh);
+    }
     let n_new = (p.positions.len() / 3) as u32;
     if p.indices.iter().any(|&i| i >= n_new) {
         return Err(BundleError::BadMesh);
@@ -173,7 +176,13 @@ pub fn add_pass(old: &Shot, p: NewPass) -> Result<Shot, BundleError> {
         }
         out.keyframes.push(Keyframe { pose, ..k.clone() });
     }
-    let cards: Vec<CardSeen> = p.cards.iter().map(|c| move_card(&m, c)).collect();
+    let mut cards: Vec<CardSeen> = Vec::new();
+    for c in p.cards.iter().rev() {
+        if !cards.iter().any(|n| n.id == c.id) {
+            cards.push(move_card(&m, c));
+        }
+    }
+    cards.reverse();
     let mut merged: Vec<CardSeen> = out
         .header
         .cards

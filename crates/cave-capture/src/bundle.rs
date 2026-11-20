@@ -173,7 +173,7 @@ pub struct KeyframeRef<'a> {
 
 /// Writes a shot as bundle bytes. `BadMesh` for anything [`decode`] would refuse: ragged arrays
 /// (positions or indices not a multiple of three, normals not one per vertex), a number that is
-/// not finite, or an index past the vertices.
+/// not finite anywhere in the file (header, poses, cards, passes), or an index past the vertices.
 pub fn encode(shot: &Shot) -> Result<Vec<u8>, BundleError> {
     let refs: Vec<KeyframeRef> = shot
         .keyframes
@@ -195,6 +195,29 @@ pub fn encode(shot: &Shot) -> Result<Vec<u8>, BundleError> {
     )
 }
 
+fn card_is_finite(c: &CardSeen) -> bool {
+    c.point.iter().all(|v| v.is_finite())
+        && c.corners.iter().flatten().all(|v| v.is_finite())
+        && c.spread_m.is_finite()
+}
+
+/// True when every number in the header is finite (JSON writes NaN as null, which no reader accepts).
+fn header_is_finite(h: &ShotHeader) -> bool {
+    h.instrument_height_m.is_finite()
+        && h.start_camera
+            .iter()
+            .chain(&h.gravity)
+            .all(|v| v.is_finite())
+        && h.compass.is_none_or(|c| c.accuracy_deg.is_finite())
+        && h.taps
+            .iter()
+            .all(|t| t.origin.iter().chain(&t.dir).all(|v| v.is_finite()))
+        && h.cards.iter().all(card_is_finite)
+        && h.passes.iter().all(|p| {
+            p.transform.iter().all(|v| v.is_finite()) && p.cards.iter().all(card_is_finite)
+        })
+}
+
 /// [`encode`] from borrowed parts. The output is sized once (photos included) and never grows.
 pub fn encode_parts(
     header: &ShotHeader,
@@ -211,6 +234,10 @@ pub fn encode_parts(
         || !indices.iter().all(|&i| (i as usize) < n)
         || u32::try_from(n).is_err()
         || u32::try_from(indices.len() / 3).is_err()
+        || !header_is_finite(header)
+        || !keyframes
+            .iter()
+            .all(|k| k.pose.iter().chain(&k.intrinsics).all(|v| v.is_finite()))
     {
         return Err(BundleError::BadMesh);
     }
