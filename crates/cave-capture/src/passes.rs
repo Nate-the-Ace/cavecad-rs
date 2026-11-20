@@ -231,8 +231,11 @@ pub fn ghost(positions: &[f32], indices: &[u32], cell_m: f32, min_outline_m: f32
     // Lookup only; ids are assigned in vertex order so the map's order never reaches the output.
     let mut cell_of: HashMap<(i32, i32, i32), u32> = HashMap::new();
     let mut sums: Vec<([f64; 3], u32)> = Vec::new();
-    let mut map = vec![0u32; n];
+    let mut map = vec![u32::MAX; n];
     for (v, p) in positions.as_chunks::<3>().0.iter().enumerate() {
+        if !p.iter().all(|x| x.is_finite()) {
+            continue; // left unclustered; triangles touching it are skipped
+        }
         let key = (
             (p[0] / cell_m).floor() as i32,
             (p[1] / cell_m).floor() as i32,
@@ -260,6 +263,9 @@ pub fn ghost(positions: &[f32], indices: &[u32], cell_m: f32, min_outline_m: f32
             continue;
         }
         let (a, b, c) = (map[t[0] as usize], map[t[1] as usize], map[t[2] as usize]);
+        if a == u32::MAX || b == u32::MAX || c == u32::MAX {
+            continue;
+        }
         if a == b || b == c || a == c {
             continue;
         }
@@ -284,36 +290,71 @@ pub fn ghost(positions: &[f32], indices: &[u32], cell_m: f32, min_outline_m: f32
             next.entry(b).or_default().push(a);
         }
     }
+    out.outlines = chain(next, &out.positions, min_outline_m);
+    out
+}
+
+/// Chains open edges (vertex to neighbours) into polylines of at least `min_len` length. Open
+/// chains are walked first, from odd-degree vertices in id order, so each comes out whole; the
+/// remaining closed loops follow, from the lowest id. A closed loop repeats its first point.
+fn chain(mut next: BTreeMap<u32, Vec<u32>>, positions: &[f32], min_len: f32) -> Vec<Vec<[f32; 3]>> {
     let at = |v: u32| {
         let i = v as usize * 3;
-        [out.positions[i], out.positions[i + 1], out.positions[i + 2]]
+        [positions[i], positions[i + 1], positions[i + 2]]
     };
     let dist = |a: [f32; 3], b: [f32; 3]| {
         ((a[0] - b[0]).powi(2) + (a[1] - b[1]).powi(2) + (a[2] - b[2]).powi(2)).sqrt()
     };
+    let keys: Vec<u32> = next.keys().copied().collect();
+    let odd: Vec<u32> = keys
+        .iter()
+        .copied()
+        .filter(|k| next[k].len() % 2 == 1)
+        .collect();
     let mut outlines = Vec::new();
-    while let Some((&start, _)) = next.iter().find(|(_, v)| !v.is_empty()) {
-        let mut line = vec![at(start)];
-        let mut len = 0.0f32;
-        let mut cur = start;
-        while let Some(nb) = next.get_mut(&cur).and_then(|v| v.pop()) {
-            if let Some(back) = next.get_mut(&nb)
-                && let Some(k) = back.iter().position(|&x| x == cur)
-            {
-                back.swap_remove(k);
+    for &start in odd.iter().chain(&keys) {
+        while !next[&start].is_empty() {
+            let mut line = vec![at(start)];
+            let mut len = 0.0f32;
+            let mut cur = start;
+            while let Some(nb) = next.get_mut(&cur).and_then(|v| v.pop()) {
+                if let Some(back) = next.get_mut(&nb)
+                    && let Some(k) = back.iter().position(|&x| x == cur)
+                {
+                    back.swap_remove(k);
+                }
+                let p = at(nb);
+                len += dist(*line.last().unwrap(), p);
+                line.push(p);
+                cur = nb;
+                if cur == start {
+                    break;
+                }
             }
-            let p = at(nb);
-            len += dist(*line.last().unwrap(), p);
-            line.push(p);
-            cur = nb;
-            if cur == start {
-                break;
+            if len >= min_len {
+                outlines.push(line);
             }
-        }
-        if len >= min_outline_m {
-            outlines.push(line);
         }
     }
-    out.outlines = outlines;
-    out
+    outlines
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn open_chain_is_one_outline_from_its_end() {
+        // a=1, b=0 (lowest id), c=2: chain a-b-c must not split at b.
+        let pos = [0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 2.0, 0.0, 0.0];
+        let mut next = BTreeMap::new();
+        next.insert(0, vec![1, 2]);
+        next.insert(1, vec![0]);
+        next.insert(2, vec![0]);
+        let o = chain(next, &pos, 0.0);
+        assert_eq!(o.len(), 1, "{o:?}");
+        assert_eq!(o[0].len(), 3);
+        let ends = [o[0][0][0], o[0][2][0]];
+        assert!(ends == [1.0, 2.0] || ends == [2.0, 1.0], "{ends:?}");
+    }
 }

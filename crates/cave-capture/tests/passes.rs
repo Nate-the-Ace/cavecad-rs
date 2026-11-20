@@ -302,3 +302,14 @@ fn ghost_is_deterministic() {
     let (p, i) = sheet(100, 0.01, 0.0, Some((0.35, 0.65)));
     assert_eq!(ghost(&p, &i, 0.05, 0.15), ghost(&p, &i, 0.05, 0.15));
 }
+
+#[test]
+fn ghost_ignores_non_finite_vertices() {
+    let (mut p, i) = sheet(20, 0.05, 0.0, None);
+    p[3 * 50 + 1] = f32::NAN;
+    p[3 * 60] = f32::INFINITY;
+    let g = ghost(&p, &i, 0.1, 0.1);
+    assert!(!g.indices.is_empty());
+    assert!(g.positions.iter().all(|x| x.is_finite()));
+    assert!(g.outlines.iter().flatten().flatten().all(|x| x.is_finite()));
+}
