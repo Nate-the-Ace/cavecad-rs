@@ -31,7 +31,10 @@ means a scanned notebook page.
   2026-11-16 floor sweep, `tools/cave-osmo/FINDINGS.md`). Same gimbal, so no field.
 - **Picking stations and orienting a capture by hand belong in CaveCAD**, in a LiDAR suite of tools planned
   later (its own spec): where a compass heading is wrong or a shot needs moving, it is fixed there, not on
-  the phone. Shots taken with a heading tap (two exist) still place as before.
+  the phone. That includes declination for a shot whose compass gave magnetic north (no location fix): the
+  shot keeps the raw compass state (`true_north`, `accuracy_deg`, taken when ARKit aligned to north) and
+  the suite corrects it from the cave's location (`cave-geomag`). Until then such shots are placed as
+  they are and labelled, never silently. Shots taken with a heading tap (two exist) still place as before.
 
 ## Hard limits (stated, not solved)
 
@@ -41,7 +44,7 @@ means a scanned notebook page.
   motion sensors. A dark cave loses tracking. The rig carries a video light aimed with the phone; the app
   refuses to start a shot while ARKit reports too little light and pauses the gimbal while tracking is
   limited.
-- **No compass.** The OM7 clamp's magnet spoiled the X1's compass and will spoil the phone's. Heading comes
+- **No compass** (superseded by the 2026-11-20 revision above). The OM7 clamp's magnet spoiled the X1's compass and will spoil the phone's. Heading comes
   from the surveyor (see "A shot"), never from the magnetometer.
 - **Scale is never free.** ARKit LiDAR captures are metric; matching solves turn and shift only. A free scale
   would soak registration error into a wrong cave length (the datum-trap family).
