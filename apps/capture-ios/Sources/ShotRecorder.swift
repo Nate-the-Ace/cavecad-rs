@@ -88,7 +88,30 @@ final class ShotRecorder: NSObject, ObservableObject, ARSessionDelegate {
     /// parent is from an earlier run, or tracking was reset), so a pass cannot be saved until the cards line it
     /// up. Identity: this session made (or continued) the shot in its own frame. Otherwise: the card fit, valid
     /// for every later pass of this session. Cleared whenever tracking is reset.
-    private(set) var sessionToShot: [Double]?
+    private(set) var sessionToShot: [Double]? { didSet { ghostTransform = Self.ghostPlacement(sessionToShot) } }
+    /// The parent's ghost for this pass (nil: none loaded, or the pass was saved and the file changed).
+    @Published private(set) var ghost: Core.GhostMesh?
+    /// Changes whenever a different ghost is loaded, so the live view builds each one once.
+    @Published private(set) var ghostKey = 0
+    /// Where the shot's frame sits in this session's: the inverse of `sessionToShot` (nil: hidden until lined up).
+    @Published private(set) var ghostTransform: simd_float4x4?
+    /// The parent file as read for this pass (mapped), for the card check and line-up.
+    private var parentData: Data?
+    /// Bumped per ghost load and whenever the loaded one is dropped, so a late load is not used.
+    private var ghostLoad = 0
+    /// Cards already warned about as moved this pass.
+    private var warnedCards: Set<StationCard> = []
+    /// The settled cards (id: position) the last check or line-up ran with; it runs again only when they change.
+    private var checkedCards: [Int: SIMD3<Double>] = [:]
+    /// One check or line-up in flight at most.
+    private var checkingCards = false
+    static let lookForGhostMessage = "Look at two cards to show the earlier scan."
+    /// A ghost with more triangles than this is rebuilt on a coarser grid (it must not cost the scan its frame rate).
+    nonisolated static let ghostMaxTriangles = 40_000
+    nonisolated static let ghostCoarseCellM: Float = 0.08
+    /// A settled card farther than this from where the shot has it warns, metres; also the worst misfit a card
+    /// line-up accepts.
+    nonisolated static let cardTolerance = 0.05
     /// The shot `sessionToShot` maps into (a different parent makes it unknown).
     private var sessionShot: URL?
     /// The station the ARKit session ran over; nil until one has run (or after it failed). Coming back to the
@@ -120,6 +143,46 @@ final class ShotRecorder: NSObject, ObservableObject, ARSessionDelegate {
         guard hasParent else { return .newShot }
         guard let t = sessionToShot else { return .refuse }
         return t == identity ? .sameSession : .cards(t)
+    }
+
+    /// The rule for a card line-up: a worst misfit up to 5 cm is accepted (returns the transform); above, the
+    /// message names the worst card.
+    nonisolated static func lineUp(fit: [String: Any]) -> (transform: [Double]?, message: String) {
+        let worst = (fit["worst_m"] as? Double) ?? .infinity
+        guard let t = fit["transform"] as? [Double], t.count == 16, t.allSatisfy(\.isFinite), worst <= cardTolerance else {
+            let mis = (fit["misfits"] as? [[String: Any]] ?? []).max { ($0["m"] as? Double ?? 0) < ($1["m"] as? Double ?? 0) }
+            let word = (mis?["id"] as? NSNumber).flatMap { StationCard(rawValue: $0.intValue) }?.word ?? "A card"
+            let m = (mis?["m"] as? Double) ?? worst
+            let cm = m.isFinite ? "\(Int((m * 100).rounded())) cm" : "too far"
+            return (nil, "\(word) doesn't match where it was (\(cm)). Put it back, or carry on without the earlier scan.")
+        }
+        return (t, String(format: "Lined up by cards (worst %.0f mm).", worst * 1000))
+    }
+
+    /// Where the ghost (the shot's frame) sits in this session's frame: the inverse of session -> shot, exactly
+    /// identity for the same session; nil when the line-up is unknown or not a 4x4.
+    nonisolated static func ghostPlacement(_ sessionToShot: [Double]?) -> simd_float4x4? {
+        guard let t = sessionToShot, t.count == 16 else { return nil }
+        if t == identity { return matrix_identity_float4x4 }
+        let f = t.map(Float.init)
+        let m = simd_float4x4(columns: (SIMD4(f[0], f[1], f[2], f[3]), SIMD4(f[4], f[5], f[6], f[7]),
+                                        SIMD4(f[8], f[9], f[10], f[11]), SIMD4(f[12], f[13], f[14], f[15])))
+        return m.inverse
+    }
+
+    /// The settled cards differ from those last checked: one came or went, or one moved more than `by` metres.
+    nonisolated static func cardsChanged(last: [Int: SIMD3<Double>], now: [Int: SIMD3<Double>], by: Double = 0.02) -> Bool {
+        guard Set(last.keys) == Set(now.keys) else { return true }
+        return now.contains { id, p in last[id].map { simd_distance($0, p) > by } ?? true }
+    }
+
+    /// The cards the core's same-session offsets put more than 5 cm from the shot's, not yet warned about.
+    nonisolated static func moved(offsets: [[String: Any]], warned: Set<StationCard>) -> [(card: StationCard, m: Double)] {
+        offsets.compactMap { o in
+            guard let id = (o["id"] as? NSNumber)?.intValue, let m = o["m"] as? Double, m > cardTolerance,
+                  let c = StationCard(rawValue: id), !warned.contains(c) else { return nil }
+            return (c, m)
+        }
     }
 
     /// Tracking was (or is about to be) reset: this session's frame no longer relates to any shot.
@@ -255,6 +318,7 @@ final class ShotRecorder: NSObject, ObservableObject, ARSessionDelegate {
         } else if parent != sessionShot {
             dropFrame("the station's shot changed")
         }
+        dropGhost()
         if let parent {
             Log.write("shot", "adding to the station's shot \(parent.lastPathComponent) (\(sessionToShot == nil ? "needs a card line-up" : "lined up in this session"))")
         }
@@ -354,11 +418,106 @@ final class ShotRecorder: NSObject, ObservableObject, ARSessionDelegate {
         meshing = false; lastMeshTime = f.timestamp; meshRuns = 0; meshMillis = 0; meshCopyMillis = 0; weakReads = [:]
         removeCardAnchors()
         lastCompassLog = f.timestamp
+        warnedCards = []; checkedCards = [:]; checkingCards = false
         Log.write("compass", "at start: \(compass.latest.logLine) (aligned with \(compassAtAlignment.logLine))")
         phase = .capturing
         UIApplication.shared.isIdleTimerDisabled = true
+        if let p = parent, parentData == nil { loadGhost(p) }
         // An unsure compass does not stop the shot, but it must be seen.
-        message = compassAtAlignment.warning ?? "Capturing. Walk or turn slowly and look at each card; Stop when the room is covered."
+        let going = parent != nil && sessionToShot == nil
+            ? Self.lookForGhostMessage
+            : "Capturing. Walk or turn slowly and look at each card; Stop when the room is covered."
+        message = compassAtAlignment.warning.map { "\($0) \(going)" } ?? going
+    }
+
+    /// Reads the parent and builds its ghost off the main actor (once per pass; the file changes with each save).
+    private func loadGhost(_ p: URL) {
+        ghostLoad += 1
+        let n = ghostLoad
+        Task {
+            let t0 = Date()
+            let (data, g, coarse) = await Task.detached { () -> (Data?, Core.GhostMesh?, Bool) in
+                guard let d = try? Data(contentsOf: p, options: .alwaysMapped) else { return (nil, nil, false) }
+                var g = Core.ghost(bundle: d)
+                var coarse = false
+                if let fine = g, fine.indices.count / 3 > Self.ghostMaxTriangles {
+                    Log.write("ghost", "\(fine.indices.count / 3) triangles at 5 cm: rebuilding at \(Int(Self.ghostCoarseCellM * 100)) cm")
+                    g = Core.ghost(bundle: d, cellM: Self.ghostCoarseCellM)
+                    coarse = true
+                }
+                return (d, g, coarse)
+            }.value
+            guard n == ghostLoad, p == parent else { return }
+            parentData = data
+            ghost = g
+            ghostKey += 1
+            if let g {
+                Log.write("ghost", "\(g.indices.count / 3) triangles, \(g.outlines.count) outlines, \(Int(Date().timeIntervalSince(t0) * 1000)) ms\(coarse ? " (coarse)" : "")")
+            } else {
+                Log.write("ghost", data == nil ? "the earlier scan could not be read" : "no ghost from the earlier scan")
+            }
+            // Cards may have settled while it loaded.
+            checkCards()
+        }
+    }
+
+    /// Forgets the loaded parent and its ghost (the file changed, or another parent): the next pass reloads.
+    private func dropGhost() {
+        ghostLoad += 1
+        parentData = nil
+        if ghost != nil { ghost = nil; ghostKey += 1 }
+    }
+
+    /// With the parent in this session's frame, warns about cards that moved; with no line-up yet, tries to line
+    /// up by the settled cards. Runs off the main actor, one at a time, and only when the settled cards change.
+    private func checkCards() {
+        guard case .capturing = phase, parent != nil, let d = parentData, !checkingCards else { return }
+        let same = sessionToShot == Self.identity
+        // lined up by cards already: nothing to do
+        guard same || sessionToShot == nil else { return }
+        let settled = cardTracker.seen.filter { $0.track.settled }
+        guard settled.count >= (same ? 1 : 2) else { return }
+        let now = Dictionary(settled.map { ($0.track.card.rawValue, $0.estimate.point) }, uniquingKeysWith: { a, _ in a })
+        guard Self.cardsChanged(last: checkedCards, now: now) else { return }
+        checkedCards = now
+        let recs = cardTracker.records.filter { now[$0.id] != nil }
+        checkingCards = true
+        let serial = shotSerial, epoch = trackingEpoch, into = parent, warned = warnedCards
+        Task {
+            let out = await Task.detached { () -> CardCheck in
+                let r = Core.cardsFit(bundle: d, cards: recs, sameSession: same)
+                if same { return .moved(Self.moved(offsets: r["offsets"] as? [[String: Any]] ?? [], warned: warned)) }
+                guard let fit = r["fit"] as? [String: Any] else {
+                    return .noFit(r["error"] as? String ?? "the cards do not match the earlier scan's, or are too close together")
+                }
+                let l = Self.lineUp(fit: fit)
+                return .lineUp(transform: l.transform, message: l.message, yawDeg: (fit["yaw_rad"] as? Double ?? 0) * 180 / .pi,
+                               worstMm: (fit["worst_m"] as? Double ?? 0) * 1000)
+            }.value
+            checkingCards = false
+            guard serial == shotSerial, epoch == trackingEpoch, into == parent, case .capturing = phase else { return }
+            switch out {
+            case .moved(let cards):
+                for (c, m) in cards where !warnedCards.contains(c) {
+                    warnedCards.insert(c)
+                    message = "\(c.word) is \(Int((m * 100).rounded())) cm from where it was: card moved, or tracking slipped?"
+                    Log.write("cards", "check: \(c.word) \(Int((m * 1000).rounded())) mm from the earlier scan")
+                }
+            case .lineUp(let t, let msg, let yaw, let worst):
+                message = msg
+                if let t, sessionToShot == nil {
+                    sessionShot = into
+                    sessionToShot = t
+                    Log.write("cards", String(format: "lined up by cards: yaw %.1f deg, worst %.0f mm", yaw, worst))
+                } else {
+                    Log.write("cards", "card line-up refused: \(msg)")
+                }
+            case .noFit(let why):
+                Log.write("cards", "card line-up: no fit (\(why))")
+            }
+            // Cards may have changed while it ran.
+            checkCards()
+        }
     }
 
     // ARSession calls this on the main queue (no delegateQueue is set).
@@ -475,6 +634,7 @@ final class ShotRecorder: NSObject, ObservableObject, ARSessionDelegate {
         }
         if !r.found.isEmpty { pinNewCards(); updateCardMarkers() }
         refreshCalm()
+        checkCards()
     }
 
     /// Re-reads whether every card is settled; call wherever the tracker changes, not every frame.
@@ -519,7 +679,7 @@ final class ShotRecorder: NSObject, ObservableObject, ARSessionDelegate {
                 let d = cardTracker.moveAnchor(card, Self.double(m))
                 if d > 0 { anchorMoves[card, default: 0] += d; any = true }
             }
-            if any { updateCardMarkers(); refreshCalm() }
+            if any { updateCardMarkers(); refreshCalm(); checkCards() }
         }
     }
 
@@ -562,6 +722,7 @@ final class ShotRecorder: NSObject, ObservableObject, ARSessionDelegate {
                 self.cardTracker.applyMesh(ranges, pass: self.meshRuns)
                 self.updateCardMarkers()
                 self.refreshCalm()
+                self.checkCards()
             }
         }
     }
@@ -643,6 +804,8 @@ final class ShotRecorder: NSObject, ObservableObject, ARSessionDelegate {
                 if epoch == trackingEpoch, sessionToShot != nil { sessionShot = url }
                 parent = url
                 parentMade = parentMade ?? Date()
+                // The file changed: the next pass loads its new ghost.
+                dropGhost()
                 Log.write("shot", "saved pass \(max(passes, 1))")
                 phase = .saved(url); message = "Shot saved. Scan more to fill gaps."
             case .failure(let m): phase = .failed(m.message); message = m.message
@@ -698,6 +861,16 @@ final class ShotRecorder: NSObject, ObservableObject, ARSessionDelegate {
 }
 
 struct ShotFailure: Error { let message: String }
+
+/// What a card check or line-up found, handed back from off the main actor.
+private enum CardCheck: Sendable {
+    /// Same session: cards more than 5 cm from where the shot has them.
+    case moved([(card: StationCard, m: Double)])
+    /// A card fit: its transform when accepted (pass -> shot), else nil, and the message for the screen.
+    case lineUp(transform: [Double]?, message: String, yawDeg: Double, worstMm: Double)
+    /// No fit could be made (unmatched cards, or too close together).
+    case noFit(String)
+}
 
 /// Everything Stop needs to turn a shot into a file, so the heavy part (merge, encode, write) runs off the main
 /// actor. A class so the photos have one owner: `write` lets each go as soon as it is in the joined buffer.

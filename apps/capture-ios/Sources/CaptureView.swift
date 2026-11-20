@@ -13,6 +13,15 @@ struct ARMeshView: UIViewRepresentable {
     let session: ARSession
     /// Station cards seen so far, drawn as a coloured ball and the card's word at the 3D point.
     var markers: [CardMarker] = []
+    /// The earlier scan's ghost, `ghostKey` naming which one, and where it sits (nil: not shown).
+    var ghost: Core.GhostMesh?
+    var ghostKey = 0
+    var ghostTransform: simd_float4x4?
+
+    /// Which ghost the view built, so it is built once and afterwards only moved.
+    final class Coordinator { var builtGhost: Int? }
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
     func makeUIView(context: Context) -> ARView {
         let v = ARView(frame: .zero, cameraMode: .ar, automaticallyConfigureSession: false)
         v.session = session
@@ -20,6 +29,7 @@ struct ARMeshView: UIViewRepresentable {
         return v
     }
     func updateUIView(_ uiView: ARView, context: Context) {
+        updateGhost(uiView, context.coordinator)
         let existing = uiView.scene.anchors.filter { $0.name.hasPrefix("card-") }
         let wanted = Set(markers.map { "card-\($0.card.rawValue)" })
         for a in existing where !wanted.contains(a.name) { uiView.scene.removeAnchor(a) }
@@ -53,6 +63,24 @@ struct ARMeshView: UIViewRepresentable {
             }
         }
     }
+
+    /// Builds the ghost once; afterwards only moves it. Rebuilding the mesh on every update would cost the scan
+    /// its frame rate.
+    private func updateGhost(_ uiView: ARView, _ c: Coordinator) {
+        var old = uiView.scene.anchors.first { $0.name == "ghost" }
+        if let o = old, c.builtGhost != ghostKey || ghost == nil || ghostTransform == nil {
+            uiView.scene.removeAnchor(o)
+            old = nil
+            c.builtGhost = nil
+        }
+        guard let g = ghost, let t = ghostTransform else { return }
+        if let old {
+            if old.transform.matrix != t { old.transform = Transform(matrix: t) }
+        } else {
+            uiView.scene.addAnchor(GhostView.entity(g, transform: t))
+            c.builtGhost = ghostKey
+        }
+    }
 }
 
 struct CaptureView: View {
@@ -61,7 +89,8 @@ struct CaptureView: View {
 
     var body: some View {
         ZStack {
-            if ShotRecorder.hasLiDAR { ARMeshView(session: rec.session, markers: rec.cardMarkers).ignoresSafeArea() }
+            if ShotRecorder.hasLiDAR { ARMeshView(session: rec.session, markers: rec.cardMarkers, ghost: rec.ghost, ghostKey: rec.ghostKey,
+                           ghostTransform: rec.ghostTransform).ignoresSafeArea() }
             VStack {
                 Text("Over \(over.label)").padding(8).background(.thinMaterial, in: .capsule)
                 if let d = rec.parentMade {

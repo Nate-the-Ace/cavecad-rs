@@ -225,4 +225,46 @@ final class ShotRecorderTests: XCTestCase {
         guard case .failure(let f) = lost.writePass(into: missing, sameSession: true, transform: nil) else { return XCTFail("pass into nothing") }
         XCTAssertEqual(f.message, "The earlier scan could not be read.")
     }
+
+    func testOutlineRibbonsAndLineUpRule() {
+        let r = GhostView.ribbon(outlines: [[SIMD3(0, 0, 0), SIMD3(1, 0, 0), SIMD3(1, 0, 1)]], width: 0.02)
+        XCTAssertEqual(r.indices.count, 2 * 4 * 3)
+        XCTAssertTrue(r.positions.allSatisfy { $0.x.isFinite && $0.y.isFinite && $0.z.isFinite })
+        // an upright segment (parallel to up) and a repeated point make no NaN either
+        let v = GhostView.ribbon(outlines: [[SIMD3(0, 0, 0), SIMD3(0, 1, 0), SIMD3(0, 1, 0)]], width: 0.02)
+        XCTAssertEqual(v.indices.count, 1 * 4 * 3)
+        XCTAssertTrue(v.positions.allSatisfy { $0.x.isFinite && $0.y.isFinite && $0.z.isFinite })
+        let ok: [String: Any] = ["transform": [Double](repeating: 0, count: 16), "yaw_rad": 0.1, "worst_m": 0.03, "misfits": [["id": 2, "m": 0.03]]]
+        XCTAssertNotNil(ShotRecorder.lineUp(fit: ok).transform)
+        let bad: [String: Any] = ["transform": [Double](repeating: 0, count: 16), "yaw_rad": 0.1, "worst_m": 0.12, "misfits": [["id": 2, "m": 0.01], ["id": 12, "m": 0.12]]]
+        let r2 = ShotRecorder.lineUp(fit: bad)
+        XCTAssertNil(r2.transform)
+        XCTAssertTrue(r2.message.contains("FORWARD"), r2.message)
+        XCTAssertTrue(r2.message.contains("12 cm"), r2.message)
+    }
+
+    func testGhostPlacementIsTheInverseOfTheLineUp() throws {
+        XCTAssertNil(ShotRecorder.ghostPlacement(nil))
+        XCTAssertEqual(ShotRecorder.ghostPlacement(ShotRecorder.identity), matrix_identity_float4x4)
+        // a quarter turn about +y then a shift (2, 0, 3): session -> shot
+        let fit: [Double] = [0, 0, -1, 0, 0, 1, 0, 0, 1, 0, 0, 0, 2, 0, 3, 1]
+        let g = try XCTUnwrap(ShotRecorder.ghostPlacement(fit))
+        // the shot's point where the session's origin lands goes back to the session's origin
+        let back = g * SIMD4<Float>(2, 0, 3, 1)
+        XCTAssertLessThan(simd_length(SIMD3(back.x, back.y, back.z)), 1e-5)
+        XCTAssertNil(ShotRecorder.ghostPlacement([1, 2, 3]))
+    }
+
+    func testCardCheckRunsOnlyWhenSettledCardsChange() {
+        let a: [Int: SIMD3<Double>] = [2: SIMD3(0, 0, 0), 12: SIMD3(1, 0, 0)]
+        XCTAssertFalse(ShotRecorder.cardsChanged(last: a, now: a))
+        XCTAssertFalse(ShotRecorder.cardsChanged(last: a, now: [2: SIMD3(0.005, 0, 0), 12: SIMD3(1, 0, 0)]))
+        XCTAssertTrue(ShotRecorder.cardsChanged(last: a, now: [2: SIMD3(0.03, 0, 0), 12: SIMD3(1, 0, 0)]))
+        XCTAssertTrue(ShotRecorder.cardsChanged(last: a, now: [2: SIMD3(0, 0, 0)]))
+        XCTAssertTrue(ShotRecorder.cardsChanged(last: [:], now: a))
+        // the offsets warn once per card, and only past 5 cm
+        let w = ShotRecorder.moved(offsets: [["id": 2, "m": 0.07], ["id": 12, "m": 0.02], ["id": 26, "m": 0.2]], warned: [.rear])
+        XCTAssertEqual(w.map(\.card), [.current])
+        XCTAssertEqual(w.first?.m ?? 0, 0.07, accuracy: 1e-9)
+    }
 }
