@@ -5,7 +5,7 @@ found, so it can be re-run. The wire format itself (packets, flags, memory map) 
 about behaviour and timing. Add to it whenever a test teaches something; put anything the library should rely on into
 `src/lib.rs` too (a constant, a helper, or the refused-commands list).
 
-Device: CavwayX1-0312, firmware 1.1.6. Bench: MacBook, X1 lying still, pointed at a wall about 1.5 m away.
+Device: CavwayX1-0312 (serial 312), firmware 1.1.7 (read with `x1-peek E000:4` on 2026-11-17; earlier notes said 1.1.6). Bench: MacBook, X1 lying still, pointed at a wall about 1.5 m away.
 
 ## Laser and remote shots (2026-11-17, `x1-timing`, `x1-overlap`)
 

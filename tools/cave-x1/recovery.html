@@ -1,0 +1,236 @@
+<title>X1 Recovery Card</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: one narrow field-card column; a triage grid up top, then numbered procedures with keypad diagrams. */
+:root{
+  --bg:#eef1f2; --card:#ffffff; --ink:#18242b; --muted:#5b6a72; --line:#cfd8dc;
+  --accent:#e2621b; --accent-ink:#ffffff; --accent-soft:#fde6d8;
+  --ok:#1f7a4d; --ok-soft:#dcefe4; --warn:#9a6a00; --warn-soft:#f8ecc8; --bad:#b3261e; --bad-soft:#f6dcda;
+  --key:#e3e8ea; --key-edge:#aab6bc;
+  --f-display:"Barlow Condensed","Arial Narrow",system-ui,sans-serif;
+  --f-body:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --f-mono:"IBM Plex Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#11181c; --card:#1a2329; --ink:#e6edf0; --muted:#97a6ae; --line:#2f3c43;
+  --accent:#f07a35; --accent-ink:#1a0c03; --accent-soft:#3a2416;
+  --ok:#5cc690; --ok-soft:#173226; --warn:#e2b23c; --warn-soft:#352b12; --bad:#f08079; --bad-soft:#3a1d1b;
+  --key:#2a353b; --key-edge:#45545c; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#11181c; --card:#1a2329; --ink:#e6edf0; --muted:#97a6ae; --line:#2f3c43;
+  --accent:#f07a35; --accent-ink:#1a0c03; --accent-soft:#3a2416;
+  --ok:#5cc690; --ok-soft:#173226; --warn:#e2b23c; --warn-soft:#352b12; --bad:#f08079; --bad-soft:#3a1d1b;
+  --key:#2a353b; --key-edge:#45545c; color-scheme:dark}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--ink);font:15px/1.55 var(--f-body);margin:0}
+.wrap{max-width:860px;margin:0 auto;padding-block:28px 56px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));display:grid;gap:22px}
+h1,h2,h3{font-family:var(--f-display);font-weight:700;letter-spacing:.01em;line-height:1.1;margin:0;text-wrap:balance}
+h1{font-size:2.6rem;text-transform:uppercase}
+h2{font-size:1.6rem;text-transform:uppercase}
+h3{font-size:1.2rem}
+p{margin:0}
+code,.mono{font-family:var(--f-mono);font-size:.88em}
+.eyebrow{font-family:var(--f-mono);font-size:.75rem;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+header{display:grid;gap:10px;border-bottom:3px solid var(--accent);padding-bottom:16px}
+.unit{display:flex;flex-wrap:wrap;gap:8px}
+.chip{font-family:var(--f-mono);font-size:.78rem;border:1px solid var(--line);background:var(--card);border-radius:4px;padding:3px 8px;font-variant-numeric:tabular-nums}
+.calm{background:var(--ok-soft);border-left:4px solid var(--ok);padding:14px 16px;border-radius:0 6px 6px 0;display:grid;gap:6px}
+.calm strong{color:var(--ok)}
+.triage{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px}
+.tri{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:14px;display:grid;gap:8px;align-content:start;text-decoration:none;color:inherit}
+.tri:hover,.tri:focus-visible{border-color:var(--accent);outline:none}
+.tri .sym{font-family:var(--f-display);font-weight:600;font-size:1.15rem}
+.tri .go{font-family:var(--f-mono);font-size:.8rem;color:var(--accent)}
+section{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:20px;display:grid;gap:16px;min-width:0}
+.step{display:grid;grid-template-columns:2.2rem 1fr;gap:12px;align-items:start}
+.num{font-family:var(--f-display);font-weight:700;font-size:1.4rem;width:2.2rem;height:2.2rem;border-radius:50%;background:var(--accent);color:var(--accent-ink);display:grid;place-items:center}
+.step > div{display:grid;gap:8px;min-width:0}
+.keypad{display:grid;grid-template-columns:repeat(3,62px);grid-template-rows:auto auto;gap:8px;justify-content:start;padding:12px;background:var(--bg);border-radius:8px;width:max-content;max-width:100%}
+.k{height:44px;border-radius:10px;background:var(--key);border:1px solid var(--key-edge);box-shadow:inset 0 -3px 0 var(--key-edge);display:grid;place-items:center;font-family:var(--f-display);font-weight:600;font-size:1rem;color:var(--muted)}
+.k.dist{grid-column:1 / span 2}
+.k.hold{background:var(--accent);color:var(--accent-ink);border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
+.k.tap{background:var(--card);color:var(--accent);border:2px dashed var(--accent);box-shadow:none}
+.legend{display:flex;flex-wrap:wrap;gap:14px;font-size:.82rem;color:var(--muted);align-items:center}
+.sw{display:inline-block;width:14px;height:14px;border-radius:4px;vertical-align:-2px;margin-right:5px}
+.sw.hold{background:var(--accent)} .sw.tap{border:2px dashed var(--accent)}
+.screen{font-family:var(--f-mono);background:#0d1418;color:#9fe3c0;border-radius:6px;padding:8px 12px;width:max-content;max-width:100%;letter-spacing:.06em;font-size:.9rem}
+.tag{font-family:var(--f-mono);font-size:.7rem;letter-spacing:.06em;text-transform:uppercase;padding:2px 7px;border-radius:3px;white-space:nowrap}
+.tag.v{background:var(--ok-soft);color:var(--ok)}
+.tag.i{background:var(--warn-soft);color:var(--warn)}
+.warn{background:var(--bad-soft);border-left:4px solid var(--bad);padding:12px 14px;border-radius:0 6px 6px 0;display:grid;gap:4px}
+.warn strong{color:var(--bad)}
+.results{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px}
+.res{border:1px solid var(--line);border-radius:8px;padding:12px;display:grid;gap:6px;align-content:start}
+.res .screen{font-size:.82rem}
+ul{margin:0;padding-left:1.2em;display:grid;gap:4px}
+.cmd{display:flex;gap:8px;align-items:stretch;flex-wrap:wrap}
+.cmd pre{margin:0;flex:1 1 280px;min-width:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:10px 12px;font:13px/1.5 var(--f-mono)}
+.cmd button{font:600 .85rem var(--f-body);background:var(--card);color:var(--ink);border:1px solid var(--line);border-radius:6px;padding:0 14px;cursor:pointer;min-height:40px}
+.cmd button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.tbl{overflow-x:auto}
+table{border-collapse:collapse;width:100%;font-size:.9rem}
+th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-family:var(--f-mono);font-size:.72rem;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);font-weight:500}
+.flow{display:flex;flex-wrap:wrap;gap:6px;align-items:center;font-family:var(--f-mono);font-size:.8rem}
+.flow span{border:1px solid var(--line);border-radius:4px;padding:4px 8px;background:var(--bg)}
+.flow i{font-style:normal;color:var(--muted)}
+footer{font-size:.82rem;color:var(--muted);display:grid;gap:4px}
+@media (max-width:420px){h1{font-size:2.1rem}.keypad{grid-template-columns:repeat(3,54px)}}
+@media (prefers-reduced-motion:no-preference){.tri{transition:border-color .15s}}
+</style>
+
+<div class="wrap">
+<header>
+  <span class="eyebrow">Cavway X1 · panic card</span>
+  <h1>X1 Recovery Card</h1>
+  <div class="unit">
+    <span class="chip">CavwayX1-0312 · serial 312</span>
+    <span class="chip">app 1.1.7</span>
+    <span class="chip">bootloader 0x0A</span>
+    <span class="chip">USB: /dev/cu.usbmodem5CBC0132551 · 115200</span>
+  </div>
+</header>
+
+<div class="calm">
+  <p><strong>Breathe. The bootloader can't be broken by a bad update.</strong></p>
+  <p>It lives in its own flash sector, and no update erases or writes it. As long as the battery holds a charge, you can always get back to boot mode and flash a working firmware.</p>
+</div>
+
+<div class="triage">
+  <a class="tri" href="#frozen"><span class="sym">Frozen, keys do nothing</span><span>Force it off, then start it again.</span><span class="go">→ A. Power off</span></a>
+  <a class="tri" href="#boot"><span class="sym">Won't start, blank, crashes, or a patch broke it</span><span>Enter boot mode and flash stock firmware.</span><span class="go">→ B. Boot mode, C. Reflash</span></a>
+  <a class="tri" href="#stuck"><span class="sym">Stuck on "BOOT MODE"</span><span>Leave without flashing.</span><span class="go">→ D. Leave boot mode</span></a>
+  <a class="tri" href="#fail"><span class="sym">"UPGRADE FAIL" or flash cut off</span><span>Nothing is lost that you can't redo.</span><span class="go">→ E. After a failed flash</span></a>
+</div>
+
+<div class="legend">
+  <span><span class="sw hold"></span>hold down</span>
+  <span><span class="sw tap"></span>press once</span>
+  <span>Keys are drawn schematically, so go by the labels, not the positions.</span>
+</div>
+
+<section id="frozen">
+  <h2>A. Power off</h2>
+  <div class="step"><span class="num">1</span><div>
+    <p><strong>Hold CLR</strong> until the screen goes dark. A long CLR press is the firmware's own power-off. <span class="tag v">read in code</span></p>
+    <div class="keypad" aria-label="CLR held">
+      <div class="k">&lt;</div><div class="k">M</div><div class="k">&gt;</div>
+      <div class="k dist">DIST</div><div class="k hold">CLR</div>
+    </div>
+  </div></div>
+  <div class="step"><span class="num">2</span><div>
+    <p><strong>Press DIST</strong> to start it again.</p>
+  </div></div>
+  <div class="step"><span class="num">3</span><div>
+    <p>If CLR does nothing, the code itself has hung and isn't reading keys. Plug in USB power, then try boot mode (B), which runs before the app does. If that does nothing either, leave it until the battery runs flat, then charge and start it. <span class="tag i">not tested</span></p>
+  </div></div>
+</section>
+
+<section id="boot">
+  <h2>B. Enter boot mode</h2>
+  <p>The bootloader checks the two arrow keys at power-on. If both are held, it waits for new firmware and doesn't start the app.</p>
+  <div class="step"><span class="num">1</span><div>
+    <p>Make sure the X1 is <strong>off</strong> (A).</p>
+  </div></div>
+  <div class="step"><span class="num">2</span><div>
+    <p><strong>Hold both arrows, <code>&lt;</code> and <code>&gt;</code></strong>, and keep holding.</p>
+    <div class="keypad" aria-label="both arrows held">
+      <div class="k hold">&lt;</div><div class="k">M</div><div class="k hold">&gt;</div>
+      <div class="k dist">DIST</div><div class="k">CLR</div>
+    </div>
+  </div></div>
+  <div class="step"><span class="num">3</span><div>
+    <p>While still holding them, <strong>press DIST</strong> to power on.</p>
+    <div class="keypad" aria-label="both arrows held, DIST pressed">
+      <div class="k hold">&lt;</div><div class="k">M</div><div class="k hold">&gt;</div>
+      <div class="k dist tap">DIST</div><div class="k">CLR</div>
+    </div>
+  </div></div>
+  <div class="step"><span class="num">4</span><div>
+    <p>Let go once the screen shows:</p>
+    <div class="screen">BOOT MODE</div>
+    <p class="mono" style="color:var(--muted)">Both arrows read in bootloader code <span class="tag v">read in code</span>. DIST as the power key is inferred, and nobody has tried this sequence on your X1 yet <span class="tag i">not tested</span>.</p>
+  </div></div>
+</section>
+
+<section id="reflash">
+  <h2>C. Reflash firmware</h2>
+  <div class="warn">
+    <p><strong>Flashing erases stored shots.</strong> The new image is first written into the shot-memory area. Get unsent shots off the X1 first if you can, and back up calibration coefficients with Cavway Assistant. It's not yet known whether calibration survives an update.</p>
+  </div>
+  <div class="step"><span class="num">1</span><div>
+    <p><strong>Connect the USB cable.</strong> It's steadier than Bluetooth, and the bootloader listens on both. On the Mac it appears as a CH343 serial port at 115200 baud.</p>
+    <div class="cmd"><pre id="c1">ls /dev/cu.usbmodem*</pre><button type="button" data-copy="c1">Copy</button></div>
+  </div></div>
+  <div class="step"><span class="num">2</span><div>
+    <p><strong>Enter boot mode</strong> (B). The app won't take a firmware update. Only the bootloader will.</p>
+  </div></div>
+  <div class="step"><span class="num">3</span><div>
+    <p><strong>Flash with Cavway Assistant</strong> (Windows) or the Cavway Assistant web port. Pick a <code>.bin</code> that has Cavway's 256-byte header. The flasher sends three steps:</p>
+    <div class="flow"><span>K · erase staging</span><i>→</i><span>L × n · 128-byte packets, CRC-checked</span><i>→</i><span>M · checksum, then copy into the app</span></div>
+  </div></div>
+  <div class="step"><span class="num">4</span><div>
+    <p><strong>Read the screen:</strong></p>
+    <div class="results">
+      <div class="res"><div class="screen">UPGRADING...</div><p>Copying into the app area. Takes a few seconds, so don't power off now.</p></div>
+      <div class="res"><div class="screen">UPGRADE SUCCESS</div><p>Done. Power off with CLR and start normally.</p></div>
+      <div class="res"><div class="screen">UPGRADE FAIL</div><p>The checksum didn't match, so the old app wasn't touched. Go to E.</p></div>
+    </div>
+  </div></div>
+  <div class="tbl"><table>
+    <thead><tr><th>Firmware file</th><th>Where</th><th>Use</th></tr></thead>
+    <tbody>
+      <tr><td class="mono">1.1.7</td><td>Not on disk. Ask Cavway for it.</td><td>The best restore: everything you have now, scan mode included.</td></tr>
+      <tr><td class="mono">1.1.4</td><td class="mono">cavway-upstream/CavwayAssist/Resources/CVWY_X1_Firm_1_1_4.bin</td><td>Known-good fallback. It has no scan mode and loses whatever 1.1.5 to 1.1.7 added.</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<section id="stuck">
+  <h2>D. Leave boot mode without flashing</h2>
+  <div class="step"><span class="num">1</span><div>
+    <p><strong>Press CLR.</strong> In boot mode it powers the X1 straight off. <span class="tag v">read in code</span></p>
+    <div class="keypad" aria-label="CLR pressed">
+      <div class="k">&lt;</div><div class="k">M</div><div class="k">&gt;</div>
+      <div class="k dist">DIST</div><div class="k tap">CLR</div>
+    </div>
+  </div></div>
+  <div class="step"><span class="num">2</span><div>
+    <p>Press DIST alone (no arrows) to start the app normally. If nothing is sent, boot mode also powers off by itself after a long wait (exact time unknown).</p>
+  </div></div>
+</section>
+
+<section id="fail">
+  <h2>E. After a failed or interrupted flash</h2>
+  <ul>
+    <li><strong>"UPGRADE FAIL", a dropped link, or the flasher timed out before the end:</strong> the app area was never erased. Start the X1 normally, or retry from C.</li>
+    <li><strong>Power cut during "UPGRADING...":</strong> the app may be half-copied and won't start. The bootloader is untouched: enter boot mode (B) and flash again.</li>
+    <li><strong>Nothing at all when holding the arrows plus DIST:</strong> charge it for an hour and try again. If it's still dark, contact Cavway support.</li>
+  </ul>
+</section>
+
+<section>
+  <h2>Check it's alive</h2>
+  <p>A read that changes nothing. Over USB it should answer <code>01 01 07 00</code> (the app version), and over Bluetooth use <code>x1-peek</code>.</p>
+  <div class="cmd"><pre id="c2">cd ~/Documents/github/cavecad-rs-ble/tools/cave-x1 &amp;&amp; ./run-mac.sh x1-peek E000:4 E004:4</pre><button type="button" data-copy="c2">Copy</button></div>
+  <p style="color:var(--muted);font-size:.88rem">Bluetooth must be on and the X1 must not be connected to the phone. Details and addresses are in <code>tools/cave-x1/FIRMWARE.md</code>.</p>
+</section>
+
+<footer>
+  <p>From reading the 1.1.4 firmware and the bootloader code (unchanged in 1.1.7, version 0x0A), plus reads off CavwayX1-0312 on 2026-11-17.</p>
+  <p><span class="tag v">read in code</span> means seen in the disassembly. <span class="tag i">not tested</span> means not yet tried on the hardware.</p>
+</footer>
+</div>
+
+<script>
+document.querySelectorAll('[data-copy]').forEach(function(b){
+  b.addEventListener('click',function(){
+    var el=document.getElementById(b.getAttribute('data-copy'));var t=el.textContent;
+    function sel(){var r=document.createRange();r.selectNodeContents(el);var s=getSelection();s.removeAllRanges();s.addRange(r);b.textContent='Selected';}
+    try{navigator.clipboard.writeText(t).then(function(){b.textContent='Copied';},sel);}catch(e){sel();}
+    setTimeout(function(){b.textContent='Copy';},1800);
+  });
+});
+</script>

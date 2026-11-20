@@ -14,7 +14,9 @@
 //! # Ok(()) }
 //! ```
 
-use btleplug::api::{Central, CentralEvent, Characteristic, Manager as _, Peripheral as _, ScanFilter, WriteType};
+use btleplug::api::{
+    Central, CentralEvent, Characteristic, Manager as _, Peripheral as _, ScanFilter, WriteType,
+};
 use btleplug::platform::{Manager, Peripheral};
 use cave_instrument::cavway::{self, Packet};
 use futures::StreamExt;
@@ -39,7 +41,10 @@ impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Error::NoBluetooth(e) => write!(f, "no Bluetooth: {e}"),
-            Error::NotFound => write!(f, "no Cavway X1 found: is it on, close by, and not connected to a phone?"),
+            Error::NotFound => write!(
+                f,
+                "no Cavway X1 found: is it on, close by, and not connected to a phone?"
+            ),
             Error::Link(e) => write!(f, "could not talk to the X1: {e}"),
             Error::Timeout => write!(f, "the X1 did not answer in time"),
         }
@@ -80,10 +85,18 @@ pub mod command {
     /// after every shot, so each shot is `LASER_ON` then `TRIGGER` (see [`crate::X1::fire`]).
     pub const TRIGGER: u8 = cave_instrument::cavway::CMD_TRIGGER;
 
+    /// CaveCAD firmware (`-cc2`): start scan. Stock firmware ignores it.
+    pub const SCAN_START: u8 = cave_instrument::cavway::CMD_SCAN_START;
+    /// CaveCAD firmware: stop scan.
+    pub const SCAN_STOP: u8 = cave_instrument::cavway::CMD_SCAN_STOP;
+    /// CaveCAD firmware: scan status.
+    pub const SCAN_STATUS: u8 = cave_instrument::cavway::CMD_SCAN_STATUS;
+
     /// Commands [`crate::X1::send`] refuses: power off, calibration mode, and memory or firmware writes (which take
-    /// an address and data; sent bare they could write garbage). FINDINGS.md lists what each is.
+    /// an address and data; sent bare they could write garbage). FINDINGS.md lists what each is. 39 to 3B are the
+    /// CaveCAD firmware's scan commands (FIRMWARE.md); stock 1.1.4 to 1.1.7 ignore them.
     pub fn refused(cmd: u8) -> bool {
-        matches!(cmd, 0x30..=0x34 | 0x39..=0x3c | 0x3e)
+        matches!(cmd, 0x30..=0x34 | 0x3c | 0x3e)
     }
 }
 
@@ -92,6 +105,8 @@ pub struct X1 {
     peripheral: Peripheral,
     write: Characteristic,
     shots: mpsc::UnboundedReceiver<Shot>,
+    replies: mpsc::UnboundedReceiver<cavway::Reply>,
+    scan_replies: mpsc::UnboundedReceiver<cavway::ScanStatus>,
     name: String,
     /// Every write, with when it was sent: for timing.
     pub sent: Vec<(Instant, Vec<u8>)>,
@@ -106,7 +121,9 @@ fn uuid(s: &str) -> Uuid {
 impl X1 {
     /// Finds the first X1 that advertises within `wait` and connects to it.
     pub async fn find(wait: Duration) -> Result<X1, Error> {
-        let manager = Manager::new().await.map_err(|e| Error::NoBluetooth(e.to_string()))?;
+        let manager = Manager::new()
+            .await
+            .map_err(|e| Error::NoBluetooth(e.to_string()))?;
         let adapter = manager
             .adapters()
             .await
@@ -114,7 +131,10 @@ impl X1 {
             .into_iter()
             .next()
             .ok_or_else(|| Error::NoBluetooth("no adapter".into()))?;
-        let mut events = adapter.events().await.map_err(|e| Error::NoBluetooth(e.to_string()))?;
+        let mut events = adapter
+            .events()
+            .await
+            .map_err(|e| Error::NoBluetooth(e.to_string()))?;
         adapter
             .start_scan(ScanFilter::default())
             .await
@@ -125,13 +145,19 @@ impl X1 {
             if left.is_zero() {
                 break None;
             }
-            let Ok(Some(ev)) = tokio::time::timeout(left, events.next()).await else { break None };
+            let Ok(Some(ev)) = tokio::time::timeout(left, events.next()).await else {
+                break None;
+            };
             let id = match ev {
                 CentralEvent::DeviceDiscovered(id) | CentralEvent::DeviceUpdated(id) => id,
                 _ => continue,
             };
-            let Ok(p) = adapter.peripheral(&id).await else { continue };
-            let Ok(Some(props)) = p.properties().await else { continue };
+            let Ok(p) = adapter.peripheral(&id).await else {
+                continue;
+            };
+            let Ok(Some(props)) = p.properties().await else {
+                continue;
+            };
             if let Some(name) = props.local_name.filter(|n| n.starts_with(NAME_PREFIX)) {
                 break Some((p, name));
             }
@@ -150,20 +176,36 @@ impl X1 {
         peripheral.discover_services().await.map_err(link)?;
         let chars = peripheral.characteristics();
         let find = |u: &str| chars.iter().find(|c| c.uuid == uuid(u)).cloned();
-        let write = find(cavway::WRITE).ok_or_else(|| Error::Link("no write characteristic".into()))?;
-        let notify = find(cavway::NOTIFY).ok_or_else(|| Error::Link("no notify characteristic".into()))?;
+        let write =
+            find(cavway::WRITE).ok_or_else(|| Error::Link("no write characteristic".into()))?;
+        let notify =
+            find(cavway::NOTIFY).ok_or_else(|| Error::Link("no notify characteristic".into()))?;
         peripheral.subscribe(&notify).await.map_err(link)?;
         let mut stream = peripheral.notifications().await.map_err(link)?;
         let (tx, shots) = mpsc::unbounded_channel();
+        let (reply_tx, replies) = mpsc::unbounded_channel();
+        let (scan_tx, scan_replies) = mpsc::unbounded_channel();
         // every shot is acknowledged the moment it arrives (or the X1 keeps offering it), and a repeat is dropped
         let (ack_peripheral, ack_write) = (peripheral.clone(), write.clone());
         tokio::spawn(async move {
             let mut recent: Vec<Vec<u8>> = Vec::new();
             while let Some(n) = stream.next().await {
                 let at = Instant::now();
-                let Some(packet) = cavway::decode_packet(&n.value) else { continue };
+                let Some(packet) = cavway::decode_packet(&n.value) else {
+                    // not a shot: maybe the answer to a memory read
+                    if let Some(st) = cavway::parse_scan_status(&n.value) {
+                        let _ = scan_tx.send(st);
+                    } else if let Some(r) = cavway::parse_reply(&n.value) {
+                        let _ = reply_tx.send(r);
+                    }
+                    continue;
+                };
                 let _ = ack_peripheral
-                    .write(&ack_write, &cavway::ack_frame(packet.flag), WriteType::WithoutResponse)
+                    .write(
+                        &ack_write,
+                        &cavway::ack_frame(packet.flag),
+                        WriteType::WithoutResponse,
+                    )
                     .await;
                 if recent.contains(&n.value) {
                     continue;
@@ -172,7 +214,14 @@ impl X1 {
                 if recent.len() > 8 {
                     recent.remove(0);
                 }
-                if tx.send(Shot { packet, at, raw: n.value }).is_err() {
+                if tx
+                    .send(Shot {
+                        packet,
+                        at,
+                        raw: n.value,
+                    })
+                    .is_err()
+                {
                     break;
                 }
             }
@@ -181,6 +230,8 @@ impl X1 {
             peripheral,
             write,
             shots,
+            replies,
+            scan_replies,
             name,
             sent: Vec::new(),
         })
@@ -195,7 +246,9 @@ impl X1 {
     /// change modes or write memory ([`command::refused`]).
     pub async fn send(&mut self, cmd: u8) -> Result<Instant, Error> {
         if command::refused(cmd) {
-            return Err(Error::Link(format!("command 0x{cmd:02x} is refused by this library (see FINDINGS.md)")));
+            return Err(Error::Link(format!(
+                "command 0x{cmd:02x} is refused by this library (see FINDINGS.md)"
+            )));
         }
         let frame = cavway::command(cmd);
         self.peripheral
@@ -205,6 +258,85 @@ impl X1 {
         let at = Instant::now();
         self.sent.push((at, frame));
         Ok(at)
+    }
+
+    /// Reads `length` bytes (1 to 124) at an X1 memory address (`3d`, read only: nothing on the X1 changes) and waits
+    /// up to `wait` for the answer. The addresses are the X1's own map, not flash addresses (FIRMWARE.md lists them).
+    pub async fn read_memory(
+        &mut self,
+        address: u16,
+        length: usize,
+        wait: Duration,
+    ) -> Result<cavway::Reply, Error> {
+        let frame = cavway::query_frame(address, length)
+            .ok_or_else(|| Error::Link(format!("a read is 1 to 124 bytes, not {length}")))?;
+        while self.replies.try_recv().is_ok() {}
+        self.peripheral
+            .write(&self.write, &frame, WriteType::WithoutResponse)
+            .await
+            .map_err(|e| Error::Link(e.to_string()))?;
+        self.sent.push((Instant::now(), frame));
+        let deadline = Instant::now() + wait;
+        loop {
+            let left = deadline.saturating_duration_since(Instant::now());
+            match tokio::time::timeout(left, self.replies.recv()).await {
+                Ok(Some(r)) if r.command == 0x3d && r.address == address => return Ok(r),
+                Ok(Some(_)) => continue,
+                _ => return Err(Error::Timeout),
+            }
+        }
+    }
+
+    /// Sends a CaveCAD-firmware scan command (`39` start, `3A` stop, `3B` status) and waits up to `wait` for its
+    /// answer. Stock firmware never answers: [`Error::Timeout`].
+    pub async fn scan_command(
+        &mut self,
+        cmd: u8,
+        wait: Duration,
+    ) -> Result<cavway::ScanStatus, Error> {
+        while self.scan_replies.try_recv().is_ok() {}
+        self.send(cmd).await?;
+        let deadline = Instant::now() + wait;
+        loop {
+            let left = deadline.saturating_duration_since(Instant::now());
+            match tokio::time::timeout(left, self.scan_replies.recv()).await {
+                Ok(Some(st)) if st.command == cmd => return Ok(st),
+                Ok(Some(_)) => continue,
+                _ => return Err(Error::Timeout),
+            }
+        }
+    }
+
+    /// Sets the X1's clock to this computer's local time (`3e` to 0x8000) and returns what it reads back.
+    pub async fn set_clock(&mut self, wait: Duration) -> Result<u32, Error> {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_secs() as i64);
+        // SAFETY: localtime_r fills a struct we own.
+        let offset = unsafe {
+            let t: libc::time_t = now as libc::time_t;
+            let mut tm: libc::tm = std::mem::zeroed();
+            libc::localtime_r(&t, &mut tm);
+            tm.tm_gmtoff as i32
+        };
+        let frame = cavway::clock_frame(cavway::local_seconds(now, offset));
+        while self.replies.try_recv().is_ok() {}
+        self.peripheral
+            .write(&self.write, &frame, WriteType::WithoutResponse)
+            .await
+            .map_err(|e| Error::Link(e.to_string()))?;
+        self.sent.push((Instant::now(), frame));
+        let deadline = Instant::now() + wait;
+        loop {
+            let left = deadline.saturating_duration_since(Instant::now());
+            match tokio::time::timeout(left, self.replies.recv()).await {
+                Ok(Some(r)) if r.address == cavway::CLOCK_ADDRESS && r.data.len() == 4 => {
+                    return Ok(u32::from_le_bytes([r.data[0], r.data[1], r.data[2], r.data[3]]));
+                }
+                Ok(Some(_)) => continue,
+                _ => return Err(Error::Timeout),
+            }
+        }
     }
 
     /// Laser on.
@@ -241,7 +373,10 @@ impl X1 {
 
     /// The next shot the X1 sends (fired from here or with its own button), if one comes within `wait`.
     pub async fn next_shot(&mut self, wait: Duration) -> Option<Shot> {
-        tokio::time::timeout(wait, self.shots.recv()).await.ok().flatten()
+        tokio::time::timeout(wait, self.shots.recv())
+            .await
+            .ok()
+            .flatten()
     }
 
     /// Every shot that arrives until nothing has come for `quiet`: what the X1 had stored, sent as it connects.

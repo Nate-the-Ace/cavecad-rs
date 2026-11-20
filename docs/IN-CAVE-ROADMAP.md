@@ -66,6 +66,10 @@ To check on the real X1 next time it is in hand:
 - [ ] **X1 firmware:** download the X1 firmware source and see what changing it for CaveCAD would take (e.g. a
       remote scan-mode start, looser accuracy limits, sleep behaviour).
 - [ ] **Line colours by type,** so what is on screen is easy to tell apart at a glance.
+- [ ] **LiDAR capture on the gimbal (Nathan, 2026-11-16):** mount the iPhone 17 Pro Max in the Osmo and let CaveCAD
+      turn it through a room while the phone's LiDAR scans, so a station's 3D capture is automatic and even (same
+      `cave-osmo` library and sweep plans as the X1; the phone's own motion sensors say where it points, which the
+      X1 cannot). Note: the phone would both scan and drive the gimbal over Bluetooth, so it is an iOS-app job.
 - Learned 2026-11-16: the X1's accuracy limits are tight and an office of steel shelving trips them on every shot;
   CaveCAD now judges the figures itself (Accuracy check: Strict / Normal / Relaxed, Normal by default).
 
@@ -99,7 +103,12 @@ it, in order:
   organisation (not as a person), and Apple's review takes a few weeks. Worth it if a grotto, the NSS or a CaveCAD
   non-profit would own the app. It changes nothing for local testing, which is free anyway.
 
-## Gimbal automation (planning only, nothing built)
+## Gimbal automation (bench-tested 2026-11-16: `tools/cave-osmo`, see its FINDINGS.md)
+
+**Measured on the Osmo Mobile 7:** speed commands work, angle commands do not, and it reports no angles. Pan ~287°
+between stops, tilt +34° / −24°, roll clean to −164°. With the X1's **laser out of the clamp's top** (Nathan's
+mount), roll swings the laser across the passage, so an LRUD ring = pan −90°, roll down one wall, pan 180°, roll
+down the other (`cave_osmo::sweep::ring`); a wedge of ~30° straight down is left for the tape.
 
 Gimbal in hand: **DJI Osmo Mobile** (a phone gimbal). Idea: the X1 sits in the phone clamp, CaveCAD turns the
 gimbal step by step and fires the X1 at each stop, so a sweep is even and complete with no hand wobble.

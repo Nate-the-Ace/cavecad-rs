@@ -19,6 +19,7 @@ mod geo;
 mod sheets;
 mod snap;
 mod survey;
+mod x1fw;
 
 thread_local! {
     /// The cave currently open. The browser is single-threaded, so this is the one document.

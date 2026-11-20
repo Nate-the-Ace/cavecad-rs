@@ -24,6 +24,13 @@ pub const CMD_LASER_ON: u8 = 0x36;
 /// Laser off.
 pub const CMD_LASER_OFF: u8 = 0x37;
 
+/// CaveCAD firmware (`1.1.7-cc1` and later, tools/x1-patch): start scan mode. Needs the laser on and ready.
+pub const CMD_SCAN_START: u8 = 0x39;
+/// CaveCAD firmware: stop scan mode (as a press of CLR).
+pub const CMD_SCAN_STOP: u8 = 0x3a;
+/// CaveCAD firmware: report scan status ([`ScanStatus`]).
+pub const CMD_SCAN_STATUS: u8 = 0x3b;
+
 /// The most a single query returns.
 pub const MAX_READ: usize = 124;
 /// Bytes in a full shot packet.
@@ -51,6 +58,27 @@ pub fn command(cmd: u8) -> Vec<u8> {
 /// The acknowledgement for a shot packet: its flag byte OR 0x55, framed.
 pub fn ack_frame(flag: u8) -> Vec<u8> {
     frame(&[flag | 0x55])
+}
+
+/// The X1's clock in its memory map: 4 bytes, little-endian, seconds of LOCAL wall-clock time (the X1 has no time
+/// zone; its shot timestamps are read the same way). Writable with `3e` on every firmware seen (1.1.4 to 1.1.7).
+pub const CLOCK_ADDRESS: u16 = 0x8000;
+
+/// Local wall-clock seconds, as the X1 keeps them, for a UTC instant and the local offset east of UTC.
+pub fn local_seconds(unix_utc: i64, offset_east_secs: i32) -> u32 {
+    (unix_utc + i64::from(offset_east_secs)).clamp(0, i64::from(u32::MAX)) as u32
+}
+
+/// Sets the X1's clock: `3e 00 80 04` and the 4 bytes. It answers with a read-back (`3d 00 80 04 …`).
+pub fn clock_frame(local_secs: u32) -> Vec<u8> {
+    let mut p = vec![
+        0x3e,
+        (CLOCK_ADDRESS & 0xff) as u8,
+        (CLOCK_ADDRESS >> 8) as u8,
+        4,
+    ];
+    p.extend_from_slice(&local_secs.to_le_bytes());
+    frame(&p)
 }
 
 /// A memory query: `3d`, the address (low, high), how many bytes (at most 124).
@@ -174,6 +202,9 @@ pub struct Packet {
     pub errors: Vec<AccuracyError>,
     /// Laser signal quality, raw.
     pub quality: Option<u32>,
+    /// This shot's number within its scan (1 = first), sent by CaveCAD firmware (`-cc`) in bytes 54 and 55.
+    /// `None` from stock firmware (which leaves 0xFFFF there) and for shots outside a scan.
+    pub scan_count: Option<u16>,
 }
 
 const ANGLE: f64 = 360.0 / 65535.0;
@@ -363,6 +394,9 @@ pub fn decode_packet(b: &[u8]) -> Option<Packet> {
             Vec::new()
         },
         quality: (b.len() >= 58).then(|| u32::from(u16_at(b, 56))),
+        scan_count: (b.len() >= 56)
+            .then(|| u16_at(b, 54))
+            .filter(|&n| n != 0 && n != 0xffff),
     })
 }
 
@@ -478,5 +512,137 @@ mod tolerance_tests {
             0,
             "6.3 degrees is under Relaxed's 10"
         );
+    }
+}
+
+/// Why the last scan ended, as CaveCAD firmware reports it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ScanEnd {
+    /// No scan has ended since the X1 was switched on.
+    None,
+    /// CLR on the X1.
+    Clr,
+    /// The time limit set in Scan Options.
+    TimeLimit,
+    /// More than 200 shots.
+    ShotLimit,
+    /// Stopped from here ([`CMD_SCAN_STOP`]).
+    Remote,
+    /// A code this version does not know.
+    Other(u8),
+}
+
+/// What a CaveCAD-firmware X1 answers to [`CMD_SCAN_START`], [`CMD_SCAN_STOP`] and [`CMD_SCAN_STATUS`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ScanStatus {
+    /// Which command this answers.
+    pub command: u8,
+    /// The X1's mode: 1 laser on, 2 scanning (0 idle; others are menus).
+    pub mode: u8,
+    /// Laser state: 3 on and ready.
+    pub laser: u8,
+    /// Shots stored in the current (or last) scan.
+    pub count: u16,
+    /// 25 ms ticks since the scan began.
+    pub ticks: u32,
+    /// The Scan Options byte (bit 0 allowed, bits 1-2 steadiness, bit 3 start key, bits 4-7 time limit).
+    pub options: u8,
+    /// 0 done, 1 wrong mode (start needs laser on, stop needs a scan), 2 laser not ready yet.
+    pub result: u8,
+    /// Why the last scan ended.
+    pub last_end: ScanEnd,
+    /// The CaveCAD firmware revision (1 for `-cc1`).
+    pub cc_version: u8,
+}
+
+impl ScanStatus {
+    /// True when the X1 is in scan mode.
+    pub fn scanning(&self) -> bool {
+        self.mode == 2
+    }
+    /// Seconds since the scan began.
+    pub fn seconds(&self) -> f64 {
+        f64::from(self.ticks) * 0.025
+    }
+}
+
+/// Parses an answer to a CaveCAD scan command. From `-cc2` on it is shaped as a memory read of 0xCC39..0xCC3B
+/// (`[3D, cmd, CC, 12, …]`, so the USB link forwards it); `-cc1` sent `[cmd, 0, 0, 12, …]` (Bluetooth only).
+pub fn parse_scan_status(b: &[u8]) -> Option<ScanStatus> {
+    if b.len() < 16 || b[3] != 12 {
+        return None;
+    }
+    let scan_cmd = |c: u8| (CMD_SCAN_START..=CMD_SCAN_STATUS).contains(&c);
+    let command = if b[0] == 0x3d && b[2] == 0xcc && scan_cmd(b[1]) {
+        b[1]
+    } else if scan_cmd(b[0]) && b[1] == 0 && b[2] == 0 {
+        b[0]
+    } else {
+        return None;
+    };
+    Some(ScanStatus {
+        command,
+        mode: b[4],
+        laser: b[5],
+        count: u16_at(b, 6),
+        ticks: u32::from_le_bytes([b[8], b[9], b[10], b[11]]),
+        options: b[12],
+        result: b[13],
+        last_end: match b[14] {
+            0 => ScanEnd::None,
+            1 => ScanEnd::Clr,
+            2 => ScanEnd::TimeLimit,
+            3 => ScanEnd::ShotLimit,
+            4 => ScanEnd::Remote,
+            n => ScanEnd::Other(n),
+        },
+        cc_version: b[15],
+    })
+}
+
+#[cfg(test)]
+mod cc_tests {
+    use super::*;
+
+    #[test]
+    fn scan_status_reads_the_cc1_answer() {
+        let b = [0x3b, 0, 0, 12, 2, 5, 17, 0, 0x90, 0x01, 0, 0, 0x31, 0, 4, 1];
+        let s = parse_scan_status(&b).unwrap();
+        assert!(s.scanning());
+        assert_eq!(
+            (s.count, s.ticks, s.result, s.last_end, s.cc_version),
+            (17, 400, 0, ScanEnd::Remote, 1)
+        );
+        assert_eq!(s.seconds(), 10.0);
+        assert!(
+            parse_scan_status(&[0x3d, 0, 0xe0, 4, 1, 1, 7, 0, 0, 0, 0, 0, 0, 0, 0, 0]).is_none()
+        );
+    }
+
+    #[test]
+    fn clock_frame_is_a_4_byte_write_to_0x8000() {
+        // 12:15:46 local on 2026-11-17 (the X1's own reading that day) from 17:15:46 UTC, 5 hours west
+        let local = local_seconds(0x6afc_4572 + 5 * 3600, -5 * 3600);
+        assert_eq!(local, 0x6afc_4572);
+        assert_eq!(
+            clock_frame(local),
+            [
+                b"data:".as_slice(),
+                &[
+                    8, 0x3e, 0x00, 0x80, 0x04, 0x72, 0x45, 0xfc, 0x6a, 0x0d, 0x0a
+                ]
+            ]
+            .concat()
+        );
+    }
+
+    #[test]
+    fn scan_count_is_read_only_when_cc_firmware_set_it() {
+        let mut p = encode_packet(&PacketSpec::default());
+        assert_eq!(decode_packet(&p).unwrap().scan_count, None); // 0 = not set
+        p[54..56].copy_from_slice(&[0xff, 0xff]);
+        assert_eq!(decode_packet(&p).unwrap().scan_count, None); // stock firmware
+        p[54..56].copy_from_slice(&[0x2a, 0x00]);
+        assert_eq!(decode_packet(&p).unwrap().scan_count, Some(42));
     }
 }

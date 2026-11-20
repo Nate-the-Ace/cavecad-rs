@@ -201,7 +201,11 @@ export interface Identified {
 export interface Catalog {
   devices: Device[];
   names: { prefix: string; kind: InstrumentKind; label: string }[];
-  x1: { service: string; write: string; notify: string; takeShot: number[]; laserOn: number[]; laserOff: number[] };
+  x1: {
+    service: string; write: string; notify: string; takeShot: number[]; laserOn: number[]; laserOff: number[];
+    /** Sets the X1's clock: prefix, 4 bytes of local wall-clock seconds (little-endian), suffix. */
+    setClock: { prefix: number[]; suffix: number[] };
+  };
   sap5: { service: string; write: string; notify: string };
   sap6: { service: string; name: string; command: string; leg: string; takeShot: number[] };
   bric: { measureService: string; primary: string; meta: string; errors: string; controlService: string; control: string; takeShot: number[]; batteryService: string; deviceInfoService: string; settleMs: number };

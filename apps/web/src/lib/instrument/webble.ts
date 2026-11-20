@@ -149,6 +149,39 @@ export class WebBleInstrument implements Instrument {
     if (this.kind === 'x1') this.write(Uint8Array.from(on ? this.cat.x1.laserOn : this.cat.x1.laserOff));
   }
 
+  /** A single-byte X1 command, framed (CaveCAD firmware's scan control: 39 start, 3A stop, 3B status). */
+  x1Command(cmd: number) {
+    if (this.kind === 'x1' && this.canTakeShot) this.write(Uint8Array.from([0x64, 0x61, 0x74, 0x61, 0x3a, 1, cmd & 0xff, 0x0d, 0x0a]));
+  }
+
+  /** Raw bytes to the X1 in pieces (its Bluetooth module takes 20 bytes a write), for firmware flashing. Resolves once
+   * all pieces are written. Pings and other writes are held back while `quiet` is set. */
+  async x1Raw(data: Uint8Array, piece = 20, gapMs = 12) {
+    const c = this.writer;
+    if (!c || this.kind !== 'x1') throw new Error('No X1 connected');
+    for (let at = 0; at < data.length; at += piece) {
+      const part = data.slice(at, at + piece);
+      if (c.writeValueWithoutResponse) await c.writeValueWithoutResponse(part);
+      else await c.writeValue(part);
+      await new Promise((r) => setTimeout(r, gapMs));
+    }
+  }
+  /** While flashing: no keep-awake pings or clock sets into the bootloader's stream. */
+  quiet = false;
+
+  private awakeTimer: ReturnType<typeof setInterval> | undefined;
+  /** Keeps an X1 from going to sleep: a harmless one-byte memory read (3d, address 0, 1 byte) every 45 s, the only X1
+   * command known to change nothing (cave-x1 FINDINGS; no sleep setting is known, and memory writes are refused). */
+  keepAwake(on: boolean) {
+    clearInterval(this.awakeTimer);
+    this.awakeTimer = undefined;
+    if (!on) return;
+    const ping = Uint8Array.from([0x64, 0x61, 0x74, 0x61, 0x3a, 4, 0x3d, 0x00, 0x00, 0x01, 0x0d, 0x0a]);
+    this.awakeTimer = setInterval(() => {
+      if (this.kind === 'x1' && this.canTakeShot && !this.quiet) this.write(ping);
+    }, 45_000);
+  }
+
   /** What the browser's device chooser is asked to show: the known instruments by their names, or everything. */
   private chooser(): unknown {
     const reach = [...allServices(this.cat), ...(this.opts.services ?? [])];
@@ -193,6 +226,10 @@ export class WebBleInstrument implements Instrument {
   /** A frame from the instrument goes to the engine. */
   private frame(kind: string, bytes: Uint8Array) {
     (globalThis as { __cavecadDlog?: (s: string) => void }).__cavecadDlog?.(`recv ${kind} ${hex(bytes)}`);
+    // a listener outside the engine (the gimbal dome scan reads each shot's angle to steer the next move)
+    (globalThis as { __cavecadShotTap?: (b: Uint8Array) => void }).__cavecadShotTap?.(bytes);
+    // X1 firmware flashing listens to the bootloader's answers (lib/x1firmware.svelte.ts)
+    (globalThis as { __cavecadFwTap?: (b: Uint8Array) => void }).__cavecadFwTap?.(bytes);
     const step = this.bridge.frame(kind, bytes);
     // what the engine made of it (a leg, a splay, held back), for reading the log afterwards
     const last = step.snapshot?.log?.[step.snapshot.log.length - 1];
@@ -246,6 +283,18 @@ export class WebBleInstrument implements Instrument {
     this.listen(notify, (b) => this.frame('frame', b));
     await notify.startNotifications();
     this.canTakeShot = true;
+    this.setX1Clock();
+  }
+
+  /** Sets the X1's clock to this device's local time (the X1 keeps local wall-clock seconds, no time zone), so shot
+   * timestamps are right. Every connect; harmless on any X1 firmware (a memory write it has always accepted). */
+  private setX1Clock() {
+    const c = this.cat.x1.setClock;
+    if (!c) return;
+    const now = new Date();
+    const local = Math.floor(now.getTime() / 1000) - now.getTimezoneOffset() * 60;
+    const le = [local & 0xff, (local >>> 8) & 0xff, (local >>> 16) & 0xff, (local >>> 24) & 0xff];
+    this.write(Uint8Array.from([...c.prefix, ...le, ...c.suffix]));
   }
 
   /** The SAP5: 8-byte DistoX packets notified on 0002, nothing to acknowledge. */

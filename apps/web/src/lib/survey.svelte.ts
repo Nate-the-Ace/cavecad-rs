@@ -480,6 +480,22 @@ export function laser(on: boolean) {
   instrument?.laser?.(on);
 }
 
+/** The connected X1's raw writer, for firmware flashing (null: no X1). */
+export function x1RawLink(): { x1Raw: (d: Uint8Array) => Promise<void>; quiet: boolean } | null {
+  const i = instrument as { x1Raw?: (d: Uint8Array) => Promise<void>; quiet?: boolean } | null | undefined;
+  return i?.x1Raw ? (i as { x1Raw: (d: Uint8Array) => Promise<void>; quiet: boolean }) : null;
+}
+
+/** Sends a single-byte command to the X1 (CaveCAD firmware's scan control). */
+export function instrumentCommand(cmd: number) {
+  (instrument as { x1Command?: (cmd: number) => void } | null | undefined)?.x1Command?.(cmd);
+}
+
+/** Keeps the X1 awake (a harmless ping every 45 s) while something drives it unattended, e.g. a gimbal is connected. */
+export function keepInstrumentAwake(on: boolean) {
+  (instrument as { keepAwake?: (on: boolean) => void } | null | undefined)?.keepAwake?.(on);
+}
+
 let sweepTimer: ReturnType<typeof setInterval> | undefined;
 let laserForSweep = false;
 
@@ -515,6 +531,15 @@ export function startSweep(kind: SweepKind) {
     }
     setFiring(true);
   }
+}
+
+/** Starts a sweep that something else fires (the gimbal dome scan, lib/dome.svelte.ts): no auto-fire, and never the
+ * X1's own scan mode. True if the sweep started. */
+export function startDrivenSweep(kind: SweepKind): boolean {
+  endMemory();
+  if (!apply(engine.surveyStartSweep(kind))) return false;
+  if (survey.sweep) showStation(survey.sweep.station);
+  return true;
 }
 
 /** Pauses or carries on CaveCAD's firing during a sweep. */

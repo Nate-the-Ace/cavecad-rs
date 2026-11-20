@@ -111,6 +111,7 @@ dependencies = [
  "btleplug",
  "cave-instrument",
  "futures",
+ "libc",
  "tokio",
  "uuid",
 ]

@@ -1,0 +1,20 @@
+[package]
+name = "cave-osmo"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "Talks to a DJI Osmo Mobile gimbal over Bluetooth from a computer (DUML over BLE): find, connect, read what it says, turn it. Probe tools for finding out what an Osmo Mobile 7 accepts."
+
+[dependencies]
+btleplug = "0.11"
+futures = "0.3"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync"] }
+uuid = "1"
+
+# the app's btleplug: on macOS/iOS it also finds a gimbal the OS has already bonded (as HID) and holds, which then
+# stops advertising and a plain scan never sees (FINDINGS)
+[patch.crates-io]
+btleplug = { path = "../../apps/desktop/src-tauri/vendor/btleplug-0.11.8" }
+
+# Kept out of the main workspace: Bluetooth needs native libraries the web build and CI do not have.
+[workspace]

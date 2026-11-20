@@ -1,0 +1,54 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Gimbal Watch</title>
+<style>
+  :root { --bg:#fff; --fg:#111; --mut:#666; --acc:#0a6; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#111; --fg:#eee; --mut:#999; --acc:#3c9; } }
+  body { background:var(--bg); color:var(--fg); font:16px -apple-system,system-ui,sans-serif; margin:0; padding:16px; text-align:center; }
+  button { font-size:22px; padding:16px 28px; border-radius:12px; border:0; background:var(--acc); color:#fff; margin-top:24px; }
+  .big { font-size:44px; font-variant-numeric:tabular-nums; margin-top:24px; }
+  .mut { color:var(--mut); }
+</style></head><body>
+<h2>Gimbal Watch</h2>
+<p class="mut">Phone in the clamp, back camera facing out. Tap Start, allow motion, then leave it.</p>
+<button id="go">Start</button>
+<div class="big" id="yaw">—</div>
+<div id="st" class="mut"></div>
+<script>
+// Sends the phone's orientation to the Mac ~20 times a second. Yaw/pitch are computed for the back camera's
+// direction (the way the gimbal points the phone), from the W3C alpha/beta/gamma (Z-X'-Y'' intrinsic).
+const R = d => d * Math.PI / 180;
+function aim(a, b, g) {
+  const ca=Math.cos(R(a)), sa=Math.sin(R(a)), cb=Math.cos(R(b)), sb=Math.sin(R(b)), cg=Math.cos(R(g)), sg=Math.sin(R(g));
+  // third column of R = Rz(a)Rx(b)Ry(g), negated: the back camera looks along -z of the device
+  const x = -(ca*sg + sa*sb*cg), y = -(sa*sg - ca*sb*cg), z = -(cb*cg);
+  return { yaw: Math.atan2(x, y) * 180 / Math.PI, pitch: Math.asin(Math.max(-1, Math.min(1, z))) * 180 / Math.PI };
+}
+let buf = [], last = null;
+function onOri(e) {
+  if (e.alpha == null) return;
+  const v = aim(e.alpha, e.beta, e.gamma);
+  last = { t: Date.now(), a: e.alpha, b: e.beta, g: e.gamma, yaw: v.yaw, pitch: v.pitch, hdg: e.webkitCompassHeading ?? null };
+  buf.push(last);
+}
+setInterval(() => {
+  if (last) document.getElementById('yaw').textContent = `yaw ${last.yaw.toFixed(1)}°  tilt ${last.pitch.toFixed(1)}°`;
+}, 150);
+setInterval(async () => {
+  if (!buf.length) return;
+  const send = buf; buf = [];
+  try { await fetch('o', { method: 'POST', body: JSON.stringify(send) }); document.getElementById('st').textContent = 'sending · ' + new Date().toLocaleTimeString(); }
+  catch (err) { document.getElementById('st').textContent = 'send failed: ' + err; }
+}, 400);
+document.getElementById('go').onclick = async () => {
+  try {
+    if (typeof DeviceOrientationEvent !== 'undefined' && DeviceOrientationEvent.requestPermission) {
+      const p = await DeviceOrientationEvent.requestPermission();
+      if (p !== 'granted') { document.getElementById('st').textContent = 'motion not allowed'; return; }
+    }
+    window.addEventListener('deviceorientation', onOri);
+    try { await navigator.wakeLock?.request('screen'); } catch (_) {}
+    document.getElementById('go').textContent = 'Running';
+  } catch (err) { document.getElementById('st').textContent = String(err); }
+};
+</script></body></html>
