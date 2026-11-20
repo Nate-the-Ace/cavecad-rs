@@ -19,11 +19,31 @@ pub struct StationSeed {
 
 #[derive(Deserialize)]
 struct Ops {
-    ops: Vec<Op>,
+    /// The CaveCAD client writes the ops as one JSON text inside the JSON (`"ops":"[...]"`); a plain
+    /// array is accepted too.
+    ops: serde_json::Value,
 }
 
-/// Rebuilds a cave from the server's open snapshot text (`{"upTo":n,"ops":[...]}`, if any) and the
-/// entry texts after it (`{"c":client,"ops":[...]}`), in number order. An op that does not fit is
+fn ops_of(v: serde_json::Value) -> Result<Vec<Op>, String> {
+    let v = match v {
+        serde_json::Value::String(t) => serde_json::from_str(&t).map_err(|e| short(&e))?,
+        other => other,
+    };
+    serde_json::from_value(v).map_err(|e| short(&e))
+}
+
+/// Where a JSON error is, without echoing the cave data it was reading.
+fn short(e: &serde_json::Error) -> String {
+    format!(
+        "{:?} error at line {} column {}",
+        e.classify(),
+        e.line(),
+        e.column()
+    )
+}
+
+/// Rebuilds a cave from the server's open snapshot text (`{"upTo":n,"ops":"[...]"}`, if any) and the
+/// entry texts after it (`{"c":client,"ops":"[...]"}`), in number order. An op that does not fit is
 /// skipped, as the app's own sync does.
 pub fn document_from_room(snapshot: Option<&str>, entries: &[&str]) -> Result<Document, String> {
     let mut doc = Document::new(ActorId(1));
@@ -37,8 +57,10 @@ pub fn document_from_room(snapshot: Option<&str>, entries: &[&str]) -> Result<Do
                 .map(|(i, e)| (format!("entry {}", i + 1), *e)),
         );
     for (name, text) in parts {
-        let o: Ops = serde_json::from_str(text).map_err(|e| format!("{name} unreadable: {e}"))?;
-        for op in &o.ops {
+        let o: Ops =
+            serde_json::from_str(text).map_err(|e| format!("{name} unreadable: {}", short(&e)))?;
+        let ops = ops_of(o.ops).map_err(|e| format!("{name} ops unreadable: {e}"))?;
+        for op in &ops {
             let _ = doc.apply(op);
         }
     }

@@ -3,6 +3,7 @@ import SwiftUI
 @main
 struct CaptureApp: App {
     @StateObject private var account = Account()
+    init() { Log.launched() }
     var body: some Scene {
         WindowGroup {
             Group {

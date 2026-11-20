@@ -28,7 +28,7 @@ final class Account: NSObject, ObservableObject, ASWebAuthenticationPresentation
 
     @Published private(set) var token: String? = Keychain.load()
     @Published private(set) var email: String?
-    @Published var problem: String?
+    @Published var problem: String? { didSet { if let problem { Log.write("account", problem) } } }
     /// Held while the sign-in sheet is up; a released session can end early.
     private var authSession: ASWebAuthenticationSession?
 
@@ -157,6 +157,7 @@ final class Account: NSObject, ObservableObject, ASWebAuthenticationPresentation
     /// Throws unless the answer is a success; a 401 (the sign-in ended) signs out.
     func check(_ resp: URLResponse) throws {
         let status = (resp as? HTTPURLResponse)?.statusCode ?? 0
+        Log.write("http", "\(resp.url?.path ?? "?") -> \(status)")
         if status == 401 { signOut() }
         guard (200..<300).contains(status) else { throw URLError(.badServerResponse) }
     }

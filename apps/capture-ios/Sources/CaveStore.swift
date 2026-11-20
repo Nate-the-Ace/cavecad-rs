@@ -16,7 +16,7 @@ struct KeptCave: Codable {
 final class CaveStore: ObservableObject {
     @Published var caves: [CaveInfo] = []
     @Published var offline = false
-    @Published var problem: String?
+    @Published var problem: String? { didSet { if let problem { Log.write("caves", problem) } } }
     /// Ids of the caves kept on the phone (one file each), so rows need not read the files.
     @Published private(set) var keptIds: Set<String> = []
     private let account: Account

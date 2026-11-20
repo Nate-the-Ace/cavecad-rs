@@ -70,6 +70,7 @@ struct StationPickView: View {
             if c != h { height = c }
         }
         .task(id: cave.keptAt) { await loadStations() }
+        .onChange(of: problem) { _, p in if let p { Log.write("stations", p) } }
         .onAppear { if !stations.isEmpty { Task { await loadSaved() } } }
     }
 

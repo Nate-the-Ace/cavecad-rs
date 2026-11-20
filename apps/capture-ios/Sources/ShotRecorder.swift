@@ -54,8 +54,8 @@ final class ShotRecorder: NSObject, ObservableObject, ARSessionDelegate {
     static let maxKeyframes = 240
     static let aimMessage = "Put the crosshair on the forward station and tap Aim."
 
-    @Published var phase: Phase = .aiming
-    @Published var message = aimMessage
+    @Published var phase: Phase = .aiming { didSet { Log.write("shot", "phase \(phase)") } }
+    @Published var message = aimMessage { didSet { if message != oldValue { Log.write("shot", message) } } }
     @Published var tapped = false
     @Published var keyframeCount = 0
 
@@ -161,6 +161,18 @@ final class ShotRecorder: NSObject, ObservableObject, ARSessionDelegate {
     }
 
     // ARSession calls this on the main queue (no delegateQueue is set).
+    nonisolated func session(_ session: ARSession, cameraDidChangeTrackingState camera: ARCamera) {
+        Log.write("ar", "tracking \(camera.trackingState)")
+    }
+
+    nonisolated func session(_ session: ARSession, didFailWithError error: Error) {
+        Log.write("ar", "session failed: \(error.localizedDescription)")
+    }
+
+    nonisolated func sessionWasInterrupted(_ session: ARSession) { Log.write("ar", "session interrupted") }
+
+    nonisolated func sessionInterruptionEnded(_ session: ARSession) { Log.write("ar", "interruption ended") }
+
     nonisolated func session(_ session: ARSession, didUpdate frame: ARFrame) {
         let pose = frame.camera.transform
         let yaw = atan2(-pose.columns.2.x, -pose.columns.2.z) * 180 / .pi

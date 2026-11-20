@@ -93,3 +93,27 @@ fn entry_order_and_duplicates_converge() {
         assert_eq!(stations(d), base);
     }
 }
+
+/// The CaveCAD client stores ops as one JSON text inside the snapshot and entries (found on the
+/// phone, 2026-11-20: every real cave failed to open). Both shapes must read the same.
+#[test]
+fn ops_as_json_text_like_the_server() {
+    let ops = fixture_ops();
+    let snap = serde_json::json!({ "upTo": 4, "ops": ops }).to_string();
+    let entry = serde_json::json!({ "c": "dev1", "ops": ops }).to_string();
+    assert_eq!(
+        stations(&document_from_room(Some(&snap), &[]).unwrap()).len(),
+        3
+    );
+    assert_eq!(
+        stations(&document_from_room(None, &[entry.as_str()]).unwrap()).len(),
+        3
+    );
+}
+
+#[test]
+fn errors_do_not_echo_cave_data() {
+    let snap = serde_json::json!({ "upTo": 1, "ops": "[{\"secret\":\"Truitt\"}]" }).to_string();
+    let err = document_from_room(Some(&snap), &[]).unwrap_err();
+    assert!(!err.contains("Truitt"), "{err}");
+}
