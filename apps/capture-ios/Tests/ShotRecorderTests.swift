@@ -167,4 +167,53 @@ final class ShotRecorderTests: XCTestCase {
         XCTAssertNotNil(Core.cardsFit(bundle: out, cards: [], sameSession: true)["offsets"])
         XCTAssertNil(Core.ghost(bundle: Data([1, 2, 3])))
     }
+
+    func testParentShotAndSafeReplace() throws {
+        let cave = "test-cave-parent"
+        defer { try? FileManager.default.removeItem(at: ShotFiles.folder(cave: cave)) }
+        let a = Station(id: "a", label: "A1", x: 0, y: 0, z: 0), b = Station(id: "b", label: "B1", x: 0, y: 0, z: 0)
+        func write(_ s: Station) -> URL {
+            let job = ShotJob(caveId: cave, over: s, parts: [Self.tri], keyframes: [], startCamera: .zero, tracking: "normal",
+                              systemVersion: "27", compass: CompassReading(trueNorth: true, accuracyDeg: 5, headingDeg: 0))
+            guard case .success(let u) = job.write() else { XCTFail("not written"); return URL(fileURLWithPath: "/") }
+            return u
+        }
+        XCTAssertNil(ShotFiles.parent(cave: cave, station: "a"))
+        let ua = write(a)
+        _ = write(b)
+        XCTAssertEqual(ShotFiles.parent(cave: cave, station: "a"), ua)
+        let before = try Data(contentsOf: ua)
+        XCTAssertTrue(ShotFiles.replace(ua, with: Data([1, 2, 3])))
+        XCTAssertEqual(try Data(contentsOf: ua), Data([1, 2, 3]))
+        try before.write(to: ua)
+        let gone = ShotFiles.folder(cave: "test-cave-missing").appendingPathComponent("x.cvcap")
+        try? FileManager.default.removeItem(at: ShotFiles.folder(cave: "test-cave-missing"))
+        XCTAssertFalse(ShotFiles.replace(gone, with: Data([9])))
+        XCTAssertEqual(try Data(contentsOf: ua), before)
+        // no stray temporary files are left beside the shots
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: ShotFiles.folder(cave: cave).path).filter { $0.hasSuffix(".tmp") }, [])
+
+        // a same-session pass rewrites the parent with two passes
+        let kf = ShotKeyframe(pose: matrix_identity_float4x4, intrinsics: matrix_identity_float3x3, w: 1, h: 1, jpeg: Data([5, 5]))
+        let pass = ShotJob(caveId: cave, over: a, parts: [Self.tri], keyframes: [kf], startCamera: .zero, tracking: "normal",
+                           systemVersion: "27", compass: CompassReading(trueNorth: true, accuracyDeg: 5, headingDeg: 0))
+        guard case .success(let same) = pass.writePass(into: ua, sameSession: true, transform: nil) else { return XCTFail("pass not written") }
+        XCTAssertEqual(same, ua)
+        let h = try Self.header(of: try Data(contentsOf: ua))
+        XCTAssertEqual((h["passes"] as? [[String: Any]])?.count, 2)
+        // the keyframes live beside the header on the wire: count them through the summary
+        let sum = Core.summary(bundle: try Data(contentsOf: ua), pair: nil)
+        XCTAssertEqual(sum["keyframes"] as? Int, 1)
+        XCTAssertEqual(sum["passes"] as? Int, 2)
+        // still the station's one shot: the pass did not make a new file
+        XCTAssertEqual(ShotFiles.parent(cave: cave, station: "a"), ua)
+        XCTAssertEqual(ShotFiles.list(cave: cave).count, 2)
+
+        // a pass into a file that cannot be read fails and writes nothing
+        let missing = ShotFiles.folder(cave: cave).appendingPathComponent("nope.cvcap")
+        let lost = ShotJob(caveId: cave, over: a, parts: [Self.tri], keyframes: [], startCamera: .zero, tracking: "normal",
+                           systemVersion: "27", compass: .none)
+        guard case .failure(let f) = lost.writePass(into: missing, sameSession: true, transform: nil) else { return XCTFail("pass into nothing") }
+        XCTAssertEqual(f.message, "The earlier scan could not be read.")
+    }
 }

@@ -80,6 +80,16 @@ final class ShotRecorder: NSObject, ObservableObject, ARSessionDelegate {
     @Published var findingNorth = false
     /// Station cards seen so far this shot, for the live view.
     @Published var cardMarkers: [CardMarker] = []
+    /// The station's shot this capture adds to (nil: the next Stop makes a new shot).
+    @Published private(set) var parent: URL?
+    /// When the parent was made, for the screen.
+    @Published private(set) var parentMade: Date?
+    /// The parent's earlier passes were scanned in this ARKit session (same frame, no line-up needed).
+    private(set) var parentInSession = false
+    /// This pass's frame to the parent's, column-major, from the station cards (set by the card line-up; nil
+    /// until then). Needed to save a pass whose parent is from another session.
+    private(set) var cardTransform: [Double]?
+    static let needCardsMessage = "Look at two cards so this pass can be lined up."
 
     let session = ARSession()
     private let compass = CompassWatcher()
@@ -193,6 +203,17 @@ final class ShotRecorder: NSObject, ObservableObject, ARSessionDelegate {
     /// LiDAR phones only: scene reconstruction needs the depth sensor (the simulator has none either).
     static var hasLiDAR: Bool { ARWorldTrackingConfiguration.supportsSceneReconstruction(.mesh) }
 
+    /// Called when the capture screen opens over a station (before `run`): the station's newest shot becomes
+    /// the parent. Its frame is never this session's (the session is about to start afresh), so a pass into it
+    /// must be lined up by the cards.
+    func prepare(cave: KeptCave, over: Station) {
+        parent = ShotFiles.parent(cave: cave.id, station: over.id)
+        parentMade = parent.flatMap { try? $0.resourceValues(forKeys: [.creationDateKey]).creationDate }
+        parentInSession = false
+        cardTransform = nil
+        if let parent { Log.write("shot", "adding to the station's shot \(parent.lastPathComponent) (another session)") }
+    }
+
     func run() {
         guard Self.hasLiDAR else {
             phase = .failed("This phone has no LiDAR.")
@@ -286,6 +307,7 @@ final class ShotRecorder: NSObject, ObservableObject, ARSessionDelegate {
             // The best camera format may not run with scene reconstruction and depth: try the default, once.
             guard usingBestFormat, !bestFormatFailed, case .ready = phase else { return }
             bestFormatFailed = true
+            parentInSession = false  // the restart resets tracking: the parent's frame is gone
             Log.write("ar", "best video format failed to run; falling back to the default format")
             runSession()
         }
@@ -505,6 +527,11 @@ final class ShotRecorder: NSObject, ObservableObject, ARSessionDelegate {
 
     func stop(cave: KeptCave, over: Station) {
         guard case .capturing = phase else { return }
+        // A pass into a shot from another session needs the cards to line it up; carry on capturing until then.
+        if parent != nil, !parentInSession, cardTransform == nil {
+            message = Self.needCardsMessage
+            return
+        }
         // Copy the meshes out while the anchors are still valid.
         let anchors = session.currentFrame?.anchors.compactMap { $0 as? ARMeshAnchor } ?? []
         let parts = anchors.compactMap(Self.part)
@@ -513,7 +540,7 @@ final class ShotRecorder: NSObject, ObservableObject, ARSessionDelegate {
             message = "No room mesh yet — keep turning before Stop."
             return
         }
-        session.pause()
+        // The session keeps running (tracking kept for Scan more); only leaving the screen pauses it.
         UIApplication.shared.isIdleTimerDisabled = false
         phase = .saving
         message = "Saving the shot…"
@@ -524,23 +551,44 @@ final class ShotRecorder: NSObject, ObservableObject, ARSessionDelegate {
                           tracking: worstTracking, systemVersion: UIDevice.current.systemVersion, compass: compassAtAlignment,
                           cards: cardTracker)
         keyframes = []  // the job now holds the only reference, and drops each photo as it is written
+        let into = parent, same = parentInSession, transform = cardTransform
+        // A leave or a restart while saving means the session's frame is no longer this pass's.
+        let serial = runSerial
         Task {
-            let result = await Task.detached { job.write() }.value
+            let (result, passes) = await Task.detached { () -> (Result<URL, ShotFailure>, Int) in
+                let r = into.map { job.writePass(into: $0, sameSession: same, transform: transform) } ?? job.write()
+                guard case .success(let url) = r else { return (r, 0) }
+                let n = (try? Data(contentsOf: url, options: .alwaysMapped)).map { Core.summary(bundle: $0, pair: nil)["passes"] as? Int ?? 0 } ?? 0
+                return (r, n)
+            }.value
             switch result {
-            case .success(let url): phase = .saved(url); message = "Shot saved."
+            case .success(let url):
+                parent = url
+                parentInSession = serial == runSerial
+                parentMade = parentMade ?? Date()
+                Log.write("shot", "saved pass \(max(passes, 1))")
+                phase = .saved(url); message = "Shot saved. Scan more to fill gaps."
             case .failure(let m): phase = .failed(m.message); message = m.message
             }
         }
     }
 
-    /// Ready for another shot from the same station.
-    func reset() {
+    /// Ready for another pass at the same station, in the same ARKit session (tracking kept, so the pass needs
+    /// no line-up). Does not run the session again.
+    func scanMore() {
         shotSerial += 1
         keyframes = []; keyframeCount = 0
         cardTracker = CardTracker(); cardMarkers = []; calm = false
         photoLimitShown = false
         phase = .ready
         message = Self.readyMessage
+    }
+
+    /// Ready for another shot from the same station, with tracking started afresh.
+    func reset() {
+        scanMore()
+        parentInSession = false
+        cardTransform = nil
         run()
     }
 
@@ -612,22 +660,8 @@ final class ShotJob: @unchecked Sendable {
         parts = []
         let shotId = UUID().uuidString.lowercased()
 
-        // Join the photos, letting each one go as soon as it is copied in.
-        var photos = keyframes
-        keyframes = []
-        var jpegs = Data()
-        jpegs.reserveCapacity(photos.reduce(0) { $0 + $1.jpeg.count })
-        var kfs: [[String: Any]] = []
-        var numbers: [Double] = [instrumentHeight]
-        photos.reverse()
-        while let k = photos.popLast() {
-            jpegs.append(k.jpeg)
-            let p = k.pose, i = k.intrinsics
-            let pose = [p.columns.0, p.columns.1, p.columns.2, p.columns.3].flatMap { [$0.x, $0.y, $0.z, $0.w] }.map(Double.init)
-            let intr = [i.columns.0, i.columns.1, i.columns.2].flatMap { [$0.x, $0.y, $0.z] }.map(Double.init)
-            numbers += pose + intr
-            kfs.append(["pose": pose, "intrinsics": intr, "width": k.w, "height": k.h, "jpeg_len": k.jpeg.count])
-        }
+        var (kfs, jpegs, numbers) = joinedPhotos()
+        numbers.append(instrumentHeight)
         let start = [startCamera.x, startCamera.y, startCamera.z].map(Double.init)
         numbers += start + [compass.accuracyDeg]
         let header: [String: Any] = [
@@ -650,6 +684,61 @@ final class ShotJob: @unchecked Sendable {
         guard !bundle.isEmpty else { return .failure(Self.unwritable) }
         do { return .success(try ShotFiles.save(bundle, cave: caveId, shot: shotId)) }
         catch { return .failure(ShotFailure(message: "Saving failed: \(error.localizedDescription)")) }
+    }
+
+    /// Adds this job as a pass to the shot at `parent`. Same session: the mesh replaces the shot's (ARKit's
+    /// whole current mesh, which holds the earlier passes) and the transform is identity. Otherwise `transform`
+    /// (column-major, this pass's frame to the shot's, from the cards) moves the pass and its mesh is added.
+    /// The parent is rewritten through a temporary file; on any failure it is left as it was.
+    func writePass(into parent: URL, sameSession: Bool, transform: [Double]?) -> Result<URL, ShotFailure> {
+        guard let old = try? Data(contentsOf: parent) else { return .failure(ShotFailure(message: "The earlier scan could not be read.")) }
+        if !cards.allSightings.isEmpty {
+            cards.applyMesh(CardTracker.meshRanges(cards.allSightings, MeshSnapshot(parts, near: cards.points)))
+            cards.logLines.forEach { Log.write("cards", "final (full mesh): \($0)") }
+        }
+        var mesh = ShotRecorder.mergeAnchors(parts)
+        parts = []
+        var (kfs, jpegs, numbers) = joinedPhotos()
+        let identity: [Double] = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]
+        let t = sameSession ? identity : (transform ?? identity)
+        numbers += t
+        let pass: [String: Any] = [
+            "captured_at_ms": Int64(Date().timeIntervalSince1970 * 1000),
+            "aligned_by": sameSession ? "same_session" : "cards",
+            "transform": t, "replace": sameSession, "tracking": tracking,
+            "cards": cards.records.map(\.json), "keyframes": kfs,
+        ]
+        guard t.count == 16, numbers.allSatisfy(\.isFinite), JSONSerialization.isValidJSONObject(pass),
+              let pj = try? JSONSerialization.data(withJSONObject: pass)
+        else { return .failure(Self.unwritable) }
+        let bundle = Core.addPass(bundle: old, pass: pj, positions: mesh.positions, normals: mesh.normals,
+                                  indices: mesh.indices, jpegs: jpegs)
+        jpegs = Data()
+        mesh = MergedMesh(positions: [], normals: [], indices: [])
+        guard !bundle.isEmpty else { return .failure(Self.unwritable) }
+        return ShotFiles.replace(parent, with: bundle)
+            ? .success(parent) : .failure(ShotFailure(message: "Saving the pass failed; the earlier scan is kept."))
+    }
+
+    /// Joins the photos into one JPEG run with their header entries, letting each photo go as soon as it is
+    /// copied in. `numbers` holds every pose and intrinsics value, for the finite check.
+    private func joinedPhotos() -> (kfs: [[String: Any]], jpegs: Data, numbers: [Double]) {
+        var photos = keyframes
+        keyframes = []
+        var jpegs = Data()
+        jpegs.reserveCapacity(photos.reduce(0) { $0 + $1.jpeg.count })
+        var kfs: [[String: Any]] = []
+        var numbers: [Double] = []
+        photos.reverse()
+        while let k = photos.popLast() {
+            jpegs.append(k.jpeg)
+            let p = k.pose, i = k.intrinsics
+            let pose = [p.columns.0, p.columns.1, p.columns.2, p.columns.3].flatMap { [$0.x, $0.y, $0.z, $0.w] }.map(Double.init)
+            let intr = [i.columns.0, i.columns.1, i.columns.2].flatMap { [$0.x, $0.y, $0.z] }.map(Double.init)
+            numbers += pose + intr
+            kfs.append(["pose": pose, "intrinsics": intr, "width": k.w, "height": k.h, "jpeg_len": k.jpeg.count])
+        }
+        return (kfs, jpegs, numbers)
     }
 
     private static func model() -> String {

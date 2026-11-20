@@ -32,6 +32,28 @@ enum ShotFiles {
         list(cave: cave).reduce(0) { $0 + Int64((try? $1.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0) }
     }
 
+    /// The newest shot of the cave taken over `station`, or nil. Files are mapped, not read in.
+    static func parent(cave: String, station: String) -> URL? {
+        list(cave: cave).first { u in
+            guard let d = try? Data(contentsOf: u, options: .alwaysMapped) else { return false }
+            return Core.summary(bundle: d, pair: nil)["station_id"] as? String == station
+        }
+    }
+
+    /// Writes `data` beside `url`, then swaps it in; the old file stays as it was if anything fails.
+    @discardableResult
+    static func replace(_ url: URL, with data: Data) -> Bool {
+        let tmp = url.deletingLastPathComponent().appendingPathComponent(".\(UUID().uuidString).tmp")
+        do {
+            try data.write(to: tmp, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+            _ = try FileManager.default.replaceItemAt(url, withItemAt: tmp)
+            return true
+        } catch {
+            try? FileManager.default.removeItem(at: tmp)
+            return false
+        }
+    }
+
     /// The cave's shots, newest first.
     static func list(cave: String) -> [URL] {
         let files = ((try? FileManager.default.contentsOfDirectory(at: folder(cave: cave), includingPropertiesForKeys: [.creationDateKey])) ?? [])

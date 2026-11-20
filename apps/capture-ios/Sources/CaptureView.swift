@@ -64,25 +64,33 @@ struct CaptureView: View {
             if ShotRecorder.hasLiDAR { ARMeshView(session: rec.session, markers: rec.cardMarkers).ignoresSafeArea() }
             VStack {
                 Text("Over \(over.label)").padding(8).background(.thinMaterial, in: .capsule)
+                if let d = rec.parentMade {
+                    Text("Adding to the scan from \(d.formatted(date: .omitted, time: .shortened))")
+                        .font(.caption).padding(6).background(.thinMaterial, in: .capsule)
+                }
                 Spacer()
                 Text(rec.message).padding(8).background(.thinMaterial, in: .rect(cornerRadius: 8))
                 HStack(spacing: 16) {
                     switch rec.phase {
                     case .ready:
-                        Button("Start") { rec.start() }.buttonStyle(.borderedProminent).disabled(rec.findingNorth)
+                        Button(rec.parent == nil ? "Start" : "Scan more") { rec.start() }
+                            .buttonStyle(.borderedProminent).disabled(rec.findingNorth)
                     case .capturing:
                         Text("\(rec.keyframeCount) photos")
                         Button("Stop") { rec.stop(cave: cave, over: over) }.buttonStyle(.borderedProminent).tint(.red)
                     case .saving: ProgressView()
                     case .saved(let url):
                         NavigationLink("View shot") { ShotView(url: url, stations: [over]) }
-                        Button("New shot") { rec.reset() }.buttonStyle(.bordered)
-                    case .failed(let m): Text(m).foregroundStyle(.red)
+                        Button("Scan more") { rec.scanMore() }.buttonStyle(.borderedProminent)
+                    case .failed(let m):
+                        Text(m).foregroundStyle(.red)
+                        // a failed save keeps the session (and the earlier scan): another pass can try again
+                        if ShotRecorder.hasLiDAR { Button("Scan more") { rec.scanMore() }.buttonStyle(.bordered) }
                     }
                 }.padding()
             }
         }
-        .onAppear { rec.run() }
+        .onAppear { rec.prepare(cave: cave, over: over); rec.run() }
         .onDisappear { rec.leave() }
     }
 }
