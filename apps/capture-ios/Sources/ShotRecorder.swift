@@ -17,14 +17,11 @@ struct MergedMesh: Sendable { var positions: [Float]; var normals: [Float]; var 
 /// One kept camera frame.
 struct ShotKeyframe: Sendable { let pose: simd_float4x4; let intrinsics: simd_float3x3; let w: Int; let h: Int; let jpeg: Data }
 
-/// Capture settings the person sets once and the phone remembers.
-enum CaptureSettings {
-    /// UserDefaults key for the phone's height above the station mark, metres.
-    static let heightKey = "instrumentHeightM"
-    static let defaultHeight = 1.0
-    /// A usable height: 0–3 m; anything not a number goes back to the default.
-    /// Between 0 and 3 m, to the centimetre (the stepper drifts: 0.5 arrived as 0.4999999999999996).
-    static func clampHeight(_ h: Double) -> Double { h.isFinite ? (min(max(h, 0), 3) * 100).rounded() / 100 : defaultHeight }
+/// The capture rig.
+enum Rig {
+    /// The phone's height above the station mark: the gimbal's roll pivot, metres. Mirrors
+    /// `cave_capture::frame::PIVOT_HEIGHT_M` (crates/cave-capture/src/frame.rs); change both together.
+    static let pivotHeightM = 0.30
 }
 
 /// A camera frame's pixels handed to the JPEG queue (only that frame's buffer, never the ARFrame).
@@ -46,22 +43,25 @@ private final class JpegEncoder: @unchecked Sendable {
     }
 }
 
-/// Runs one shot: ARKit scene reconstruction, heading tap, keyframes; turns it into a bundle on Stop.
+/// Runs one shot: ARKit scene reconstruction with a compass-aligned frame, keyframes; turns it into a bundle on Stop.
 @MainActor
 final class ShotRecorder: NSObject, ObservableObject, ARSessionDelegate {
-    enum Phase { case aiming, capturing, saving, saved(URL), failed(String) }
+    enum Phase { case ready, capturing, saving, saved(URL), failed(String) }
 
     /// Photos kept per shot at most (memory and file size); the mesh keeps growing after.
     static let maxKeyframes = 240
-    static let aimMessage = "Put the crosshair on the forward station and tap Aim."
+    static let readyMessage = "Stand the gimbal on the station, then press Start and let it turn."
+    /// Seconds between compass lines in the log while capturing (drift shows there).
+    static let compassLogEvery: TimeInterval = 5
 
-    @Published var phase: Phase = .aiming { didSet { Log.write("shot", "phase \(phase)") } }
-    @Published var message = aimMessage { didSet { if message != oldValue { Log.write("shot", message) } } }
-    @Published var tapped = false
+    @Published var phase: Phase = .ready { didSet { Log.write("shot", "phase \(phase)") } }
+    @Published var message = readyMessage { didSet { if message != oldValue { Log.write("shot", message) } } }
     @Published var keyframeCount = 0
 
     let session = ARSession()
-    private var tap: (origin: SIMD3<Float>, dir: SIMD3<Float>)?
+    private let compass = CompassWatcher()
+    private var compassAtStart = CompassReading.none
+    private var lastCompassLog: TimeInterval = 0
     private var startCamera = SIMD3<Float>(0, 0, 0)
     private var keyframes: [ShotKeyframe] = []
     private var lastYaw: Float = .nan, lastTime: TimeInterval = 0
@@ -123,26 +123,17 @@ final class ShotRecorder: NSObject, ObservableObject, ARSessionDelegate {
         c.sceneReconstruction = .mesh
         c.frameSemantics = [.sceneDepth]
         c.isLightEstimationEnabled = true
-        c.worldAlignment = .gravity
+        // x east, y up, z south: the compass turns the shot, no heading tap needed
+        c.worldAlignment = .gravityAndHeading
         session.delegate = self
+        compass.start()
         session.run(c, options: [.resetTracking, .removeExistingAnchors])
-    }
-
-    func aim() {
-        guard let f = session.currentFrame else { return }
-        let t = f.camera.transform
-        let origin = SIMD3(t.columns.3.x, t.columns.3.y, t.columns.3.z)
-        let fwd = -SIMD3(t.columns.2.x, t.columns.2.y, t.columns.2.z)
-        tap = (origin, simd_normalize(fwd))
-        tapped = true
-        message = "Aimed. Press Start and turn slowly around the room."
     }
 
     func start() {
         guard let f = session.currentFrame else { return }
         if (f.lightEstimate?.ambientIntensity ?? 0) < 150 { message = "Too dark to track. Turn the light on."; return }
         guard case .normal = f.camera.trackingState else { message = "Hold still until tracking settles."; return }
-        guard tapped else { message = "Aim at the forward station first."; return }
         // Warn once when space is short; a second tap on Start goes ahead.
         if !spaceWarned, let free = try? URL(fileURLWithPath: NSHomeDirectory())
             .resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey]).volumeAvailableCapacityForImportantUsage,
@@ -156,9 +147,13 @@ final class ShotRecorder: NSObject, ObservableObject, ARSessionDelegate {
         keyframes = []; keyframeCount = 0; lastYaw = .nan; lastTime = 0; worstTracking = "normal"
         photoLimitShown = false
         shotSerial += 1
+        compassAtStart = compass.latest
+        lastCompassLog = f.timestamp
+        Log.write("compass", "at start: \(compassAtStart.logLine)")
         phase = .capturing
         UIApplication.shared.isIdleTimerDisabled = true
-        message = "Capturing. Turn slowly; Stop when the room is covered."
+        // An unsure compass does not stop the shot, but it must be seen.
+        message = compassAtStart.warning ?? "Capturing. Turn slowly; Stop when the room is covered."
     }
 
     // ARSession calls this on the main queue (no delegateQueue is set).
@@ -188,6 +183,10 @@ final class ShotRecorder: NSObject, ObservableObject, ARSessionDelegate {
             case .notAvailable: worstTracking = "lost"
             case .limited: if worstTracking == "normal" { worstTracking = "limited" }
             }
+            if time - lastCompassLog >= Self.compassLogEvery {
+                lastCompassLog = time
+                Log.write("compass", compass.latest.logLine)
+            }
             if keyframes.count >= Self.maxKeyframes {
                 if !photoLimitShown { photoLimitShown = true; message = "Photo limit reached; mesh still capturing." }
                 return
@@ -210,8 +209,8 @@ final class ShotRecorder: NSObject, ObservableObject, ARSessionDelegate {
         }
     }
 
-    func stop(cave: KeptCave, over: Station, forward: Station, height: Double) {
-        guard case .capturing = phase, let tap else { return }
+    func stop(cave: KeptCave, over: Station) {
+        guard case .capturing = phase else { return }
         // Copy the meshes out while the anchors are still valid.
         let anchors = session.currentFrame?.anchors.compactMap { $0 as? ARMeshAnchor } ?? []
         let parts = anchors.compactMap(Self.part)
@@ -225,9 +224,9 @@ final class ShotRecorder: NSObject, ObservableObject, ARSessionDelegate {
         phase = .saving
         message = "Saving the shot…"
         shotSerial += 1
-        let job = ShotJob(caveId: cave.id, over: over, forward: forward, parts: parts, keyframes: keyframes,
-                          tapOrigin: tap.origin, tapDir: tap.dir, startCamera: startCamera, tracking: worstTracking,
-                          systemVersion: UIDevice.current.systemVersion, instrumentHeight: CaptureSettings.clampHeight(height))
+        Log.write("compass", "at stop: \(compass.latest.logLine)")
+        let job = ShotJob(caveId: cave.id, over: over, parts: parts, keyframes: keyframes, startCamera: startCamera,
+                          tracking: worstTracking, systemVersion: UIDevice.current.systemVersion, compass: compassAtStart)
         keyframes = []  // the job now holds the only reference, and drops each photo as it is written
         Task {
             let result = await Task.detached { job.write() }.value
@@ -241,11 +240,10 @@ final class ShotRecorder: NSObject, ObservableObject, ARSessionDelegate {
     /// Ready for another shot from the same station.
     func reset() {
         shotSerial += 1
-        tap = nil; tapped = false
         keyframes = []; keyframeCount = 0
         photoLimitShown = false
-        phase = .aiming
-        message = Self.aimMessage
+        phase = .ready
+        message = Self.readyMessage
         run()
     }
 
@@ -253,6 +251,7 @@ final class ShotRecorder: NSObject, ObservableObject, ARSessionDelegate {
     func leave() {
         shotSerial += 1
         session.pause()
+        compass.stop()
         UIApplication.shared.isIdleTimerDisabled = false
     }
 
@@ -283,22 +282,19 @@ struct ShotFailure: Error { let message: String }
 final class ShotJob: @unchecked Sendable {
     let caveId: String
     let over: Station
-    let forward: Station
     private var parts: [MeshPart]
     private var keyframes: [ShotKeyframe]
-    let tapOrigin: SIMD3<Float>
-    let tapDir: SIMD3<Float>
     let startCamera: SIMD3<Float>
     let tracking: String
     let systemVersion: String
-    let instrumentHeight: Double
+    let compass: CompassReading
+    /// Always the gimbal's pivot height: every shot stands on the same gimbal.
+    let instrumentHeight = Rig.pivotHeightM
 
-    init(caveId: String, over: Station, forward: Station, parts: [MeshPart], keyframes: [ShotKeyframe],
-         tapOrigin: SIMD3<Float>, tapDir: SIMD3<Float>, startCamera: SIMD3<Float>, tracking: String,
-         systemVersion: String, instrumentHeight: Double) {
-        self.caveId = caveId; self.over = over; self.forward = forward; self.parts = parts; self.keyframes = keyframes
-        self.tapOrigin = tapOrigin; self.tapDir = tapDir; self.startCamera = startCamera; self.tracking = tracking
-        self.systemVersion = systemVersion; self.instrumentHeight = instrumentHeight
+    init(caveId: String, over: Station, parts: [MeshPart], keyframes: [ShotKeyframe], startCamera: SIMD3<Float>,
+         tracking: String, systemVersion: String, compass: CompassReading) {
+        self.caveId = caveId; self.over = over; self.parts = parts; self.keyframes = keyframes
+        self.startCamera = startCamera; self.tracking = tracking; self.systemVersion = systemVersion; self.compass = compass
     }
 
     private static let unwritable = ShotFailure(message: "The shot could not be written.")
@@ -326,14 +322,13 @@ final class ShotJob: @unchecked Sendable {
             kfs.append(["pose": pose, "intrinsics": intr, "width": k.w, "height": k.h, "jpeg_len": k.jpeg.count])
         }
         let start = [startCamera.x, startCamera.y, startCamera.z].map(Double.init)
-        let origin = [tapOrigin.x, tapOrigin.y, tapOrigin.z].map(Double.init)
-        let dir = [tapDir.x, tapDir.y, tapDir.z].map(Double.init)
-        numbers += start + origin + dir
+        numbers += start + [compass.accuracyDeg]
         let header: [String: Any] = [
             "shot_id": shotId, "cave_id": caveId, "station_id": over.id, "station_label": over.label,
             "captured_at_ms": Int64(Date().timeIntervalSince1970 * 1000), "device": Self.model(),
             "instrument_height_m": instrumentHeight, "start_camera": start,
-            "taps": [["target_station_id": forward.id, "target_label": forward.label, "origin": origin, "dir": dir]],
+            // a compass shot: the frame is gravityAndHeading, so no taps
+            "taps": [Any](), "compass": ["true_north": compass.trueNorth, "accuracy_deg": compass.accuracyDeg],
             "tracking": tracking, "arkit_version": systemVersion,
             "gravity": [0.0, -1.0, 0.0], "keyframes": kfs,
         ]

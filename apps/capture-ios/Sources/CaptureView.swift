@@ -14,32 +14,26 @@ struct ARMeshView: UIViewRepresentable {
 }
 
 struct CaptureView: View {
-    let cave: KeptCave; let over: Station; let forward: Station
-    /// Phone height above the station mark, metres.
-    let height: Double
+    let cave: KeptCave; let over: Station
     @StateObject private var rec = ShotRecorder()
 
     var body: some View {
         ZStack {
-            if ShotRecorder.hasLiDAR {
-                ARMeshView(session: rec.session).ignoresSafeArea()
-                Image(systemName: "plus").font(.system(size: 40, weight: .thin)).foregroundStyle(.yellow)
-            }
+            if ShotRecorder.hasLiDAR { ARMeshView(session: rec.session).ignoresSafeArea() }
             VStack {
-                Text("Over \(over.label) · aim at \(forward.label)").padding(8).background(.thinMaterial, in: .capsule)
+                Text("Over \(over.label)").padding(8).background(.thinMaterial, in: .capsule)
                 Spacer()
                 Text(rec.message).padding(8).background(.thinMaterial, in: .rect(cornerRadius: 8))
                 HStack(spacing: 16) {
                     switch rec.phase {
-                    case .aiming:
-                        Button("Aim") { rec.aim() }.buttonStyle(.bordered)
-                        Button("Start") { rec.start() }.buttonStyle(.borderedProminent).disabled(!rec.tapped)
+                    case .ready:
+                        Button("Start") { rec.start() }.buttonStyle(.borderedProminent)
                     case .capturing:
                         Text("\(rec.keyframeCount) photos")
-                        Button("Stop") { rec.stop(cave: cave, over: over, forward: forward, height: height) }.buttonStyle(.borderedProminent).tint(.red)
+                        Button("Stop") { rec.stop(cave: cave, over: over) }.buttonStyle(.borderedProminent).tint(.red)
                     case .saving: ProgressView()
                     case .saved(let url):
-                        NavigationLink("View shot") { ShotView(url: url, stations: [over, forward]) }
+                        NavigationLink("View shot") { ShotView(url: url, stations: [over]) }
                         Button("New shot") { rec.reset() }.buttonStyle(.bordered)
                     case .failed(let m): Text(m).foregroundStyle(.red)
                     }

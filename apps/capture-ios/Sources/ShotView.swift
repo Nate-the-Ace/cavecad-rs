@@ -10,12 +10,14 @@ struct ShotSummary: Equatable, Sendable {
     /// The station the shot was taken over, and the one its heading tap aimed at.
     var stationId: String?
     var targetStationId: String?
+    /// A compass shot (placed from its station alone); false for the older heading-tap shots.
+    var isCompass = false
 
     init(vertices: Int, triangles: Int, keyframes: Int, placed: Bool, turnDeg: Double?, error: String?,
-         stationId: String?, targetStationId: String?) {
+         stationId: String?, targetStationId: String?, isCompass: Bool) {
         self.vertices = vertices; self.triangles = triangles; self.keyframes = keyframes
         self.placed = placed; self.turnDeg = turnDeg; self.error = error
-        self.stationId = stationId; self.targetStationId = targetStationId
+        self.stationId = stationId; self.targetStationId = targetStationId; self.isCompass = isCompass
     }
 
     init(_ d: [String: Any]) {
@@ -27,22 +29,33 @@ struct ShotSummary: Equatable, Sendable {
         error = d["error"] as? String
         stationId = d["station_id"] as? String
         targetStationId = d["target_station_id"] as? String
+        isCompass = d["compass"] is [String: Any]
     }
 
-    /// The shot's own two stations, looked up among the cave's; nil when either is gone from the cave.
-    func stations(in all: [Station]) -> (over: Station, forward: Station)? {
-        guard let o = all.first(where: { $0.id == stationId }), let f = all.first(where: { $0.id == targetStationId })
-        else { return nil }
-        return (o, f)
+    /// The shot's own stations among the cave's: nil when the station it stood on is gone. `forward` is the
+    /// tap target of an older shot (nil for compass shots, and when that target is gone).
+    func stations(in all: [Station]) -> (over: Station, forward: Station?)? {
+        guard let o = all.first(where: { $0.id == stationId }) else { return nil }
+        return (o, targetStationId.flatMap { t in all.first { $0.id == t } })
+    }
+
+    /// The six numbers to place it with: a compass shot gives its station twice (the core ignores the target);
+    /// a tap shot needs its target. Nil when a needed station is gone.
+    func pair(in all: [Station]) -> [Double]? {
+        guard let found = stations(in: all) else { return nil }
+        if isCompass { return Core.pair(found.over, found.over) }
+        return found.forward.map { Core.pair(found.over, $0) }
     }
 }
 
 struct ShotView: View {
     let url: URL
-    /// Stations to find the shot's own pair in (the cave's, or just the two it was captured with).
+    /// Stations to find the shot's own in (the cave's, or just the one it was captured over).
     let stations: [Station]
     @State private var summary: ShotSummary?
-    @State private var pair: (over: Station, forward: Station)?
+    @State private var over: Station?
+    @State private var forward: Station?
+    @State private var placeable = false
     @State private var scene: SCNScene?
 
     var body: some View {
@@ -51,14 +64,7 @@ struct ShotView: View {
                 SceneView(scene: scene, options: [.allowsCameraControl, .autoenablesDefaultLighting]).frame(maxHeight: .infinity)
             } else if let summary {
                 Spacer()
-                if summary.error != nil {
-                    Text("This shot could not be read.").padding()
-                } else if pair == nil {
-                    Text("A station this shot was taken from is gone from the cave.").multilineTextAlignment(.center).padding()
-                } else if !summary.placed {
-                    Text("Not placed: pick a forward station that is not straight above or below, or aim again.")
-                        .multilineTextAlignment(.center).padding()
-                }
+                Text(Self.problem(summary, placeable: placeable)).multilineTextAlignment(.center).padding()
                 Spacer()
             } else {
                 ProgressView().frame(maxHeight: .infinity)
@@ -68,28 +74,38 @@ struct ShotView: View {
                     Text("\(summary.vertices) points")
                     Text("\(summary.triangles) triangles")
                     Text("\(summary.keyframes) photos")
-                    if let t = summary.turnDeg { Text(String(format: "turned %.1f°", t)) }
+                    if !summary.isCompass, let t = summary.turnDeg { Text(String(format: "turned %.1f°", t)) }
                 }.font(.caption).padding(8)
             }
         }
-        .navigationTitle(pair.map { "\($0.over.label) → \($0.forward.label)" } ?? "Shot")
+        .navigationTitle(over.map { "over \($0.label)" } ?? "Shot")
         .task {
             let url = url, stations = stations
             // Reading and placing a shot is heavy: off the main actor, then shown here.
-            let (s, found, points) = await Task.detached { () -> (ShotSummary, (over: Station, forward: Station)?, [Float]) in
+            let (s, found, ok, points) = await Task.detached {
+                () -> (ShotSummary, (over: Station, forward: Station?)?, Bool, [Float]) in
                 guard let data = try? Data(contentsOf: url, options: .alwaysMapped) else {
-                    return (ShotSummary(["error": "unreadable"]), nil, [])
+                    return (ShotSummary(["error": "unreadable"]), nil, false, [])
                 }
                 let head = ShotSummary(Core.summary(bundle: data, pair: nil))
-                guard head.error == nil, let found = head.stations(in: stations) else { return (head, nil, []) }
-                let p = Core.pair(found.over, found.forward)
+                guard head.error == nil, let p = head.pair(in: stations) else { return (head, head.stations(in: stations), false, []) }
                 let s = ShotSummary(Core.summary(bundle: data, pair: p))
-                return (s, found, s.placed ? Core.placedPositions(bundle: data, pair: p) : [])
+                return (s, head.stations(in: stations), true, s.placed ? Core.placedPositions(bundle: data, pair: p) : [])
             }.value
             summary = s
-            pair = found
-            if let found, s.placed, !points.isEmpty { scene = Self.scene(points: points, over: found.over, forward: found.forward) }
+            over = found?.over
+            forward = found?.forward
+            placeable = ok
+            if let o = found?.over, s.placed, !points.isEmpty { scene = Self.scene(points: points, over: o, forward: found?.forward) }
         }
+    }
+
+    /// What to say when there is no view.
+    static func problem(_ s: ShotSummary, placeable: Bool) -> String {
+        if s.error != nil { return "This shot could not be read." }
+        if !placeable { return "A station this shot was taken from is gone from the cave." }
+        if s.isCompass { return "This shot could not be placed." }
+        return "Not placed: pick a forward station that is not straight above or below, or aim again."
     }
 
     /// Survey (x east, y north, z up) shown in SceneKit (y up): (x, z, -y).
@@ -102,7 +118,7 @@ struct ShotView: View {
     }
 
     /// Points come relative to the station over, so the scene's origin is that station.
-    static func scene(points: [Float], over: Station, forward: Station) -> SCNScene {
+    static func scene(points: [Float], over: Station, forward: Station?) -> SCNScene {
         let s = SCNScene()
         let verts = sceneVertices(points)
         let src = SCNGeometrySource(vertices: verts)
@@ -112,7 +128,8 @@ struct ShotView: View {
         g.firstMaterial?.diffuse.contents = UIColor.systemGray
         g.firstMaterial?.lightingModel = .constant
         s.rootNode.addChildNode(SCNNode(geometry: g))
-        for (st, colour) in [(over, UIColor.systemRed), (forward, UIColor.systemBlue)] {
+        // red at the station; blue at an older shot's aimed station
+        for (st, colour) in [(over, UIColor.systemRed)] + (forward.map { [($0, UIColor.systemBlue)] } ?? []) {
             let n = SCNNode(geometry: SCNSphere(radius: 0.1))
             n.geometry?.firstMaterial?.diffuse.contents = colour
             // relative to the station over, in Double first (survey coordinates can be large)
