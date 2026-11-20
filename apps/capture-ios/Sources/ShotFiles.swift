@@ -13,8 +13,13 @@ enum ShotFiles {
         try bundle.write(to: u, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
         return u
     }
+    /// The cave's shots, newest first.
     static func list(cave: String) -> [URL] {
-        ((try? FileManager.default.contentsOfDirectory(at: folder(cave: cave), includingPropertiesForKeys: [.creationDateKey])) ?? [])
-            .filter { $0.pathExtension == "cvcap" }.sorted { $0.lastPathComponent < $1.lastPathComponent }
+        let files = ((try? FileManager.default.contentsOfDirectory(at: folder(cave: cave), includingPropertiesForKeys: [.creationDateKey])) ?? [])
+            .filter { $0.pathExtension == "cvcap" }
+        let made = { (u: URL) in (try? u.resourceValues(forKeys: [.creationDateKey]).creationDate) ?? .distantPast }
+        return files.map { ($0, made($0)) }
+            .sorted { $0.1 != $1.1 ? $0.1 > $1.1 : $0.0.lastPathComponent < $1.0.lastPathComponent }
+            .map(\.0)
     }
 }

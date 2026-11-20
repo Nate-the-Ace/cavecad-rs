@@ -46,13 +46,18 @@ enum Core {
         }
     }
 
-    static func summary(bundle: Data, pair: [Double]) -> [String: Any] {
-        let d = bundle.withUnsafeBytes { b in pair.withUnsafeBufferPointer { s in
-            take(cc_shot_summary(b.bindMemory(to: UInt8.self).baseAddress, b.count, s.baseAddress))
-        } }
+    /// The core's summary of a shot. With no pair only the header is read: counts and which stations it was
+    /// taken from (`station_id`, `target_station_id`), not placed.
+    static func summary(bundle: Data, pair: [Double]?) -> [String: Any] {
+        let d = bundle.withUnsafeBytes { b in
+            let base = b.bindMemory(to: UInt8.self).baseAddress
+            guard let pair, pair.count == 6 else { return take(cc_shot_summary(base, b.count, nil)) }
+            return pair.withUnsafeBufferPointer { s in take(cc_shot_summary(base, b.count, s.baseAddress)) }
+        }
         return (try? JSONSerialization.jsonObject(with: d) as? [String: Any]) ?? ["error": "unreadable"]
     }
 
+    /// Placed mesh points, x y z per vertex, relative to the station over (`pair[0...2]`).
     static func placedPositions(bundle: Data, pair: [Double]) -> [Float] {
         let d = bundle.withUnsafeBytes { b in pair.withUnsafeBufferPointer { s in
             take(cc_shot_placed_positions(b.bindMemory(to: UInt8.self).baseAddress, b.count, s.baseAddress))

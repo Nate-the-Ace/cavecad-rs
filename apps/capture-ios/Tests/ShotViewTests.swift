@@ -13,7 +13,11 @@ final class ShotViewTests: XCTestCase {
 
     func testSummaryReading() {
         let placed = ShotSummary(["vertices": 3, "triangles": 1, "keyframes": 2, "placed": true, "turn_deg": 12.5])
-        XCTAssertEqual(placed, ShotSummary(vertices: 3, triangles: 1, keyframes: 2, placed: true, turnDeg: 12.5, error: nil))
+        XCTAssertEqual(placed, ShotSummary(vertices: 3, triangles: 1, keyframes: 2, placed: true, turnDeg: 12.5, error: nil,
+                                           stationId: nil, targetStationId: nil))
+        let named = ShotSummary(["station_id": "a", "target_station_id": "b", "placed": false])
+        XCTAssertEqual(named.stationId, "a")
+        XCTAssertEqual(named.targetStationId, "b")
         XCTAssertFalse(ShotSummary(["vertices": 0, "placed": false]).placed)
         XCTAssertEqual(ShotSummary(["error": "bad bundle"]).error, "bad bundle")
     }

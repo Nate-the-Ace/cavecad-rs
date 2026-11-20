@@ -15,6 +15,8 @@ struct ARMeshView: UIViewRepresentable {
 
 struct CaptureView: View {
     let cave: KeptCave; let over: Station; let forward: Station
+    /// Phone height above the station mark, metres.
+    let height: Double
     @StateObject private var rec = ShotRecorder()
 
     var body: some View {
@@ -34,15 +36,17 @@ struct CaptureView: View {
                         Button("Start") { rec.start() }.buttonStyle(.borderedProminent).disabled(!rec.tapped)
                     case .capturing:
                         Text("\(rec.keyframeCount) photos")
-                        Button("Stop") { rec.stop(cave: cave, over: over, forward: forward) }.buttonStyle(.borderedProminent).tint(.red)
+                        Button("Stop") { rec.stop(cave: cave, over: over, forward: forward, height: height) }.buttonStyle(.borderedProminent).tint(.red)
                     case .saving: ProgressView()
-                    case .saved(let url): NavigationLink("View shot") { ShotView(url: url, over: over, forward: forward) }
+                    case .saved(let url):
+                        NavigationLink("View shot") { ShotView(url: url, stations: [over, forward]) }
+                        Button("New shot") { rec.reset() }.buttonStyle(.bordered)
                     case .failed(let m): Text(m).foregroundStyle(.red)
                     }
                 }.padding()
             }
         }
         .onAppear { rec.run() }
-        .onDisappear { rec.session.pause() }
+        .onDisappear { rec.leave() }
     }
 }

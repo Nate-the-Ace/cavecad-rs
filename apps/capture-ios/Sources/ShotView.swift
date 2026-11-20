@@ -7,10 +7,15 @@ struct ShotSummary: Equatable, Sendable {
     var placed = false
     var turnDeg: Double?
     var error: String?
+    /// The station the shot was taken over, and the one its heading tap aimed at.
+    var stationId: String?
+    var targetStationId: String?
 
-    init(vertices: Int, triangles: Int, keyframes: Int, placed: Bool, turnDeg: Double?, error: String?) {
+    init(vertices: Int, triangles: Int, keyframes: Int, placed: Bool, turnDeg: Double?, error: String?,
+         stationId: String?, targetStationId: String?) {
         self.vertices = vertices; self.triangles = triangles; self.keyframes = keyframes
         self.placed = placed; self.turnDeg = turnDeg; self.error = error
+        self.stationId = stationId; self.targetStationId = targetStationId
     }
 
     init(_ d: [String: Any]) {
@@ -20,12 +25,24 @@ struct ShotSummary: Equatable, Sendable {
         placed = d["placed"] as? Bool ?? false
         turnDeg = d["turn_deg"] as? Double
         error = d["error"] as? String
+        stationId = d["station_id"] as? String
+        targetStationId = d["target_station_id"] as? String
+    }
+
+    /// The shot's own two stations, looked up among the cave's; nil when either is gone from the cave.
+    func stations(in all: [Station]) -> (over: Station, forward: Station)? {
+        guard let o = all.first(where: { $0.id == stationId }), let f = all.first(where: { $0.id == targetStationId })
+        else { return nil }
+        return (o, f)
     }
 }
 
 struct ShotView: View {
-    let url: URL; let over: Station; let forward: Station
+    let url: URL
+    /// Stations to find the shot's own pair in (the cave's, or just the two it was captured with).
+    let stations: [Station]
     @State private var summary: ShotSummary?
+    @State private var pair: (over: Station, forward: Station)?
     @State private var scene: SCNScene?
 
     var body: some View {
@@ -36,6 +53,8 @@ struct ShotView: View {
                 Spacer()
                 if summary.error != nil {
                     Text("This shot could not be read.").padding()
+                } else if pair == nil {
+                    Text("A station this shot was taken from is gone from the cave.").multilineTextAlignment(.center).padding()
                 } else if !summary.placed {
                     Text("Not placed: pick a forward station that is not straight above or below, or aim again.")
                         .multilineTextAlignment(.center).padding()
@@ -53,17 +72,23 @@ struct ShotView: View {
                 }.font(.caption).padding(8)
             }
         }
-        .navigationTitle(over.label)
+        .navigationTitle(pair.map { "\($0.over.label) → \($0.forward.label)" } ?? "Shot")
         .task {
-            let url = url, pair = Core.pair(over, forward)
+            let url = url, stations = stations
             // Reading and placing a shot is heavy: off the main actor, then shown here.
-            let (s, points) = await Task.detached { () -> (ShotSummary, [Float]) in
-                guard let data = try? Data(contentsOf: url) else { return (ShotSummary(["error": "unreadable"]), []) }
-                let s = ShotSummary(Core.summary(bundle: data, pair: pair))
-                return (s, s.placed ? Core.placedPositions(bundle: data, pair: pair) : [])
+            let (s, found, points) = await Task.detached { () -> (ShotSummary, (over: Station, forward: Station)?, [Float]) in
+                guard let data = try? Data(contentsOf: url, options: .alwaysMapped) else {
+                    return (ShotSummary(["error": "unreadable"]), nil, [])
+                }
+                let head = ShotSummary(Core.summary(bundle: data, pair: nil))
+                guard head.error == nil, let found = head.stations(in: stations) else { return (head, nil, []) }
+                let p = Core.pair(found.over, found.forward)
+                let s = ShotSummary(Core.summary(bundle: data, pair: p))
+                return (s, found, s.placed ? Core.placedPositions(bundle: data, pair: p) : [])
             }.value
             summary = s
-            if s.placed, !points.isEmpty { scene = Self.scene(points: points, over: over, forward: forward) }
+            pair = found
+            if let found, s.placed, !points.isEmpty { scene = Self.scene(points: points, over: found.over, forward: found.forward) }
         }
     }
 
@@ -76,6 +101,7 @@ struct ShotView: View {
         return verts
     }
 
+    /// Points come relative to the station over, so the scene's origin is that station.
     static func scene(points: [Float], over: Station, forward: Station) -> SCNScene {
         let s = SCNScene()
         let verts = sceneVertices(points)
@@ -89,7 +115,8 @@ struct ShotView: View {
         for (st, colour) in [(over, UIColor.systemRed), (forward, UIColor.systemBlue)] {
             let n = SCNNode(geometry: SCNSphere(radius: 0.1))
             n.geometry?.firstMaterial?.diffuse.contents = colour
-            n.position = SCNVector3(Float(st.x), Float(st.z), Float(-st.y))
+            // relative to the station over, in Double first (survey coordinates can be large)
+            n.position = SCNVector3(Float(st.x - over.x), Float(st.z - over.z), Float(-(st.y - over.y)))
             s.rootNode.addChildNode(n)
         }
         return s
