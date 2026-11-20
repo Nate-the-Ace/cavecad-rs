@@ -1,0 +1,4 @@
+module CaptureCore {
+    header "capture_core.h"
+    export *
+}

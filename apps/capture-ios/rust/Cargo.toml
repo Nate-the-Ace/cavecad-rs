@@ -1,0 +1,20 @@
+[workspace]
+
+[package]
+name = "capture-ffi"
+edition = "2024"
+version = "0.1.0"
+publish = false
+
+[lib]
+crate-type = ["staticlib", "rlib"]
+
+[dependencies]
+cave-capture = { path = "../../../crates/cave-capture" }
+cave-survey = { path = "../../../crates/cave-survey" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[dev-dependencies]
+cave-fixture = { path = "../../../crates/cave-fixture" }
+cave-doc = { path = "../../../crates/cave-doc" }
