@@ -27,6 +27,10 @@ enum Rig {
 /// A camera frame's pixels handed to the JPEG queue (only that frame's buffer, never the ARFrame).
 private struct PixelBuffer: @unchecked Sendable { let buffer: CVPixelBuffer }
 
+/// ARKit mesh anchors handed to the card mesh queue (ARKit hands out a new anchor object per update, so these
+/// are not changed while held; the ARFrame is not held).
+private struct MeshAnchors: @unchecked Sendable { let anchors: [ARMeshAnchor] }
+
 /// A station card to draw in the live view: where it was seen, in the capture frame (ARKit world).
 struct CardMarker: Equatable, Sendable { let card: StationCard; let position: SIMD3<Float> }
 
@@ -108,10 +112,15 @@ final class ShotRecorder: NSObject, ObservableObject, ARSessionDelegate {
     private var meshRuns = 0, meshMillis = 0.0, meshCopyMillis = 0.0
     /// Card reads ignored as too weak this shot, per card.
     private var weakReads: [StationCard: Int] = [:]
+    /// Each seen card's ARKit anchor; ARKit moves anchors when it corrects its map, and the card's sightings move
+    /// with it.
+    private var cardAnchors: [StationCard: UUID] = [:]
+    /// How far map corrections have moved each card's anchor this shot, metres.
+    private var anchorMoves: [StationCard: Double] = [:]
     /// Sight lines met with the mesh per pass at most.
     static let meshBatchLimit = 40
     /// Mesh anchors whose origin is this far from every card are not copied for the card passes, metres.
-    static let meshAnchorReach = 4.0
+    nonisolated static let meshAnchorReach = 4.0
     private static let meshQueue = DispatchQueue(label: "app.cavecad.capture.cards.mesh", qos: .utility)
     /// The highest camera format is in use (a failed start falls back to the default for the app's run).
     private var usingBestFormat = false
@@ -253,6 +262,7 @@ final class ShotRecorder: NSObject, ObservableObject, ARSessionDelegate {
         detectingCards = false; lastCardTime = -1; lastCardLog = f.timestamp
         cardRuns = 0; cardMillis = 0; cardMaxMillis = 0; cardFrameLogged = false
         meshing = false; lastMeshTime = f.timestamp; meshRuns = 0; meshMillis = 0; meshCopyMillis = 0; weakReads = [:]
+        removeCardAnchors()
         lastCompassLog = f.timestamp
         Log.write("compass", "at start: \(compass.latest.logLine) (aligned with \(compassAtAlignment.logLine))")
         phase = .capturing
@@ -369,7 +379,45 @@ final class ShotRecorder: NSObject, ObservableObject, ARSessionDelegate {
                                           s.card.rawValue, s.card.word, Self.metres(s.sizeRange), Self.metres(s.lidarRange), s.margin))
             }
         }
-        if !r.found.isEmpty { updateCardMarkers() }
+        if !r.found.isEmpty { pinNewCards(); updateCardMarkers() }
+    }
+
+    /// Gives each newly seen card an ARKit anchor where it is placed now.
+    private func pinNewCards() {
+        for (t, e) in cardTracker.seen where cardAnchors[t.card] == nil {
+            var m = matrix_identity_float4x4
+            m.columns.3 = SIMD4(Float(e.point.x), Float(e.point.y), Float(e.point.z), 1)
+            let a = ARAnchor(name: "card-\(t.card.rawValue)", transform: m)
+            session.add(anchor: a)
+            cardAnchors[t.card] = a.identifier
+            cardTracker.pin(t.card, Self.double(m))
+        }
+    }
+
+    private func removeCardAnchors() {
+        let ids = Set(cardAnchors.values)
+        for a in session.currentFrame?.anchors ?? [] where ids.contains(a.identifier) { session.remove(anchor: a) }
+        cardAnchors = [:]; anchorMoves = [:]
+    }
+
+    nonisolated static func double(_ m: simd_float4x4) -> simd_double4x4 {
+        simd_double4x4(SIMD4<Double>(m.columns.0), SIMD4<Double>(m.columns.1), SIMD4<Double>(m.columns.2), SIMD4<Double>(m.columns.3))
+    }
+
+    // ARKit corrected its map and moved some anchors (main queue).
+    nonisolated func session(_ session: ARSession, didUpdate anchors: [ARAnchor]) {
+        let moved = anchors.compactMap { a in a.name?.hasPrefix("card-") == true ? (a.identifier, a.transform) : nil }
+        guard !moved.isEmpty else { return }
+        MainActor.assumeIsolated {
+            guard case .capturing = phase else { return }
+            var any = false
+            for (id, m) in moved {
+                guard let card = cardAnchors.first(where: { $0.value == id })?.key else { continue }
+                let d = cardTracker.moveAnchor(card, Self.double(m))
+                if d > 0 { anchorMoves[card, default: 0] += d; any = true }
+            }
+            if any { updateCardMarkers() }
+        }
     }
 
     nonisolated static func metres(_ v: Double?) -> String { v.map { String(format: "%.2f m", $0) } ?? "nothing" }
@@ -380,36 +428,34 @@ final class ShotRecorder: NSObject, ObservableObject, ARSessionDelegate {
         if m != cardMarkers { cardMarkers = m }
     }
 
-    /// Every couple of seconds, meets every card sight line seen so far with the scan as it stands now, so a
-    /// card's place improves as the mesh does. The mesh is copied here (anchors are only valid on this thread);
-    /// the line tests run on their own queue.
+    /// Every couple of seconds, meets card sight lines with the scan as it stands now, so a card's place improves
+    /// as the mesh does. Only the anchor list is taken here; copying the mesh and the line tests run on their own
+    /// queue, off the main thread.
     private func meshCards(time: TimeInterval) {
         guard !meshing, time - lastMeshTime >= Self.cardMeshEvery else { return }
         let sightings = cardTracker.meshBatch(limit: Self.meshBatchLimit)
         guard !sightings.isEmpty else { return }
         lastMeshTime = time
-        let c0 = DispatchTime.now().uptimeNanoseconds
         let near = cardTracker.points
-        // Copy only anchors near a card (an anchor's mesh lies within a few metres of its origin); the queue
-        // then keeps only the parts whose box reaches within 1 m of one.
-        let anchors = (session.currentFrame?.anchors.compactMap { $0 as? ARMeshAnchor } ?? []).filter { a in
-            let o = SIMD3<Double>(Double(a.transform.columns.3.x), Double(a.transform.columns.3.y), Double(a.transform.columns.3.z))
-            return near.contains { simd_distance($0, o) <= Self.meshAnchorReach }
-        }
-        let parts = anchors.compactMap(Self.part)
-        meshCopyMillis += Double(DispatchTime.now().uptimeNanoseconds - c0) / 1e6
-        guard Self.hasMesh(parts) else { return }
+        let held = MeshAnchors(anchors: session.currentFrame?.anchors.compactMap { $0 as? ARMeshAnchor } ?? [])
         meshing = true
         let serial = shotSerial
         Self.meshQueue.async { [weak self] in
+            let c0 = DispatchTime.now().uptimeNanoseconds
+            // Copy only anchors near a card (an anchor's mesh lies within a few metres of its origin); the
+            // snapshot then keeps only the parts whose box reaches within 1 m of one.
+            let parts = held.anchors.filter { a in
+                let o = SIMD3<Double>(Double(a.transform.columns.3.x), Double(a.transform.columns.3.y), Double(a.transform.columns.3.z))
+                return near.contains { simd_distance($0, o) <= Self.meshAnchorReach }
+            }.compactMap(Self.part)
             let t0 = DispatchTime.now().uptimeNanoseconds
-            let ranges = CardTracker.meshRanges(sightings, MeshSnapshot(parts, near: near))
-            let ms = Double(DispatchTime.now().uptimeNanoseconds - t0) / 1e6
+            let ranges = Self.hasMesh(parts) ? CardTracker.meshRanges(sightings, MeshSnapshot(parts, near: near)) : [:]
+            let copyMs = Double(t0 - c0) / 1e6, ms = Double(DispatchTime.now().uptimeNanoseconds - t0) / 1e6
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 self.meshing = false
-                guard serial == self.shotSerial, case .capturing = self.phase else { return }
-                self.meshRuns += 1; self.meshMillis += ms
+                guard serial == self.shotSerial, case .capturing = self.phase, !ranges.isEmpty else { return }
+                self.meshRuns += 1; self.meshMillis += ms; self.meshCopyMillis += copyMs
                 self.cardTracker.applyMesh(ranges, pass: self.meshRuns)
                 self.updateCardMarkers()
             }
@@ -427,8 +473,13 @@ final class ShotRecorder: NSObject, ObservableObject, ARSessionDelegate {
             let w = weakReads.sorted { $0.key.rawValue < $1.key.rawValue }.map { "\($0.key.word) \($0.value)" }.joined(separator: ", ")
             Log.write("cards", "\(when): weak reads ignored: \(w)")
         }
+        if !anchorMoves.isEmpty {
+            let m = anchorMoves.sorted { $0.key.rawValue < $1.key.rawValue }
+                .map { String(format: "%@ %.0f mm", $0.key.word, $0.value * 1000) }.joined(separator: ", ")
+            Log.write("cards", "\(when): ARKit map corrections moved card anchors: \(m)")
+        }
         if meshRuns > 0 {
-            Log.write("cards", String(format: "%@: mesh passes %d, avg %.0f ms (+ %.0f ms copying on the main thread)", when, meshRuns,
+            Log.write("cards", String(format: "%@: mesh passes %d, avg %.0f ms (+ %.0f ms copying the mesh, off the main thread)", when, meshRuns,
                                       meshMillis / Double(meshRuns), meshCopyMillis / Double(meshRuns)))
         }
     }
@@ -486,7 +537,7 @@ final class ShotRecorder: NSObject, ObservableObject, ARSessionDelegate {
 
     /// One ARKit mesh anchor as plain arrays; nil for a layout this code does not read (LiDAR meshes are
     /// float3 vertices/normals and 32-bit triangle indices).
-    private static func part(_ a: ARMeshAnchor) -> MeshPart? {
+    nonisolated private static func part(_ a: ARMeshAnchor) -> MeshPart? {
         let g = a.geometry
         let f = g.faces
         guard f.bytesPerIndex == 4, f.indexCountPerPrimitive == 3,

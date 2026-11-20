@@ -120,6 +120,16 @@ struct CardSighting: Equatable, Sendable {
 
     var point: SIMD3<Double>? { range.map { eye + dir * $0.value } }
 
+    /// The same sighting with its sight line and corners moved by `m` (a rigid transform); distances unchanged.
+    func transformed(_ m: simd_double4x4) -> CardSighting {
+        func p(_ v: SIMD3<Double>) -> SIMD3<Double> { let w = m * SIMD4(v, 1); return SIMD3(w.x, w.y, w.z) }
+        let d = m * SIMD4(dir, 0)
+        var s = CardSighting(card: card, eye: p(eye), dir: simd_normalize(SIMD3(d.x, d.y, d.z)), sizeRange: sizeRange,
+                             sizeCorners: sizeCorners.map(p), lidarRange: lidarRange, margin: margin)
+        s.meshRange = meshRange; s.seq = seq; s.meshedPass = meshedPass
+        return s
+    }
+
     /// The corners moved along their own sight lines to agree with `range`.
     var corners: [SIMD3<Double>] {
         guard let s = sizeRange, s > 0, let r = range?.value, sizeCorners.count == 4 else { return [] }
@@ -395,26 +405,48 @@ struct CardEstimate: Equatable, Sendable {
 /// One card's sightings over a shot.
 struct CardTrack: Sendable {
     let card: StationCard
-    private(set) var sightings: [CardSighting] = []
+    /// The sightings in the card anchor's own frame (the capture frame until an anchor is pinned).
+    private var local: [CardSighting] = []
     private var marginSum = 0.0
     /// Detections with no distance at all to place them.
     var noRange = 0
+    /// Where the card's ARKit anchor is now (capture frame from anchor); nil until one is pinned. ARKit moves
+    /// anchors when it corrects its map, and the sightings move with it.
+    private(set) var anchor: simd_double4x4?
 
     init(card: StationCard) { self.card = card }
 
-    var count: Int { sightings.count }
-    var meanMargin: Double { sightings.isEmpty ? 0 : marginSum / Double(sightings.count) }
+    /// The sightings in the capture frame as the map stands now.
+    var sightings: [CardSighting] { anchor.map { a in local.map { $0.transformed(a) } } ?? local }
+    var count: Int { local.count }
+    var meanMargin: Double { local.isEmpty ? 0 : marginSum / Double(local.count) }
     var estimate: CardEstimate? { CardEstimate(sightings) }
 
+    /// Adds a sighting made in the capture frame as the map stands now.
     mutating func add(_ s: CardSighting) {
-        sightings.append(s)
+        local.append(anchor.map { s.transformed($0.inverse) } ?? s)
         marginSum += s.margin
+    }
+
+    /// Ties the sightings to an anchor just placed at `m`, without moving them.
+    mutating func pin(_ m: simd_double4x4) {
+        let world = sightings
+        anchor = m
+        local = world.map { $0.transformed(m.inverse) }
+    }
+
+    /// ARKit moved the anchor to `m`: the sightings move with it. Returns how far its origin moved, metres.
+    @discardableResult
+    mutating func moveAnchor(_ m: simd_double4x4) -> Double {
+        guard let old = anchor else { return 0 }
+        anchor = m
+        return simd_distance(SIMD3(old.columns.3.x, old.columns.3.y, old.columns.3.z), SIMD3(m.columns.3.x, m.columns.3.y, m.columns.3.z))
     }
 
     /// Takes the mesh ranges just worked out (by sighting `seq`); a sighting missing from `ranges` keeps its own.
     mutating func applyMesh(_ ranges: [Int: Double?], pass: Int) {
-        for i in sightings.indices {
-            if let r = ranges[sightings[i].seq] { sightings[i].meshRange = r; sightings[i].meshedPass = pass }
+        for i in local.indices {
+            if let r = ranges[local[i].seq] { local[i].meshRange = r; local[i].meshedPass = pass }
         }
     }
 }
@@ -448,6 +480,13 @@ struct CardTracker: Sendable {
     }
 
     mutating func addMissed(_ c: StationCard) { tracks[c, default: CardTrack(card: c)].noRange += 1 }
+
+    /// Ties a card's sightings to its ARKit anchor, just placed at `m`.
+    mutating func pin(_ c: StationCard, _ m: simd_double4x4) { tracks[c]?.pin(m) }
+
+    /// ARKit moved a card's anchor to `m`; returns how far, metres (0 for a card with no track or anchor).
+    @discardableResult
+    mutating func moveAnchor(_ c: StationCard, _ m: simd_double4x4) -> Double { tracks[c]?.moveAnchor(m) ?? 0 }
 
     /// Every sighting so far, for meeting with the mesh.
     var allSightings: [CardSighting] { tracks.values.flatMap(\.sightings) }

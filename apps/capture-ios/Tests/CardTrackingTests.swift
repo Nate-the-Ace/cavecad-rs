@@ -176,6 +176,36 @@ final class CardTrackingTests: XCTestCase {
         XCTAssertEqual(t.meshBatch(limit: 2).map(\.seq), [5, 1])
     }
 
+    /// ARKit corrects its map by moving anchors: readings kept relative to the card's anchor move with it, so
+    /// looks from before and after the correction agree.
+    func testSightingsFollowTheirCardAnchor() {
+        var t = CardTracker()
+        t.add(sighting(size: 2))                                  // card at (0, 0, -2)
+        var a = matrix_identity_double4x4
+        a.columns.3 = SIMD4(0, 0, -2, 1)
+        t.pin(.current, a)
+        XCTAssertEqual(t.tracks[.current]!.estimate!.point.z, -2, accuracy: 1e-9)   // pinning moves nothing
+        XCTAssertEqual(t.tracks[.current]!.estimate!.point.x, 0, accuracy: 1e-9)
+        var b = a
+        b.columns.3 = SIMD4(0.15, 0, -2, 1)
+        XCTAssertEqual(t.moveAnchor(.current, b), 0.15, accuracy: 1e-9)
+        XCTAssertEqual(t.tracks[.current]!.estimate!.point.x, 0.15, accuracy: 1e-9)
+        // a look in the corrected map lands with the old one
+        t.add(sighting(eye: SIMD3(0.15, 0, 0), size: 2))
+        var e = t.tracks[.current]!.estimate!
+        XCTAssertEqual(e.kept, 2); XCTAssertEqual(e.spread, 0, accuracy: 1e-9)
+        // turning the anchor turns the sight lines about it: the card stays at the anchor
+        let turn = simd_double4x4(simd_quatd(angle: .pi / 2, axis: SIMD3(0, 1, 0)))
+        var c = turn
+        c.columns.3 = SIMD4(0.15, 0, -2, 1)
+        t.moveAnchor(.current, c)
+        e = t.tracks[.current]!.estimate!
+        XCTAssertEqual(e.point.x, 0.15, accuracy: 1e-9); XCTAssertEqual(e.point.z, -2, accuracy: 1e-9)
+        XCTAssertEqual(t.tracks[.current]!.sightings[0].eye.x, 2.15, accuracy: 1e-9)
+        XCTAssertNil(t.tracks[.rear]?.anchor)
+        XCTAssertEqual(t.moveAnchor(.rear, c), 0)                 // no track: nothing to move
+    }
+
     func testSizeGateTightensWithDistanceKnown() {
         XCTAssertTrue(CardSighting.agree(4.6, 4.46))      // the 4.6 m card in the retest: 3 %
         XCTAssertTrue(CardSighting.agree(1.15, 1.23))
