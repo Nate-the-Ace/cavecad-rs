@@ -12,17 +12,21 @@ and the coverage model shown to Nathan on 2026-11-20.
 
 ## Parts
 
-- **Tongue** (78 × 9 mm, centred on the phone's middle): the part the OM7 clamp grips, inside its 67–84 mm width
-  and 6.9–10 mm thickness range. Grip it at the middle, where the phone's centre is.
-- **Cradle:** the phone's screen rests on an open frame (the camera bump and LiDAR at the top stay clear); the
-  phone's bottom edge sits on the lip.
-- **Ears:** two pairs on each long edge keep two rubber bands from sliding. Run the bands across the back of the
-  case below the camera bump.
+- **Tongue** (78 × 9 mm): the part the OM7 clamp grips, inside its 67–84 mm width and 6.9–10 mm thickness range.
+  Grip it near the top, at 89 mm up (the phone's centre), for balance.
+- **Plate:** a solid 74 mm wide plate tipped 45°; the phone's screen rests on it, the phone's bottom edge stands
+  on the base, and its top (camera bump, LiDAR) stands free above the plate.
+- **Band guides:** two pairs of 45° ridges on each long edge of the plate make channels for two rubber bands.
+  Run the bands across the back of the case, below the camera bump.
 
-## Printing
+## Printing (no supports, no bridges)
 
-Stand it on its bottom end (the lip on the bed) as the STL is oriented: everything rises straight up, the cross
-bars bridge, no supports. PETG (or PLA), 0.2 mm layers, 4 walls, 30 % infill. About 78 × 93 × 128 mm.
+Print it exactly as the STL is oriented, standing on its base. The body is one cross-section extruded straight
+up (vertical walls only), the base and lip are the first 4 mm on the bed, and the ridges are 45°: nothing overhangs
+more than 45°. PETG (or PLA), 0.2 mm layers, 4 walls, 30 % infill, a brim helps it stand. About 79 × 94 × 124 mm.
+
+The plate covers the middle of the screen: tap Start before strapping the phone in, or use the gimbal pass's
+start delay once the app has one.
 
 ## Before trusting it on the gimbal
 
