@@ -27,10 +27,12 @@ struct ARMeshView: UIViewRepresentable {
         for m in markers {
             let name = "card-\(m.card.rawValue)"
             let anchor: AnchorEntity
-            if let found = existing.first(where: { $0.name == name }) as? AnchorEntity {
-                anchor = found
-                anchor.position = m.position
+            let old = existing.first(where: { $0.name == name }) as? AnchorEntity
+            // A world anchor is pinned where it was made: when the estimate moves, make a new one there.
+            if let old, simd_distance(old.position(relativeTo: nil), m.position) < 0.01 {
+                anchor = old
             } else {
+                if let old { uiView.scene.removeAnchor(old) }
                 anchor = AnchorEntity(world: m.position)
                 anchor.name = name
                 let ball = ModelEntity(mesh: .generateSphere(radius: 0.05),

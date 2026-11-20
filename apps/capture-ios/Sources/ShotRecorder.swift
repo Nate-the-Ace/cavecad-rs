@@ -66,6 +66,8 @@ final class ShotRecorder: NSObject, ObservableObject, ARSessionDelegate {
     static let cardEvery: TimeInterval = 1.0 / 3
     /// Seconds between card summaries in the log.
     static let cardLogEvery: TimeInterval = 5
+    /// Seconds between passes that meet every card sight line with the scan as it now stands.
+    static let cardMeshEvery: TimeInterval = 2
 
     @Published var phase: Phase = .ready { didSet { Log.write("shot", "phase \(phase)") } }
     @Published var message = readyMessage { didSet { if message != oldValue { Log.write("shot", message) } } }
@@ -100,6 +102,11 @@ final class ShotRecorder: NSObject, ObservableObject, ARSessionDelegate {
     private var lastCardTime: TimeInterval = -1, lastCardLog: TimeInterval = 0
     private var cardRuns = 0, cardMillis = 0.0, cardMaxMillis = 0.0
     private var cardFrameLogged = false
+    /// One mesh pass in flight at most: every card sight line met with the latest scan, off the main thread.
+    private var meshing = false
+    private var lastMeshTime: TimeInterval = 0
+    private var meshRuns = 0, meshMillis = 0.0
+    private static let meshQueue = DispatchQueue(label: "app.cavecad.capture.cards.mesh", qos: .utility)
     /// The highest camera format is in use (a failed start falls back to the default for the app's run).
     private var usingBestFormat = false
     private var bestFormatFailed = false
@@ -239,6 +246,7 @@ final class ShotRecorder: NSObject, ObservableObject, ARSessionDelegate {
         cardTracker = CardTracker(); cardMarkers = []
         detectingCards = false; lastCardTime = -1; lastCardLog = f.timestamp
         cardRuns = 0; cardMillis = 0; cardMaxMillis = 0; cardFrameLogged = false
+        meshing = false; lastMeshTime = f.timestamp; meshRuns = 0; meshMillis = 0
         lastCompassLog = f.timestamp
         Log.write("compass", "at start: \(compass.latest.logLine) (aligned with \(compassAtAlignment.logLine))")
         phase = .capturing
@@ -275,6 +283,7 @@ final class ShotRecorder: NSObject, ObservableObject, ARSessionDelegate {
         let px = PixelBuffer(buffer: frame.capturedImage)
         let intrinsics = frame.camera.intrinsics
         let depthBuffer = frame.sceneDepth.map { PixelBuffer(buffer: $0.depthMap) }
+        let confidenceBuffer = frame.sceneDepth?.confidenceMap.map { PixelBuffer(buffer: $0) }
         MainActor.assumeIsolated {
             guard case .capturing = phase else { return }
             switch state {
@@ -286,7 +295,8 @@ final class ShotRecorder: NSObject, ObservableObject, ARSessionDelegate {
                 lastCompassLog = time
                 Log.write("compass", compass.latest.logLine)
             }
-            detectCards(px: px, depth: depthBuffer, intrinsics: intrinsics, pose: pose, time: time)
+            detectCards(px: px, depth: depthBuffer, confidence: confidenceBuffer, intrinsics: intrinsics, pose: pose, time: time)
+            meshCards(time: time)
             if keyframes.count >= Self.maxKeyframes {
                 if !photoLimitShown { photoLimitShown = true; message = "Photo limit reached; mesh still capturing." }
                 return
@@ -313,7 +323,8 @@ final class ShotRecorder: NSObject, ObservableObject, ARSessionDelegate {
     }
 
     /// Hands this frame's luma (and a copy of its depth) to the card detector, at most 3 a second, one at a time.
-    private func detectCards(px: PixelBuffer, depth: PixelBuffer?, intrinsics: simd_float3x3, pose: simd_float4x4, time: TimeInterval) {
+    private func detectCards(px: PixelBuffer, depth: PixelBuffer?, confidence: PixelBuffer?, intrinsics: simd_float3x3,
+                             pose: simd_float4x4, time: TimeInterval) {
         if time - lastCardLog >= Self.cardLogEvery {
             lastCardLog = time
             logCards("summary")
@@ -323,7 +334,7 @@ final class ShotRecorder: NSObject, ObservableObject, ARSessionDelegate {
         lastCardTime = time
         let serial = shotSerial
         guard let luma = GreyImage(lumaOf: px.buffer) else { detectingCards = false; return }
-        let frame = CardFrame(luma: luma, depth: depth.flatMap { DepthGrid(copying: $0.buffer) },
+        let frame = CardFrame(luma: luma, depth: depth.flatMap { DepthGrid(copying: $0.buffer, confidence: confidence?.buffer) },
                               intrinsics: intrinsics, camera: pose)
         cardDetector.detect(frame) { [weak self] result in
             Task { @MainActor [weak self] in self?.cardsDone(result, serial: serial) }
@@ -344,16 +355,48 @@ final class ShotRecorder: NSObject, ObservableObject, ARSessionDelegate {
             }
         }
         cardRuns += 1; cardMillis += r.millis; cardMaxMillis = max(cardMaxMillis, r.millis)
-        for c in r.noDepth { cardTracker.addMissed(c) }
+        for c in r.noRange { cardTracker.addMissed(c) }
         for s in r.found {
             if cardTracker.add(s) {
-                Log.write("cards", String(format: "first sighting: %d %@ at %.2f m, margin %.1f", s.card.rawValue, s.card.word, s.distance, s.margin))
+                Log.write("cards", String(format: "first sighting: %d %@, size says %@, lidar says %@, margin %.1f",
+                                          s.card.rawValue, s.card.word, Self.metres(s.sizeRange), Self.metres(s.lidarRange), s.margin))
             }
         }
-        if !r.found.isEmpty {
-            cardMarkers = cardTracker.seen.map {
-                let m = $0.median
-                return CardMarker(card: $0.card, position: SIMD3(Float(m.x), Float(m.y), Float(m.z)))
+        if !r.found.isEmpty { updateCardMarkers() }
+    }
+
+    nonisolated static func metres(_ v: Double?) -> String { v.map { String(format: "%.2f m", $0) } ?? "nothing" }
+
+    /// The live markers follow the estimates as they are now (new sightings, a better mesh).
+    private func updateCardMarkers() {
+        let m = cardTracker.seen.map { t, e in CardMarker(card: t.card, position: SIMD3(Float(e.point.x), Float(e.point.y), Float(e.point.z))) }
+        if m != cardMarkers { cardMarkers = m }
+    }
+
+    /// Every couple of seconds, meets every card sight line seen so far with the scan as it stands now, so a
+    /// card's place improves as the mesh does. The mesh is copied here (anchors are only valid on this thread);
+    /// the line tests run on their own queue.
+    private func meshCards(time: TimeInterval) {
+        guard !meshing, time - lastMeshTime >= Self.cardMeshEvery else { return }
+        let sightings = cardTracker.allSightings
+        guard !sightings.isEmpty else { return }
+        lastMeshTime = time
+        let anchors = session.currentFrame?.anchors.compactMap { $0 as? ARMeshAnchor } ?? []
+        let parts = anchors.compactMap(Self.part)
+        guard Self.hasMesh(parts) else { return }
+        meshing = true
+        let serial = shotSerial
+        Self.meshQueue.async { [weak self] in
+            let t0 = DispatchTime.now().uptimeNanoseconds
+            let ranges = CardTracker.meshRanges(sightings, MeshSnapshot(parts))
+            let ms = Double(DispatchTime.now().uptimeNanoseconds - t0) / 1e6
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.meshing = false
+                guard serial == self.shotSerial, case .capturing = self.phase else { return }
+                self.meshRuns += 1; self.meshMillis += ms
+                self.cardTracker.applyMesh(ranges)
+                self.updateCardMarkers()
             }
         }
     }
@@ -364,6 +407,9 @@ final class ShotRecorder: NSObject, ObservableObject, ARSessionDelegate {
         if lines.isEmpty { Log.write("cards", "\(when): none seen yet") } else { lines.forEach { Log.write("cards", "\(when): \($0)") } }
         if cardRuns > 0 {
             Log.write("cards", String(format: "%@: detector %d runs, avg %.0f ms, max %.0f ms", when, cardRuns, cardMillis / Double(cardRuns), cardMaxMillis))
+        }
+        if meshRuns > 0 {
+            Log.write("cards", String(format: "%@: mesh passes %d, avg %.0f ms", when, meshRuns, meshMillis / Double(meshRuns)))
         }
     }
 
@@ -386,7 +432,7 @@ final class ShotRecorder: NSObject, ObservableObject, ARSessionDelegate {
         logCards("at stop")
         let job = ShotJob(caveId: cave.id, over: over, parts: parts, keyframes: keyframes, startCamera: startCamera,
                           tracking: worstTracking, systemVersion: UIDevice.current.systemVersion, compass: compassAtAlignment,
-                          cards: cardTracker.records)
+                          cards: cardTracker)
         keyframes = []  // the job now holds the only reference, and drops each photo as it is written
         Task {
             let result = await Task.detached { job.write() }.value
@@ -451,13 +497,13 @@ final class ShotJob: @unchecked Sendable {
     let tracking: String
     let systemVersion: String
     let compass: CompassReading
-    /// Station cards seen during the scan.
-    let cards: [CardSeenRecord]
+    /// Station cards seen during the scan; their sight lines meet the final mesh in `write`.
+    private var cards: CardTracker
     /// Always the gimbal's pivot height: every shot stands on the same gimbal.
     let instrumentHeight = Rig.pivotHeightM
 
     init(caveId: String, over: Station, parts: [MeshPart], keyframes: [ShotKeyframe], startCamera: SIMD3<Float>,
-         tracking: String, systemVersion: String, compass: CompassReading, cards: [CardSeenRecord] = []) {
+         tracking: String, systemVersion: String, compass: CompassReading, cards: CardTracker = CardTracker()) {
         self.cards = cards
         self.caveId = caveId; self.over = over; self.parts = parts; self.keyframes = keyframes
         self.startCamera = startCamera; self.tracking = tracking; self.systemVersion = systemVersion; self.compass = compass
@@ -467,6 +513,11 @@ final class ShotJob: @unchecked Sendable {
 
     /// Writes the shot once; the photos and mesh are gone from the job afterwards.
     func write() -> Result<URL, ShotFailure> {
+        // The cards' last word: every sight line met with the final mesh.
+        if !cards.allSightings.isEmpty {
+            cards.applyMesh(CardTracker.meshRanges(cards.allSightings, MeshSnapshot(parts)))
+            cards.logLines.forEach { Log.write("cards", "final (full mesh): \($0)") }
+        }
         var mesh = ShotRecorder.mergeAnchors(parts)
         parts = []
         let shotId = UUID().uuidString.lowercased()
@@ -496,7 +547,7 @@ final class ShotJob: @unchecked Sendable {
             // a compass shot: the frame is gravityAndHeading, so no taps
             "taps": [Any](), "compass": ["true_north": compass.trueNorth, "accuracy_deg": compass.accuracyDeg],
             "tracking": tracking, "arkit_version": systemVersion,
-            "gravity": [0.0, -1.0, 0.0], "keyframes": kfs, "cards": cards.map(\.json),
+            "gravity": [0.0, -1.0, 0.0], "keyframes": kfs, "cards": cards.records.map(\.json),
         ]
         guard numbers.allSatisfy(\.isFinite), JSONSerialization.isValidJSONObject(header),
               let headerData = try? JSONSerialization.data(withJSONObject: header)

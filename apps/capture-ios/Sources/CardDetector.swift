@@ -37,7 +37,7 @@ struct CardFrame: Sendable {
 
 struct CardResult: Sendable {
     let found: [CardSighting]
-    let noDepth: [StationCard]
+    let noRange: [StationCard]
     /// How long the detector took on this frame, milliseconds.
     let millis: Double
     let width: Int, height: Int
@@ -46,8 +46,9 @@ struct CardResult: Sendable {
 }
 
 extension DepthGrid {
-    /// Copies an ARKit depth map (32-bit float metres) out; nil for any other layout.
-    init?(copying buffer: CVPixelBuffer) {
+    /// Copies an ARKit depth map (32-bit float metres) and its confidence map (8-bit, 0-2) out; nil for any
+    /// other depth layout. A confidence map of another size or layout is left out.
+    init?(copying buffer: CVPixelBuffer, confidence conf: CVPixelBuffer? = nil) {
         guard CVPixelBufferGetPixelFormatType(buffer) == kCVPixelFormatType_DepthFloat32 else { return nil }
         CVPixelBufferLockBaseAddress(buffer, .readOnly)
         defer { CVPixelBufferUnlockBaseAddress(buffer, .readOnly) }
@@ -59,7 +60,21 @@ extension DepthGrid {
             let row = base.advanced(by: y * stride).assumingMemoryBound(to: Float.self)
             for x in 0..<w { out[y * w + x] = row[x] }
         }
-        self.init(width: w, height: h, values: out)
+        self.init(width: w, height: h, values: out, confidence: conf.flatMap { Self.copyConfidence($0, width: w, height: h) })
+    }
+
+    private static func copyConfidence(_ b: CVPixelBuffer, width w: Int, height h: Int) -> [UInt8]? {
+        guard CVPixelBufferGetPixelFormatType(b) == kCVPixelFormatType_OneComponent8,
+              CVPixelBufferGetWidth(b) == w, CVPixelBufferGetHeight(b) == h else { return nil }
+        CVPixelBufferLockBaseAddress(b, .readOnly)
+        defer { CVPixelBufferUnlockBaseAddress(b, .readOnly) }
+        guard let base = CVPixelBufferGetBaseAddress(b) else { return nil }
+        let stride = CVPixelBufferGetBytesPerRow(b)
+        var out = [UInt8](repeating: 0, count: w * h)
+        out.withUnsafeMutableBytes { dst in
+            for y in 0..<h { memcpy(dst.baseAddress! + y * w, base + y * stride, w) }
+        }
+        return out
     }
 }
 
@@ -98,7 +113,7 @@ final class CardDetector: @unchecked Sendable {
             let r = CardMath.sightings(from: raw, depth: frame.depth, imageW: w, imageH: h,
                                        intrinsics: frame.intrinsics, camera: frame.camera)
             let ms = Double(DispatchTime.now().uptimeNanoseconds - t0) / 1e6
-            done(CardResult(found: r.found, noDepth: r.noDepth, millis: ms, width: w, height: h,
+            done(CardResult(found: r.found, noRange: r.noRange, millis: ms, width: w, height: h,
                             depthWidth: frame.depth?.width ?? 0, depthHeight: frame.depth?.height ?? 0))
         }
     }

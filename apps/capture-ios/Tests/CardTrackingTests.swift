@@ -33,59 +33,140 @@ final class CardTrackingTests: XCTestCase {
         XCTAssertEqual(StationCard.allCases.map(\.word), ["CURRENT", "FORWARD", "REAR"])
     }
 
-    func testSightingsFilterAndDepth() {
-        let grid = DepthGrid(width: 4, height: 2, values: [Float](repeating: 3, count: 8))
-        let dets = [
-            RawDetection(id: 12, hamming: 0, margin: 40, center: SIMD2(960, 540),
-                         corners: [SIMD2(900, 480), SIMD2(1020, 480), SIMD2(1020, 600), SIMD2(900, 600)]),
-            RawDetection(id: 5, hamming: 0, margin: 50, center: SIMD2(960, 540), corners: []),
-            RawDetection(id: 2, hamming: 1, margin: 50, center: SIMD2(960, 540), corners: []),
-        ]
-        let r = CardMath.sightings(from: dets, depth: grid, imageW: 1920, imageH: 1080, intrinsics: Self.k, camera: matrix_identity_float4x4)
+    /// The image corners of a glyph of side `side` centred at `c` (OpenCV camera axes: x right, y down, z ahead),
+    /// turned `yaw` radians about the camera's y axis.
+    static func project(centre c: SIMD3<Double>, side: Double = StationCard.glyphSide, yaw: Double = 0) -> [SIMD2<Double>] {
+        let h = side / 2
+        return [SIMD2(-h, -h), SIMD2(h, -h), SIMD2(h, h), SIMD2(-h, h)].map { q in
+            let p = c + SIMD3(q.x * cos(yaw), q.y, -q.x * sin(yaw))
+            return SIMD2(1000 * p.x / p.z + 960, 1000 * p.y / p.z + 540)
+        }
+    }
+
+    func testGlyphPoseFromPrintedSize() {
+        for yaw in [0.0, 0.6, -1.0] {
+            let px = Self.project(centre: SIMD3(0.3, -0.1, 2.5), yaw: yaw)
+            guard let pose = CardMath.glyphPose(corners: px, side: StationCard.glyphSide, intrinsics: Self.k) else {
+                return XCTFail("no pose at yaw \(yaw)")
+            }
+            // ARKit camera axes: y up, looking down -z
+            XCTAssertEqual(pose.center.x, 0.3, accuracy: 1e-6); XCTAssertEqual(pose.center.y, 0.1, accuracy: 1e-6)
+            XCTAssertEqual(pose.center.z, -2.5, accuracy: 1e-6)
+            XCTAssertEqual(pose.corners.count, 4)
+            XCTAssertEqual(simd_distance(pose.corners[0], pose.corners[1]), StationCard.glyphSide, accuracy: 1e-6)
+        }
+        // reversed corner order still gives the same centre
+        let rev = Array(Self.project(centre: SIMD3(0, 0, 3)).reversed())
+        XCTAssertEqual(CardMath.glyphPose(corners: rev, side: StationCard.glyphSide, intrinsics: Self.k)?.center.z ?? 0, -3, accuracy: 1e-6)
+        XCTAssertNil(CardMath.glyphPose(corners: [SIMD2(1, 1), SIMD2(1, 1), SIMD2(1, 1), SIMD2(1, 1)], side: 0.0762, intrinsics: Self.k))
+        let x = CardMath.solve([[2, 1], [1, 3]], [3, 5]) ?? []
+        XCTAssertEqual(x.count, 2)
+        XCTAssertEqual(x.first ?? 0, 0.8, accuracy: 1e-12); XCTAssertEqual(x.last ?? 0, 1.4, accuracy: 1e-12)
+    }
+
+    func testDepthUsesOnlyHighConfidence() {
+        let v: [Float] = [1, 1, 1, 1, 9, 1, 1, 1, 1]
+        let low = DepthGrid(width: 3, height: 3, values: v, confidence: [0, 1, 0, 1, 2, 1, 0, 0, 1])
+        XCTAssertEqual(low.depth(atImagePixel: 150, 150, imageW: 300, imageH: 300) ?? 0, 9, accuracy: 1e-6)
+        let none = DepthGrid(width: 3, height: 3, values: v, confidence: [UInt8](repeating: 1, count: 9))
+        XCTAssertNil(none.depth(atImagePixel: 150, 150, imageW: 300, imageH: 300))
+        var holes = [Float](repeating: 0, count: 9)
+        holes[4] = 2.0; holes[3] = .nan; holes[5] = 2.2
+        XCTAssertEqual(DepthGrid(width: 3, height: 3, values: holes).depth(atImagePixel: 150, 150, imageW: 300, imageH: 300) ?? 0,
+                       2.2, accuracy: 1e-6)
+    }
+
+    func testSightingsCarrySightLineSizeAndLidar() {
+        let px = Self.project(centre: SIMD3(0, 0, 2))
+        let det = RawDetection(id: 12, hamming: 0, margin: 40, center: SIMD2(960, 540), corners: px)
+        let stray = RawDetection(id: 5, hamming: 0, margin: 50, center: SIMD2(960, 540), corners: px)
+        var cam = matrix_identity_float4x4
+        cam.columns.3 = SIMD4(1, 0, 0, 1)
+        let deep = DepthGrid(width: 4, height: 2, values: [Float](repeating: 3.7, count: 8), confidence: [UInt8](repeating: 2, count: 8))
+        let r = CardMath.sightings(from: [det, stray], depth: deep, imageW: 1920, imageH: 1080, intrinsics: Self.k, camera: cam)
         XCTAssertEqual(r.found.count, 1)
-        XCTAssertEqual(r.found[0].card, .forward)
-        XCTAssertEqual(r.found[0].center.z, -3, accuracy: 1e-9)
-        XCTAssertEqual(r.found[0].distance, 3, accuracy: 1e-9)
-        XCTAssertEqual(r.found[0].corners.count, 4)
-        XCTAssertTrue(r.noDepth.isEmpty)
-        let none = CardMath.sightings(from: dets, depth: nil, imageW: 1920, imageH: 1080, intrinsics: Self.k, camera: matrix_identity_float4x4)
+        let s = r.found[0]
+        XCTAssertEqual(s.card, .forward)
+        XCTAssertEqual(s.eye, SIMD3(1, 0, 0))
+        XCTAssertEqual(s.dir.z, -1, accuracy: 1e-9)
+        XCTAssertEqual(s.sizeRange ?? 0, 2, accuracy: 1e-6)
+        XCTAssertEqual(s.lidarRange ?? 0, 3.7, accuracy: 1e-6)
+        // LiDAR says 3.7 m, the printed size 2 m: the bad depth is not believed
+        XCTAssertEqual(s.range?.source, .size)
+        XCTAssertEqual(s.point?.z ?? 0, -2, accuracy: 1e-6)
+        XCTAssertEqual(s.corners.count, 4)
+        let none = CardMath.sightings(from: [RawDetection(id: 2, hamming: 0, margin: 9, center: SIMD2(960, 540), corners: [])],
+                                      depth: nil, imageW: 1920, imageH: 1080, intrinsics: Self.k, camera: cam)
         XCTAssertTrue(none.found.isEmpty)
-        XCTAssertEqual(none.noDepth, [.forward])
+        XCTAssertEqual(none.noRange, [.current])
     }
 
-    func testDepthGridSamplingIgnoresHolesAndNaN() {
-        var v = [Float](repeating: 0, count: 9)
-        v[4] = 2.0; v[3] = .nan; v[5] = 2.2
-        let g = DepthGrid(width: 3, height: 3, values: v)
-        XCTAssertEqual(g.depth(atImagePixel: 150, _: 150, imageW: 300, imageH: 300) ?? 0, 2.2, accuracy: 1e-6)  // median of [2.0, 2.2]
-        XCTAssertNil(DepthGrid(width: 3, height: 3, values: [Float](repeating: 0, count: 9)).depth(atImagePixel: 150, _: 150, imageW: 300, imageH: 300))
+    func sighting(_ card: StationCard = .current, eye: SIMD3<Double> = .zero, dir: SIMD3<Double> = SIMD3(0, 0, -1),
+                  size: Double? = 2, lidar: Double? = nil, mesh: Double? = nil, margin: Double = 30) -> CardSighting {
+        var s = CardSighting(card: card, eye: eye, dir: dir, sizeRange: size, sizeCorners: [], lidarRange: lidar, margin: margin)
+        s.meshRange = mesh
+        return s
     }
 
-    func sighting(_ card: StationCard, _ p: SIMD3<Double>, d: Double = 3, margin: Double = 30, corners: Bool = false) -> CardSighting {
-        CardSighting(card: card, center: p, corners: corners ? [p, p, p, p] : [], distance: d, margin: margin)
+    func testRangePreference() {
+        XCTAssertEqual(sighting(lidar: 2.1, mesh: 1.98).range?.source, .mesh)
+        XCTAssertEqual(sighting(lidar: 2.1, mesh: 3.5).range?.value, 2.1)        // mesh hole: through to the wall
+        XCTAssertEqual(sighting(lidar: 3.69, mesh: 3.5).range?.source, .size)
+        XCTAssertEqual(sighting(size: nil, lidar: 3.0, mesh: 2.5).range?.value, 2.5)
+        XCTAssertEqual(sighting(size: nil, lidar: 3.0).range?.value, 3.0)
+        XCTAssertNil(sighting(size: nil).range)
     }
 
-    func testTrackerRunningMedianAndStats() {
+    /// Two walls facing the camera, at 2 m and 4 m down -z.
+    static func walls() -> MeshSnapshot {
+        func wall(_ z: Float) -> MeshPart {
+            MeshPart(positions: [SIMD3(-1, -1, z), SIMD3(1, -1, z), SIMD3(1, 1, z), SIMD3(-1, 1, z)],
+                     normals: Array(repeating: SIMD3(0, 0, 1), count: 4), indices: [0, 1, 2, 0, 2, 3], transform: matrix_identity_float4x4)
+        }
+        return MeshSnapshot([wall(-2), wall(-4)])
+    }
+
+    func testSightLineMeetsMesh() {
+        let m = Self.walls()
+        let h = m.hits(origin: .zero, dir: SIMD3(0, 0, -1))
+        XCTAssertEqual(h.count, 2)
+        XCTAssertEqual(h[0], 2, accuracy: 1e-5); XCTAssertEqual(h[1], 4, accuracy: 1e-5)
+        XCTAssertTrue(m.hits(origin: .zero, dir: SIMD3(0, 0, 1)).isEmpty)      // looking away
+        XCTAssertTrue(m.hits(origin: .zero, dir: simd_normalize(SIMD3(1, 0, -0.2))).isEmpty)   // beside the walls
+        XCTAssertEqual(m.range(for: sighting(size: nil)) ?? 0, 2, accuracy: 1e-5)  // first surface
+        XCTAssertEqual(m.range(for: sighting(size: 3.8)) ?? 0, 4, accuracy: 1e-5)  // the one the size points at
+        // anchor transforms are applied
+        let moved = MeshSnapshot([MeshPart(positions: [SIMD3(-1, -1, 0), SIMD3(1, -1, 0), SIMD3(0, 1, 0)], normals: [],
+                                           indices: [0, 1, 2], transform: simd_float4x4(SIMD4(1, 0, 0, 0), SIMD4(0, 1, 0, 0), SIMD4(0, 0, 1, 0), SIMD4(0, 0, -3, 1)))])
+        XCTAssertEqual(moved.hits(origin: .zero, dir: SIMD3(0, 0, -1)).first ?? 0, 3, accuracy: 1e-5)
+    }
+
+    func testEstimateRejectsBadReadingsAndFollowsTheMesh() {
         var t = CardTracker()
-        XCTAssertTrue(t.add(sighting(.current, SIMD3(0, 0, -2), d: 2, margin: 20)))
-        XCTAssertFalse(t.add(sighting(.current, SIMD3(0.01, 0, -2), d: 2.5, margin: 40)))
-        t.add(sighting(.current, SIMD3(0.50, 0, -2), d: 4, margin: 30, corners: true))   // an outlier: the median holds
-        let c = t.tracks[.current]!
-        XCTAssertEqual(c.count, 3)
-        XCTAssertEqual(c.median.x, 0.01, accuracy: 1e-12)
-        XCTAssertEqual(c.nearest, 2); XCTAssertEqual(c.farthest, 4)
-        XCTAssertEqual(c.meanMargin, 30, accuracy: 1e-12)
-        XCTAssertEqual(c.spread, 0.49, accuracy: 1e-12)
-        XCTAssertEqual(c.corners.count, 4)
+        XCTAssertTrue(t.add(sighting(size: 2.0, lidar: 2.02, margin: 20)))
+        XCTAssertFalse(t.add(sighting(size: 2.05, lidar: 2.0, margin: 40)))
+        t.add(sighting(size: 1.97, lidar: 2.01))
+        t.add(sighting(size: nil, lidar: 3.69))                         // a bad depth with no size to check it
+        guard let e = t.tracks[.current]?.estimate else { return XCTFail("no estimate") }
+        XCTAssertEqual(e.kept, 3); XCTAssertEqual(e.rejected, 1)
+        XCTAssertEqual(e.point.z, -2.01, accuracy: 1e-9)
+        XCTAssertEqual(e.fromLidar, 3)
+        XCTAssertLessThan(e.spread, 0.02)
+        // the scan improves: every line now meets it at 1.95 m and the card moves there
+        let ranges = CardTracker.meshRanges(t.allSightings, MeshSnapshot([MeshPart(
+            positions: [SIMD3(-1, -1, -1.95), SIMD3(1, -1, -1.95), SIMD3(0, 1, -1.95)], normals: [], indices: [0, 1, 2],
+            transform: matrix_identity_float4x4)]))
+        XCTAssertEqual(ranges.count, 4)
+        t.applyMesh(ranges)
+        let f = t.tracks[.current]!.estimate!
+        XCTAssertEqual(f.point.z, -1.95, accuracy: 1e-5)
+        XCTAssertEqual(f.fromMesh, 4); XCTAssertEqual(f.rejected, 0)
         t.addMissed(.rear)
-        XCTAssertEqual(t.seen.map(\.card), [.current])   // REAR has no placed sighting
-        XCTAssertEqual(t.tracks[.rear]?.noDepth, 1)
-        let r = t.records
-        XCTAssertEqual(r.count, 1)
-        XCTAssertEqual(r[0].id, 2); XCTAssertEqual(r[0].word, "CURRENT"); XCTAssertEqual(r[0].sightings, 3)
-        XCTAssertEqual(r[0].corners.count, 4)
-        XCTAssertEqual(t.logLines.count, 1)
-        XCTAssertTrue(t.logLines[0].hasPrefix("card 2 CURRENT at (0.01, 0.00, -2.00) dist 2.00-4.00 m, 3 sightings, spread 490 mm"))
+        XCTAssertEqual(t.seen.map(\.track.card), [.current])
+        XCTAssertEqual(t.records.first?.sightings, 4)
+        XCTAssertEqual(t.records.first?.word, "CURRENT")
+        XCTAssertTrue(t.logLines[0].hasPrefix("card 2 CURRENT at (0.00, 0.00, -1.95) dist 1.95-1.95 m, 4 sightings (mesh 4, lidar 0, size 0), 0 rejected, spread 0 mm"),
+                      t.logLines[0])
     }
 
     func testMedianEvenCount() {
@@ -153,6 +234,7 @@ final class CardDetectorTests: XCTestCase {
         let r = CardMath.sightings(from: found, depth: DepthGrid(width: 1, height: 1, values: [2]), imageW: 600, imageH: 600,
                                    intrinsics: CardTrackingTests.k, camera: matrix_identity_float4x4)
         XCTAssertTrue(r.found.isEmpty)
+        XCTAssertTrue(r.noRange.isEmpty)
     }
 
     func testBestFormatPrefersPixelsThenLowerFrameRate() {
@@ -174,10 +256,12 @@ final class CardDetectorTests: XCTestCase {
     @MainActor func testShotWritesItsCards() throws {
         let over = Station(id: "a", label: "A1", x: 100, y: 200, z: 50)
         var tracker = CardTracker()
-        tracker.add(CardSighting(card: .forward, center: SIMD3(0, 0, -2), corners: [], distance: 2, margin: 30))
+        // the test mesh is 1 m ahead but the printed size says 2 m: the mesh is not believed
+        tracker.add(CardSighting(card: .forward, eye: .zero, dir: SIMD3(0, 0, -1), sizeRange: 2, sizeCorners: [],
+                                 lidarRange: nil, margin: 30))
         let job = ShotJob(caveId: "test-cave-cards", over: over, parts: [ShotRecorderTests.tri], keyframes: [], startCamera: .zero,
                           tracking: "normal", systemVersion: "26.0",
-                          compass: CompassReading(trueNorth: true, accuracyDeg: 8, headingDeg: 12), cards: tracker.records)
+                          compass: CompassReading(trueNorth: true, accuracyDeg: 8, headingDeg: 12), cards: tracker)
         defer { try? FileManager.default.removeItem(at: ShotFiles.folder(cave: "test-cave-cards")) }
         guard case .success(let url) = job.write() else { return XCTFail("shot not written") }
         let data = try Data(contentsOf: url)
