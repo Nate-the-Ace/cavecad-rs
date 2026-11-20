@@ -94,8 +94,10 @@ struct CardSighting: Equatable, Sendable {
     /// Order of arrival in the shot, so mesh results can be matched back.
     var seq: Int = 0
 
-    /// Two ranges agree when within 15 % (at least 15 cm): what the printed size can vouch for.
-    static func agree(_ r: Double, _ size: Double) -> Bool { abs(r - size) <= max(0.15, 0.15 * size) }
+    /// Two ranges agree when within 8 % (at least 10 cm): what the printed size can vouch for. At 4K a 3 in
+    /// glyph is still about 50 px wide at 4.5 m, so its range holds to a few percent; the retest's 4.6 m card
+    /// had size and mesh 3 % apart.
+    static func agree(_ r: Double, _ size: Double) -> Bool { abs(r - size) <= max(0.10, 0.08 * size) }
 
     /// The best distance: the mesh, then LiDAR depth, each only when the printed size agrees with it; else the
     /// size alone. With no size, the mesh or the depth as they are.
@@ -230,12 +232,16 @@ struct MeshSnapshot: Sendable {
     }
     let parts: [Part]
 
-    init(_ meshes: [MeshPart]) {
+    /// `near`: keep only the parts whose box comes within `radius` of one of these points (the cards as now
+    /// placed), so a long walk's mesh does not slow every pass; nil keeps everything.
+    init(_ meshes: [MeshPart], near: [SIMD3<Double>]? = nil, radius: Float = 1) {
+        let points = near?.map { SIMD3<Float>($0) }
         parts = meshes.compactMap { m in
             guard !m.positions.isEmpty, m.indices.count >= 3 else { return nil }
             let v = m.positions.map { p -> SIMD3<Float> in let w = m.transform * SIMD4(p, 1); return SIMD3(w.x, w.y, w.z) }
             var lo = v[0], hi = v[0]
             for p in v { lo = simd_min(lo, p); hi = simd_max(hi, p) }
+            if let points, !points.contains(where: { simd_distance(simd_clamp($0, lo, hi), $0) <= radius }) { return nil }
             return Part(lo: lo, hi: hi, v: v, tri: m.indices)
         }
     }
@@ -312,6 +318,21 @@ func medianPoint(_ v: [SIMD3<Double>]) -> SIMD3<Double> {
     SIMD3(medianOf(v.map(\.x)), medianOf(v.map(\.y)), medianOf(v.map(\.z)))
 }
 
+/// The value where the running weight (in value order) first reaches half the total.
+func weightedMedian(_ v: [(value: Double, weight: Double)]) -> Double {
+    let s = v.sorted { $0.value < $1.value }
+    let half = s.reduce(0) { $0 + $1.weight } / 2
+    var run = 0.0
+    for e in s { run += e.weight; if run >= half { return e.value } }
+    return s.last?.value ?? 0
+}
+
+/// Per-axis weighted median of points.
+func weightedMedianPoint(_ v: [(point: SIMD3<Double>, weight: Double)]) -> SIMD3<Double> {
+    SIMD3(weightedMedian(v.map { ($0.point.x, $0.weight) }), weightedMedian(v.map { ($0.point.y, $0.weight) }),
+          weightedMedian(v.map { ($0.point.z, $0.weight) }))
+}
+
 /// A card's place worked out from all its sightings as they stand now.
 struct CardEstimate: Equatable, Sendable {
     let point: SIMD3<Double>
@@ -329,13 +350,17 @@ struct CardEstimate: Equatable, Sendable {
     /// A sighting this far from the median of all of them is a bad reading, metres.
     static let reject = 0.25
 
+    /// How much a sighting counts: one over its distance squared (the printed size's error grows with the
+    /// square of the distance, depth's at least linearly), so close looks outweigh ones from across the room.
+    static func weight(_ range: Double) -> Double { 1 / pow(max(range, 0.5), 2) }
+
     init?(_ sightings: [CardSighting]) {
         let placed = sightings.compactMap { s in s.range.flatMap { r in s.point.map { (s, r, $0) } } }
         guard !placed.isEmpty else { return nil }
-        let first = medianPoint(placed.map(\.2))
+        let first = weightedMedianPoint(placed.map { ($0.2, Self.weight($0.1.value)) })
         var keep = placed.filter { simd_distance($0.2, first) <= Self.reject }
         if keep.isEmpty { keep = placed }
-        let m = medianPoint(keep.map(\.2))
+        let m = weightedMedianPoint(keep.map { ($0.2, Self.weight($0.1.value)) })
         point = m
         kept = keep.count; rejected = placed.count - keep.count
         spread = medianOf(keep.map { simd_distance($0.2, m) })
@@ -418,6 +443,9 @@ struct CardTracker: Sendable {
         for s in sightings { out[s.seq] = .some(mesh.range(for: s)) }
         return out
     }
+
+    /// Where the cards are now placed, for keeping only the mesh near them.
+    var points: [SIMD3<Double>] { seen.map(\.estimate.point) }
 
     /// Cards with a placed estimate, in id order.
     var seen: [(track: CardTrack, estimate: CardEstimate)] {

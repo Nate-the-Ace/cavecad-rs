@@ -105,7 +105,9 @@ final class ShotRecorder: NSObject, ObservableObject, ARSessionDelegate {
     /// One mesh pass in flight at most: every card sight line met with the latest scan, off the main thread.
     private var meshing = false
     private var lastMeshTime: TimeInterval = 0
-    private var meshRuns = 0, meshMillis = 0.0
+    private var meshRuns = 0, meshMillis = 0.0, meshCopyMillis = 0.0
+    /// Mesh anchors whose origin is this far from every card are not copied for the card passes, metres.
+    static let meshAnchorReach = 4.0
     private static let meshQueue = DispatchQueue(label: "app.cavecad.capture.cards.mesh", qos: .utility)
     /// The highest camera format is in use (a failed start falls back to the default for the app's run).
     private var usingBestFormat = false
@@ -246,7 +248,7 @@ final class ShotRecorder: NSObject, ObservableObject, ARSessionDelegate {
         cardTracker = CardTracker(); cardMarkers = []
         detectingCards = false; lastCardTime = -1; lastCardLog = f.timestamp
         cardRuns = 0; cardMillis = 0; cardMaxMillis = 0; cardFrameLogged = false
-        meshing = false; lastMeshTime = f.timestamp; meshRuns = 0; meshMillis = 0
+        meshing = false; lastMeshTime = f.timestamp; meshRuns = 0; meshMillis = 0; meshCopyMillis = 0
         lastCompassLog = f.timestamp
         Log.write("compass", "at start: \(compass.latest.logLine) (aligned with \(compassAtAlignment.logLine))")
         phase = .capturing
@@ -381,14 +383,22 @@ final class ShotRecorder: NSObject, ObservableObject, ARSessionDelegate {
         let sightings = cardTracker.allSightings
         guard !sightings.isEmpty else { return }
         lastMeshTime = time
-        let anchors = session.currentFrame?.anchors.compactMap { $0 as? ARMeshAnchor } ?? []
+        let c0 = DispatchTime.now().uptimeNanoseconds
+        let near = cardTracker.points
+        // Copy only anchors near a card (an anchor's mesh lies within a few metres of its origin); the queue
+        // then keeps only the parts whose box reaches within 1 m of one.
+        let anchors = (session.currentFrame?.anchors.compactMap { $0 as? ARMeshAnchor } ?? []).filter { a in
+            let o = SIMD3<Double>(Double(a.transform.columns.3.x), Double(a.transform.columns.3.y), Double(a.transform.columns.3.z))
+            return near.contains { simd_distance($0, o) <= Self.meshAnchorReach }
+        }
         let parts = anchors.compactMap(Self.part)
+        meshCopyMillis += Double(DispatchTime.now().uptimeNanoseconds - c0) / 1e6
         guard Self.hasMesh(parts) else { return }
         meshing = true
         let serial = shotSerial
         Self.meshQueue.async { [weak self] in
             let t0 = DispatchTime.now().uptimeNanoseconds
-            let ranges = CardTracker.meshRanges(sightings, MeshSnapshot(parts))
+            let ranges = CardTracker.meshRanges(sightings, MeshSnapshot(parts, near: near))
             let ms = Double(DispatchTime.now().uptimeNanoseconds - t0) / 1e6
             Task { @MainActor [weak self] in
                 guard let self else { return }
@@ -409,7 +419,8 @@ final class ShotRecorder: NSObject, ObservableObject, ARSessionDelegate {
             Log.write("cards", String(format: "%@: detector %d runs, avg %.0f ms, max %.0f ms", when, cardRuns, cardMillis / Double(cardRuns), cardMaxMillis))
         }
         if meshRuns > 0 {
-            Log.write("cards", String(format: "%@: mesh passes %d, avg %.0f ms", when, meshRuns, meshMillis / Double(meshRuns)))
+            Log.write("cards", String(format: "%@: mesh passes %d, avg %.0f ms (+ %.0f ms copying on the main thread)", when, meshRuns,
+                                      meshMillis / Double(meshRuns), meshCopyMillis / Double(meshRuns)))
         }
     }
 
@@ -515,7 +526,7 @@ final class ShotJob: @unchecked Sendable {
     func write() -> Result<URL, ShotFailure> {
         // The cards' last word: every sight line met with the final mesh.
         if !cards.allSightings.isEmpty {
-            cards.applyMesh(CardTracker.meshRanges(cards.allSightings, MeshSnapshot(parts)))
+            cards.applyMesh(CardTracker.meshRanges(cards.allSightings, MeshSnapshot(parts, near: cards.points)))
             cards.logLines.forEach { Log.write("cards", "final (full mesh): \($0)") }
         }
         var mesh = ShotRecorder.mergeAnchors(parts)

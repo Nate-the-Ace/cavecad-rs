@@ -141,6 +141,40 @@ final class CardTrackingTests: XCTestCase {
         XCTAssertEqual(moved.hits(origin: .zero, dir: SIMD3(0, 0, -1)).first ?? 0, 3, accuracy: 1e-5)
     }
 
+    func testSizeGateTightensWithDistanceKnown() {
+        XCTAssertTrue(CardSighting.agree(4.6, 4.46))      // the 4.6 m card in the retest: 3 %
+        XCTAssertTrue(CardSighting.agree(1.15, 1.23))
+        XCTAssertFalse(CardSighting.agree(0.81, 0.62))    // shiny-laminate LiDAR at 0.6 m
+        XCTAssertFalse(CardSighting.agree(1.12, 1.0))     // at least 10 cm, else 8 %
+        XCTAssertFalse(CardSighting.agree(4.8, 4.4))
+    }
+
+    func testNearReadingsOutweighFarOnes() {
+        var t = CardTracker()
+        // three close looks put the card at z = -2.00
+        for _ in 0..<3 { t.add(sighting(size: 2.0)) }
+        // four looks from 4.4 m away (walked off) land 10 cm further on
+        let far = SIMD3<Double>(0, 0, 2.5)
+        for _ in 0..<4 { t.add(sighting(eye: far, size: 4.6)) }
+        let e = t.tracks[.current]!.estimate!
+        XCTAssertEqual(e.kept, 7)
+        XCTAssertEqual(e.point.z, -2.0, accuracy: 1e-9)      // a plain median would say -2.10
+        XCTAssertEqual(weightedMedian([(1, 1), (5, 1), (9, 10)]), 9)
+        XCTAssertEqual(weightedMedian([(1, 1), (2, 1), (3, 1)]), 2)
+    }
+
+    func testMeshNearCardsOnly() {
+        func wall(_ z: Float) -> MeshPart {
+            MeshPart(positions: [SIMD3(-1, -1, z), SIMD3(1, -1, z), SIMD3(1, 1, z), SIMD3(-1, 1, z)],
+                     normals: [], indices: [0, 1, 2, 0, 2, 3], transform: matrix_identity_float4x4)
+        }
+        let m = MeshSnapshot([wall(-2), wall(-4)], near: [SIMD3(0, 0, -4.5)], radius: 1)
+        XCTAssertEqual(m.parts.count, 1)
+        XCTAssertEqual(m.hits(origin: .zero, dir: SIMD3(0, 0, -1)).first ?? 0, 4, accuracy: 1e-5)
+        XCTAssertEqual(MeshSnapshot([wall(-2), wall(-4)], near: [], radius: 1).parts.count, 0)
+        XCTAssertEqual(MeshSnapshot([wall(-2), wall(-4)]).parts.count, 2)
+    }
+
     func testEstimateRejectsBadReadingsAndFollowsTheMesh() {
         var t = CardTracker()
         XCTAssertTrue(t.add(sighting(size: 2.0, lidar: 2.02, margin: 20)))
