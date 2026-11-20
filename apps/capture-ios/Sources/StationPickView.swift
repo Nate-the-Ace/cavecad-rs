@@ -70,7 +70,7 @@ struct StationPickView: View {
             if c != h { height = c }
         }
         .task(id: cave.keptAt) { await loadStations() }
-        .onAppear { Task { await loadSaved() } }
+        .onAppear { if !stations.isEmpty { Task { await loadSaved() } } }
     }
 
     /// Stations come from the Rust core, off the main actor; the result is published back here.

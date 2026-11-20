@@ -95,7 +95,10 @@ final class ShotRecorder: NSObject, ObservableObject, ARSessionDelegate {
                 out.positions += [w.x, w.y, w.z]
             }
             for n in p.normals {
-                let w = simd_normalize(rot * n)
+                let r = rot * n
+                let len = simd_length(r)
+                // a zero or non-finite ARKit normal would make the whole mesh unwritable: point it up instead
+                let w = len.isFinite && len > 1e-6 ? r / len : SIMD3<Float>(0, 1, 0)
                 out.normals += [w.x, w.y, w.z]
             }
             out.indices += p.indices.map { $0 + base }
