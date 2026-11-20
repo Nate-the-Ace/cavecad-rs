@@ -105,17 +105,25 @@ struct CaptureView: View {
                         .font(.caption).padding(6).background(.thinMaterial, in: .capsule)
                 }
                 Spacer()
-                Text(rec.message).padding(8).background(.thinMaterial, in: .rect(cornerRadius: 8))
-                HStack(spacing: 16) {
+                // The controls sit on a solid dark panel with big, solid buttons: the live view behind is busy
+                // with mesh lines and coloured markers.
+                VStack(spacing: 12) {
+                    Text(rec.message).font(.body.weight(.medium)).foregroundStyle(.white).multilineTextAlignment(.center)
                     switch rec.phase {
-                    case .capturing: Text("\(rec.keyframeCount) photos")
-                    case .saving: ProgressView()
+                    case .capturing: Text("\(rec.keyframeCount) photos").font(.subheadline).foregroundStyle(.white.opacity(0.8))
+                    case .saving: ProgressView().tint(.white).controlSize(.large)
                     // a failed save keeps the session (and the earlier scan): another pass can try again
                     case .failed(let m): Text(m).foregroundStyle(.red)
                     default: EmptyView()
                     }
-                    ForEach(ShotRecorder.controls(rec.phase, hasParent: rec.parent != nil), id: \.self) { button($0) }
-                }.padding()
+                    HStack(spacing: 12) {
+                        ForEach(ShotRecorder.controls(rec.phase, hasParent: rec.parent != nil), id: \.self) { button($0) }
+                    }
+                }
+                .padding(16)
+                .frame(maxWidth: .infinity)
+                .background(.black.opacity(0.72), in: .rect(cornerRadius: 20))
+                .padding(.horizontal, 12).padding(.bottom, 8)
             }
         }
         .navigationDestination(item: $rec.viewing) { url in ShotView(url: url, stations: [over]) }
@@ -133,14 +141,32 @@ struct CaptureView: View {
                     if !ready { rec.scanMore() }
                     rec.start()
                 }
-                .buttonStyle(.borderedProminent).disabled(rec.findingNorth)
+                .buttonStyle(BigButton(colour: .green)).disabled(rec.findingNorth)
             }
         case .pause:
-            Button("Pause") { rec.pause(cave: cave, over: over) }.buttonStyle(.borderedProminent).tint(.red)
+            Button("Pause") { rec.pause(cave: cave, over: over) }.buttonStyle(BigButton(colour: .orange))
         case .stop:
-            Button("Stop") { rec.finish(cave: cave, over: over) }.buttonStyle(.bordered)
+            Button("Stop") { rec.finish(cave: cave, over: over) }.buttonStyle(BigButton(colour: .red))
         case .viewShot:
-            if case .saved(let url) = rec.phase { NavigationLink("View shot") { ShotView(url: url, stations: [over]) } }
+            if case .saved(let url) = rec.phase {
+                NavigationLink("View") { ShotView(url: url, stations: [over]) }.buttonStyle(BigButton(colour: .blue))
+            }
         }
+    }
+}
+
+/// A capture control big and solid enough to find on a busy live view: bold white text on a solid colour,
+/// at least 64 pt tall, sharing the row's width.
+struct BigButton: ButtonStyle {
+    let colour: Color
+    @Environment(\.isEnabled) private var enabled
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.title2.weight(.bold))
+            .foregroundStyle(.white)
+            .frame(maxWidth: .infinity, minHeight: 64)
+            .background(colour.opacity(enabled ? (configuration.isPressed ? 0.7 : 1) : 0.4), in: .rect(cornerRadius: 16))
+            .overlay(RoundedRectangle(cornerRadius: 16).stroke(.white.opacity(0.9), lineWidth: 2))
     }
 }
