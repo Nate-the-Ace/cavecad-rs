@@ -21,6 +21,9 @@ pub struct Pass {
     /// The cards as this pass placed them, in the shot's frame.
     #[serde(default)]
     pub cards: Vec<CardSeen>,
+    /// Why/how the pass ran: `gimbal`, `tracking lost`, `gimbal lost`, `low battery`. Empty in old files.
+    #[serde(default)]
+    pub flags: Vec<String>,
 }
 
 /// What a new pass does to the shot's mesh.
@@ -55,6 +58,8 @@ pub struct NewPass {
     pub cards: Vec<CardSeen>,
     /// How tracking went in this pass: `normal`, `limited` or `lost`.
     pub tracking: String,
+    /// Flags for the pass: `gimbal`, `tracking lost`, `gimbal lost`, `low battery`.
+    pub flags: Vec<String>,
 }
 
 /// The 4x4 identity, column-major.
@@ -159,6 +164,7 @@ pub fn add_pass(old: &Shot, p: NewPass) -> Result<Shot, BundleError> {
             first_keyframe: 0,
             keyframe_count: old.keyframes.len() as u32,
             cards: old.header.cards.clone(),
+            flags: old.header.flags.clone(),
         });
     }
     match p.mesh {
@@ -215,6 +221,7 @@ pub fn add_pass(old: &Shot, p: NewPass) -> Result<Shot, BundleError> {
         first_keyframe,
         keyframe_count: p.keyframes.len() as u32,
         cards,
+        flags: p.flags,
     });
     Ok(out)
 }

@@ -32,6 +32,7 @@ fn header() -> ShotHeader {
         compass: None,
         cards: vec![card(2, [0.0, -1.0, -1.0]), card(12, [0.0, -1.0, -4.0])],
         passes: vec![],
+        flags: vec![],
     }
 }
 
@@ -84,6 +85,7 @@ fn new_pass(aligned_by: &str, transform: [f64; 16], mesh: PassMesh) -> NewPass {
         keyframes: vec![kf(9)],
         cards: vec![card(12, [0.0, -1.0, -4.1]), card(26, [0.0, -1.0, 2.0])],
         tracking: "limited".into(),
+        flags: vec![],
     }
 }
 
@@ -490,4 +492,37 @@ fn near_card_keeps_the_floor_limit() {
     assert!(!f.ok, "{f:?}");
     assert!(f.worst_ratio > 1.0);
     assert!(f.limits.iter().all(|(_, l)| (l - 0.05).abs() < 1e-9));
+}
+
+#[test]
+fn flags_round_trip_and_header_flags_seed_the_first_pass() {
+    let mut s = shot();
+    s.header.flags = vec!["gimbal".into()];
+    let mut np = new_pass("same_session", identity(), PassMesh::Replace);
+    np.flags = vec!["gimbal".into(), "low battery".into()];
+    let out = add_pass(&s, np).unwrap();
+    let back = decode(&encode(&out).unwrap()).unwrap();
+    let p = &back.header.passes;
+    assert_eq!(p[0].flags, vec!["gimbal".to_string()]);
+    assert_eq!(
+        p[1].flags,
+        vec!["gimbal".to_string(), "low battery".to_string()]
+    );
+    assert_eq!(back.header.flags, vec!["gimbal".to_string()]);
+}
+
+#[test]
+fn old_json_without_flags_reads_empty() {
+    let pass: cave_capture::passes::Pass = serde_json::from_str(
+        r#"{"captured_at_ms":1,"aligned_by":"first","transform":[1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1],"first_keyframe":0,"keyframe_count":0}"#,
+    )
+    .unwrap();
+    assert!(pass.flags.is_empty());
+    let h: ShotHeader = serde_json::from_str(
+        &serde_json::to_string(&header())
+            .unwrap()
+            .replace(r#","flags":[]"#, ""),
+    )
+    .unwrap();
+    assert!(h.flags.is_empty());
 }

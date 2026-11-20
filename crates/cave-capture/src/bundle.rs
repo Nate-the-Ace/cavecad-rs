@@ -90,6 +90,10 @@ pub struct ShotHeader {
     /// one pass written before passes existed. See [`crate::passes`].
     #[serde(default)]
     pub passes: Vec<crate::passes::Pass>,
+    /// Flags of the shot's first pass (`gimbal`, `tracking lost`, `gimbal lost`, `low battery`);
+    /// absent (empty) in older files.
+    #[serde(default)]
+    pub flags: Vec<String>,
 }
 
 /// One kept camera frame, for colouring the mesh later.

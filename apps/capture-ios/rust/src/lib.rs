@@ -414,6 +414,8 @@ struct PassIn {
     tracking: String,
     #[serde(default)]
     cards: Vec<CardSeen>,
+    #[serde(default)]
+    flags: Vec<String>,
     keyframes: Vec<KeyIn>,
 }
 
@@ -497,6 +499,7 @@ pub unsafe extern "C" fn cc_shot_add_pass(
                 keyframes,
                 cards: p.cards,
                 tracking: p.tracking,
+                flags: p.flags,
             };
             let Ok(shot) = add_pass(&old, new) else {
                 return empty();

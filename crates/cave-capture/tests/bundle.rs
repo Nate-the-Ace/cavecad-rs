@@ -27,6 +27,7 @@ fn sample() -> Shot {
             compass: None,
             cards: vec![],
             passes: vec![],
+            flags: vec![],
         },
         positions: vec![0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0],
         normals: vec![0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0],

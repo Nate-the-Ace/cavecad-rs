@@ -57,6 +57,28 @@ final class ShotRecorderTests: XCTestCase {
         XCTAssertEqual(ShotFiles.list(cave: "test-cave-shotjob"), [url])
     }
 
+    /// Pass flags: a new shot writes them to the header; a pass stores them in its own pass record.
+    func testFlagsReachTheHeaderAndThePass() throws {
+        let cave = "test-cave-flags"
+        defer { try? FileManager.default.removeItem(at: ShotFiles.folder(cave: cave)) }
+        let a = Station(id: "a", label: "A1", x: 0, y: 0, z: 0)
+        let kf = ShotKeyframe(pose: matrix_identity_float4x4, intrinsics: matrix_identity_float3x3, w: 1, h: 1, jpeg: Data([1]))
+        let compass = CompassReading(trueNorth: true, accuracyDeg: 5, headingDeg: 0)
+        let first = ShotJob(caveId: cave, over: a, parts: [Self.tri], keyframes: [kf], startCamera: .zero, tracking: "normal",
+                            systemVersion: "27", compass: compass, flags: ["gimbal"])
+        guard case .success(let url) = first.write() else { return XCTFail("shot not written") }
+        XCTAssertEqual(try Self.header(of: Data(contentsOf: url))["flags"] as? [String], ["gimbal"])
+        let pass = ShotJob(caveId: cave, over: a, parts: [Self.tri], keyframes: [kf], startCamera: .zero, tracking: "normal",
+                           systemVersion: "27", compass: compass, flags: ["gimbal", "low battery"])
+        guard case .success = pass.writePass(into: url, sameSession: true, transform: nil) else { return XCTFail("pass not written") }
+        let h = try Self.header(of: Data(contentsOf: url))
+        let passes = h["passes"] as? [[String: Any]]
+        XCTAssertEqual(passes?.count, 2)
+        XCTAssertEqual(passes?[0]["flags"] as? [String], ["gimbal"])
+        XCTAssertEqual(passes?[1]["flags"] as? [String], ["gimbal", "low battery"])
+        XCTAssertEqual(h["flags"] as? [String], ["gimbal"])
+    }
+
     func testCompassReading() {
         let good = CompassReading(trueHeading: 91, magneticHeading: 90, accuracy: 5)
         XCTAssertEqual(good, CompassReading(trueNorth: true, accuracyDeg: 5, headingDeg: 91))

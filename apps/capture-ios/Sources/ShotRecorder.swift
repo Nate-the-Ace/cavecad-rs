@@ -1031,14 +1031,17 @@ final class ShotJob: @unchecked Sendable {
     let tracking: String
     let systemVersion: String
     let compass: CompassReading
+    /// Pass flags (`gimbal`, `tracking lost`, `gimbal lost`, `low battery`): the shot's header for a new shot, the pass record for a pass.
+    let flags: [String]
     /// Station cards seen during the scan; their sight lines meet the final mesh in `write`.
     private var cards: CardTracker
     /// Always the gimbal's pivot height: every shot stands on the same gimbal.
     let instrumentHeight = Rig.pivotHeightM
 
     init(caveId: String, over: Station, parts: [MeshPart], keyframes: [ShotKeyframe], startCamera: SIMD3<Float>,
-         tracking: String, systemVersion: String, compass: CompassReading, cards: CardTracker = CardTracker()) {
-        self.cards = cards
+         tracking: String, systemVersion: String, compass: CompassReading, cards: CardTracker = CardTracker(),
+         flags: [String] = []) {
+        self.cards = cards; self.flags = flags
         self.caveId = caveId; self.over = over; self.parts = parts; self.keyframes = keyframes
         self.startCamera = startCamera; self.tracking = tracking; self.systemVersion = systemVersion; self.compass = compass
     }
@@ -1068,6 +1071,7 @@ final class ShotJob: @unchecked Sendable {
             "taps": [Any](), "compass": ["true_north": compass.trueNorth, "accuracy_deg": compass.accuracyDeg],
             "tracking": tracking, "arkit_version": systemVersion,
             "gravity": [0.0, -1.0, 0.0], "keyframes": kfs, "cards": cards.records.map(\.json),
+            "flags": flags,
         ]
         guard numbers.allSatisfy(\.isFinite), JSONSerialization.isValidJSONObject(header),
               let headerData = try? JSONSerialization.data(withJSONObject: header)
@@ -1104,7 +1108,7 @@ final class ShotJob: @unchecked Sendable {
             "captured_at_ms": Int64(Date().timeIntervalSince1970 * 1000),
             "aligned_by": sameSession ? "same_session" : "cards",
             "transform": t, "replace": sameSession, "tracking": tracking,
-            "cards": cards.records.map(\.json), "keyframes": kfs,
+            "cards": cards.records.map(\.json), "keyframes": kfs, "flags": flags,
         ]
         guard t.count == 16, numbers.allSatisfy(\.isFinite), JSONSerialization.isValidJSONObject(pass),
               let pj = try? JSONSerialization.data(withJSONObject: pass)
