@@ -313,3 +313,90 @@ fn ghost_ignores_non_finite_vertices() {
     assert!(g.positions.iter().all(|x| x.is_finite()));
     assert!(g.outlines.iter().flatten().flatten().all(|x| x.is_finite()));
 }
+
+use cave_capture::{apply_point, card_offsets, cards_fit};
+
+#[test]
+fn cards_fit_recovers_a_known_turn_and_shift() {
+    let old = vec![
+        card(2, [0.3, -1.0, -1.0]),
+        card(12, [1.5, -0.8, -4.0]),
+        card(26, [-0.4, -1.1, 2.0]),
+    ];
+    let t = yaw_shift(0.7, [1.0, -0.2, 3.0]);
+    // the new pass sees the same cards in its own frame: new = inverse(t) * old
+    let inv = yaw_shift(-0.7, [0.0; 3]);
+    let back = |p: [f64; 3]| apply_point(&inv, [p[0] - 1.0, p[1] + 0.2, p[2] - 3.0]);
+    let new: Vec<_> = old
+        .iter()
+        .take(2)
+        .map(|c| card(c.id, back(c.point)))
+        .collect();
+    let f = cards_fit(&old, &new).unwrap();
+    assert!((f.yaw_rad - 0.7).abs() < 1e-9, "{}", f.yaw_rad);
+    assert!(f.worst_m < 1e-9);
+    for (a, b) in f.transform.iter().zip(t.iter()) {
+        assert!((a - b).abs() < 1e-9);
+    }
+    assert_eq!(f.misfits.len(), 2);
+}
+
+#[test]
+fn cards_fit_names_a_moved_card() {
+    let old = vec![
+        card(2, [0.0, -1.0, -1.0]),
+        card(12, [0.0, -1.0, -4.0]),
+        card(26, [0.0, -1.0, 2.0]),
+    ];
+    let mut new = old.clone();
+    // along the line of cards: a sideways nudge of an end card would be soaked up by the turn
+    new[2].point[2] += 0.12;
+    let f = cards_fit(&old, &new).unwrap();
+    assert!(f.worst_m > 0.05);
+    let (id, m) = f
+        .misfits
+        .iter()
+        .copied()
+        .max_by(|a, b| a.1.total_cmp(&b.1))
+        .unwrap();
+    assert_eq!(id, 26);
+    assert!(m > 0.05);
+    assert!(cards_fit(&old, &new[..1]).is_none());
+}
+
+#[test]
+fn card_offsets_are_plain_distances() {
+    let old = vec![card(2, [0.0, 0.0, 0.0]), card(12, [1.0, 0.0, 0.0])];
+    let new = vec![card(2, [0.07, 0.0, 0.0]), card(26, [5.0, 0.0, 0.0])];
+    let o = card_offsets(&old, &new);
+    assert_eq!(o.len(), 1);
+    assert_eq!(o[0].0, 2);
+    assert!((o[0].1 - 0.07).abs() < 1e-12);
+}
+
+#[test]
+fn cards_fit_refuses_cards_stacked_on_one_spot() {
+    // 0.1 m apart horizontally (one above the other is no help either): yaw is undetermined
+    let old = vec![card(2, [0.0, -1.0, -1.0]), card(12, [0.1, -0.2, -1.0])];
+    let new = vec![card(2, [3.0, -1.0, 0.0]), card(12, [3.1, -0.2, 0.0])];
+    assert!(cards_fit(&old, &new).is_none());
+    let tall = vec![card(2, [0.0, -1.0, -1.0]), card(12, [0.0, 1.0, -1.0])];
+    assert!(cards_fit(&tall, &tall).is_none());
+}
+
+#[test]
+fn cards_fit_refuses_non_finite_numbers() {
+    let old = vec![card(2, [0.0, -1.0, -1.0]), card(12, [0.0, -1.0, -4.0])];
+    for bad in [f64::NAN, f64::INFINITY] {
+        let mut new = old.clone();
+        new[1].point[2] = bad;
+        assert!(cards_fit(&old, &new).is_none());
+        assert!(cards_fit(&new, &old).is_none());
+    }
+    // a pair so large the arithmetic overflows must not produce a NaN transform either
+    let huge = vec![
+        card(2, [1e200, 0.0, 1e200]),
+        card(12, [-1e200, 0.0, -1e200]),
+    ];
+    assert!(cards_fit(&huge, &huge).is_none_or(|f| f.transform.iter().all(|v| v.is_finite())));
+}

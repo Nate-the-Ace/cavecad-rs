@@ -15,6 +15,7 @@ pub use frame::{
     PIVOT_HEIGHT_M, Placement, bearing_deg, capture_to_survey, from_compass, heading_from_tap,
 };
 pub use passes::{
-    Ghost, IDENTITY, NewPass, Pass, PassMesh, add_pass, apply_dir, apply_point, ghost, mul,
+    CardFit, Ghost, IDENTITY, NewPass, Pass, PassMesh, add_pass, apply_dir, apply_point,
+    card_offsets, cards_fit, ghost, mul,
 };
 pub use stations::{StationSeed, document_from_room, stations};

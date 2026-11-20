@@ -339,6 +339,111 @@ fn chain(mut next: BTreeMap<u32, Vec<u32>>, positions: &[f32], min_len: f32) -> 
     outlines
 }
 
+/// How a pass lines up from its cards.
+#[derive(Clone, Debug, PartialEq)]
+pub struct CardFit {
+    /// Turn about +y (up), radians.
+    pub yaw_rad: f64,
+    /// Column-major 4x4 from the pass's frame to the shot's (turn, then shift).
+    pub transform: [f64; 16],
+    /// Each matched card's distance from where the shot has it after the fit: (id, metres).
+    pub misfits: Vec<(u32, f64)>,
+    /// The largest misfit, metres.
+    pub worst_m: f64,
+}
+
+fn matched<'a>(old: &'a [CardSeen], new: &'a [CardSeen]) -> Vec<(&'a CardSeen, &'a CardSeen)> {
+    new.iter()
+        .filter_map(|n| old.iter().find(|o| o.id == n.id).map(|o| (o, n)))
+        .collect()
+}
+
+fn dist(a: [f64; 3], b: [f64; 3]) -> f64 {
+    ((a[0] - b[0]).powi(2) + (a[1] - b[1]).powi(2) + (a[2] - b[2]).powi(2)).sqrt()
+}
+
+/// Largest horizontal (x/z) separation between any two of the points.
+fn horizontal_spread(pts: &[[f64; 3]]) -> f64 {
+    let mut best = 0.0_f64;
+    for (i, a) in pts.iter().enumerate() {
+        for b in &pts[i + 1..] {
+            best = best.max((a[0] - b[0]).hypot(a[2] - b[2]));
+        }
+    }
+    best
+}
+
+/// Least-squares turn about +y and shift taking the new pass's cards onto the shot's (gravity is
+/// shared, so 4 unknowns). Needs 2 matched cards; a third shows a moved card as a misfit.
+/// `None` if fewer than 2 match, if the matched cards are all within 0.2 m of each other
+/// horizontally (the turn is undetermined), or if any number is, or comes out, non-finite.
+pub fn cards_fit(old: &[CardSeen], new: &[CardSeen]) -> Option<CardFit> {
+    let m = matched(old, new);
+    if m.len() < 2 {
+        return None;
+    }
+    if m.iter()
+        .any(|(o, n)| o.point.iter().chain(n.point.iter()).any(|v| !v.is_finite()))
+    {
+        return None;
+    }
+    let op: Vec<[f64; 3]> = m.iter().map(|(o, _)| o.point).collect();
+    let np: Vec<[f64; 3]> = m.iter().map(|(_, n)| n.point).collect();
+    if horizontal_spread(&op) < 0.2 || horizontal_spread(&np) < 0.2 {
+        return None;
+    }
+    let k = m.len() as f64;
+    let mut co = [0.0; 3];
+    let mut cn = [0.0; 3];
+    for (o, n) in &m {
+        for i in 0..3 {
+            co[i] += o.point[i] / k;
+            cn[i] += n.point[i] / k;
+        }
+    }
+    // R_y(t) u = (c ux + s uz, uy, -s ux + c uz); maximise sum v . R u
+    let (mut sx, mut sc) = (0.0, 0.0);
+    for (o, n) in &m {
+        let (ux, uz) = (n.point[0] - cn[0], n.point[2] - cn[2]);
+        let (vx, vz) = (o.point[0] - co[0], o.point[2] - co[2]);
+        sc += vx * ux + vz * uz;
+        sx += vx * uz - vz * ux;
+    }
+    let yaw = sx.atan2(sc);
+    let (s, c) = yaw.sin_cos();
+    let rot = [
+        c, 0.0, -s, 0.0, 0.0, 1.0, 0.0, 0.0, s, 0.0, c, 0.0, 0.0, 0.0, 0.0, 1.0,
+    ];
+    let rc = apply_dir(&rot, cn);
+    let mut transform = rot;
+    transform[12] = co[0] - rc[0];
+    transform[13] = co[1] - rc[1];
+    transform[14] = co[2] - rc[2];
+    let misfits: Vec<(u32, f64)> = m
+        .iter()
+        .map(|(o, n)| (n.id, dist(apply_point(&transform, n.point), o.point)))
+        .collect();
+    let worst_m = misfits.iter().map(|x| x.1).fold(0.0, f64::max);
+    if !yaw.is_finite() || !worst_m.is_finite() || transform.iter().any(|v| !v.is_finite()) {
+        return None;
+    }
+    Some(CardFit {
+        yaw_rad: yaw,
+        transform,
+        misfits,
+        worst_m,
+    })
+}
+
+/// Each card seen in both, with how far apart they are as they stand (no fit): the same-session
+/// check that nothing moved.
+pub fn card_offsets(old: &[CardSeen], new: &[CardSeen]) -> Vec<(u32, f64)> {
+    matched(old, new)
+        .iter()
+        .map(|(o, n)| (n.id, dist(n.point, o.point)))
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
