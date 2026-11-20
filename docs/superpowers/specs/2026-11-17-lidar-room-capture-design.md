@@ -20,6 +20,19 @@ means a scanned notebook page.
 - **First version goes as far as walls on the map:** a stitched, coloured 3D room in CaveCAD's 3D view, a
   GLB/PLY export, and the room's walls sliced into the plan drawing.
 
+## Revision, 2026-11-20 (Nathan, after the first shots on the phone)
+
+- **Capture's only controls are the station chooser and Start/Stop.** The forward-station pick, the
+  crosshair heading tap and the height field are gone ("excessive").
+- **Heading comes from the phone's compass** (ARKit `.gravityAndHeading`). This replaces the "No compass"
+  limit below. The OM7 clamp's magnet spoiled the X1's compass, so every shot records the compass's
+  accuracy and the app warns (does not block) when it is worse than 20°.
+- **Height is fixed at the gimbal's pivot, 0.30 m** above the surface its tripod stands on (measured in the
+  2026-11-16 floor sweep, `tools/cave-osmo/FINDINGS.md`). Same gimbal, so no field.
+- **Picking stations and orienting a capture by hand belong in CaveCAD**, in a LiDAR suite of tools planned
+  later (its own spec): where a compass heading is wrong or a shot needs moving, it is fixed there, not on
+  the phone. Shots taken with a heading tap (two exist) still place as before.
+
 ## Hard limits (stated, not solved)
 
 - **Range.** iPhone LiDAR is good to about 5 m. Bigger rooms need more shots. The app shows where nothing
@@ -169,6 +182,8 @@ has one gimbal implementation shared with the Mac tools, not a third copy in Swi
 4. **Into CaveCAD:** App Group hand-off, server capture storage and upload, capture room record, Capture
    rooms panel, 3D view layer, GLB/PLY export.
 5. **Walls on the map:** slicing and the capture walls layer.
+6. **LiDAR suite in CaveCAD** (own spec, later): pick a shot's station, turn and move a capture by hand,
+   and whatever else working with captures on the desktop needs.
 
 ## Not in this version
 
