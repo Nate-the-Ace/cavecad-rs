@@ -84,12 +84,50 @@ final class ShotRecorder: NSObject, ObservableObject, ARSessionDelegate {
     @Published private(set) var parent: URL?
     /// When the parent was made, for the screen.
     @Published private(set) var parentMade: Date?
-    /// The parent's earlier passes were scanned in this ARKit session (same frame, no line-up needed).
-    private(set) var parentInSession = false
-    /// This pass's frame to the parent's, column-major, from the station cards (set by the card line-up; nil
-    /// until then). Needed to save a pass whose parent is from another session.
-    private(set) var cardTransform: [Double]?
+    /// How this ARKit session's frame maps into the parent shot's frame (column-major 4x4). nil: unknown (the
+    /// parent is from an earlier run, or tracking was reset), so a pass cannot be saved until the cards line it
+    /// up. Identity: this session made (or continued) the shot in its own frame. Otherwise: the card fit, valid
+    /// for every later pass of this session. Cleared whenever tracking is reset.
+    private(set) var sessionToShot: [Double]?
+    /// The shot `sessionToShot` maps into (a different parent makes it unknown).
+    private var sessionShot: URL?
+    /// The station the ARKit session ran over; nil until one has run (or after it failed). Coming back to the
+    /// same station resumes the session without a reset, so the frame (and `sessionToShot`) is kept.
+    private var sessionStation: String?
+    /// The next `run` resumes the paused session instead of starting tracking afresh.
+    private var resumeNext = false
+    /// The station the screen is over now (from `prepare`); the session takes it when it runs.
+    private var preparedStation: String?
+    /// Bumped whenever tracking is reset, so a save that finishes after a reset does not claim the new frame.
+    private var trackingEpoch = 0
     static let needCardsMessage = "Look at two cards so this pass can be lined up."
+    nonisolated static let identity: [Double] = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]
+
+    /// How Stop saves.
+    enum SaveMode: Equatable {
+        /// No parent: a new shot file.
+        case newShot
+        /// A parent in an unknown frame: not saved, the cards must line the pass up first.
+        case refuse
+        /// The parent is in this session's frame: ARKit's whole mesh replaces the shot's.
+        case sameSession
+        /// Lined up by the cards: the pass is moved by the transform and its mesh added.
+        case cards([Double])
+    }
+
+    /// Stop's choice, from whether there is a parent and how this session maps into it.
+    nonisolated static func saveMode(hasParent: Bool, sessionToShot: [Double]?) -> SaveMode {
+        guard hasParent else { return .newShot }
+        guard let t = sessionToShot else { return .refuse }
+        return t == identity ? .sameSession : .cards(t)
+    }
+
+    /// Tracking was (or is about to be) reset: this session's frame no longer relates to any shot.
+    private func dropFrame(_ why: String) {
+        trackingEpoch += 1
+        if sessionToShot != nil { Log.write("shot", "line-up with the shot dropped: \(why)") }
+        sessionToShot = nil; sessionShot = nil
+    }
 
     let session = ARSession()
     private let compass = CompassWatcher()
@@ -203,15 +241,23 @@ final class ShotRecorder: NSObject, ObservableObject, ARSessionDelegate {
     /// LiDAR phones only: scene reconstruction needs the depth sensor (the simulator has none either).
     static var hasLiDAR: Bool { ARWorldTrackingConfiguration.supportsSceneReconstruction(.mesh) }
 
-    /// Called when the capture screen opens over a station (before `run`): the station's newest shot becomes
-    /// the parent. Its frame is never this session's (the session is about to start afresh), so a pass into it
-    /// must be lined up by the cards.
+    /// Called when the capture screen opens (or comes back) over a station, before `run`: the station's newest
+    /// shot becomes the parent. Back at the same station after a session ran (say from viewing the shot), the
+    /// next `run` resumes that session and keeps how it maps into the shot; otherwise tracking starts afresh and
+    /// a pass into an existing shot must be lined up by the cards.
     func prepare(cave: KeptCave, over: Station) {
         parent = ShotFiles.parent(cave: cave.id, station: over.id)
         parentMade = parent.flatMap { try? $0.resourceValues(forKeys: [.creationDateKey]).creationDate }
-        parentInSession = false
-        cardTransform = nil
-        if let parent { Log.write("shot", "adding to the station's shot \(parent.lastPathComponent) (another session)") }
+        preparedStation = over.id
+        resumeNext = sessionStation == over.id
+        if !resumeNext {
+            dropFrame("another station")
+        } else if parent != sessionShot {
+            dropFrame("the station's shot changed")
+        }
+        if let parent {
+            Log.write("shot", "adding to the station's shot \(parent.lastPathComponent) (\(sessionToShot == nil ? "needs a card line-up" : "lined up in this session"))")
+        }
     }
 
     func run() {
@@ -220,10 +266,17 @@ final class ShotRecorder: NSObject, ObservableObject, ARSessionDelegate {
             message = "This phone has no LiDAR."
             return
         }
-        // .gravityAndHeading fixes north when the session runs: start the compass first and wait (up to 3 s)
-        // for a valid heading, so the alignment has one and the header records that very reading.
         compass.start()
         runSerial += 1
+        if resumeNext {
+            // ARKit keeps its world, mesh and anchors over a pause and relocalizes; north was fixed at the first run.
+            resumeNext = false
+            findingNorth = false
+            runSession(reset: false)
+            return
+        }
+        // .gravityAndHeading fixes north when the session runs: start the compass first and wait (up to 3 s)
+        // for a valid heading, so the alignment has one and the header records that very reading.
         let serial = runSerial
         findingNorth = true
         message = "Finding north…"
@@ -239,11 +292,12 @@ final class ShotRecorder: NSObject, ObservableObject, ARSessionDelegate {
                 Log.write("compass", "no heading at alignment")
             }
             message = Self.readyMessage
-            runSession()
+            runSession(reset: true)
         }
     }
 
-    private func runSession() {
+    /// Runs the session: `reset` starts tracking afresh (a new frame), otherwise a paused session resumes.
+    private func runSession(reset: Bool) {
         let c = ARWorldTrackingConfiguration()
         c.sceneReconstruction = .mesh
         c.frameSemantics = [.sceneDepth]
@@ -262,8 +316,19 @@ final class ShotRecorder: NSObject, ObservableObject, ARSessionDelegate {
             Log.write("ar", "video format default \(Int(c.videoFormat.imageResolution.width))x\(Int(c.videoFormat.imageResolution.height)) @\(c.videoFormat.framesPerSecond) fps")
         }
         session.delegate = self
-        session.run(c, options: [.resetTracking, .removeExistingAnchors])
+        sessionStation = preparedStation
+        if reset {
+            dropFrame("tracking started afresh")
+            Log.write("ar", "started fresh")
+            session.run(c, options: [.resetTracking, .removeExistingAnchors])
+        } else {
+            Log.write("ar", "resumed without reset")
+            session.run(c)
+        }
     }
+
+    /// After an interruption ARKit relocalizes into the same world, so the frame (and `sessionToShot`) holds.
+    nonisolated func sessionShouldAttemptRelocalization(_ session: ARSession) -> Bool { true }
 
     func start() {
         guard !findingNorth, let f = session.currentFrame else { return }
@@ -304,12 +369,14 @@ final class ShotRecorder: NSObject, ObservableObject, ARSessionDelegate {
     nonisolated func session(_ session: ARSession, didFailWithError error: Error) {
         Log.write("ar", "session failed: \(error.localizedDescription)")
         MainActor.assumeIsolated {
+            // A failed session has no world to come back to: the next run starts afresh.
+            sessionStation = nil
+            dropFrame("the session failed")
             // The best camera format may not run with scene reconstruction and depth: try the default, once.
             guard usingBestFormat, !bestFormatFailed, case .ready = phase else { return }
             bestFormatFailed = true
-            parentInSession = false  // the restart resets tracking: the parent's frame is gone
             Log.write("ar", "best video format failed to run; falling back to the default format")
-            runSession()
+            runSession(reset: true)
         }
     }
 
@@ -527,8 +594,9 @@ final class ShotRecorder: NSObject, ObservableObject, ARSessionDelegate {
 
     func stop(cave: KeptCave, over: Station) {
         guard case .capturing = phase else { return }
-        // A pass into a shot from another session needs the cards to line it up; carry on capturing until then.
-        if parent != nil, !parentInSession, cardTransform == nil {
+        let mode = Self.saveMode(hasParent: parent != nil, sessionToShot: sessionToShot)
+        // A pass into a shot in an unknown frame needs the cards to line it up; carry on capturing until then.
+        if mode == .refuse {
             message = Self.needCardsMessage
             return
         }
@@ -551,20 +619,29 @@ final class ShotRecorder: NSObject, ObservableObject, ARSessionDelegate {
                           tracking: worstTracking, systemVersion: UIDevice.current.systemVersion, compass: compassAtAlignment,
                           cards: cardTracker)
         keyframes = []  // the job now holds the only reference, and drops each photo as it is written
-        let into = parent, same = parentInSession, transform = cardTransform
-        // A leave or a restart while saving means the session's frame is no longer this pass's.
-        let serial = runSerial
+        let into = parent
+        // A tracking reset while saving means this session's frame is no longer the shot's.
+        let epoch = trackingEpoch
         Task {
             let (result, passes) = await Task.detached { () -> (Result<URL, ShotFailure>, Int) in
-                let r = into.map { job.writePass(into: $0, sameSession: same, transform: transform) } ?? job.write()
+                let r: Result<URL, ShotFailure>
+                switch (mode, into) {
+                case (.sameSession, let u?): r = job.writePass(into: u, sameSession: true, transform: nil)
+                // v1 limit: in a card-lined session ARKit's mesh is cumulative, so every later pass of the session
+                // adds the session's earlier geometry again (overlapping triangles are allowed by the spec).
+                case (.cards(let t), let u?): r = job.writePass(into: u, sameSession: false, transform: t)
+                default: r = job.write()
+                }
                 guard case .success(let url) = r else { return (r, 0) }
                 let n = (try? Data(contentsOf: url, options: .alwaysMapped)).map { Core.summary(bundle: $0, pair: nil)["passes"] as? Int ?? 0 } ?? 0
                 return (r, n)
             }.value
             switch result {
             case .success(let url):
+                // A fresh shot is in this session's own frame; a pass leaves the line-up as it was.
+                if mode == .newShot, epoch == trackingEpoch { sessionToShot = Self.identity }
+                if epoch == trackingEpoch, sessionToShot != nil { sessionShot = url }
                 parent = url
-                parentInSession = serial == runSerial
                 parentMade = parentMade ?? Date()
                 Log.write("shot", "saved pass \(max(passes, 1))")
                 phase = .saved(url); message = "Shot saved. Scan more to fill gaps."
@@ -573,8 +650,8 @@ final class ShotRecorder: NSObject, ObservableObject, ARSessionDelegate {
         }
     }
 
-    /// Ready for another pass at the same station, in the same ARKit session (tracking kept, so the pass needs
-    /// no line-up). Does not run the session again.
+    /// Ready for another pass at the same station, in the same ARKit session (tracking and the line-up with the
+    /// shot are kept). Does not run the session again.
     func scanMore() {
         shotSerial += 1
         keyframes = []; keyframeCount = 0
@@ -587,8 +664,7 @@ final class ShotRecorder: NSObject, ObservableObject, ARSessionDelegate {
     /// Ready for another shot from the same station, with tracking started afresh.
     func reset() {
         scanMore()
-        parentInSession = false
-        cardTransform = nil
+        resumeNext = false
         run()
     }
 

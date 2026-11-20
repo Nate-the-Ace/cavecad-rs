@@ -168,6 +168,15 @@ final class ShotRecorderTests: XCTestCase {
         XCTAssertNil(Core.ghost(bundle: Data([1, 2, 3])))
     }
 
+    func testSaveModeFollowsHowTheSessionMapsIntoTheShot() {
+        let fit: [Double] = [0, 0, -1, 0, 0, 1, 0, 0, 1, 0, 0, 0, 2, 0, 3, 1]
+        XCTAssertEqual(ShotRecorder.saveMode(hasParent: false, sessionToShot: nil), .newShot)
+        XCTAssertEqual(ShotRecorder.saveMode(hasParent: false, sessionToShot: ShotRecorder.identity), .newShot)
+        XCTAssertEqual(ShotRecorder.saveMode(hasParent: true, sessionToShot: nil), .refuse)
+        XCTAssertEqual(ShotRecorder.saveMode(hasParent: true, sessionToShot: ShotRecorder.identity), .sameSession)
+        XCTAssertEqual(ShotRecorder.saveMode(hasParent: true, sessionToShot: fit), .cards(fit))
+    }
+
     func testParentShotAndSafeReplace() throws {
         let cave = "test-cave-parent"
         defer { try? FileManager.default.removeItem(at: ShotFiles.folder(cave: cave)) }
