@@ -1,11 +1,13 @@
 import AuthenticationServices
 import CryptoKit
 import Foundation
+import UIKit
 
 enum PKCE {
-    static func verifier() -> String {
+    /// 32 random bytes as base64url; nil when the system gave no randomness.
+    static func verifier() -> String? {
         var bytes = [UInt8](repeating: 0, count: 32)
-        _ = SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes)
+        guard SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes) == errSecSuccess else { return nil }
         return base64url(Data(bytes))
     }
     static func challenge(for verifier: String) -> String {
@@ -21,6 +23,8 @@ enum PKCE {
 @MainActor
 final class Account: NSObject, ObservableObject, ASWebAuthenticationPresentationContextProviding {
     static let server = URL(string: Bundle.main.object(forInfoDictionaryKey: "CaveCADServer") as? String ?? "https://cavecad.com")!
+    /// Ordinary server calls give up after this long with no answer.
+    static let restTimeout: TimeInterval = 15
 
     @Published private(set) var token: String? = Keychain.load()
     @Published private(set) var email: String?
@@ -41,7 +45,11 @@ final class Account: NSObject, ObservableObject, ASWebAuthenticationPresentation
     }
 
     func signIn() {
-        let verifier = PKCE.verifier(), state = PKCE.verifier()
+        guard let verifier = PKCE.verifier(), let state = PKCE.verifier() else {
+            problem = "This phone could not make a secure sign-in code. Try again."
+            return
+        }
+        problem = nil
         let url = Self.signInURL(server: Self.server, challenge: PKCE.challenge(for: verifier), state: state)
         let session = ASWebAuthenticationSession(url: url, callback: .customScheme("cavecad")) { [weak self] cb, error in
             Task { @MainActor in
@@ -63,6 +71,7 @@ final class Account: NSObject, ObservableObject, ASWebAuthenticationPresentation
     private func redeem(code: String, verifier: String) async {
         var req = URLRequest(url: Self.server.appendingPathComponent("api/desktop-token"))
         req.httpMethod = "POST"
+        req.timeoutInterval = Self.restTimeout
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.httpBody = try? JSONSerialization.data(withJSONObject: ["code": code, "verifier": verifier])
         do {
@@ -70,7 +79,9 @@ final class Account: NSObject, ObservableObject, ASWebAuthenticationPresentation
             guard (resp as? HTTPURLResponse)?.statusCode == 200,
                   let t = (try JSONSerialization.jsonObject(with: data) as? [String: Any])?["token"] as? String
             else { problem = "The server refused the sign-in."; return }
-            Keychain.save(t)
+            if !Keychain.save(t) {
+                problem = "Signed in, but this phone could not keep the sign-in. You will need to sign in again next time."
+            }
             token = t
             await loadMe()
         } catch { problem = "No connection to CaveCAD." }
@@ -82,7 +93,14 @@ final class Account: NSObject, ObservableObject, ASWebAuthenticationPresentation
         email = (me["member"] as? [String: Any])?["email"] as? String ?? me["email"] as? String
     }
 
-    func signOut() { Keychain.delete(); token = nil; email = nil; deviceId = nil }
+    /// Signs out and forgets the caves kept on the phone. Captured shots (Documents/shots) stay.
+    func signOut() {
+        Keychain.delete()
+        token = nil
+        email = nil
+        deviceId = nil
+        CaveStore.forgetKept()
+    }
 
     /// This phone's id as a CaveCAD device. The server's cave calls all name one (`X-Cave-Device`); it is
     /// registered from an X25519 key kept in the Keychain, so the phone stays the same device across launches.
@@ -96,17 +114,25 @@ final class Account: NSObject, ObservableObject, ASWebAuthenticationPresentation
             key = k
         } else {
             key = Curve25519.KeyAgreement.PrivateKey()
-            Keychain.save(key.rawRepresentation.base64EncodedString(), service: Keychain.deviceKey)
+            // A key that cannot be kept would make this phone a new device on every launch: stop instead.
+            guard Keychain.save(key.rawRepresentation.base64EncodedString(), service: Keychain.deviceKey) else {
+                problem = "This phone could not keep its device key, so it cannot reach your caves."
+                throw URLError(.userAuthenticationRequired)
+            }
         }
+        let signedInAs = token
         var req = URLRequest(url: Self.server.appendingPathComponent("api/devices"))
         req.httpMethod = "POST"
+        req.timeoutInterval = Self.restTimeout
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        req.setValue("Bearer \(token ?? "")", forHTTPHeaderField: "Authorization")
+        req.setValue("Bearer \(signedInAs ?? "")", forHTTPHeaderField: "Authorization")
         req.httpBody = try JSONSerialization.data(withJSONObject: ["publicKey": PKCE.base64url(key.publicKey.rawRepresentation)])
-        let data = try await checked(URLSession.shared.data(for: req))
+        let (data, resp) = try await URLSession.shared.data(for: req)
+        try check(resp)
         guard let id = ((try JSONSerialization.jsonObject(with: data) as? [String: Any])?["device"] as? [String: Any])?["id"] as? String
         else { throw URLError(.badServerResponse) }
-        deviceId = id
+        // Signed out (or in as someone else) meanwhile: the id belongs to the old account, so do not keep it.
+        if token == signedInAs { deviceId = id }
         return id
     }
 
@@ -115,6 +141,7 @@ final class Account: NSObject, ObservableObject, ASWebAuthenticationPresentation
         var c = URLComponents(url: Self.server.appendingPathComponent(path), resolvingAgainstBaseURL: false)!
         if !query.isEmpty { c.queryItems = query }
         var req = URLRequest(url: c.url!)
+        req.timeoutInterval = Self.restTimeout
         req.setValue("Bearer \(token ?? "")", forHTTPHeaderField: "Authorization")
         if needsDevice { req.setValue(try await device(), forHTTPHeaderField: "X-Cave-Device") }
         return req
@@ -122,14 +149,16 @@ final class Account: NSObject, ObservableObject, ASWebAuthenticationPresentation
 
     /// An authenticated GET. Throws on no connection or a refusal; a 401 signs out.
     func get(_ path: String, query: [URLQueryItem] = [], device: Bool = true) async throws -> Data {
-        try await checked(URLSession.shared.data(for: authorized(path, query: query, device: device)))
+        let (data, resp) = try await URLSession.shared.data(for: authorized(path, query: query, device: device))
+        try check(resp)
+        return data
     }
 
-    private func checked(_ r: (Data, URLResponse)) throws -> Data {
-        let status = (r.1 as? HTTPURLResponse)?.statusCode ?? 0
+    /// Throws unless the answer is a success; a 401 (the sign-in ended) signs out.
+    func check(_ resp: URLResponse) throws {
+        let status = (resp as? HTTPURLResponse)?.statusCode ?? 0
         if status == 401 { signOut() }
         guard (200..<300).contains(status) else { throw URLError(.badServerResponse) }
-        return r.0
     }
 
     nonisolated func presentationAnchor(for session: ASWebAuthenticationSession) -> ASPresentationAnchor {

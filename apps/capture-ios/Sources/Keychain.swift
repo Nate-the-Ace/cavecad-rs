@@ -6,12 +6,14 @@ enum Keychain {
     static let token = "app.cavecad.capture.token"
     static let deviceKey = "app.cavecad.capture.device-key"
 
-    static func save(_ value: String, service: String = token) {
+    /// Keeps a value; false when the Keychain refused it.
+    @discardableResult
+    static func save(_ value: String, service: String = token) -> Bool {
         delete(service: service)
         let q: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service,
                                 kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
                                 kSecValueData as String: Data(value.utf8)]
-        SecItemAdd(q as CFDictionary, nil)
+        return SecItemAdd(q as CFDictionary, nil) == errSecSuccess
     }
 
     static func load(service: String = token) -> String? {

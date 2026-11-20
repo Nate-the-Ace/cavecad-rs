@@ -35,7 +35,7 @@ enum Core {
     }
 
     static func encodeShot(header: Data, positions: [Float], normals: [Float], indices: [UInt32], jpegs: Data) -> Data {
-        let h = String(data: header, encoding: .utf8)!
+        guard let h = String(data: header, encoding: .utf8) else { return Data() }
         return h.withCString { hp in
             positions.withUnsafeBufferPointer { p in normals.withUnsafeBufferPointer { n in
                 indices.withUnsafeBufferPointer { i in jpegs.withUnsafeBytes { j in

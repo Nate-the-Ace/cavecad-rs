@@ -1,11 +1,18 @@
 import SwiftUI
 
 struct StationPickView: View {
-    let cave: KeptCave
+    @State var cave: KeptCave
+    let store: CaveStore
     @State private var stations: [Station] = []
     @State private var over: Station?
     @State private var forward: Station?
     @State private var problem: String?
+    @State private var updating = false
+
+    init(cave: KeptCave, store: CaveStore) {
+        _cave = State(initialValue: cave)
+        self.store = store
+    }
 
     var body: some View {
         List {
@@ -16,11 +23,35 @@ struct StationPickView: View {
                     .font(.headline)
             }
             if let problem { Text(problem).foregroundStyle(.red) }
+            Section { Text("Kept \(cave.keptAt.formatted(date: .abbreviated, time: .shortened))").font(.caption).foregroundStyle(.secondary) }
         }
         .navigationTitle(cave.name)
-        .task {
-            do { stations = try Core.stations(snapshot: cave.snapshot, entries: cave.entries) }
-            catch { problem = error.localizedDescription }
+        .toolbar {
+            if updating { ProgressView() } else { Button("Get latest") { getLatest() } }
+        }
+        .task(id: cave.keptAt) { await loadStations() }
+    }
+
+    /// Stations come from the Rust core, off the main actor; the result is published back here.
+    private func loadStations() async {
+        let snapshot = cave.snapshot, entries = cave.entries
+        do {
+            let s = try await Task.detached { try Core.stations(snapshot: snapshot, entries: entries) }.value
+            stations = s
+            problem = nil
+            // keep picks that still exist in the newer copy
+            if let o = over { over = s.first { $0.id == o.id } }
+            if let f = forward { forward = s.first { $0.id == f.id } }
+        } catch { problem = error.localizedDescription }
+    }
+
+    /// Downloads the cave again in the background; the kept copy changes only on full success.
+    private func getLatest() {
+        updating = true
+        Task {
+            defer { updating = false }
+            do { cave = try await store.download(CaveInfo(id: cave.id, name: cave.name)) }
+            catch { problem = "Could not get the latest copy; still using the kept one." }
         }
     }
 

@@ -39,3 +39,18 @@ final class CaveStoreTests: XCTestCase {
         XCTAssertEqual(caves, [CaveInfo(id: "cave-open-1", name: "Truitt Cave"), CaveInfo(id: "cave-open-2", name: "cave-open-2")])
     }
 }
+
+@MainActor
+final class SignOutTests: XCTestCase {
+    func testSignOutForgetsKeptCaves() throws {
+        let k = KeptCave(id: "kept-test-cave", name: "Test", snapshot: nil, entries: [], last: 0, keptAt: Date())
+        try JSONEncoder().encode(k).write(to: CaveStore.folder.appendingPathComponent("kept-test-cave.json"))
+        let account = Account()
+        let store = CaveStore(account: account)
+        XCTAssertTrue(store.keptIds.contains("kept-test-cave"))
+        account.signOut()
+        store.reloadKept()
+        XCTAssertTrue(store.kept().isEmpty)
+        XCTAssertTrue(store.keptIds.isEmpty)
+    }
+}

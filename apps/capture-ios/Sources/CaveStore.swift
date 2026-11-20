@@ -17,9 +17,31 @@ final class CaveStore: ObservableObject {
     @Published var caves: [CaveInfo] = []
     @Published var offline = false
     @Published var problem: String?
+    /// Ids of the caves kept on the phone (one file each), so rows need not read the files.
+    @Published private(set) var keptIds: Set<String> = []
     private let account: Account
 
-    init(account: Account) { self.account = account }
+    /// The stream (catch-up then live) waits this long for each read.
+    static let streamReadTimeout: TimeInterval = 30
+
+    init(account: Account) {
+        self.account = account
+        keptIds = Self.keptIdsOnDisk()
+    }
+
+    nonisolated static func keptIdsOnDisk() -> Set<String> {
+        let files = (try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)) ?? []
+        return Set(files.filter { $0.pathExtension == "json" }.map { $0.deletingPathExtension().lastPathComponent })
+    }
+
+    /// Removes every kept cave (sign-out). Captured shots live elsewhere and stay.
+    nonisolated static func forgetKept() {
+        let u = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("caves")
+        try? FileManager.default.removeItem(at: u)
+    }
+
+    /// Re-reads the kept set from disk (after a sign-out, or anything else that changed the folder).
+    func reloadKept() { keptIds = Self.keptIdsOnDisk() }
 
     nonisolated static var folder: URL {
         let u = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("caves")
@@ -59,6 +81,7 @@ final class CaveStore: ObservableObject {
     }
 
     func refresh() async {
+        reloadKept()
         do {
             caves = Self.parseCaves(try await account.get("api/caves"))
             offline = false
@@ -68,26 +91,37 @@ final class CaveStore: ObservableObject {
         }
     }
 
-    /// Downloads a cave (snapshot, then every entry until the stream says it is live) and keeps it.
-    func download(_ cave: CaveInfo) async throws -> KeptCave {
-        let snapData = try await account.get("api/caves/\(cave.id)/snapshot")
-        let snap = (try JSONSerialization.jsonObject(with: snapData) as? [String: Any])?["snapshot"] as? [String: Any]
-        let snapshot = snap?["locked"] as? String
-        let after = snap?["upTo"] as? Int ?? 0
-        let req = try await account.authorized("api/caves/\(cave.id)/stream", query: [URLQueryItem(name: "after", value: String(after))])
+    /// Reads the cave's stream until it says it is live. Runs off the main actor: a big cave is many lines.
+    nonisolated static func readStream(_ req: URLRequest) async throws -> (response: URLResponse, entries: [String], last: Int, caughtUp: Bool) {
         let (bytes, resp) = try await URLSession.shared.bytes(for: req)
-        guard (resp as? HTTPURLResponse)?.statusCode == 200 else { throw URLError(.badServerResponse) }
+        guard (resp as? HTTPURLResponse)?.statusCode == 200 else { return (resp, [], 0, false) }
         var body = ""
         for try await line in bytes.lines {
             body += line + "\n"
             if line.contains(#""t":"live""#) { break }
         }
-        let parsed = Self.parseStream(body)
+        let parsed = parseStream(body)
+        return (resp, parsed.entries, parsed.last, parsed.caughtUp)
+    }
+
+    /// Downloads a cave (snapshot, then every entry until the stream says it is live) and keeps it.
+    /// The kept copy is replaced only when the whole download succeeded.
+    func download(_ cave: CaveInfo) async throws -> KeptCave {
+        let snapData = try await account.get("api/caves/\(cave.id)/snapshot")
+        let snap = (try JSONSerialization.jsonObject(with: snapData) as? [String: Any])?["snapshot"] as? [String: Any]
+        let snapshot = snap?["locked"] as? String
+        let after = snap?["upTo"] as? Int ?? 0
+        var req = try await account.authorized("api/caves/\(cave.id)/stream", query: [URLQueryItem(name: "after", value: String(after))])
+        req.timeoutInterval = Self.streamReadTimeout
+        let streamed = try await Task.detached { try await Self.readStream(req) }.value
+        try account.check(streamed.response)
         // A stream that ended before "live" is a partial cave: keep the older copy instead.
-        guard parsed.caughtUp else { throw URLError(.networkConnectionLost) }
-        let k = KeptCave(id: cave.id, name: cave.name, snapshot: snapshot, entries: parsed.entries,
-                         last: max(after, parsed.last), keptAt: Date())
-        try JSONEncoder().encode(k).write(to: Self.folder.appendingPathComponent("\(cave.id).json"), options: .atomic)
+        guard streamed.caughtUp else { throw URLError(.networkConnectionLost) }
+        let k = KeptCave(id: cave.id, name: cave.name, snapshot: snapshot, entries: streamed.entries,
+                         last: max(after, streamed.last), keptAt: Date())
+        let data = try JSONEncoder().encode(k)
+        try data.write(to: Self.folder.appendingPathComponent("\(cave.id).json"), options: .atomic)
+        keptIds.insert(cave.id)
         return k
     }
 
