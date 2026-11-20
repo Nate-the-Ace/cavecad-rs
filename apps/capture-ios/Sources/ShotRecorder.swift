@@ -54,14 +54,22 @@ private final class JpegEncoder: @unchecked Sendable {
     }
 }
 
-/// Runs one shot: ARKit scene reconstruction with a compass-aligned frame, keyframes; turns it into a bundle on Stop.
+/// Runs the shots: ARKit scene reconstruction with a compass-aligned frame, keyframes; turns each pass into a bundle
+/// on Pause. One for the app's whole run (with its one ARSession), so leaving the capture screen and coming back to
+/// the same station resumes the session.
 @MainActor
 final class ShotRecorder: NSObject, ObservableObject, ARSessionDelegate {
     enum Phase { case ready, capturing, saving, saved(URL), failed(String) }
 
     /// Photos kept per shot at most (memory and file size); the mesh keeps growing after.
     static let maxKeyframes = 240
-    static let readyMessage = "Put the CURRENT card on this station (or stand the gimbal on it), FORWARD and REAR on the next and previous ones, then press Start."
+    /// What to do before a pass; `resume` when it adds to the station's shot (the button reads Resume).
+    static func readyMessage(resume: Bool) -> String {
+        "Put the CURRENT card on this station (or stand the gimbal on it), FORWARD and REAR on the next and previous ones, then press \(resume ? "Resume" : "Start")."
+    }
+    static let capturingMessage = "Capturing. Walk or turn slowly and look at each card; Pause to save."
+    static let savedMessage = "Saved. Resume to fill gaps."
+    static let separateMessage = "Saved as a separate scan: it couldn't be lined up with the earlier one."
     /// Seconds between compass lines in the log while capturing (drift shows there).
     static let compassLogEvery: TimeInterval = 5
     /// Keyframe JPEGs are at most this wide (the camera format can be 4K; files must not balloon).
@@ -74,19 +82,19 @@ final class ShotRecorder: NSObject, ObservableObject, ARSessionDelegate {
     static let cardMeshEvery: TimeInterval = 2
 
     @Published var phase: Phase = .ready { didSet { Log.write("shot", "phase \(phase)") } }
-    @Published var message = readyMessage { didSet { if message != oldValue { Log.write("shot", message) } } }
+    @Published var message = ShotRecorder.readyMessage(resume: false) { didSet { if message != oldValue { Log.write("shot", message) } } }
     @Published var keyframeCount = 0
     /// Waiting for a heading before the session runs (Start is off meanwhile).
     @Published var findingNorth = false
     /// Station cards seen so far this shot, for the live view.
     @Published var cardMarkers: [CardMarker] = []
-    /// The station's shot this capture adds to (nil: the next Stop makes a new shot).
+    /// The station's shot this capture adds to (nil: the next Pause makes a new shot).
     @Published private(set) var parent: URL?
     /// When the parent was made, for the screen.
     @Published private(set) var parentMade: Date?
     /// How this ARKit session's frame maps into the parent shot's frame (column-major 4x4). nil: unknown (the
-    /// parent is from an earlier run, or tracking was reset), so a pass cannot be saved until the cards line it
-    /// up. Identity: this session made (or continued) the shot in its own frame. Otherwise: the card fit, valid
+    /// parent is from an earlier run, or tracking was reset): the cards may line the pass up, else Pause saves it
+    /// as a separate shot. Identity: this session made (or continued) the shot in its own frame. Otherwise: the card fit, valid
     /// for every later pass of this session. Cleared whenever tracking is reset.
     private(set) var sessionToShot: [Double]? { didSet { ghostTransform = Self.ghostPlacement(sessionToShot) } }
     /// The parent's ghost for this pass (nil: none loaded, or the pass was saved and the file changed).
@@ -109,8 +117,10 @@ final class ShotRecorder: NSObject, ObservableObject, ARSessionDelegate {
     /// A ghost with more triangles than this is rebuilt on a coarser grid (it must not cost the scan its frame rate).
     nonisolated static let ghostMaxTriangles = 40_000
     nonisolated static let ghostCoarseCellM: Float = 0.08
+    /// Still too many at the coarse grid: rebuilt once more on this one.
+    nonisolated static let ghostCoarserCellM: Float = 0.12
     /// A settled card farther than this from where the shot has it warns, metres; also the worst misfit a card
-    /// line-up accepts.
+    /// line-up accepts when the core gives no verdict ("ok") of its own.
     nonisolated static let cardTolerance = 0.05
     /// The shot `sessionToShot` maps into (a different parent makes it unknown).
     private var sessionShot: URL?
@@ -119,42 +129,52 @@ final class ShotRecorder: NSObject, ObservableObject, ARSessionDelegate {
     private var sessionStation: String?
     /// The next `run` resumes the paused session instead of starting tracking afresh.
     private var resumeNext = false
-    /// The station the screen is over now (from `prepare`); the session takes it when it runs.
+    /// The cave and station the screen is over now (from `prepare`, `stationKey`); the session takes it when it runs.
     private var preparedStation: String?
     /// Bumped whenever tracking is reset, so a save that finishes after a reset does not claim the new frame.
     private var trackingEpoch = 0
-    static let needCardsMessage = "Look at two cards so this pass can be lined up."
     nonisolated static let identity: [Double] = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]
 
-    /// How Stop saves.
+    /// How Pause saves.
     enum SaveMode: Equatable {
         /// No parent: a new shot file.
         case newShot
-        /// A parent in an unknown frame: not saved, the cards must line the pass up first.
-        case refuse
+        /// A parent in an unknown frame (the cards did not line the pass up): a new shot over the same station,
+        /// which becomes the parent. Pause never blocks.
+        case separateShot
         /// The parent is in this session's frame: ARKit's whole mesh replaces the shot's.
         case sameSession
         /// Lined up by the cards: the pass is moved by the transform and its mesh added.
         case cards([Double])
     }
 
-    /// Stop's choice, from whether there is a parent and how this session maps into it.
+    /// Pause's choice, from whether there is a parent and how this session maps into it.
     nonisolated static func saveMode(hasParent: Bool, sessionToShot: [Double]?) -> SaveMode {
         guard hasParent else { return .newShot }
-        guard let t = sessionToShot else { return .refuse }
+        guard let t = sessionToShot else { return .separateShot }
         return t == identity ? .sameSession : .cards(t)
     }
 
-    /// The rule for a card line-up: a worst misfit up to 5 cm is accepted (returns the transform); above, the
-    /// message names the worst card.
+    /// The rule for a card line-up: the core's verdict `ok` (each card within its own limit: 5 cm, or 1.5% of its
+    /// distance to the other cards when that is more); from a core without one, a worst misfit up to 5 cm. Accepted:
+    /// the transform. Refused: the message names the worst card by misfit over its limit.
     nonisolated static func lineUp(fit: [String: Any]) -> (transform: [Double]?, message: String) {
         let worst = (fit["worst_m"] as? Double) ?? .infinity
-        guard let t = fit["transform"] as? [Double], t.count == 16, t.allSatisfy(\.isFinite), worst <= cardTolerance else {
-            let mis = (fit["misfits"] as? [[String: Any]] ?? []).max { ($0["m"] as? Double ?? 0) < ($1["m"] as? Double ?? 0) }
+        let ok = (fit["ok"] as? Bool) ?? (worst <= cardTolerance)
+        guard ok, let t = fit["transform"] as? [Double], t.count == 16, t.allSatisfy(\.isFinite) else {
+            var limits: [Int: Double] = [:]
+            for l in fit["limits"] as? [[String: Any]] ?? [] {
+                if let id = (l["id"] as? NSNumber)?.intValue, let m = l["m"] as? Double, m > 0 { limits[id] = m }
+            }
+            func ratio(_ o: [String: Any]) -> Double {
+                let id = (o["id"] as? NSNumber)?.intValue ?? -1
+                return (o["m"] as? Double ?? 0) / (limits[id] ?? cardTolerance)
+            }
+            let mis = (fit["misfits"] as? [[String: Any]] ?? []).max { ratio($0) < ratio($1) }
             let word = (mis?["id"] as? NSNumber).flatMap { StationCard(rawValue: $0.intValue) }?.word ?? "A card"
             let m = (mis?["m"] as? Double) ?? worst
             let cm = m.isFinite ? "\(Int((m * 100).rounded())) cm" : "too far"
-            return (nil, "\(word) doesn't match where it was (\(cm)). Put it back, or carry on without the earlier scan.")
+            return (nil, "\(word) doesn't match where it was (\(cm)). Put it back; Pause will save this as a separate scan.")
         }
         return (t, String(format: "Lined up by cards (worst %.0f mm).", worst * 1000))
     }
@@ -206,7 +226,7 @@ final class ShotRecorder: NSObject, ObservableObject, ARSessionDelegate {
     private let encoder = JpegEncoder()
     /// One JPEG in flight at most; a frame that arrives meanwhile is skipped.
     private var encoding = false
-    /// Bumped per shot, so a JPEG finishing after Stop is not added to the next shot.
+    /// Bumped per shot, so a JPEG finishing after Pause is not added to the next shot.
     private var shotSerial = 0
     private var photoLimitShown = false
     private var spaceWarned = false
@@ -308,20 +328,49 @@ final class ShotRecorder: NSObject, ObservableObject, ARSessionDelegate {
     /// shot becomes the parent. Back at the same station after a session ran (say from viewing the shot), the
     /// next `run` resumes that session and keeps how it maps into the shot; otherwise tracking starts afresh and
     /// a pass into an existing shot must be lined up by the cards.
+    ///
+    /// The recorder outlives the screen: at another station whatever the last screen left (the pass, its markers,
+    /// the saved or failed state, the message) is cleared; a save still running finishes and is then let go.
     func prepare(cave: KeptCave, over: Station) {
+        let key = Self.stationKey(cave: cave.id, station: over.id)
         parent = ShotFiles.parent(cave: cave.id, station: over.id)
         parentMade = parent.flatMap { try? $0.resourceValues(forKeys: [.creationDateKey]).creationDate }
-        preparedStation = over.id
-        resumeNext = sessionStation == over.id
+        let sameScreen = preparedStation == key
+        preparedStation = key
+        resumeNext = sessionStation == key
         if !resumeNext {
             dropFrame("another station")
         } else if parent != sessionShot {
             dropFrame("the station's shot changed")
         }
         dropGhost()
+        if case .saving = phase {
+            // the save lands (or is let go) when it finishes
+        } else if !sameScreen {
+            clearPass()
+            phase = .ready
+            message = readyText
+        } else if case .ready = phase {
+            message = readyText
+        }
         if let parent {
             Log.write("shot", "adding to the station's shot \(parent.lastPathComponent) (\(sessionToShot == nil ? "needs a card line-up" : "lined up in this session"))")
         }
+    }
+
+    /// Which station a session or screen is over: station ids are only unique within a cave.
+    nonisolated static func stationKey(cave: String, station: String) -> String { "\(cave)/\(station)" }
+
+    /// The ready message for the station's state now.
+    private var readyText: String { Self.readyMessage(resume: parent != nil) }
+
+    /// Forgets the pass in hand (photos, cards, markers, warnings); the session and the line-up are kept.
+    private func clearPass() {
+        shotSerial += 1
+        keyframes = []; keyframeCount = 0
+        cardTracker = CardTracker(); cardMarkers = []; calm = false
+        photoLimitShown = false
+        warnedCards = []; checkedCards = [:]
     }
 
     func run() {
@@ -355,7 +404,7 @@ final class ShotRecorder: NSObject, ObservableObject, ARSessionDelegate {
                 compassAtAlignment = CompassReading(trueNorth: false, accuracyDeg: -1, headingDeg: compass.latest.headingDeg)
                 Log.write("compass", "no heading at alignment")
             }
-            message = Self.readyMessage
+            message = readyText
             runSession(reset: true)
         }
     }
@@ -403,7 +452,7 @@ final class ShotRecorder: NSObject, ObservableObject, ARSessionDelegate {
             .resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey]).volumeAvailableCapacityForImportantUsage,
             free < 2_000_000_000 {
             spaceWarned = true
-            message = "Less than 2 GB free on the phone. Tap Start again to capture anyway."
+            message = "Less than 2 GB free on the phone. Tap again to capture anyway."
             return
         }
         let t = f.camera.transform
@@ -426,7 +475,7 @@ final class ShotRecorder: NSObject, ObservableObject, ARSessionDelegate {
         // An unsure compass does not stop the shot, but it must be seen.
         let going = parent != nil && sessionToShot == nil
             ? Self.lookForGhostMessage
-            : "Capturing. Walk or turn slowly and look at each card; Stop when the room is covered."
+            : Self.capturingMessage
         message = compassAtAlignment.warning.map { "\($0) \(going)" } ?? going
     }
 
@@ -440,9 +489,11 @@ final class ShotRecorder: NSObject, ObservableObject, ARSessionDelegate {
                 guard let d = try? Data(contentsOf: p, options: .alwaysMapped) else { return (nil, nil, false) }
                 var g = Core.ghost(bundle: d)
                 var coarse = false
-                if let fine = g, fine.indices.count / 3 > Self.ghostMaxTriangles {
-                    Log.write("ghost", "\(fine.indices.count / 3) triangles at 5 cm: rebuilding at \(Int(Self.ghostCoarseCellM * 100)) cm")
-                    g = Core.ghost(bundle: d, cellM: Self.ghostCoarseCellM)
+                // finer grids first; each one still over the cap is rebuilt on the next
+                for (from, to) in [(Float(0.05), Self.ghostCoarseCellM), (Self.ghostCoarseCellM, Self.ghostCoarserCellM)] {
+                    guard let big = g, big.indices.count / 3 > Self.ghostMaxTriangles else { break }
+                    Log.write("ghost", "\(big.indices.count / 3) triangles at \(Int((from * 100).rounded())) cm: rebuilding at \(Int((to * 100).rounded())) cm")
+                    g = Core.ghost(bundle: d, cellM: to)
                     coarse = true
                 }
                 return (d, g, coarse)
@@ -755,21 +806,17 @@ final class ShotRecorder: NSObject, ObservableObject, ARSessionDelegate {
 
     func stop(cave: KeptCave, over: Station) {
         guard case .capturing = phase else { return }
+        // Never refused for want of a line-up: a pass the cards did not line up becomes a separate shot.
         let mode = Self.saveMode(hasParent: parent != nil, sessionToShot: sessionToShot)
-        // A pass into a shot in an unknown frame needs the cards to line it up; carry on capturing until then.
-        if mode == .refuse {
-            message = Self.needCardsMessage
-            return
-        }
         // Copy the meshes out while the anchors are still valid.
         let anchors = session.currentFrame?.anchors.compactMap { $0 as? ARMeshAnchor } ?? []
         let parts = anchors.compactMap(Self.part)
         guard Self.hasMesh(parts) else {
             // the session is still running: carry on capturing
-            message = "No room mesh yet — keep turning before Stop."
+            message = "No room mesh yet — keep turning before Pause."
             return
         }
-        // The session keeps running (tracking kept for Scan more); only leaving the screen pauses it.
+        // The session keeps running (tracking kept for Resume); only leaving the screen pauses it.
         UIApplication.shared.isIdleTimerDisabled = false
         phase = .saving
         message = "Saving the shot…"
@@ -783,32 +830,47 @@ final class ShotRecorder: NSObject, ObservableObject, ARSessionDelegate {
         let into = parent
         // A tracking reset while saving means this session's frame is no longer the shot's.
         let epoch = trackingEpoch
+        // Leaving for another station while saving lets the result go (the next screen is not its).
+        let screen = preparedStation
         Task {
-            let (result, passes) = await Task.detached { () -> (Result<URL, ShotFailure>, Int) in
-                let r: Result<URL, ShotFailure>
+            let (result, passes, separate) = await Task.detached { () -> (Result<URL, ShotFailure>, Int, Bool) in
+                var r: Result<URL, ShotFailure>
+                var separate = false
                 switch (mode, into) {
                 case (.sameSession, let u?): r = job.writePass(into: u, sameSession: true, transform: nil)
                 // v1 limit: in a card-lined session ARKit's mesh is cumulative, so every later pass of the session
                 // adds the session's earlier geometry again (overlapping triangles are allowed by the spec).
                 case (.cards(let t), let u?): r = job.writePass(into: u, sameSession: false, transform: t)
+                case (.separateShot, _): r = job.write(); separate = true
                 default: r = job.write()
                 }
-                guard case .success(let url) = r else { return (r, 0) }
+                // The earlier scan is gone or unreadable: the pass is kept as a shot of its own instead.
+                if case .failure(let f) = r, f.parentUnreadable {
+                    Log.write("shot", "the earlier scan could not be read: saving the pass as a separate shot")
+                    r = job.write(); separate = true
+                }
+                guard case .success(let url) = r else { return (r, 0, separate) }
                 let n = (try? Data(contentsOf: url, options: .alwaysMapped)).map { Core.summary(bundle: $0, pair: nil)["passes"] as? Int ?? 0 } ?? 0
-                return (r, n)
+                return (r, n, separate)
             }.value
             switch result {
             case .success(let url):
-                // A fresh shot is in this session's own frame; a pass leaves the line-up as it was.
-                if mode == .newShot, epoch == trackingEpoch { sessionToShot = Self.identity }
+                // A fresh shot (first or separate) is in this session's own frame; a pass leaves the line-up as it was.
+                if mode == .newShot || separate, epoch == trackingEpoch { sessionToShot = Self.identity }
                 if epoch == trackingEpoch, sessionToShot != nil { sessionShot = url }
+                Log.write("shot", separate ? "saved as a separate shot (no line-up)" : "saved pass \(max(passes, 1))")
+                guard screen == preparedStation else {
+                    phase = .ready; message = readyText
+                    return
+                }
                 parent = url
-                parentMade = parentMade ?? Date()
+                parentMade = separate ? Date() : (parentMade ?? Date())
                 // The file changed: the next pass loads its new ghost.
                 dropGhost()
-                Log.write("shot", "saved pass \(max(passes, 1))")
-                phase = .saved(url); message = "Shot saved. Scan more to fill gaps."
-            case .failure(let m): phase = .failed(m.message); message = m.message
+                phase = .saved(url); message = separate ? Self.separateMessage : Self.savedMessage
+            case .failure(let m):
+                guard screen == preparedStation else { phase = .ready; message = readyText; return }
+                phase = .failed(m.message); message = m.message
             }
         }
     }
@@ -816,12 +878,9 @@ final class ShotRecorder: NSObject, ObservableObject, ARSessionDelegate {
     /// Ready for another pass at the same station, in the same ARKit session (tracking and the line-up with the
     /// shot are kept). Does not run the session again.
     func scanMore() {
-        shotSerial += 1
-        keyframes = []; keyframeCount = 0
-        cardTracker = CardTracker(); cardMarkers = []; calm = false
-        photoLimitShown = false
+        clearPass()
         phase = .ready
-        message = Self.readyMessage
+        message = readyText
     }
 
     /// Ready for another shot from the same station, with tracking started afresh.
@@ -831,8 +890,14 @@ final class ShotRecorder: NSObject, ObservableObject, ARSessionDelegate {
         run()
     }
 
-    /// The capture screen went away.
+    /// The capture screen went away. The session pauses (battery) and a pass in hand is dropped; the recorder,
+    /// the session's world and the line-up are kept for coming back to the same station.
     func leave() {
+        if case .capturing = phase {
+            Log.write("shot", "left the capture screen mid-pass: the pass is dropped")
+            clearPass()
+            phase = .ready
+        }
         shotSerial += 1
         runSerial += 1
         findingNorth = false
@@ -860,7 +925,11 @@ final class ShotRecorder: NSObject, ObservableObject, ARSessionDelegate {
     }
 }
 
-struct ShotFailure: Error { let message: String }
+struct ShotFailure: Error {
+    let message: String
+    /// A pass could not read the shot it adds to (nothing was written): Pause saves a separate shot instead.
+    var parentUnreadable = false
+}
 
 /// What a card check or line-up found, handed back from off the main actor.
 private enum CardCheck: Sendable {
@@ -872,7 +941,7 @@ private enum CardCheck: Sendable {
     case noFit(String)
 }
 
-/// Everything Stop needs to turn a shot into a file, so the heavy part (merge, encode, write) runs off the main
+/// Everything Pause needs to turn a shot into a file, so the heavy part (merge, encode, write) runs off the main
 /// actor. A class so the photos have one owner: `write` lets each go as soon as it is in the joined buffer.
 /// Used by one task at a time.
 final class ShotJob: @unchecked Sendable {
@@ -940,7 +1009,9 @@ final class ShotJob: @unchecked Sendable {
     /// (column-major, this pass's frame to the shot's, from the cards) moves the pass and its mesh is added.
     /// The parent is rewritten through a temporary file; on any failure it is left as it was.
     func writePass(into parent: URL, sameSession: Bool, transform: [Double]?) -> Result<URL, ShotFailure> {
-        guard let old = try? Data(contentsOf: parent) else { return .failure(ShotFailure(message: "The earlier scan could not be read.")) }
+        guard let old = try? Data(contentsOf: parent) else {
+            return .failure(ShotFailure(message: "The earlier scan could not be read.", parentUnreadable: true))
+        }
         if !cards.allSightings.isEmpty {
             cards.applyMesh(CardTracker.meshRanges(cards.allSightings, MeshSnapshot(parts, near: cards.points)))
             cards.logLines.forEach { Log.write("cards", "final (full mesh): \($0)") }

@@ -85,7 +85,9 @@ struct ARMeshView: UIViewRepresentable {
 
 struct CaptureView: View {
     let cave: KeptCave; let over: Station
-    @StateObject private var rec = ShotRecorder()
+    /// The app's one recorder: it (and its ARSession) outlives this screen, so coming back to the same station
+    /// resumes without a reset.
+    @EnvironmentObject private var rec: ShotRecorder
 
     var body: some View {
         ZStack {
@@ -102,19 +104,19 @@ struct CaptureView: View {
                 HStack(spacing: 16) {
                     switch rec.phase {
                     case .ready:
-                        Button(rec.parent == nil ? "Start" : "Scan more") { rec.start() }
+                        Button(rec.parent == nil ? "Start" : "Resume") { rec.start() }
                             .buttonStyle(.borderedProminent).disabled(rec.findingNorth)
                     case .capturing:
                         Text("\(rec.keyframeCount) photos")
-                        Button("Stop") { rec.stop(cave: cave, over: over) }.buttonStyle(.borderedProminent).tint(.red)
+                        Button("Pause") { rec.stop(cave: cave, over: over) }.buttonStyle(.borderedProminent).tint(.red)
                     case .saving: ProgressView()
                     case .saved(let url):
                         NavigationLink("View shot") { ShotView(url: url, stations: [over]) }
-                        Button("Scan more") { rec.scanMore() }.buttonStyle(.borderedProminent)
+                        Button("Resume") { rec.scanMore(); rec.start() }.buttonStyle(.borderedProminent)
                     case .failed(let m):
                         Text(m).foregroundStyle(.red)
                         // a failed save keeps the session (and the earlier scan): another pass can try again
-                        if ShotRecorder.hasLiDAR { Button("Scan more") { rec.scanMore() }.buttonStyle(.bordered) }
+                        if ShotRecorder.hasLiDAR { Button("Resume") { rec.scanMore(); rec.start() }.buttonStyle(.bordered) }
                     }
                 }.padding()
             }

@@ -172,7 +172,8 @@ final class ShotRecorderTests: XCTestCase {
         let fit: [Double] = [0, 0, -1, 0, 0, 1, 0, 0, 1, 0, 0, 0, 2, 0, 3, 1]
         XCTAssertEqual(ShotRecorder.saveMode(hasParent: false, sessionToShot: nil), .newShot)
         XCTAssertEqual(ShotRecorder.saveMode(hasParent: false, sessionToShot: ShotRecorder.identity), .newShot)
-        XCTAssertEqual(ShotRecorder.saveMode(hasParent: true, sessionToShot: nil), .refuse)
+        // a parent that cannot be lined up never blocks Pause: the pass becomes a separate shot over the station
+        XCTAssertEqual(ShotRecorder.saveMode(hasParent: true, sessionToShot: nil), .separateShot)
         XCTAssertEqual(ShotRecorder.saveMode(hasParent: true, sessionToShot: ShotRecorder.identity), .sameSession)
         XCTAssertEqual(ShotRecorder.saveMode(hasParent: true, sessionToShot: fit), .cards(fit))
     }
@@ -224,6 +225,14 @@ final class ShotRecorderTests: XCTestCase {
                            systemVersion: "27", compass: .none)
         guard case .failure(let f) = lost.writePass(into: missing, sameSession: true, transform: nil) else { return XCTFail("pass into nothing") }
         XCTAssertEqual(f.message, "The earlier scan could not be read.")
+        // Pause falls back to a separate shot on exactly this failure
+        XCTAssertTrue(f.parentUnreadable)
+        // ... and only on it: an unwritable pass (a non-finite transform) is a plain failure
+        let nan = [Double](repeating: .nan, count: 16)
+        guard case .failure(let g) = ShotJob(caveId: cave, over: a, parts: [Self.tri], keyframes: [], startCamera: .zero, tracking: "normal",
+                                             systemVersion: "27", compass: .none).writePass(into: ua, sameSession: false, transform: nan)
+        else { return XCTFail("a non-finite pass was written") }
+        XCTAssertFalse(g.parentUnreadable)
     }
 
     func testOutlineRibbonsAndLineUpRule() {
@@ -234,13 +243,29 @@ final class ShotRecorderTests: XCTestCase {
         let v = GhostView.ribbon(outlines: [[SIMD3(0, 0, 0), SIMD3(0, 1, 0), SIMD3(0, 1, 0)]], width: 0.02)
         XCTAssertEqual(v.indices.count, 1 * 4 * 3)
         XCTAssertTrue(v.positions.allSatisfy { $0.x.isFinite && $0.y.isFinite && $0.z.isFinite })
-        let ok: [String: Any] = ["transform": [Double](repeating: 0, count: 16), "yaw_rad": 0.1, "worst_m": 0.03, "misfits": [["id": 2, "m": 0.03]]]
+        let t16 = [Double](repeating: 0, count: 16)
+        // without "ok" (an older core): the 5 cm rule
+        let ok: [String: Any] = ["transform": t16, "yaw_rad": 0.1, "worst_m": 0.03, "misfits": [["id": 2, "m": 0.03]]]
         XCTAssertNotNil(ShotRecorder.lineUp(fit: ok).transform)
-        let bad: [String: Any] = ["transform": [Double](repeating: 0, count: 16), "yaw_rad": 0.1, "worst_m": 0.12, "misfits": [["id": 2, "m": 0.01], ["id": 12, "m": 0.12]]]
+        let bad: [String: Any] = ["transform": t16, "yaw_rad": 0.1, "worst_m": 0.12, "misfits": [["id": 2, "m": 0.01], ["id": 12, "m": 0.12]]]
         let r2 = ShotRecorder.lineUp(fit: bad)
         XCTAssertNil(r2.transform)
         XCTAssertTrue(r2.message.contains("FORWARD"), r2.message)
         XCTAssertTrue(r2.message.contains("12 cm"), r2.message)
+        XCTAssertTrue(r2.message.contains("Pause will save this as a separate scan"), r2.message)
+        // "ok" decides: 7 cm accepted when the card's own limit allows it
+        let far: [String: Any] = ["ok": true, "transform": t16, "worst_m": 0.07, "worst_ratio": 0.9,
+                                  "misfits": [["id": 2, "m": 0.07]], "limits": [["id": 2, "m": 0.078]]]
+        XCTAssertNotNil(ShotRecorder.lineUp(fit: far).transform)
+        // ... and refuses 6 cm when it does not; the card named is the worst by ratio: CURRENT (6 of 4 cm), not FORWARD (7.5 of 10)
+        let near: [String: Any] = ["ok": false, "transform": t16, "worst_m": 0.06, "worst_ratio": 1.5,
+                                   "misfits": [["id": 2, "m": 0.06], ["id": 12, "m": 0.075]],
+                                   "limits": [["id": 2, "m": 0.04], ["id": 12, "m": 0.1]]]
+        let r3 = ShotRecorder.lineUp(fit: near)
+        XCTAssertNil(r3.transform)
+        XCTAssertTrue(r3.message.hasPrefix("\(StationCard(rawValue: 2)!.word) doesn't match where it was (6 cm)."), r3.message)
+        // "ok" true with no usable transform is still refused
+        XCTAssertNil(ShotRecorder.lineUp(fit: ["ok": true, "worst_m": 0.01]).transform)
     }
 
     func testGhostPlacementIsTheInverseOfTheLineUp() throws {
