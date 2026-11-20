@@ -6,7 +6,9 @@ is never read as another card or upside down. The detector must accept only thes
 
     python3 -I make_cards.py OUT_DIR        (needs opencv-python-headless, numpy, pillow)
 
-Writes one PDF per size, US Letter, print at 100% (actual size), laminate, cut on the grey lines.
+Writes one two-page PDF per size, US Letter: page 1 the fronts, page 2 the backs (the same card, placed so a
+duplex print flipped on the long edge lines each back up behind its front). Print double-sided at 100%
+(actual size), laminate, cut on the grey lines. Every card then reads from either side.
 """
 import sys
 import cv2
@@ -61,20 +63,36 @@ def card(tid, word, note, w_mm, h_mm, tag_mm):
     return img
 
 
-def sheet(out, name, w, h, t, grid):
-    cols, rows = grid
+PAGE_W, PAGE_H = 215.9, 279.4
+
+
+def layout(w, h):
+    """Card slots on a Letter page as (x mm, y mm, turned): three 4x6 cards fit as two turned upright side by
+    side over one lying flat; business cards fill a 2 x 3 grid (two full sets)."""
+    if w > 120:  # 4x6: [w][w] upright on top, one flat below, centred
+        top = (PAGE_W - 2 * h) / 2
+        y0 = (PAGE_H - (w + h)) / 2
+        return [(top, y0, True), (top + h, y0, True), ((PAGE_W - w) / 2, y0 + w, False)]
+    gx, gy = (PAGE_W - 2 * w) / 3, (PAGE_H - 3 * h) / 4
+    return [(gx + c * (w + gx), gy + r * (h + gy), False) for r in range(3) for c in range(2)]
+
+
+def sheet(out, name, w, h, t, _grid):
     imgs = [card(i, wd, n, w, h, t) for i, wd, n in CARDS]
-    per = cols * rows
-    order = imgs + imgs[: (-len(imgs)) % per]  # fill the last page with spares
+    slots = layout(w, h)
     pages = []
-    for p in range(0, len(order), per):
-        page = Image.new("L", (mm(215.9), mm(279.4)), 255)
-        gx = (mm(215.9) - cols * mm(w)) // (cols + 1)
-        gy = (mm(279.4) - mm(12) - rows * mm(h)) // (rows + 1)
-        for k, im in enumerate(order[p : p + per]):
-            c, r = k % cols, k // cols
-            page.paste(im, (gx + c * (mm(w) + gx), mm(12) + gy + r * (mm(h) + gy)))
-        ImageDraw.Draw(page).text((mm(12), mm(6)), f"CaveCAD Capture station cards, {w:g} x {h:g} mm. Print at 100% (actual size, no fit-to-page), laminate, cut on the grey lines.", font=font(mm(3), False), fill=0)
+    for back in (False, True):
+        page = Image.new("L", (mm(PAGE_W), mm(PAGE_H)), 255)
+        for k, (x, y, turned) in enumerate(slots):
+            im = imgs[k % len(imgs)]
+            cw, ch = (h, w) if turned else (w, h)
+            if turned:
+                im = im.rotate(90, expand=True)
+            if back:  # flipped on the long edge: the back sits mirrored left to right
+                x = PAGE_W - x - cw
+            page.paste(im, (mm(x), mm(y)))
+        title = "BACKS" if back else "FRONTS"
+        ImageDraw.Draw(page).text((mm(8), mm(3)), f"CaveCAD Capture station cards {w:g} x {h:g} mm - {title}. Print double-sided, flip on long edge, 100% (actual size).", font=font(mm(2.6), False), fill=0)
         pages.append(page.convert("RGB"))
     pages[0].save(f"{out}/CaveCAD-station-cards-{name}.pdf", save_all=True, append_images=pages[1:], resolution=DPI)
     for (i, wd, _), im in zip(CARDS, imgs):
