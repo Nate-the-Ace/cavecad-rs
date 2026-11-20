@@ -272,6 +272,22 @@ final class CardTrackingTests: XCTestCase {
         XCTAssertEqual(medianOf([4, 1, 3, 2]), 2.5)
         XCTAssertEqual(medianOf([]), 0)
     }
+
+    func testSettledAfterEightTightLooks() {
+        var t = CardTracker()
+        for _ in 0..<7 { t.add(sighting(size: 2)) }
+        XCTAssertFalse(t.tracks[.current]!.settled)
+        XCTAssertFalse(t.allSettled)
+        t.add(sighting(size: 2))
+        XCTAssertTrue(t.tracks[.current]!.settled)
+        XCTAssertTrue(t.allSettled)
+        XCTAssertTrue(t.meshBatch(limit: 10, skipSettled: true).isEmpty)
+        XCTAssertEqual(t.meshBatch(limit: 10).count, 8)
+        var loose = CardTracker()
+        for i in 0..<8 { loose.add(sighting(size: 2 + (i % 2 == 0 ? 0.02 : -0.02))) }
+        XCTAssertFalse(loose.tracks[.current]!.settled)
+        XCTAssertFalse(CardTracker().allSettled)
+    }
 }
 
 /// The vendored detector itself, on a synthetic tag, plus the recorder's pure helpers for this build.

@@ -103,6 +103,8 @@ final class ShotRecorder: NSObject, ObservableObject, ARSessionDelegate {
     private var cardTracker = CardTracker()
     /// One card detection in flight at most; a frame that arrives meanwhile is skipped.
     private var detectingCards = false
+    private var backedOff = false
+    private var frameCount = 0, lastFpsTime: TimeInterval = 0
     private var lastCardTime: TimeInterval = -1, lastCardLog: TimeInterval = 0
     private var cardRuns = 0, cardMillis = 0.0, cardMaxMillis = 0.0
     private var cardFrameLogged = false
@@ -260,6 +262,7 @@ final class ShotRecorder: NSObject, ObservableObject, ARSessionDelegate {
         shotSerial += 1
         cardTracker = CardTracker(); cardMarkers = []
         detectingCards = false; lastCardTime = -1; lastCardLog = f.timestamp
+        backedOff = false; frameCount = 0; lastFpsTime = 0
         cardRuns = 0; cardMillis = 0; cardMaxMillis = 0; cardFrameLogged = false
         meshing = false; lastMeshTime = f.timestamp; meshRuns = 0; meshMillis = 0; meshCopyMillis = 0; weakReads = [:]
         removeCardAnchors()
@@ -302,6 +305,7 @@ final class ShotRecorder: NSObject, ObservableObject, ARSessionDelegate {
         let confidenceBuffer = frame.sceneDepth?.confidenceMap.map { PixelBuffer(buffer: $0) }
         MainActor.assumeIsolated {
             guard case .capturing = phase else { return }
+            frameCount += 1
             switch state {
             case .normal: break
             case .notAvailable: worstTracking = "lost"
@@ -345,14 +349,19 @@ final class ShotRecorder: NSObject, ObservableObject, ARSessionDelegate {
             lastCardLog = time
             logCards("summary")
         }
-        guard !detectingCards, time - lastCardTime >= Self.cardEvery else { return }
+        let calm = cardTracker.allSettled
+        if calm != backedOff {
+            backedOff = calm
+            Log.write("cards", calm ? "settled, backing off" : "searching at full rate")
+        }
+        guard !detectingCards, time - lastCardTime >= (calm ? 2.0 : Self.cardEvery) else { return }
         detectingCards = true
         lastCardTime = time
         let serial = shotSerial
         guard let luma = GreyImage(lumaOf: px.buffer) else { detectingCards = false; return }
         let frame = CardFrame(luma: luma, depth: depth.flatMap { DepthGrid(copying: $0.buffer, confidence: confidence?.buffer) },
                               intrinsics: intrinsics, camera: pose)
-        cardDetector.detect(frame) { [weak self] result in
+        cardDetector.detect(frame, decimate: calm ? 2 : 1, threads: calm ? 1 : 2) { [weak self] result in
             Task { @MainActor [weak self] in self?.cardsDone(result, serial: serial) }
         }
     }
@@ -433,7 +442,7 @@ final class ShotRecorder: NSObject, ObservableObject, ARSessionDelegate {
     /// queue, off the main thread.
     private func meshCards(time: TimeInterval) {
         guard !meshing, time - lastMeshTime >= Self.cardMeshEvery else { return }
-        let sightings = cardTracker.meshBatch(limit: Self.meshBatchLimit)
+        let sightings = cardTracker.meshBatch(limit: Self.meshBatchLimit, skipSettled: true)
         guard !sightings.isEmpty else { return }
         lastMeshTime = time
         let near = cardTracker.points
@@ -464,6 +473,10 @@ final class ShotRecorder: NSObject, ObservableObject, ARSessionDelegate {
 
     /// The card summary in the log: every seen card, then how the detector is doing.
     private func logCards(_ when: String) {
+        if let t = session.currentFrame?.timestamp, t > lastFpsTime, lastFpsTime > 0 {
+            Log.write("cards", String(format: "%@: ARKit %.0f fps", when, Double(frameCount) / (t - lastFpsTime)))
+        }
+        lastFpsTime = session.currentFrame?.timestamp ?? 0; frameCount = 0
         let lines = cardTracker.logLines
         if lines.isEmpty { Log.write("cards", "\(when): none seen yet") } else { lines.forEach { Log.write("cards", "\(when): \($0)") } }
         if cardRuns > 0 {

@@ -421,6 +421,8 @@ struct CardTrack: Sendable {
     var count: Int { local.count }
     var meanMargin: Double { local.isEmpty ? 0 : marginSum / Double(local.count) }
     var estimate: CardEstimate? { CardEstimate(sightings) }
+    /// Enough close agreement that more looks will not move it: 8 kept sightings within 1 cm (typical).
+    var settled: Bool { estimate.map { $0.kept >= 8 && $0.spread < 0.01 } ?? false }
 
     /// Adds a sighting made in the capture frame as the map stands now.
     mutating func add(_ s: CardSighting) {
@@ -489,6 +491,8 @@ struct CardTracker: Sendable {
     mutating func moveAnchor(_ c: StationCard, _ m: simd_double4x4) -> Double { tracks[c]?.moveAnchor(m) ?? 0 }
 
     /// Every sighting so far, for meeting with the mesh.
+    /// Every card seen so far is settled (false before any is seen).
+    var allSettled: Bool { let s = seen; return !s.isEmpty && s.allSatisfy { $0.track.settled } }
     var allSightings: [CardSighting] { tracks.values.flatMap(\.sightings) }
 
     /// Mesh ranges by sighting `seq`, nil where the line met no mesh, from mesh pass `pass`.
@@ -498,8 +502,9 @@ struct CardTracker: Sendable {
 
     /// The sightings for the next mesh pass, at most `limit`: never met with the mesh first (oldest first),
     /// then those met longest ago. Keeps each pass short however long the walk.
-    func meshBatch(limit: Int) -> [CardSighting] {
-        Array(allSightings.sorted { ($0.meshedPass ?? -1, $0.seq) < ($1.meshedPass ?? -1, $1.seq) }.prefix(limit))
+    func meshBatch(limit: Int, skipSettled: Bool = false) -> [CardSighting] {
+        let pool = skipSettled ? tracks.values.filter { !$0.settled }.flatMap(\.sightings) : allSightings
+        return Array(pool.sorted { ($0.meshedPass ?? -1, $0.seq) < ($1.meshedPass ?? -1, $1.seq) }.prefix(limit))
     }
 
     /// Meets every sighting with this mesh (call off the main thread for a big mesh).

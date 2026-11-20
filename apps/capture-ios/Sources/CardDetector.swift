@@ -103,8 +103,10 @@ final class CardDetector: @unchecked Sendable {
         tag16h5_destroy(family)
     }
 
-    func detect(_ frame: CardFrame, done: @escaping @Sendable (CardResult) -> Void) {
+    func detect(_ frame: CardFrame, decimate: Float = 1, threads: Int32 = 2, done: @escaping @Sendable (CardResult) -> Void) {
         queue.async { [self] in
+            detector.pointee.quad_decimate = decimate
+            detector.pointee.nthreads = threads
             var frame = frame
             let t0 = DispatchTime.now().uptimeNanoseconds
             let (w, h) = (frame.luma.width, frame.luma.height)
