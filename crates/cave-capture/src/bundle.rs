@@ -33,6 +33,24 @@ pub struct Compass {
     pub accuracy_deg: f64,
 }
 
+/// A station card (CURRENT, FORWARD or REAR) the phone saw while scanning, summarised over all its sightings.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct CardSeen {
+    /// The card's glyph id (2 CURRENT, 12 FORWARD, 26 REAR).
+    pub id: u32,
+    /// The card's printed word, for people reading the file.
+    pub word: String,
+    /// Running median of the card centre's 3D position in the capture frame, metres.
+    pub point: [f64; 3],
+    /// The card's four corners in the capture frame (median per corner); empty when depth never covered them.
+    #[serde(default)]
+    pub corners: Vec<[f64; 3]>,
+    /// How many detections went into the median.
+    pub sightings: u32,
+    /// How far the centre wandered between sightings (largest distance from the median), metres.
+    pub spread_m: f64,
+}
+
 /// Everything about a shot except its bulk arrays.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ShotHeader {
@@ -65,6 +83,9 @@ pub struct ShotHeader {
     /// before compass shots existed).
     #[serde(default)]
     pub compass: Option<Compass>,
+    /// Station cards seen during the scan; absent in files written before cards were detected.
+    #[serde(default)]
+    pub cards: Vec<CardSeen>,
 }
 
 /// One kept camera frame, for colouring the mesh later.

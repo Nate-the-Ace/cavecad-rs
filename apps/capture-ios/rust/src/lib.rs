@@ -311,6 +311,23 @@ fn summary(bundle: *const u8, len: usize, station_and_target: *const f64) -> CcB
         out["min"] = serde_json::json!(min);
         out["max"] = serde_json::json!(max);
         out["turn_deg"] = turn.into();
+        // Cards seen, placed like the mesh; points RELATIVE TO THE STATION (as cc_shot_placed_positions).
+        if let Some(p) = place(&shot, st) {
+            let cards: Vec<_> = shot
+                .header
+                .cards
+                .iter()
+                .map(|c| {
+                    let q = p.apply(c.point);
+                    serde_json::json!({
+                        "id": c.id, "word": c.word,
+                        "point": [q.x - st[0], q.y - st[1], q.z - st[2]],
+                        "sightings": c.sightings, "spread_m": c.spread_m,
+                    })
+                })
+                .collect();
+            out["cards"] = cards.into();
+        }
     }
     give_json(out)
 }
@@ -550,6 +567,46 @@ mod tests {
                 0,
             )
         })
+    }
+
+    #[test]
+    fn summary_places_cards_relative_to_the_station() {
+        let header = CString::new(
+            r#"{"shot_id":"s","cave_id":"c","station_id":"a","station_label":"A","captured_at_ms":0,"device":"t",
+               "instrument_height_m":0.3,"start_camera":[0,0,0],"compass":{"true_north":true,"accuracy_deg":5.0},
+               "tracking":"normal","arkit_version":"26.1","gravity":[0,-1,0],"keyframes":[],
+               "cards":[{"id":12,"word":"FORWARD","point":[0,0,-2],"sightings":4,"spread_m":0.01}]}"#,
+        )
+        .unwrap();
+        let pos = [0f32, 0.0, -1.0, 1.0, 0.0, -1.0, 0.0, 1.0, -1.0];
+        let nor = [0f32; 9];
+        let idx = [0u32, 1, 2];
+        let b = read(unsafe {
+            cc_shot_encode(
+                header.as_ptr(),
+                pos.as_ptr(),
+                9,
+                nor.as_ptr(),
+                9,
+                idx.as_ptr(),
+                3,
+                std::ptr::null(),
+                0,
+            )
+        });
+        assert!(!b.is_empty());
+        let st = [100.0, 200.0, 50.0, 100.0, 200.0, 50.0];
+        let sum: serde_json::Value = serde_json::from_slice(&read(unsafe {
+            cc_shot_summary(b.as_ptr(), b.len(), st.as_ptr())
+        }))
+        .unwrap();
+        let c = &sum["cards"][0];
+        assert_eq!(c["word"], "FORWARD");
+        // 2 m north of the camera, which is 0.3 m above the station
+        assert!((c["point"][0].as_f64().unwrap()).abs() < 1e-9);
+        assert!((c["point"][1].as_f64().unwrap() - 2.0).abs() < 1e-9);
+        assert!((c["point"][2].as_f64().unwrap() - 0.3).abs() < 1e-9);
+        assert_eq!(c["sightings"], 4);
     }
 
     #[test]

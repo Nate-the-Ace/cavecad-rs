@@ -33,7 +33,10 @@ CcBuf cc_shot_encode(const char *header_json,
 /// station_and_target: pointer to exactly 6 doubles (station xyz then target xyz, survey frame);
 /// may be NULL, in which case the shot is not placed.
 /// Returns JSON {"vertices","triangles","keyframes","placed":bool,"station_id","target_station_id",
-/// "compass":{"true_north","accuracy_deg"}|null,"min":[3],"max":[3],"turn_deg"} or {"error"}.
+/// "compass":{"true_north","accuracy_deg"}|null,"min":[3],"max":[3],"turn_deg",
+/// "cards":[{"id","word","point":[3],"sightings","spread_m"}]} or {"error"}.
+/// "cards" (only when placed) are the station cards the scan saw, placed like the mesh; "point" is
+/// RELATIVE TO THE STATION, survey frame (x east, y north, z up), metres.
 /// station_id is the station the shot was taken over; target_station_id the first heading tap's
 /// station (null when there is no tap, as in every compass shot); compass is null for a tap shot.
 /// With a NULL station_and_target only the header is read (cheap) and the shot is not placed.

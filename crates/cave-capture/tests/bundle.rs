@@ -1,7 +1,7 @@
 //! Round-trip and refusal tests for the capture bundle.
 
 use cave_capture::bundle::{
-    BundleError, HeadingTap, Keyframe, MAGIC, Shot, ShotHeader, decode, encode,
+    BundleError, CardSeen, HeadingTap, Keyframe, MAGIC, Shot, ShotHeader, decode, encode,
 };
 
 fn sample() -> Shot {
@@ -25,6 +25,7 @@ fn sample() -> Shot {
             arkit_version: "26.1".into(),
             gravity: [0.0, -1.0, 0.0],
             compass: None,
+            cards: vec![],
         },
         positions: vec![0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0],
         normals: vec![0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0],
@@ -225,4 +226,46 @@ fn header_without_compass_or_taps_still_reads() {
     .unwrap();
     assert!(h.taps.is_empty());
     assert_eq!(h.compass, None);
+}
+
+/// A card seen during the shot round-trips, corners included.
+#[test]
+fn cards_round_trip() {
+    let mut s = sample();
+    s.header.cards = vec![
+        CardSeen {
+            id: 2,
+            word: "CURRENT".into(),
+            point: [0.5, -0.3, -2.0],
+            corners: vec![
+                [0.4, -0.2, -2.0],
+                [0.6, -0.2, -2.0],
+                [0.6, -0.4, -2.0],
+                [0.4, -0.4, -2.0],
+            ],
+            sightings: 14,
+            spread_m: 0.004,
+        },
+        CardSeen {
+            id: 12,
+            word: "FORWARD".into(),
+            point: [3.0, -0.3, -1.0],
+            corners: vec![],
+            sightings: 3,
+            spread_m: 0.02,
+        },
+    ];
+    assert_eq!(decode(&encode(&s).unwrap()), Ok(s));
+}
+
+/// Shots written before `cards` existed must still read, with none.
+#[test]
+fn header_without_cards_still_reads() {
+    let h: ShotHeader = serde_json::from_str(
+        r#"{"shot_id":"s","cave_id":"c","station_id":"a","station_label":"A","captured_at_ms":0,
+            "device":"t","instrument_height_m":1.0,"start_camera":[0,0,0],"tracking":"normal",
+            "arkit_version":"26.1","gravity":[0,-1,0],"compass":{"true_north":true,"accuracy_deg":5.0}}"#,
+    )
+    .unwrap();
+    assert!(h.cards.is_empty());
 }

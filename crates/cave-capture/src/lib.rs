@@ -7,8 +7,8 @@ pub mod frame;
 pub mod stations;
 
 pub use bundle::{
-    BundleError, Compass, HeaderInfo, HeadingTap, Keyframe, KeyframeRef, Shot, ShotHeader,
-    check_header, decode, encode, encode_parts,
+    BundleError, CardSeen, Compass, HeaderInfo, HeadingTap, Keyframe, KeyframeRef, Shot,
+    ShotHeader, check_header, decode, encode, encode_parts,
 };
 pub use frame::{
     PIVOT_HEIGHT_M, Placement, bearing_deg, capture_to_survey, from_compass, heading_from_tap,
