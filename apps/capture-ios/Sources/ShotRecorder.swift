@@ -322,7 +322,8 @@ final class ShotRecorder: NSObject, ObservableObject, ARSessionDelegate {
         detectingCards = true
         lastCardTime = time
         let serial = shotSerial
-        let frame = CardFrame(luma: px.buffer, depth: depth.flatMap { DepthGrid(copying: $0.buffer) },
+        guard let luma = GreyImage(lumaOf: px.buffer) else { detectingCards = false; return }
+        let frame = CardFrame(luma: luma, depth: depth.flatMap { DepthGrid(copying: $0.buffer) },
                               intrinsics: intrinsics, camera: pose)
         cardDetector.detect(frame) { [weak self] result in
             Task { @MainActor [weak self] in self?.cardsDone(result, serial: serial) }
@@ -334,7 +335,13 @@ final class ShotRecorder: NSObject, ObservableObject, ARSessionDelegate {
         guard serial == shotSerial, case .capturing = phase else { return }
         if !cardFrameLogged {
             cardFrameLogged = true
-            Log.write("cards", "detecting on \(r.width)x\(r.height) luma")
+            Log.write("cards", "detecting on \(r.width)x\(r.height) luma, depth \(r.depthWidth)x\(r.depthHeight)")
+            // Depth is mapped to the image by scaling each axis; a different aspect means a crop, and cards
+            // would be placed with the wrong depth.
+            if r.depthWidth > 0, r.depthHeight > 0,
+               abs(Double(r.width) / Double(r.height) - Double(r.depthWidth) / Double(r.depthHeight)) > 0.02 {
+                Log.write("cards", "WARNING depth aspect differs from the image: card depths may be wrong")
+            }
         }
         cardRuns += 1; cardMillis += r.millis; cardMaxMillis = max(cardMaxMillis, r.millis)
         for c in r.noDepth { cardTracker.addMissed(c) }

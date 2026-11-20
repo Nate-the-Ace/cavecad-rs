@@ -122,6 +122,29 @@ final class CardDetectorTests: XCTestCase {
         }
     }
 
+    func testLumaCopyDropsRowPaddingAndDetects() {
+        let size = 600
+        let src = Self.tagImage(id: StationCard.forward.rawValue, size: size)
+        var buf: CVPixelBuffer?
+        XCTAssertEqual(CVPixelBufferCreate(nil, size, size, kCVPixelFormatType_420YpCbCr8BiPlanarFullRange, nil, &buf),
+                       kCVReturnSuccess)
+        guard let buf else { return XCTFail("no buffer") }
+        CVPixelBufferLockBaseAddress(buf, [])
+        let base = CVPixelBufferGetBaseAddressOfPlane(buf, 0)!
+        let stride = CVPixelBufferGetBytesPerRowOfPlane(buf, 0)
+        for y in 0..<size {
+            let row = base.advanced(by: y * stride).assumingMemoryBound(to: UInt8.self)
+            for x in 0..<size { row[x] = src[y * size + x] }
+            for x in size..<stride { row[x] = 0 }  // padding must not leak into the copy
+        }
+        CVPixelBufferUnlockBaseAddress(buf, [])
+        guard var grey = GreyImage(lumaOf: buf) else { return XCTFail("no copy") }
+        XCTAssertEqual(grey.width, size); XCTAssertEqual(grey.height, size)
+        XCTAssertEqual(grey.pixels, src)
+        let found = CardDetector().detectGrey(&grey.pixels, width: size, height: size)
+        XCTAssertEqual(found.map(\.id), [StationCard.forward.rawValue])
+    }
+
     func testStrayGlyphIsFoundButNotACard() {
         let d = CardDetector()
         var px = Self.tagImage(id: 5)

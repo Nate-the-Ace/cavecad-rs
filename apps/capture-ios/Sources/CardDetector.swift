@@ -2,10 +2,34 @@ import CoreVideo
 import Foundation
 import simd
 
-/// A camera frame's luma and depth, as handed to the detector queue: the luma pixel buffer (held only while
-/// the detection runs, never the ARFrame) and the depth map already copied out.
-struct CardFrame: @unchecked Sendable {
-    let luma: CVPixelBuffer
+/// An 8-bit grey image owned by Swift (rows packed, stride = width).
+struct GreyImage: Sendable {
+    let width: Int, height: Int
+    var pixels: [UInt8]
+
+    /// Copies plane 0 (luma) of a camera buffer out, so ARKit gets its buffer back at once instead of
+    /// waiting for a full-resolution detection (holding pool buffers stalls the camera).
+    init?(lumaOf buffer: CVPixelBuffer) {
+        CVPixelBufferLockBaseAddress(buffer, .readOnly)
+        defer { CVPixelBufferUnlockBaseAddress(buffer, .readOnly) }
+        guard let base = CVPixelBufferGetBaseAddressOfPlane(buffer, 0) else { return nil }
+        let w = CVPixelBufferGetWidthOfPlane(buffer, 0), h = CVPixelBufferGetHeightOfPlane(buffer, 0)
+        let stride = CVPixelBufferGetBytesPerRowOfPlane(buffer, 0)
+        guard w > 0, h > 0, stride >= w else { return nil }
+        var out = [UInt8](repeating: 0, count: w * h)
+        out.withUnsafeMutableBytes { dst in
+            for y in 0..<h { memcpy(dst.baseAddress! + y * w, base + y * stride, w) }
+        }
+        self.init(width: w, height: h, pixels: out)
+    }
+
+    init(width: Int, height: Int, pixels: [UInt8]) { self.width = width; self.height = height; self.pixels = pixels }
+}
+
+/// A camera frame's luma and depth, as handed to the detector queue: both already copied out, so neither the
+/// ARFrame nor its pixel buffers are held.
+struct CardFrame: Sendable {
+    var luma: GreyImage
     let depth: DepthGrid?
     let intrinsics: simd_float3x3
     let camera: simd_float4x4
@@ -17,6 +41,8 @@ struct CardResult: Sendable {
     /// How long the detector took on this frame, milliseconds.
     let millis: Double
     let width: Int, height: Int
+    /// The depth map's size (0 x 0 when the frame had none); its aspect should match the image's.
+    let depthWidth: Int, depthHeight: Int
 }
 
 extension DepthGrid {
@@ -62,26 +88,19 @@ final class CardDetector: @unchecked Sendable {
 
     func detect(_ frame: CardFrame, done: @escaping @Sendable (CardResult) -> Void) {
         queue.async { [self] in
+            var frame = frame
             let t0 = DispatchTime.now().uptimeNanoseconds
-            let raw = Self.run(detector, frame.luma)
-            let w = CVPixelBufferGetWidthOfPlane(frame.luma, 0), h = CVPixelBufferGetHeightOfPlane(frame.luma, 0)
+            let (w, h) = (frame.luma.width, frame.luma.height)
+            let raw = frame.luma.pixels.withUnsafeMutableBufferPointer { p in
+                var im = image_u8_t(width: Int32(w), height: Int32(h), stride: Int32(w), buf: p.baseAddress)
+                return Self.detections(detector, &im)
+            }
             let r = CardMath.sightings(from: raw, depth: frame.depth, imageW: w, imageH: h,
                                        intrinsics: frame.intrinsics, camera: frame.camera)
             let ms = Double(DispatchTime.now().uptimeNanoseconds - t0) / 1e6
-            done(CardResult(found: r.found, noDepth: r.noDepth, millis: ms, width: w, height: h))
+            done(CardResult(found: r.found, noDepth: r.noDepth, millis: ms, width: w, height: h,
+                            depthWidth: frame.depth?.width ?? 0, depthHeight: frame.depth?.height ?? 0))
         }
-    }
-
-    /// Detects on the buffer's luma plane in place (no copy; the plane's row stride is passed on).
-    private static func run(_ td: UnsafeMutablePointer<apriltag_detector_t>, _ buffer: CVPixelBuffer) -> [RawDetection] {
-        CVPixelBufferLockBaseAddress(buffer, .readOnly)
-        defer { CVPixelBufferUnlockBaseAddress(buffer, .readOnly) }
-        guard let base = CVPixelBufferGetBaseAddressOfPlane(buffer, 0) else { return [] }
-        var im = image_u8_t(width: Int32(CVPixelBufferGetWidthOfPlane(buffer, 0)),
-                            height: Int32(CVPixelBufferGetHeightOfPlane(buffer, 0)),
-                            stride: Int32(CVPixelBufferGetBytesPerRowOfPlane(buffer, 0)),
-                            buf: base.assumingMemoryBound(to: UInt8.self))
-        return detections(td, &im)
     }
 
     /// Runs the detector on an image and copies the results out.
