@@ -59,13 +59,28 @@ enum Core {
 
     /// Placed mesh points, x y z per vertex, relative to the station over (`pair[0...2]`).
     static func placedPositions(bundle: Data, pair: [Double]) -> [Float] {
+        guard pair.count == 6 else { return [] }
         let d = bundle.withUnsafeBytes { b in pair.withUnsafeBufferPointer { s in
             take(cc_shot_placed_positions(b.bindMemory(to: UInt8.self).baseAddress, b.count, s.baseAddress))
         } }
-        // copy rather than rebind: the bytes carry no alignment promise
+        return floats(d)
+    }
+
+    /// Placed points thinned on a `cellM` grid (one per occupied cell, the cell mean), x y z per point,
+    /// relative to the station over (`pair[0...2]`). Empty when the shot cannot be placed.
+    static func placedPointsThin(bundle: Data, pair: [Double], cellM: Float = 0.05) -> [Float] {
+        guard pair.count == 6 else { return [] }
+        let d = bundle.withUnsafeBytes { b in pair.withUnsafeBufferPointer { s in
+            take(cc_shot_placed_points_thin(b.bindMemory(to: UInt8.self).baseAddress, b.count, s.baseAddress, cellM))
+        } }
+        return floats(d)
+    }
+
+    /// Little-endian float32s. Copied rather than rebound: the bytes carry no alignment promise.
+    private static func floats(_ d: Data) -> [Float] {
         var out = [Float](repeating: 0, count: d.count / MemoryLayout<Float>.size)
         _ = out.withUnsafeMutableBytes { d.copyBytes(to: $0) }
-        return out
+        return out.map { Float(bitPattern: UInt32(littleEndian: $0.bitPattern)) }
     }
 
     /// A shot's ghost: simplified mesh and hole outlines, capture frame.

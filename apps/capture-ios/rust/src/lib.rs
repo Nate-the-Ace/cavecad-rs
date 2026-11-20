@@ -6,7 +6,7 @@
 use cave_capture::{
     CardSeen, Keyframe, KeyframeRef, NewPass, PassMesh, Shot, ShotHeader, add_pass, card_offsets,
     cards_fit, check_header, decode, document_from_room, encode, encode_parts, from_compass, ghost,
-    heading_from_tap, stations,
+    heading_from_tap, stations, thin_points,
 };
 use cave_survey::Vec3;
 use serde::Deserialize;
@@ -348,29 +348,61 @@ pub unsafe extern "C" fn cc_shot_placed_positions(
 }
 
 fn positions_of(bundle: *const u8, len: usize, station_and_target: *const f64) -> CcBuf {
+    give(le_bytes(&relative_points(bundle, len, station_and_target)))
+}
+
+/// The placed mesh points relative to the station (`station_and_target[0..3]`), x y z per point;
+/// empty when the shot cannot be read or placed.
+fn relative_points(bundle: *const u8, len: usize, station_and_target: *const f64) -> Vec<f32> {
     let st = unsafe { slice(station_and_target, 6) };
     let Ok(shot) = decode(unsafe { slice(bundle, len) }) else {
-        return give(Vec::new());
+        return Vec::new();
     };
     if st.len() != 6 {
-        return give(Vec::new());
+        return Vec::new();
     }
     let Some((pts, _)) = placed_points(&shot, st) else {
-        return give(Vec::new());
+        return Vec::new();
     };
     // Relative to the station, in f64 before narrowing: survey coordinates can be millions of
     // metres, where f32 keeps only about half a metre.
-    let mut out = Vec::with_capacity(pts.len() * 12);
+    let mut out = Vec::with_capacity(pts.len() * 3);
     for q in pts {
-        for v in [
+        out.extend_from_slice(&[
             (q.x - st[0]) as f32,
             (q.y - st[1]) as f32,
             (q.z - st[2]) as f32,
-        ] {
-            out.extend_from_slice(&v.to_le_bytes());
-        }
+        ]);
     }
-    give(out)
+    out
+}
+
+fn le_bytes(v: &[f32]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(v.len() * 4);
+    for x in v {
+        out.extend_from_slice(&x.to_le_bytes());
+    }
+    out
+}
+
+/// See `capture_core.h`.
+///
+/// # Safety
+/// Every pointer must be null or valid for its stated length (strings NUL-terminated).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn cc_shot_placed_points_thin(
+    bundle: *const u8,
+    len: usize,
+    station_and_target: *const f64,
+    cell_m: f32,
+) -> CcBuf {
+    guard(
+        || {
+            let pts = relative_points(bundle, len, station_and_target);
+            give(le_bytes(&thin_points(&pts, cell_m)))
+        },
+        empty,
+    )
 }
 
 #[derive(Deserialize)]
@@ -942,6 +974,60 @@ mod tests {
         // the first vertex is 5 m along the tap, which points at the target due east
         assert!((pts[0] - 5.0).abs() < 1e-4, "{pts:?}");
         assert!(pts[1].abs() < 1e-4 && pts[2].abs() < 1e-4, "{pts:?}");
+    }
+
+    fn floats(raw: &[u8]) -> Vec<f32> {
+        raw.as_chunks::<4>()
+            .0
+            .iter()
+            .map(|c| f32::from_le_bytes(*c))
+            .collect()
+    }
+
+    #[test]
+    fn thin_points_door_thins_relative_to_the_station() {
+        let b = sample_bundle();
+        let st = [500_000.0, 4_000_000.0, 300.0, 500_010.0, 4_000_000.0, 300.0];
+        let all = floats(&read(unsafe {
+            cc_shot_placed_positions(b.as_ptr(), b.len(), st.as_ptr())
+        }));
+        // a fine grid keeps all three vertices, in order, exactly as the plain door gives them
+        let fine = floats(&read(unsafe {
+            cc_shot_placed_points_thin(b.as_ptr(), b.len(), st.as_ptr(), 0.05)
+        }));
+        assert_eq!(fine, all);
+        // placed: (5,0,0), (5,-1,0), (5,0,1). A 10 m grid merges the two with y >= 0 into their
+        // mean, first; the one south of the station (y < 0) is a cell of its own.
+        let coarse = floats(&read(unsafe {
+            cc_shot_placed_points_thin(b.as_ptr(), b.len(), st.as_ptr(), 10.0)
+        }));
+        let want = [5.0, 0.0, 0.5, 5.0, -1.0, 0.0];
+        assert_eq!(coarse.len(), 6, "{coarse:?}");
+        assert!(
+            coarse.iter().zip(want).all(|(a, b)| (a - b).abs() < 1e-4),
+            "{coarse:?}"
+        );
+    }
+
+    #[test]
+    fn thin_points_door_is_empty_when_it_cannot_place() {
+        let b = sample_bundle();
+        let junk = [1u8, 2, 3];
+        let st = [0.0, 0.0, 0.0, 10.0, 0.0, 0.0];
+        assert!(
+            read(unsafe { cc_shot_placed_points_thin(junk.as_ptr(), 3, st.as_ptr(), 0.05) })
+                .is_empty()
+        );
+        assert!(
+            read(unsafe {
+                cc_shot_placed_points_thin(b.as_ptr(), b.len(), std::ptr::null(), 0.05)
+            })
+            .is_empty()
+        );
+        assert!(
+            read(unsafe { cc_shot_placed_points_thin(std::ptr::null(), 99, st.as_ptr(), 0.05) })
+                .is_empty()
+        );
     }
 
     const COMPASS: &str = r#"{"shot_id":"s","cave_id":"c","station_id":"a","station_label":"A","captured_at_ms":0,"device":"t",

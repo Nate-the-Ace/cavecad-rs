@@ -53,6 +53,13 @@ CcBuf cc_shot_summary(const uint8_t *bundle, size_t len, const double *station_a
 /// station_and_target is 6 doubles as above (NULL allowed). Empty when it cannot be placed.
 CcBuf cc_shot_placed_positions(const uint8_t *bundle, size_t len, const double *station_and_target);
 
+/// As cc_shot_placed_positions, thinned on a cubic grid of cell_m metres: one point per occupied cell,
+/// at the mean of its points, in the order the cells were first entered (deterministic). Non-finite
+/// points are dropped; a cell_m that is not positive and finite thins nothing. Little-endian float32
+/// x y z per point, relative to the station. Empty when it cannot be placed. For overviews/thumbnails.
+CcBuf cc_shot_placed_points_thin(const uint8_t *bundle, size_t len, const double *station_and_target,
+                                 float cell_m);
+
 /// Adds a scanning pass to a .cvcap (bundle, len BYTES) and returns the new bundle, or empty on any
 /// error. pass_json: {"captured_at_ms","aligned_by":"same_session"|"cards","transform":[16 column-major,
 /// pass frame to shot frame],"replace":bool (true: the pass mesh replaces the shot's, same session;
