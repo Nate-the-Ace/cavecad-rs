@@ -6,6 +6,9 @@ pub mod bundle;
 pub mod frame;
 pub mod stations;
 
-pub use bundle::{BundleError, HeadingTap, Keyframe, Shot, ShotHeader, decode, encode};
+pub use bundle::{
+    BundleError, HeaderInfo, HeadingTap, Keyframe, KeyframeRef, Shot, ShotHeader, check_header,
+    decode, encode, encode_parts,
+};
 pub use frame::{Placement, bearing_deg, capture_to_survey, heading_from_tap};
 pub use stations::{StationSeed, document_from_room, stations};

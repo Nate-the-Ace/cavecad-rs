@@ -30,12 +30,18 @@ CcBuf cc_shot_encode(const char *header_json,
 /// Reads a .cvcap and places it from its first heading tap. bundle: len BYTES, valid for len.
 /// station_and_target: pointer to exactly 6 doubles (station xyz then target xyz, survey frame);
 /// may be NULL, in which case the shot is not placed.
-/// Returns JSON {"vertices","triangles","keyframes","placed":bool,"min":[3],"max":[3],"turn_deg"} or {"error"}.
-/// "placed" is false when there is no usable tap, no bearing, or the mesh is empty.
+/// Returns JSON {"vertices","triangles","keyframes","placed":bool,"station_id","target_station_id",
+/// "min":[3],"max":[3],"turn_deg"} or {"error"}. station_id is the station the shot was taken over and
+/// target_station_id the first heading tap's station (null when there is no tap); with a NULL
+/// station_and_target only the header is read (cheap) and the shot is not placed. min/max are
+/// absolute survey coordinates. "placed" is false when there is no usable tap, no bearing, or the
+/// mesh is empty.
 CcBuf cc_shot_summary(const uint8_t *bundle, size_t len, const double *station_and_target);
 
 /// Survey-frame positions of a .cvcap's mesh (placed from station_and_target), for the viewer:
-/// little-endian float32 x,y,z per vertex, 12 bytes per vertex. bundle is len BYTES;
+/// little-endian float32 x,y,z per vertex, 12 bytes per vertex, RELATIVE TO THE STATION (the first
+/// three doubles of station_and_target): add the station's xyz for absolute survey coordinates.
+/// (Relative keeps millimetres; float32 of a large absolute coordinate does not.) bundle is len BYTES;
 /// station_and_target is 6 doubles as above (NULL allowed). Empty when it cannot be placed.
 CcBuf cc_shot_placed_positions(const uint8_t *bundle, size_t len, const double *station_and_target);
 

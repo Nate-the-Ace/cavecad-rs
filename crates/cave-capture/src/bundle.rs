@@ -115,49 +115,164 @@ struct WireKeyframe {
     jpeg_len: u32,
 }
 
-/// Writes a shot as bundle bytes. `BadMesh` when the arrays are ragged (positions or indices not a
-/// multiple of three, normals not one per vertex).
+/// A keyframe whose JPEG is borrowed, so a caller holding the bytes elsewhere (the phone's joined
+/// buffer) can write a bundle without copying every photo first.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct KeyframeRef<'a> {
+    /// Camera-to-capture transform, column-major 4×4.
+    pub pose: [f32; 16],
+    /// Camera intrinsics, column-major 3×3.
+    pub intrinsics: [f32; 9],
+    /// Image width in pixels.
+    pub width: u32,
+    /// Image height in pixels.
+    pub height: u32,
+    /// The JPEG bytes.
+    pub jpeg: &'a [u8],
+}
+
+/// Writes a shot as bundle bytes. `BadMesh` for anything [`decode`] would refuse: ragged arrays
+/// (positions or indices not a multiple of three, normals not one per vertex), a number that is
+/// not finite, or an index past the vertices.
 pub fn encode(shot: &Shot) -> Result<Vec<u8>, BundleError> {
-    if !shot.positions.len().is_multiple_of(3)
-        || shot.normals.len() != shot.positions.len()
-        || !shot.indices.len().is_multiple_of(3)
+    let refs: Vec<KeyframeRef> = shot
+        .keyframes
+        .iter()
+        .map(|k| KeyframeRef {
+            pose: k.pose,
+            intrinsics: k.intrinsics,
+            width: k.width,
+            height: k.height,
+            jpeg: &k.jpeg,
+        })
+        .collect();
+    encode_parts(
+        &shot.header,
+        &shot.positions,
+        &shot.normals,
+        &shot.indices,
+        &refs,
+    )
+}
+
+/// [`encode`] from borrowed parts. The output is sized once (photos included) and never grows.
+pub fn encode_parts(
+    header: &ShotHeader,
+    positions: &[f32],
+    normals: &[f32],
+    indices: &[u32],
+    keyframes: &[KeyframeRef],
+) -> Result<Vec<u8>, BundleError> {
+    let n = positions.len() / 3;
+    if !positions.len().is_multiple_of(3)
+        || normals.len() != positions.len()
+        || !indices.len().is_multiple_of(3)
+        || !positions.iter().chain(normals).all(|v| v.is_finite())
+        || !indices.iter().all(|&i| (i as usize) < n)
+        || u32::try_from(n).is_err()
+        || u32::try_from(indices.len() / 3).is_err()
     {
         return Err(BundleError::BadMesh);
     }
+    let mut wire_keyframes = Vec::with_capacity(keyframes.len());
+    let mut photo_bytes = 0usize;
+    for k in keyframes {
+        let jpeg_len = u32::try_from(k.jpeg.len()).map_err(|_| BundleError::BadHeader)?;
+        photo_bytes = photo_bytes
+            .checked_add(k.jpeg.len())
+            .ok_or(BundleError::BadHeader)?;
+        wire_keyframes.push(WireKeyframe {
+            pose: k.pose.to_vec(),
+            intrinsics: k.intrinsics.to_vec(),
+            width: k.width,
+            height: k.height,
+            jpeg_len,
+        });
+    }
     let wire = Wire {
-        header: shot.header.clone(),
-        vertex_count: (shot.positions.len() / 3) as u32,
-        normal_count: (shot.normals.len() / 3) as u32,
-        triangle_count: (shot.indices.len() / 3) as u32,
-        keyframes: shot
-            .keyframes
-            .iter()
-            .map(|k| WireKeyframe {
-                pose: k.pose.to_vec(),
-                intrinsics: k.intrinsics.to_vec(),
-                width: k.width,
-                height: k.height,
-                jpeg_len: k.jpeg.len() as u32,
-            })
-            .collect(),
+        header: header.clone(),
+        vertex_count: n as u32,
+        normal_count: n as u32,
+        triangle_count: (indices.len() / 3) as u32,
+        keyframes: wire_keyframes,
     };
-    let json = serde_json::to_vec(&wire).expect("header always serializes");
-    let mut out =
-        Vec::with_capacity(json.len() + shot.positions.len() * 8 + shot.indices.len() * 4);
+    let json = serde_json::to_vec(&wire).map_err(|_| BundleError::BadHeader)?;
+    let json_len = u32::try_from(json.len()).map_err(|_| BundleError::BadHeader)?;
+    let size = MAGIC.len()
+        + 2
+        + 4
+        + json.len()
+        + (positions.len() + normals.len() + indices.len()) * 4
+        + photo_bytes;
+    let mut out = Vec::with_capacity(size);
     out.extend_from_slice(MAGIC);
     out.extend_from_slice(&FORMAT.to_le_bytes());
-    out.extend_from_slice(&(json.len() as u32).to_le_bytes());
+    out.extend_from_slice(&json_len.to_le_bytes());
     out.extend_from_slice(&json);
-    for v in shot.positions.iter().chain(&shot.normals) {
+    for v in positions.iter().chain(normals) {
         out.extend_from_slice(&v.to_le_bytes());
     }
-    for i in &shot.indices {
+    for i in indices {
         out.extend_from_slice(&i.to_le_bytes());
     }
-    for k in &shot.keyframes {
-        out.extend_from_slice(&k.jpeg);
+    for k in keyframes {
+        out.extend_from_slice(k.jpeg);
     }
+    debug_assert_eq!(out.len(), size);
     Ok(out)
+}
+
+/// What [`check_header`] finds: the header and the counts, with no array read.
+#[derive(Clone, Debug, PartialEq)]
+pub struct HeaderInfo {
+    /// The shot's header.
+    pub header: ShotHeader,
+    /// Mesh vertices.
+    pub vertices: usize,
+    /// Mesh triangles.
+    pub triangles: usize,
+    /// Kept photos.
+    pub keyframes: usize,
+}
+
+/// Reads only a bundle's header and checks the file is exactly as long as the header says. Cheap
+/// (no mesh or photo is copied); it does not check the mesh numbers, which [`decode`] does.
+pub fn check_header(bytes: &[u8]) -> Result<HeaderInfo, BundleError> {
+    if !bytes.starts_with(MAGIC) {
+        return Err(BundleError::NotACapture);
+    }
+    let mut r = Reader {
+        b: bytes,
+        at: MAGIC.len(),
+    };
+    let format = r.u16()?;
+    if format > FORMAT {
+        return Err(BundleError::NewerFormat(format));
+    }
+    let len = r.u32()? as usize;
+    let wire: Wire = serde_json::from_slice(r.take(len)?).map_err(|_| BundleError::BadHeader)?;
+    if wire.normal_count != wire.vertex_count {
+        return Err(BundleError::BadMesh);
+    }
+    if wire
+        .keyframes
+        .iter()
+        .any(|k| k.pose.len() != 16 || k.intrinsics.len() != 9)
+    {
+        return Err(BundleError::BadHeader);
+    }
+    let photos: u64 = wire.keyframes.iter().map(|k| u64::from(k.jpeg_len)).sum();
+    let need =
+        u64::from(wire.vertex_count) * 3 * 4 * 2 + u64::from(wire.triangle_count) * 3 * 4 + photos;
+    if need != (bytes.len() - r.at) as u64 {
+        return Err(BundleError::Truncated);
+    }
+    Ok(HeaderInfo {
+        vertices: wire.vertex_count as usize,
+        triangles: wire.triangle_count as usize,
+        keyframes: wire.keyframes.len(),
+        header: wire.header,
+    })
 }
 
 struct Reader<'a> {

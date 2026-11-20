@@ -78,18 +78,27 @@ fn truncated() {
     assert_eq!(decode(&b[..b.len() - 1]), Err(BundleError::Truncated));
 }
 
+/// Where the mesh starts in a bundle (after magic, format, header length and header).
+fn mesh_start(b: &[u8]) -> usize {
+    let at = MAGIC.len() + 2;
+    at + 4 + u32::from_le_bytes(b[at..at + 4].try_into().unwrap()) as usize
+}
+
+// encode refuses these, so the bad bytes are patched into a good file: decode must refuse them too.
 #[test]
 fn index_out_of_range() {
-    let mut s = sample();
-    s.indices = vec![0, 1, 3];
-    assert_eq!(decode(&encode(&s).unwrap()), Err(BundleError::BadMesh));
+    let mut b = encode(&sample()).unwrap();
+    let third_index = mesh_start(&b) + 9 * 4 * 2 + 2 * 4;
+    b[third_index..third_index + 4].copy_from_slice(&3u32.to_le_bytes());
+    assert_eq!(decode(&b), Err(BundleError::BadMesh));
 }
 
 #[test]
 fn non_finite_vertex() {
-    let mut s = sample();
-    s.positions[4] = f32::NAN;
-    assert_eq!(decode(&encode(&s).unwrap()), Err(BundleError::BadMesh));
+    let mut b = encode(&sample()).unwrap();
+    let fifth_position = mesh_start(&b) + 4 * 4;
+    b[fifth_position..fifth_position + 4].copy_from_slice(&f32::NAN.to_le_bytes());
+    assert_eq!(decode(&b), Err(BundleError::BadMesh));
 }
 
 #[test]
@@ -137,4 +146,56 @@ fn normal_count_mismatch_refused() {
     out.extend_from_slice(lie.as_bytes());
     out.extend_from_slice(&b[at + 4 + len..]);
     assert_eq!(decode(&out), Err(BundleError::BadMesh));
+}
+
+#[test]
+fn encode_refuses_what_decode_would() {
+    let mut s = sample();
+    s.indices = vec![0, 1, 3];
+    assert_eq!(encode(&s), Err(BundleError::BadMesh));
+    let mut s = sample();
+    s.normals[4] = f32::INFINITY;
+    assert_eq!(encode(&s), Err(BundleError::BadMesh));
+}
+
+#[test]
+fn encode_never_reallocates() {
+    let b = encode(&sample()).unwrap();
+    assert_eq!(b.capacity(), b.len());
+}
+
+#[test]
+fn encode_parts_matches_encode() {
+    use cave_capture::bundle::{KeyframeRef, encode_parts};
+    let s = sample();
+    let refs: Vec<KeyframeRef> = s
+        .keyframes
+        .iter()
+        .map(|k| KeyframeRef {
+            pose: k.pose,
+            intrinsics: k.intrinsics,
+            width: k.width,
+            height: k.height,
+            jpeg: &k.jpeg,
+        })
+        .collect();
+    assert_eq!(
+        encode_parts(&s.header, &s.positions, &s.normals, &s.indices, &refs),
+        encode(&s)
+    );
+}
+
+#[test]
+fn check_header_reads_header_and_counts_only() {
+    use cave_capture::bundle::check_header;
+    let s = sample();
+    let b = encode(&s).unwrap();
+    let h = check_header(&b).unwrap();
+    assert_eq!(h.header, s.header);
+    assert_eq!((h.vertices, h.triangles, h.keyframes), (3, 1, 2));
+    assert_eq!(check_header(&b[..b.len() - 1]), Err(BundleError::Truncated));
+    let mut longer = b.clone();
+    longer.push(0);
+    assert_eq!(check_header(&longer), Err(BundleError::Truncated));
+    assert_eq!(check_header(b"nope"), Err(BundleError::NotACapture));
 }

@@ -4,7 +4,8 @@
 #![allow(unsafe_code)]
 
 use cave_capture::{
-    Keyframe, Shot, ShotHeader, decode, document_from_room, encode, heading_from_tap, stations,
+    KeyframeRef, Shot, ShotHeader, check_header, decode, document_from_room, encode_parts,
+    heading_from_tap, stations,
 };
 use cave_survey::Vec3;
 use serde::Deserialize;
@@ -168,13 +169,14 @@ pub unsafe extern "C" fn cc_shot_encode(
             let Ok(h) = serde_json::from_str::<HeaderIn>(htext) else {
                 return empty();
             };
+            // Everything is borrowed from the caller's buffers: the only copy made is the bundle itself.
             let jpeg_bytes = unsafe { slice(jpegs, n_jpegs) };
             let mut at = 0usize;
-            let mut keyframes = Vec::new();
-            for k in h.keyframes {
+            let mut keyframes = Vec::with_capacity(h.keyframes.len());
+            for k in &h.keyframes {
                 let (Ok(pose), Ok(intrinsics)) = (
-                    <[f32; 16]>::try_from(k.pose),
-                    <[f32; 9]>::try_from(k.intrinsics),
+                    <[f32; 16]>::try_from(k.pose.as_slice()),
+                    <[f32; 9]>::try_from(k.intrinsics.as_slice()),
                 ) else {
                     return empty();
                 };
@@ -185,25 +187,30 @@ pub unsafe extern "C" fn cc_shot_encode(
                     return empty();
                 };
                 at = end;
-                keyframes.push(Keyframe {
+                keyframes.push(KeyframeRef {
                     pose,
                     intrinsics,
                     width: k.width,
                     height: k.height,
-                    jpeg: jpeg.to_vec(),
+                    jpeg,
                 });
             }
-            let shot = Shot {
-                header: h.header,
-                positions: unsafe { slice(positions, n_positions) }.to_vec(),
-                normals: unsafe { slice(normals, n_normals) }.to_vec(),
-                indices: unsafe { slice(indices, n_indices) }.to_vec(),
-                keyframes,
+            let bytes = match encode_parts(
+                &h.header,
+                unsafe { slice(positions, n_positions) },
+                unsafe { slice(normals, n_normals) },
+                unsafe { slice(indices, n_indices) },
+                &keyframes,
+            ) {
+                Ok(b) => b,
+                Err(_) => return empty(),
             };
-            match encode(&shot) {
-                Ok(bytes) if decode(&bytes).is_ok() => give(bytes),
-                _ => empty(),
+            // encode_parts already refused any mesh decode would; re-reading the header (no copies)
+            // is the check that what was written reads back.
+            if check_header(&bytes).is_err() {
+                return empty();
             }
+            give(bytes)
         },
         empty,
     )
@@ -259,20 +266,29 @@ pub unsafe extern "C" fn cc_shot_summary(
 }
 
 fn summary(bundle: *const u8, len: usize, station_and_target: *const f64) -> CcBuf {
-    let shot = match decode(unsafe { slice(bundle, len) }) {
+    let bytes = unsafe { slice(bundle, len) };
+    // The header alone answers the counts and which stations the shot was taken from.
+    let info = match check_header(bytes) {
+        Ok(i) => i,
+        Err(e) => return err(&format!("{e:?}")),
+    };
+    let mut out = serde_json::json!({
+        "vertices": info.vertices,
+        "triangles": info.triangles,
+        "keyframes": info.keyframes,
+        "placed": false,
+        "station_id": info.header.station_id,
+        "target_station_id": info.header.taps.first().map(|t| t.target_station_id.clone()),
+    });
+    let st = unsafe { slice(station_and_target, 6) };
+    if st.len() != 6 {
+        return give_json(out);
+    }
+    let shot = match decode(bytes) {
         Ok(s) => s,
         Err(e) => return err(&format!("{e:?}")),
     };
-    let st = unsafe { slice(station_and_target, 6) };
-    let mut out = serde_json::json!({
-        "vertices": shot.positions.len() / 3,
-        "triangles": shot.indices.len() / 3,
-        "keyframes": shot.keyframes.len(),
-        "placed": false,
-    });
-    if st.len() == 6
-        && let Some((pts, turn)) = placed_points(&shot, st)
-    {
+    if let Some((pts, turn)) = placed_points(&shot, st) {
         let mut min = [f64::INFINITY; 3];
         let mut max = [f64::NEG_INFINITY; 3];
         for q in &pts {
@@ -313,9 +329,15 @@ fn positions_of(bundle: *const u8, len: usize, station_and_target: *const f64) -
     let Some((pts, _)) = placed_points(&shot, st) else {
         return give(Vec::new());
     };
+    // Relative to the station, in f64 before narrowing: survey coordinates can be millions of
+    // metres, where f32 keeps only about half a metre.
     let mut out = Vec::with_capacity(pts.len() * 12);
     for q in pts {
-        for v in [q.x as f32, q.y as f32, q.z as f32] {
+        for v in [
+            (q.x - st[0]) as f32,
+            (q.y - st[1]) as f32,
+            (q.z - st[2]) as f32,
+        ] {
             out.extend_from_slice(&v.to_le_bytes());
         }
     }
@@ -498,5 +520,57 @@ mod tests {
             read(unsafe { cc_shot_placed_positions(bundle.as_ptr(), bundle.len(), st.as_ptr()) })
                 .is_empty()
         );
+    }
+
+    fn sample_bundle() -> Vec<u8> {
+        let header = CString::new(BARE).unwrap();
+        let pos = [0f32, 0.0, -5.0, 1.0, 0.0, -5.0, 0.0, 1.0, -5.0];
+        let nor = [0f32; 9];
+        let idx = [0u32, 1, 2];
+        read(unsafe {
+            cc_shot_encode(
+                header.as_ptr(),
+                pos.as_ptr(),
+                9,
+                nor.as_ptr(),
+                9,
+                idx.as_ptr(),
+                3,
+                std::ptr::null(),
+                0,
+            )
+        })
+    }
+
+    #[test]
+    fn summary_names_its_stations_without_a_pair() {
+        let b = sample_bundle();
+        let sum: serde_json::Value = serde_json::from_slice(&read(unsafe {
+            cc_shot_summary(b.as_ptr(), b.len(), std::ptr::null())
+        }))
+        .unwrap();
+        assert_eq!(sum["station_id"], "a");
+        assert_eq!(sum["target_station_id"], "b");
+        assert_eq!(sum["vertices"], 3);
+        assert_eq!(sum["triangles"], 1);
+        assert_eq!(sum["placed"], false);
+    }
+
+    #[test]
+    fn placed_positions_are_relative_to_the_station() {
+        let b = sample_bundle();
+        // a station far from the origin: absolute f32 would lose millimetres
+        let st = [500_000.0, 4_000_000.0, 300.0, 500_010.0, 4_000_000.0, 300.0];
+        let raw = read(unsafe { cc_shot_placed_positions(b.as_ptr(), b.len(), st.as_ptr()) });
+        let pts: Vec<f32> = raw
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|c| f32::from_le_bytes(*c))
+            .collect();
+        assert_eq!(pts.len(), 9);
+        // the first vertex is 5 m along the tap, which points at the target due east
+        assert!((pts[0] - 5.0).abs() < 1e-4, "{pts:?}");
+        assert!(pts[1].abs() < 1e-4 && pts[2].abs() < 1e-4, "{pts:?}");
     }
 }
