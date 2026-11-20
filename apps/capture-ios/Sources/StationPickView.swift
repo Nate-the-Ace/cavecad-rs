@@ -39,7 +39,7 @@ struct StationPickView: View {
 
     var body: some View {
         List {
-            Section("Station you capture from") { picker($over) }
+            Section { picker($over) }
             if let over {
                 NavigationLink("Capture") { CaptureView(cave: cave, over: over) }.font(.headline)
             }
