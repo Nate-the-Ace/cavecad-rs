@@ -8,6 +8,7 @@ struct StationPickView: View {
     @State private var forward: Station?
     @State private var problem: String?
     @State private var updating = false
+    @State private var saved: [URL] = []
 
     init(cave: KeptCave, store: CaveStore) {
         _cave = State(initialValue: cave)
@@ -22,6 +23,16 @@ struct StationPickView: View {
                 NavigationLink("Capture") { CaptureView(cave: cave, over: over, forward: forward) }
                     .font(.headline)
             }
+            if !saved.isEmpty, let over, let forward {
+                // Phase 1: a shot is viewed against the stations picked now; Phase 4 keeps each shot's own pair.
+                Section("Saved shots") {
+                    ForEach(saved, id: \.self) { u in
+                        NavigationLink(String(u.deletingPathExtension().lastPathComponent.prefix(8))) {
+                            ShotView(url: u, over: over, forward: forward)
+                        }
+                    }
+                }
+            }
             if let problem { Text(problem).foregroundStyle(.red) }
             Section { Text("Kept \(cave.keptAt.formatted(date: .abbreviated, time: .shortened))").font(.caption).foregroundStyle(.secondary) }
         }
@@ -30,6 +41,7 @@ struct StationPickView: View {
             if updating { ProgressView() } else { Button("Get latest") { getLatest() } }
         }
         .task(id: cave.keptAt) { await loadStations() }
+        .onAppear { saved = ShotFiles.list(cave: cave.id) }
     }
 
     /// Stations come from the Rust core, off the main actor; the result is published back here.

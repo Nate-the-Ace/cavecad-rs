@@ -46,11 +46,3 @@ struct CaptureView: View {
         .onDisappear { rec.session.pause() }
     }
 }
-
-struct ShotView: View {
-    let url: URL; let over: Station; let forward: Station
-    var body: some View {
-        let s = (try? Data(contentsOf: url)).map { Core.summary(bundle: $0, pair: Core.pair(over, forward)) } ?? [:]
-        List { ForEach(s.keys.sorted(), id: \.self) { k in LabeledContent(k, value: "\(s[k]!)") } }
-    }
-}

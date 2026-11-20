@@ -57,6 +57,9 @@ enum Core {
         let d = bundle.withUnsafeBytes { b in pair.withUnsafeBufferPointer { s in
             take(cc_shot_placed_positions(b.bindMemory(to: UInt8.self).baseAddress, b.count, s.baseAddress))
         } }
-        return d.withUnsafeBytes { Array($0.bindMemory(to: Float.self)) }
+        // copy rather than rebind: the bytes carry no alignment promise
+        var out = [Float](repeating: 0, count: d.count / MemoryLayout<Float>.size)
+        _ = out.withUnsafeMutableBytes { d.copyBytes(to: $0) }
+        return out
     }
 }
