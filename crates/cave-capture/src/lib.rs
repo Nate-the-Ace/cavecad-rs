@@ -6,6 +6,7 @@ pub mod bundle;
 pub mod frame;
 pub mod passes;
 pub mod stations;
+pub mod thin;
 
 pub use bundle::{
     BundleError, CardSeen, Compass, HeaderInfo, HeadingTap, Keyframe, KeyframeRef, Shot,
@@ -19,3 +20,4 @@ pub use passes::{
     card_offsets, cards_fit, ghost, mul,
 };
 pub use stations::{StationSeed, document_from_room, stations};
+pub use thin::thin_points;
