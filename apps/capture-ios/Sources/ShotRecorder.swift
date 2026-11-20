@@ -27,15 +27,22 @@ enum Rig {
 /// A camera frame's pixels handed to the JPEG queue (only that frame's buffer, never the ARFrame).
 private struct PixelBuffer: @unchecked Sendable { let buffer: CVPixelBuffer }
 
+/// A station card to draw in the live view: where it was seen, in the capture frame (ARKit world).
+struct CardMarker: Equatable, Sendable { let card: StationCard; let position: SIMD3<Float> }
+
 /// Turns frames into JPEGs on one background queue.
 private final class JpegEncoder: @unchecked Sendable {
     private let queue = DispatchQueue(label: "app.cavecad.capture.jpeg", qos: .userInitiated)
     private let context = CIContext()
 
-    func encode(_ px: PixelBuffer, done: @escaping @Sendable (Data?) -> Void) {
+    /// `width` x `height` is the size the JPEG is written at (the frame scaled down when it is bigger).
+    func encode(_ px: PixelBuffer, width: Int, height: Int, done: @escaping @Sendable (Data?) -> Void) {
         queue.async { [context] in
+            var image = CIImage(cvPixelBuffer: px.buffer)
+            let sx = CGFloat(width) / image.extent.width, sy = CGFloat(height) / image.extent.height
+            if sx != 1 || sy != 1 { image = image.transformed(by: CGAffineTransform(scaleX: sx, y: sy)) }
             let jpeg = CGColorSpace(name: CGColorSpace.sRGB).flatMap { srgb in
-                context.jpegRepresentation(of: CIImage(cvPixelBuffer: px.buffer), colorSpace: srgb,
+                context.jpegRepresentation(of: image, colorSpace: srgb,
                                            options: [kCGImageDestinationLossyCompressionQuality as CIImageRepresentationOption: 0.7])
             }
             done(jpeg)
@@ -53,12 +60,20 @@ final class ShotRecorder: NSObject, ObservableObject, ARSessionDelegate {
     static let readyMessage = "Stand the gimbal on the station, then press Start and let it turn."
     /// Seconds between compass lines in the log while capturing (drift shows there).
     static let compassLogEvery: TimeInterval = 5
+    /// Keyframe JPEGs are at most this wide (the camera format can be 4K; files must not balloon).
+    static let maxKeyframeWidth = 1920
+    /// Card detection runs at most this often (seconds apart), one at a time.
+    static let cardEvery: TimeInterval = 1.0 / 3
+    /// Seconds between card summaries in the log.
+    static let cardLogEvery: TimeInterval = 5
 
     @Published var phase: Phase = .ready { didSet { Log.write("shot", "phase \(phase)") } }
     @Published var message = readyMessage { didSet { if message != oldValue { Log.write("shot", message) } } }
     @Published var keyframeCount = 0
     /// Waiting for a heading before the session runs (Start is off meanwhile).
     @Published var findingNorth = false
+    /// Station cards seen so far this shot, for the live view.
+    @Published var cardMarkers: [CardMarker] = []
 
     let session = ARSession()
     private let compass = CompassWatcher()
@@ -78,6 +93,16 @@ final class ShotRecorder: NSObject, ObservableObject, ARSessionDelegate {
     private var shotSerial = 0
     private var photoLimitShown = false
     private var spaceWarned = false
+    private let cardDetector = CardDetector()
+    private var cardTracker = CardTracker()
+    /// One card detection in flight at most; a frame that arrives meanwhile is skipped.
+    private var detectingCards = false
+    private var lastCardTime: TimeInterval = -1, lastCardLog: TimeInterval = 0
+    private var cardRuns = 0, cardMillis = 0.0, cardMaxMillis = 0.0
+    private var cardFrameLogged = false
+    /// The highest camera format is in use (a failed start falls back to the default for the app's run).
+    private var usingBestFormat = false
+    private var bestFormatFailed = false
 
     nonisolated static func shouldKeep(lastYaw: Float, yaw: Float, lastTime: TimeInterval, time: TimeInterval) -> Bool {
         if time - lastTime < 0.25 { return false }
@@ -85,6 +110,31 @@ final class ShotRecorder: NSObject, ObservableObject, ARSessionDelegate {
         var d = abs(yaw - lastYaw).truncatingRemainder(dividingBy: 360)
         if d > 180 { d = 360 - d }
         return d >= 15 || time - lastTime >= 2
+    }
+
+    /// The camera format to prefer: most pixels (range for the cards doubles with resolution), then the lower
+    /// frame rate (lighter for LiDAR and the detector). Index into the list, nil when it is empty.
+    nonisolated static func bestFormatIndex(_ formats: [(width: Int, height: Int, fps: Int)]) -> Int? {
+        formats.indices.max { a, b in
+            let (x, y) = (formats[a], formats[b])
+            if x.width * x.height != y.width * y.height { return x.width * x.height < y.width * y.height }
+            return x.fps > y.fps
+        }
+    }
+
+    /// A frame's JPEG size: as it is when no wider than `maxWidth`, else scaled to that width.
+    nonisolated static func keyframeSize(width: Int, height: Int, maxWidth: Int) -> (width: Int, height: Int) {
+        guard width > maxWidth, maxWidth > 0, width > 0 else { return (width, height) }
+        return (maxWidth, max(1, Int((Double(height) * Double(maxWidth) / Double(width)).rounded())))
+    }
+
+    /// Intrinsics for the same frame written at `from` -> `to` pixels.
+    nonisolated static func scaledIntrinsics(_ k: simd_float3x3, from: (width: Int, height: Int), to: (width: Int, height: Int)) -> simd_float3x3 {
+        guard from.width > 0, from.height > 0 else { return k }
+        let sx = Float(to.width) / Float(from.width), sy = Float(to.height) / Float(from.height)
+        var o = k
+        o.columns.0.x *= sx; o.columns.1.y *= sy; o.columns.2.x *= sx; o.columns.2.y *= sy
+        return o
     }
 
     nonisolated static func mergeAnchors(_ parts: [MeshPart]) -> MergedMesh {
@@ -154,6 +204,17 @@ final class ShotRecorder: NSObject, ObservableObject, ARSessionDelegate {
         c.isLightEstimationEnabled = true
         // x east, y up, z south: the compass turns the shot, no heading tap needed
         c.worldAlignment = .gravityAndHeading
+        let formats = ARWorldTrackingConfiguration.supportedVideoFormats
+        usingBestFormat = false
+        if !bestFormatFailed, let i = Self.bestFormatIndex(formats.map {
+            (Int($0.imageResolution.width), Int($0.imageResolution.height), $0.framesPerSecond)
+        }) {
+            c.videoFormat = formats[i]
+            usingBestFormat = true
+            Log.write("ar", "video format \(Int(formats[i].imageResolution.width))x\(Int(formats[i].imageResolution.height)) @\(formats[i].framesPerSecond) fps (best of \(formats.count))")
+        } else {
+            Log.write("ar", "video format default \(Int(c.videoFormat.imageResolution.width))x\(Int(c.videoFormat.imageResolution.height)) @\(c.videoFormat.framesPerSecond) fps")
+        }
         session.delegate = self
         session.run(c, options: [.resetTracking, .removeExistingAnchors])
     }
@@ -175,6 +236,9 @@ final class ShotRecorder: NSObject, ObservableObject, ARSessionDelegate {
         keyframes = []; keyframeCount = 0; lastYaw = .nan; lastTime = 0; worstTracking = "normal"
         photoLimitShown = false
         shotSerial += 1
+        cardTracker = CardTracker(); cardMarkers = []
+        detectingCards = false; lastCardTime = -1; lastCardLog = f.timestamp
+        cardRuns = 0; cardMillis = 0; cardMaxMillis = 0; cardFrameLogged = false
         lastCompassLog = f.timestamp
         Log.write("compass", "at start: \(compass.latest.logLine) (aligned with \(compassAtAlignment.logLine))")
         phase = .capturing
@@ -190,6 +254,13 @@ final class ShotRecorder: NSObject, ObservableObject, ARSessionDelegate {
 
     nonisolated func session(_ session: ARSession, didFailWithError error: Error) {
         Log.write("ar", "session failed: \(error.localizedDescription)")
+        MainActor.assumeIsolated {
+            // The best camera format may not run with scene reconstruction and depth: try the default, once.
+            guard usingBestFormat, !bestFormatFailed, case .ready = phase else { return }
+            bestFormatFailed = true
+            Log.write("ar", "best video format failed to run; falling back to the default format")
+            runSession()
+        }
     }
 
     nonisolated func sessionWasInterrupted(_ session: ARSession) { Log.write("ar", "session interrupted") }
@@ -203,6 +274,7 @@ final class ShotRecorder: NSObject, ObservableObject, ARSessionDelegate {
         let state = frame.camera.trackingState
         let px = PixelBuffer(buffer: frame.capturedImage)
         let intrinsics = frame.camera.intrinsics
+        let depthBuffer = frame.sceneDepth.map { PixelBuffer(buffer: $0.depthMap) }
         MainActor.assumeIsolated {
             guard case .capturing = phase else { return }
             switch state {
@@ -214,6 +286,7 @@ final class ShotRecorder: NSObject, ObservableObject, ARSessionDelegate {
                 lastCompassLog = time
                 Log.write("compass", compass.latest.logLine)
             }
+            detectCards(px: px, depth: depthBuffer, intrinsics: intrinsics, pose: pose, time: time)
             if keyframes.count >= Self.maxKeyframes {
                 if !photoLimitShown { photoLimitShown = true; message = "Photo limit reached; mesh still capturing." }
                 return
@@ -222,17 +295,68 @@ final class ShotRecorder: NSObject, ObservableObject, ARSessionDelegate {
             encoding = true
             lastYaw = yaw; lastTime = time
             let serial = shotSerial
-            let w = CVPixelBufferGetWidth(px.buffer), h = CVPixelBufferGetHeight(px.buffer)
-            encoder.encode(px) { [weak self] jpeg in
+            let full = (width: CVPixelBufferGetWidth(px.buffer), height: CVPixelBufferGetHeight(px.buffer))
+            let out = Self.keyframeSize(width: full.width, height: full.height, maxWidth: Self.maxKeyframeWidth)
+            let (w, h) = (out.width, out.height)
+            let k = Self.scaledIntrinsics(intrinsics, from: full, to: out)
+            encoder.encode(px, width: w, height: h) { [weak self] jpeg in
                 Task { @MainActor [weak self] in
                     guard let self else { return }
                     self.encoding = false
                     guard serial == self.shotSerial, case .capturing = self.phase, let jpeg,
                           self.keyframes.count < Self.maxKeyframes else { return }
-                    self.keyframes.append(ShotKeyframe(pose: pose, intrinsics: intrinsics, w: w, h: h, jpeg: jpeg))
+                    self.keyframes.append(ShotKeyframe(pose: pose, intrinsics: k, w: w, h: h, jpeg: jpeg))
                     self.keyframeCount = self.keyframes.count
                 }
             }
+        }
+    }
+
+    /// Hands this frame's luma (and a copy of its depth) to the card detector, at most 3 a second, one at a time.
+    private func detectCards(px: PixelBuffer, depth: PixelBuffer?, intrinsics: simd_float3x3, pose: simd_float4x4, time: TimeInterval) {
+        if time - lastCardLog >= Self.cardLogEvery {
+            lastCardLog = time
+            logCards("summary")
+        }
+        guard !detectingCards, time - lastCardTime >= Self.cardEvery else { return }
+        detectingCards = true
+        lastCardTime = time
+        let serial = shotSerial
+        let frame = CardFrame(luma: px.buffer, depth: depth.flatMap { DepthGrid(copying: $0.buffer) },
+                              intrinsics: intrinsics, camera: pose)
+        cardDetector.detect(frame) { [weak self] result in
+            Task { @MainActor [weak self] in self?.cardsDone(result, serial: serial) }
+        }
+    }
+
+    private func cardsDone(_ r: CardResult, serial: Int) {
+        detectingCards = false
+        guard serial == shotSerial, case .capturing = phase else { return }
+        if !cardFrameLogged {
+            cardFrameLogged = true
+            Log.write("cards", "detecting on \(r.width)x\(r.height) luma")
+        }
+        cardRuns += 1; cardMillis += r.millis; cardMaxMillis = max(cardMaxMillis, r.millis)
+        for c in r.noDepth { cardTracker.addMissed(c) }
+        for s in r.found {
+            if cardTracker.add(s) {
+                Log.write("cards", String(format: "first sighting: %d %@ at %.2f m, margin %.1f", s.card.rawValue, s.card.word, s.distance, s.margin))
+            }
+        }
+        if !r.found.isEmpty {
+            cardMarkers = cardTracker.seen.map {
+                let m = $0.median
+                return CardMarker(card: $0.card, position: SIMD3(Float(m.x), Float(m.y), Float(m.z)))
+            }
+        }
+    }
+
+    /// The card summary in the log: every seen card, then how the detector is doing.
+    private func logCards(_ when: String) {
+        let lines = cardTracker.logLines
+        if lines.isEmpty { Log.write("cards", "\(when): none seen yet") } else { lines.forEach { Log.write("cards", "\(when): \($0)") } }
+        if cardRuns > 0 {
+            Log.write("cards", String(format: "%@: detector %d runs, avg %.0f ms, max %.0f ms", when, cardRuns, cardMillis / Double(cardRuns), cardMaxMillis))
         }
     }
 
@@ -252,8 +376,10 @@ final class ShotRecorder: NSObject, ObservableObject, ARSessionDelegate {
         message = "Saving the shot…"
         shotSerial += 1
         Log.write("compass", "at stop: \(compass.latest.logLine)")
+        logCards("at stop")
         let job = ShotJob(caveId: cave.id, over: over, parts: parts, keyframes: keyframes, startCamera: startCamera,
-                          tracking: worstTracking, systemVersion: UIDevice.current.systemVersion, compass: compassAtAlignment)
+                          tracking: worstTracking, systemVersion: UIDevice.current.systemVersion, compass: compassAtAlignment,
+                          cards: cardTracker.records)
         keyframes = []  // the job now holds the only reference, and drops each photo as it is written
         Task {
             let result = await Task.detached { job.write() }.value
@@ -268,6 +394,7 @@ final class ShotRecorder: NSObject, ObservableObject, ARSessionDelegate {
     func reset() {
         shotSerial += 1
         keyframes = []; keyframeCount = 0
+        cardTracker = CardTracker(); cardMarkers = []
         photoLimitShown = false
         phase = .ready
         message = Self.readyMessage
@@ -317,11 +444,14 @@ final class ShotJob: @unchecked Sendable {
     let tracking: String
     let systemVersion: String
     let compass: CompassReading
+    /// Station cards seen during the scan.
+    let cards: [CardSeenRecord]
     /// Always the gimbal's pivot height: every shot stands on the same gimbal.
     let instrumentHeight = Rig.pivotHeightM
 
     init(caveId: String, over: Station, parts: [MeshPart], keyframes: [ShotKeyframe], startCamera: SIMD3<Float>,
-         tracking: String, systemVersion: String, compass: CompassReading) {
+         tracking: String, systemVersion: String, compass: CompassReading, cards: [CardSeenRecord] = []) {
+        self.cards = cards
         self.caveId = caveId; self.over = over; self.parts = parts; self.keyframes = keyframes
         self.startCamera = startCamera; self.tracking = tracking; self.systemVersion = systemVersion; self.compass = compass
     }
@@ -359,7 +489,7 @@ final class ShotJob: @unchecked Sendable {
             // a compass shot: the frame is gravityAndHeading, so no taps
             "taps": [Any](), "compass": ["true_north": compass.trueNorth, "accuracy_deg": compass.accuracyDeg],
             "tracking": tracking, "arkit_version": systemVersion,
-            "gravity": [0.0, -1.0, 0.0], "keyframes": kfs,
+            "gravity": [0.0, -1.0, 0.0], "keyframes": kfs, "cards": cards.map(\.json),
         ]
         guard numbers.allSatisfy(\.isFinite), JSONSerialization.isValidJSONObject(header),
               let headerData = try? JSONSerialization.data(withJSONObject: header)

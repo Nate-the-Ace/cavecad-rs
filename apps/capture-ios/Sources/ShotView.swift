@@ -14,6 +14,8 @@ struct ShotSummary: Equatable, Sendable {
     var isCompass = false
     /// A compass shot's compass at alignment (heading not stored: only true/magnetic and accuracy).
     var compass: CompassReading?
+    /// Station cards the scan saw, relative to the station over (survey frame, metres).
+    var cards: [CardPlaced] = []
     /// What to show for the compass; nil for a tap shot.
     var compassLabel: String? { compass?.label }
 
@@ -34,6 +36,7 @@ struct ShotSummary: Equatable, Sendable {
         stationId = d["station_id"] as? String
         targetStationId = d["target_station_id"] as? String
         isCompass = d["compass"] is [String: Any]
+        cards = (d["cards"] as? [[String: Any]] ?? []).compactMap(CardPlaced.init)
         if let c = d["compass"] as? [String: Any] {
             compass = CompassReading(trueNorth: c["true_north"] as? Bool ?? false,
                                      accuracyDeg: (c["accuracy_deg"] as? NSNumber)?.doubleValue ?? -1, headingDeg: 0)
@@ -53,6 +56,25 @@ struct ShotSummary: Equatable, Sendable {
         guard let found = stations(in: all) else { return nil }
         if isCompass { return Core.pair(found.over, found.over) }
         return found.forward.map { Core.pair(found.over, $0) }
+    }
+}
+
+/// A card the shot saw, placed in the survey frame relative to its station.
+struct CardPlaced: Equatable, Sendable {
+    let card: StationCard
+    let point: SIMD3<Float>
+    let sightings: Int
+    let spreadM: Double
+
+    init(card: StationCard, point: SIMD3<Float>, sightings: Int, spreadM: Double) {
+        self.card = card; self.point = point; self.sightings = sightings; self.spreadM = spreadM
+    }
+
+    init?(_ d: [String: Any]) {
+        guard let id = (d["id"] as? NSNumber)?.intValue, let card = StationCard(rawValue: id),
+              let p = d["point"] as? [NSNumber], p.count == 3 else { return nil }
+        self.init(card: card, point: SIMD3(p[0].floatValue, p[1].floatValue, p[2].floatValue),
+                  sightings: (d["sightings"] as? NSNumber)?.intValue ?? 0, spreadM: (d["spread_m"] as? NSNumber)?.doubleValue ?? 0)
     }
 }
 
@@ -83,6 +105,7 @@ struct ShotView: View {
                     Text("\(summary.triangles) triangles")
                     Text("\(summary.keyframes) photos")
                     if !summary.isCompass, let t = summary.turnDeg { Text(String(format: "turned %.1f°", t)) }
+                    if !summary.cards.isEmpty { Text(summary.cards.map(\.card.word.capitalized).joined(separator: ", ")) }
                     if let c = summary.compass {
                         Text(c.label).foregroundStyle(c.warning == nil ? Color.secondary : Color.orange)
                     }
@@ -107,7 +130,7 @@ struct ShotView: View {
             over = found?.over
             forward = found?.forward
             placeable = ok
-            if let o = found?.over, s.placed, !points.isEmpty { scene = Self.scene(points: points, over: o, forward: found?.forward) }
+            if let o = found?.over, s.placed, !points.isEmpty { scene = Self.scene(points: points, over: o, forward: found?.forward, cards: s.cards) }
         }
     }
 
@@ -129,7 +152,7 @@ struct ShotView: View {
     }
 
     /// Points come relative to the station over, so the scene's origin is that station.
-    static func scene(points: [Float], over: Station, forward: Station?) -> SCNScene {
+    static func scene(points: [Float], over: Station, forward: Station?, cards: [CardPlaced] = []) -> SCNScene {
         let s = SCNScene()
         let verts = sceneVertices(points)
         let src = SCNGeometrySource(vertices: verts)
@@ -145,6 +168,27 @@ struct ShotView: View {
             n.geometry?.firstMaterial?.diffuse.contents = colour
             // relative to the station over, in Double first (survey coordinates can be large)
             n.position = SCNVector3(Float(st.x - over.x), Float(st.z - over.z), Float(-(st.y - over.y)))
+            s.rootNode.addChildNode(n)
+        }
+        // cards the scan saw: a labelled ball at each, relative to the station like the room
+        for c in cards {
+            let n = SCNNode(geometry: SCNSphere(radius: 0.06))
+            n.geometry?.firstMaterial?.diffuse.contents = c.card.colour
+            n.geometry?.firstMaterial?.lightingModel = .constant
+            n.position = SCNVector3(c.point.x, c.point.z, -c.point.y)
+            n.name = "card-\(c.card.rawValue)"
+            let text = SCNText(string: c.card.word, extrusionDepth: 0.1)
+            text.font = UIFont.boldSystemFont(ofSize: 4)
+            text.firstMaterial?.diffuse.contents = c.card.colour
+            text.firstMaterial?.lightingModel = .constant
+            let label = SCNNode(geometry: text)
+            label.scale = SCNVector3(0.03, 0.03, 0.03)
+            let (lo, hi) = label.boundingBox
+            label.pivot = SCNMatrix4MakeTranslation((lo.x + hi.x) / 2, -lo.y + 1, 0)
+            label.position = SCNVector3(0, 0.12, 0)
+            let look = SCNBillboardConstraint(); look.freeAxes = .all
+            label.constraints = [look]
+            n.addChildNode(label)
             s.rootNode.addChildNode(n)
         }
         return s

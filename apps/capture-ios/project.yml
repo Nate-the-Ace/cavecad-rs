@@ -11,7 +11,12 @@ targets:
   CaveCADCapture:
     type: application
     platform: iOS
-    sources: [Sources]
+    sources:
+      - Sources
+      # AprilTag (BSD-2): the station cards' detector, tag16h5 only
+      - path: Vendor/apriltag
+        excludes: ["LICENSE.md", "VENDORED.txt", "**/*.h"]
+        compilerFlags: ["-w", "-O2"]
     resources: [Resources]
     dependencies:
       - framework: CaptureCore.xcframework
@@ -22,6 +27,8 @@ targets:
         PRODUCT_NAME: CaveCAD Capture
         INFOPLIST_FILE: Resources/Info.plist
         TARGETED_DEVICE_FAMILY: "1"
+        SWIFT_OBJC_BRIDGING_HEADER: Sources/CaveCADCapture-Bridging-Header.h
+        HEADER_SEARCH_PATHS: "$(SRCROOT)/Vendor/apriltag"
   CaveCADCaptureTests:
     type: bundle.unit-test
     platform: iOS
