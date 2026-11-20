@@ -19,7 +19,10 @@ struct CaveListView: View {
                 }
             }
             .navigationTitle("Caves")
-            .toolbar { Button("Sign out") { account.signOut(); store.reloadKept() } }
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) { NavigationLink("Station cards") { CardSheetView() } }
+                ToolbarItem(placement: .topBarTrailing) { Button("Sign out") { account.signOut(); store.reloadKept() } }
+            }
             .refreshable { await store.refresh() }
             .task { await store.refresh() }
             .overlay(alignment: .bottom) { if let p = store.problem { Text(p).padding().background(.thinMaterial) } }

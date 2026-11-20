@@ -111,6 +111,29 @@ final class ShotRecorderTests: XCTestCase {
         XCTAssertEqual(ShotFiles.list(cave: cave).map(\.lastPathComponent), ["aaa-newer.cvcap", "zzz-older.cvcap"])
     }
 
+    func testDeleteShotsOnlyInsideTheShotsFolder() throws {
+        let cave = "test-cave-delete", other = "test-cave-delete-other"
+        defer {
+            try? FileManager.default.removeItem(at: ShotFiles.folder(cave: cave))
+            try? FileManager.default.removeItem(at: ShotFiles.folder(cave: other))
+        }
+        let a = try ShotFiles.save(Data([1, 2, 3]), cave: cave, shot: "a")
+        _ = try ShotFiles.save(Data([4, 5]), cave: cave, shot: "b")
+        let keep = try ShotFiles.save(Data([6]), cave: other, shot: "c")
+        XCTAssertEqual(ShotFiles.bytes(cave: cave), 5)
+        XCTAssertTrue(ShotFiles.delete(a))
+        XCTAssertEqual(ShotFiles.list(cave: cave).map(\.lastPathComponent), ["b.cvcap"])
+        // nothing outside Documents/shots, and nothing that is not a shot
+        XCTAssertFalse(ShotFiles.delete(Log.file))
+        let notShot = ShotFiles.folder(cave: cave).appendingPathComponent("x.txt")
+        try Data([1]).write(to: notShot)
+        XCTAssertFalse(ShotFiles.delete(notShot))
+        XCTAssertFalse(ShotFiles.delete(ShotFiles.folder(cave: cave).appendingPathComponent("../../capture.cvcap")))
+        XCTAssertEqual(ShotFiles.deleteAll(cave: cave), 1)
+        XCTAssertTrue(ShotFiles.list(cave: cave).isEmpty)
+        XCTAssertEqual(ShotFiles.list(cave: other), [keep])
+    }
+
     func testRaggedMeshIsRefused() {
         let bad = MeshPart(positions: [SIMD3(0, 0, 0), SIMD3(1, 0, 0), SIMD3(0, 1, 0)],
                            normals: [SIMD3(0, 0, 1)], indices: [0, 1, 2], transform: matrix_identity_float4x4)

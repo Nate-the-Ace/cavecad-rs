@@ -25,6 +25,8 @@ struct StationPickView: View {
     @State private var problem: String?
     @State private var updating = false
     @State private var saved: [SavedShot] = []
+    @State private var savedBytes: Int64 = 0
+    @State private var askDeleteAll = false
 
     init(cave: KeptCave, store: CaveStore) {
         _cave = State(initialValue: cave)
@@ -39,7 +41,7 @@ struct StationPickView: View {
             }
             if !saved.isEmpty {
                 // Each shot is shown with its own station, whatever is picked above.
-                Section("Saved shots") {
+                Section {
                     ForEach(saved) { s in
                         let made = [s.made?.formatted(date: .abbreviated, time: .shortened), s.compassLabel]
                             .compactMap { $0 }.joined(separator: " · ")
@@ -51,12 +53,35 @@ struct StationPickView: View {
                             LabeledContent(s.title, value: made).foregroundStyle(.secondary)
                         }
                     }
+                    .onDelete { rows in
+                        let gone = rows.map { saved[$0] }
+                        for s in gone { Log.write("shots", "deleted one shot: \(ShotFiles.delete(s.url) ? "ok" : "failed")") }
+                        Task { await loadSaved() }
+                    }
+                } header: {
+                    Text("Saved shots")
+                } footer: {
+                    Text("Swipe a shot left to delete it from this phone.")
+                }
+                Section {
+                    Button("Delete all shots of this cave (\(ByteCountFormatter.string(fromByteCount: savedBytes, countStyle: .file)))",
+                           role: .destructive) { askDeleteAll = true }
                 }
             }
             if let problem { Text(problem).foregroundStyle(.red) }
             Section { Text("Kept \(cave.keptAt.formatted(date: .abbreviated, time: .shortened))").font(.caption).foregroundStyle(.secondary) }
         }
         .navigationTitle(cave.name)
+        .confirmationDialog("Delete all \(saved.count) shots of \(cave.name) from this phone?", isPresented: $askDeleteAll,
+                            titleVisibility: .visible) {
+            Button("Delete all shots", role: .destructive) {
+                let caveId = cave.id
+                Log.write("shots", "deleted all shots of a cave: \(ShotFiles.deleteAll(cave: caveId))")
+                Task { await loadSaved() }
+            }
+        } message: {
+            Text("Shots not yet sent anywhere are lost. This cannot be undone.")
+        }
         .toolbar {
             if updating { ProgressView() } else { Button("Get latest") { getLatest() } }
         }
@@ -81,6 +106,7 @@ struct StationPickView: View {
     /// The cave's saved shots, newest first, each with its own stations (header only: cheap).
     private func loadSaved() async {
         let caveId = cave.id, all = stations
+        savedBytes = await Task.detached { ShotFiles.bytes(cave: caveId) }.value
         saved = await Task.detached {
             ShotFiles.list(cave: caveId).map { u in
                 let made = try? u.resourceValues(forKeys: [.creationDateKey]).creationDate

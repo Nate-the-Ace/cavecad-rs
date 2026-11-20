@@ -226,6 +226,37 @@ final class CardDetectorTests: XCTestCase {
         XCTAssertEqual(found.map(\.id), [StationCard.forward.rawValue])
     }
 
+    /// The printable sheet: Letter pages, front and back per card, and each front reads as its own card at the
+    /// printed size.
+    func testCardSheetPrintsReadableTrueSizeGlyphs() throws {
+        let data = CardSheet.pdf()
+        let doc = try XCTUnwrap(CGPDFDocument(CGDataProvider(data: data as CFData)!))
+        XCTAssertEqual(doc.numberOfPages, 6)
+        let page = try XCTUnwrap(doc.page(at: 1))
+        XCTAssertEqual(page.getBoxRect(.mediaBox).size, CardSheet.pageSize)
+        // black square = 6 of the 8 cells = 3 in = 216 pt
+        XCTAssertEqual(CardSheet.box.width * 6 / 8, 216, accuracy: 0.01)
+        let d = CardDetector()
+        for (i, card) in StationCard.allCases.enumerated() {
+            let p = try XCTUnwrap(doc.page(at: 1 + i * 2))
+            let scale: CGFloat = 2, w = Int(CardSheet.pageSize.width * scale), h = Int(CardSheet.pageSize.height * scale)
+            var px = [UInt8](repeating: 255, count: w * h)
+            px.withUnsafeMutableBytes { buf in
+                let g = CGContext(data: buf.baseAddress, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w,
+                                  space: CGColorSpaceCreateDeviceGray(), bitmapInfo: CGImageAlphaInfo.none.rawValue)!
+                g.setFillColor(gray: 1, alpha: 1); g.fill(CGRect(x: 0, y: 0, width: w, height: h))
+                g.scaleBy(x: scale, y: scale)
+                g.drawPDFPage(p)
+            }
+            let found = d.detectGrey(&px, width: w, height: h).filter { StationCard.accepting(id: $0.id, hamming: $0.hamming) != nil }
+            XCTAssertEqual(found.map(\.id), [card.rawValue], card.word)
+            // side of the detected square, in points: 216
+            if let f = found.first {
+                XCTAssertEqual(simd_distance(f.corners[0], f.corners[1]) / Double(scale), 216, accuracy: 2)
+            }
+        }
+    }
+
     func testStrayGlyphIsFoundButNotACard() {
         let d = CardDetector()
         var px = Self.tagImage(id: 5)
