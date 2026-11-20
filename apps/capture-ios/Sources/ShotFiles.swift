@@ -1,6 +1,7 @@
 import Foundation
 
-/// Shots kept on the phone: Documents/shots/<caveId>/<shotId>.cvcap. Sign-out leaves them alone.
+/// Shots kept on the phone: Documents/shots/<caveId>/<shotId>.cvcap, each with its picture beside it
+/// (<shotId>.thumb.png, made on demand). Sign-out leaves them alone.
 enum ShotFiles {
     static func folder(cave: String) -> URL {
         let u = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
@@ -13,19 +14,32 @@ enum ShotFiles {
         try bundle.write(to: u, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
         return u
     }
-    /// Deletes one shot file from the phone. Refuses anything that is not a .cvcap in the shots folder.
+    /// The shot's picture, beside it: <shotId>.thumb.png.
+    static func thumbnail(of shot: URL) -> URL {
+        shot.deletingPathExtension().appendingPathExtension("thumb.png")
+    }
+
+    /// Deletes one shot file (and its picture) from the phone. Refuses anything that is not a .cvcap in the
+    /// shots folder.
     @discardableResult
     static func delete(_ url: URL) -> Bool {
         let root = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("shots").standardizedFileURL.path + "/"
         let path = url.standardizedFileURL.path
         guard url.pathExtension == "cvcap", path.hasPrefix(root) else { return false }
+        try? FileManager.default.removeItem(at: thumbnail(of: url))
         do { try FileManager.default.removeItem(at: url); return true } catch { return false }
     }
 
-    /// Deletes every shot of the cave from the phone; returns how many went.
+    /// Deletes every shot of the cave from the phone (and any picture left without its shot); returns how
+    /// many shots went.
     @discardableResult
-    static func deleteAll(cave: String) -> Int { list(cave: cave).filter(delete).count }
+    static func deleteAll(cave: String) -> Int {
+        let n = list(cave: cave).filter(delete).count
+        let left = (try? FileManager.default.contentsOfDirectory(at: folder(cave: cave), includingPropertiesForKeys: nil)) ?? []
+        for u in left where u.lastPathComponent.hasSuffix(".thumb.png") { try? FileManager.default.removeItem(at: u) }
+        return n
+    }
 
     /// Bytes the cave's shots take on the phone.
     static func bytes(cave: String) -> Int64 {
