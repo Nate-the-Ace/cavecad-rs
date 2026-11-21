@@ -225,10 +225,10 @@ final class ShotRecorderTests: XCTestCase {
             guard case .success(let u) = job.write() else { XCTFail("not written"); return URL(fileURLWithPath: "/") }
             return u
         }
-        XCTAssertNil(ShotFiles.parent(cave: cave, station: "a"))
+        XCTAssertNil(ShotFiles.parent(cave: cave, station: a))
         let ua = write(a)
         _ = write(b)
-        XCTAssertEqual(ShotFiles.parent(cave: cave, station: "a"), ua)
+        XCTAssertEqual(ShotFiles.parent(cave: cave, station: a), ua)
         let before = try Data(contentsOf: ua)
         XCTAssertTrue(ShotFiles.replace(ua, with: Data([1, 2, 3])))
         XCTAssertEqual(try Data(contentsOf: ua), Data([1, 2, 3]))
@@ -253,7 +253,7 @@ final class ShotRecorderTests: XCTestCase {
         XCTAssertEqual(sum["keyframes"] as? Int, 1)
         XCTAssertEqual(sum["passes"] as? Int, 2)
         // still the station's one shot: the pass did not make a new file
-        XCTAssertEqual(ShotFiles.parent(cave: cave, station: "a"), ua)
+        XCTAssertEqual(ShotFiles.parent(cave: cave, station: a), ua)
         XCTAssertEqual(ShotFiles.list(cave: cave).count, 2)
 
         // a pass into a file that cannot be read fails and writes nothing

@@ -24,6 +24,7 @@ buttons call, under the same enable rules, and is logged as `[test] got …` and
     apps/capture-ios/test-cmd.sh <udid> 'action=status'          # one line: screen, cave, station, phase, gimbal, tracking, lux
     apps/capture-ios/test-cmd.sh <udid> 'action=open&cave=Truitt Cave'   # cave id or name; from the cave list
     apps/capture-ios/test-cmd.sh <udid> 'action=station&label=A3'        # pick the station and go to Capture
+    apps/capture-ios/test-cmd.sh <udid> 'action=station&label=A9&other=1' # as "Other station…": a label the cave lacks is taken as waiting
     apps/capture-ios/test-cmd.sh <udid> 'action=gimbal&on=1'             # the Gimbal switch (0 turns it off)
     apps/capture-ios/test-cmd.sh <udid> 'action=start'                   # also pause, resume, stop
     apps/capture-ios/test-cmd.sh <udid> 'action=back'                    # leave the capture screen (from stations: the cave list)

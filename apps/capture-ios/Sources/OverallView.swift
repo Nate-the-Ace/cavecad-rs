@@ -112,6 +112,7 @@ struct OverallView: View {
     @State private var done = 0
     @State private var placed = 0
     @State private var skipped = 0
+    @State private var waiting = 0
     @State private var finished = false
     @State private var scene: SCNScene?
 
@@ -134,6 +135,7 @@ struct OverallView: View {
             if finished {
                 HStack {
                     Text("\(placed) shot\(placed == 1 ? "" : "s")")
+                    if waiting > 0 { Text("\(waiting) waiting for station").foregroundStyle(.secondary) }
                     if skipped > 0 {
                         Text("\(skipped) skipped (unreadable or station gone)").foregroundStyle(.orange)
                     }
@@ -149,10 +151,13 @@ struct OverallView: View {
     private func load() async {
         guard scene == nil, !finished else { return }
         var parts: [Overall.Part] = []
-        var skip = 0
+        var skip = 0, wait = 0
         for (i, s) in shots.enumerated() {
             if Task.isCancelled { return }
-            if let over = s.over, let pair = s.pair {
+            if s.waitingLabel != nil {
+                // not in the cave yet: no place among the others
+                wait += 1
+            } else if let over = s.over, let pair = s.pair {
                 let url = s.url
                 let points = await Task.detached(priority: .userInitiated) { () -> [Float] in
                     guard let d = try? Data(contentsOf: url, options: .alwaysMapped) else { return [] }
@@ -173,7 +178,8 @@ struct OverallView: View {
         }
         placed = parts.count
         skipped = skip
+        waiting = wait
         finished = true
-        Log.write("shots", "overall: \(parts.count) placed, \(skip) skipped")
+        Log.write("shots", "overall: \(parts.count) placed, \(wait) waiting for station, \(skip) skipped")
     }
 }

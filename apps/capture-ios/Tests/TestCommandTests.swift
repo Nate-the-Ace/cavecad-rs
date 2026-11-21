@@ -7,7 +7,11 @@ final class TestCommandTests: XCTestCase {
     func testGoodCommands() {
         XCTAssertEqual(parse("cavecadcapture://test?action=open&cave=Truitt%20Cave"), .success(.open(cave: "Truitt Cave")))
         XCTAssertEqual(parse("cavecadcapture://test?action=open&cave=abc123"), .success(.open(cave: "abc123")))
-        XCTAssertEqual(parse("cavecadcapture://test?action=station&label=A3"), .success(.station(label: "A3")))
+        XCTAssertEqual(parse("cavecadcapture://test?action=station&label=A3"), .success(.station(label: "A3", other: false)))
+        // other=1: the "Other station…" entry, so an unknown label is taken as a waiting station
+        XCTAssertEqual(parse("cavecadcapture://test?action=station&label=A9&other=1"), .success(.station(label: "A9", other: true)))
+        XCTAssertEqual(parse("cavecadcapture://test?action=station&label=A9&other=0"), .success(.station(label: "A9", other: false)))
+        XCTAssertEqual(TestCommand.station(label: "A9", other: true).text, "station label=A9 other=1")
         XCTAssertEqual(parse("cavecadcapture://test?action=gimbal&on=1"), .success(.gimbal(on: true)))
         XCTAssertEqual(parse("cavecadcapture://test?action=gimbal&on=0"), .success(.gimbal(on: false)))
         XCTAssertEqual(parse("cavecadcapture://test?on=off&action=gimbal"), .success(.gimbal(on: false)))

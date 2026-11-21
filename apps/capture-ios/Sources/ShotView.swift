@@ -10,6 +10,11 @@ struct ShotSummary: Equatable, Sendable {
     /// The station the shot was taken over, and the one its heading tap aimed at.
     var stationId: String?
     var targetStationId: String?
+    /// The station's label as saved (for a waiting shot, as typed).
+    var stationLabel: String?
+    /// Taken over a typed label the cave did not have yet (empty station id): placed by its label once the
+    /// cave carries it.
+    var isWaiting = false
     /// A compass shot (placed from its station alone); false for the older heading-tap shots.
     var isCompass = false
     /// A compass shot's compass at alignment (heading not stored: only true/magnetic and accuracy).
@@ -35,6 +40,8 @@ struct ShotSummary: Equatable, Sendable {
         error = d["error"] as? String
         stationId = d["station_id"] as? String
         targetStationId = d["target_station_id"] as? String
+        stationLabel = d["station_label"] as? String
+        isWaiting = d["waiting"] as? Bool ?? (stationId == "")
         isCompass = d["compass"] is [String: Any]
         cards = (d["cards"] as? [[String: Any]] ?? []).compactMap(CardPlaced.init)
         if let c = d["compass"] as? [String: Any] {
@@ -43,11 +50,25 @@ struct ShotSummary: Equatable, Sendable {
         }
     }
 
-    /// The shot's own stations among the cave's: nil when the station it stood on is gone. `forward` is the
-    /// tap target of an older shot (nil for compass shots, and when that target is gone).
+    /// The shot's own stations among the cave's: nil when the station it stood on is gone (or, for a waiting
+    /// shot, when no station carries its label yet). `forward` is the tap target of an older shot (nil for
+    /// compass shots, and when that target is gone).
     func stations(in all: [Station]) -> (over: Station, forward: Station?)? {
-        guard let o = all.first(where: { $0.id == stationId }) else { return nil }
+        if isWaiting { return StationLabel.find(stationLabel ?? "", in: all).map { ($0, nil) } }
+        guard let o = all.first(where: { !$0.isWaiting && $0.id == stationId }) else { return nil }
         return (o, targetStationId.flatMap { t in all.first { $0.id == t } })
+    }
+
+    /// A waiting shot's typed label while no station carries it; nil otherwise.
+    func waitingLabel(in all: [Station]) -> String? {
+        isWaiting && stations(in: all) == nil ? (stationLabel ?? "") : nil
+    }
+
+    /// The pair to draw it with: its placement, or for a compass shot still waiting for its station, the
+    /// station at the origin (the mesh around its own spot, turned to north). Nil when it cannot be drawn.
+    func viewPair(in all: [Station]) -> [Double]? {
+        if let p = pair(in: all) { return p }
+        return isCompass && waitingLabel(in: all) != nil ? [0, 0, 0, 0, 0, 0] : nil
     }
 
     /// The six numbers to place it with: a compass shot gives its station twice (the core ignores the target);
@@ -87,9 +108,15 @@ struct ShotView: View {
     @State private var forward: Station?
     @State private var placeable = false
     @State private var scene: SCNScene?
+    /// The typed label of a shot still waiting for its station (drawn around its own spot, not placed).
+    @State private var waiting: String?
 
     var body: some View {
         VStack(spacing: 0) {
+            if let waiting {
+                Text("Waiting for station \(waiting): not placed in the cave yet. Shown around its own spot.")
+                    .font(.footnote).foregroundStyle(.orange).multilineTextAlignment(.center).padding(8)
+            }
             if let scene {
                 OrbitView(scene: scene).frame(maxHeight: .infinity)
             } else if let summary {
@@ -112,32 +139,38 @@ struct ShotView: View {
                 }.font(.caption).padding(8)
             }
         }
-        .navigationTitle(over.map { "over \($0.label)" } ?? "Shot")
+        .navigationTitle(waiting.map { "\($0) · waiting" } ?? over.map { "over \($0.label)" } ?? "Shot")
         .task {
             let url = url, stations = stations
             // Reading and placing a shot is heavy: off the main actor, then shown here.
-            let (s, found, ok, points) = await Task.detached {
-                () -> (ShotSummary, (over: Station, forward: Station?)?, Bool, [Float]) in
+            let (s, found, waitingLabel, ok, points) = await Task.detached {
+                () -> (ShotSummary, (over: Station, forward: Station?)?, String?, Bool, [Float]) in
                 guard let data = try? Data(contentsOf: url, options: .alwaysMapped) else {
-                    return (ShotSummary(["error": "unreadable"]), nil, false, [])
+                    return (ShotSummary(["error": "unreadable"]), nil, nil, false, [])
                 }
                 let head = ShotSummary(Core.summary(bundle: data, pair: nil))
-                guard head.error == nil, let p = head.pair(in: stations) else { return (head, head.stations(in: stations), false, []) }
+                let found = head.stations(in: stations), waiting = head.waitingLabel(in: stations)
+                guard head.error == nil, let p = head.viewPair(in: stations) else { return (head, found, waiting, false, []) }
                 let s = ShotSummary(Core.summary(bundle: data, pair: p))
-                return (s, head.stations(in: stations), true, s.placed ? Core.placedPositions(bundle: data, pair: p) : [])
+                return (s, found, waiting, true, s.placed ? Core.placedPositions(bundle: data, pair: p) : [])
             }.value
             summary = s
-            over = found?.over
+            // still waiting: its own spot is the origin, marked with the typed label
+            over = found?.over ?? waitingLabel.map { Station.waiting(label: $0) }
             forward = found?.forward
+            waiting = waitingLabel
             placeable = ok
-            if let o = found?.over, s.placed, !points.isEmpty { scene = Self.scene(points: points, over: o, forward: found?.forward, cards: s.cards) }
+            if let o = over, s.placed, !points.isEmpty { scene = Self.scene(points: points, over: o, forward: forward, cards: s.cards) }
         }
     }
 
     /// What to say when there is no view.
     static func problem(_ s: ShotSummary, placeable: Bool) -> String {
         if s.error != nil { return "This shot could not be read." }
-        if !placeable { return "A station this shot was taken from is gone from the cave." }
+        if !placeable {
+            if s.isWaiting { return "Waiting for station \(s.stationLabel ?? ""): not placed in the cave yet." }
+            return "A station this shot was taken from is gone from the cave."
+        }
         if s.isCompass { return "This shot could not be placed." }
         return "Not placed: pick a forward station that is not straight above or below, or aim again."
     }

@@ -11,8 +11,9 @@ import Foundation
 enum TestCommand: Equatable, Sendable {
     /// Opens a kept cave by id or name, as tapping its row does.
     case open(cave: String)
-    /// Picks the station on the station screen and goes to the capture screen, as tapping Capture does.
-    case station(label: String)
+    /// Picks the station on the station screen and goes to the capture screen, as tapping Capture does. With
+    /// `other` the label goes through "Other station…": one the cave lacks is taken as a waiting station.
+    case station(label: String, other: Bool = false)
     /// Flips the Gimbal switch.
     case gimbal(on: Bool)
     case start, pause, resume, stop
@@ -39,7 +40,8 @@ enum TestCommand: Equatable, Sendable {
             return .success(.open(cave: cave))
         case "station":
             guard let label = value("label") else { return .failure(.missing("label")) }
-            return .success(.station(label: label))
+            let other = ["1", "true", "yes", "on"].contains(value("other")?.lowercased() ?? "")
+            return .success(.station(label: label, other: other))
         case "gimbal":
             guard let on = value("on") else { return .failure(.missing("on")) }
             switch on.lowercased() {
@@ -61,7 +63,7 @@ enum TestCommand: Equatable, Sendable {
     var text: String {
         switch self {
         case .open(let c): "open cave=\(c)"
-        case .station(let l): "station label=\(l)"
+        case .station(let l, let other): "station label=\(l)" + (other ? " other=1" : "")
         case .gimbal(let on): "gimbal on=\(on ? 1 : 0)"
         case .start: "start"
         case .pause: "pause"

@@ -99,7 +99,7 @@ struct CaptureView: View {
             if ShotRecorder.hasLiDAR { ARMeshView(session: rec.session, markers: rec.cardMarkers, ghost: rec.ghost, ghostKey: rec.ghostKey,
                            ghostTransform: rec.ghostTransform, liveMesh: ShotRecorder.showsLiveMesh(rec.phase)).ignoresSafeArea() }
             VStack {
-                Text("Over \(over.label)").padding(8).background(.thinMaterial, in: .capsule)
+                Text("Over \(over.label)" + (over.isWaiting ? " · waiting for station" : "")).padding(8).background(.thinMaterial, in: .capsule)
                 if let d = rec.parentMade {
                     Text("Adding to the scan from \(d.formatted(date: .omitted, time: .shortened))")
                         .font(.caption).padding(6).background(.thinMaterial, in: .capsule)

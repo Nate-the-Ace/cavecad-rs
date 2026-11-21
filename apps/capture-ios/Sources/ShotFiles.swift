@@ -46,11 +46,14 @@ enum ShotFiles {
         list(cave: cave).reduce(0) { $0 + Int64((try? $1.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0) }
     }
 
-    /// The newest shot of the cave taken over `station`, or nil. Files are mapped, not read in.
-    static func parent(cave: String, station: String) -> URL? {
-        list(cave: cave).first { u in
+    /// The newest shot of the cave taken over `station`, or nil. Files are mapped, not read in. A shot saved
+    /// waiting for its station counts once `station` (from the cave) carries its label; a waiting station
+    /// itself has no parent, so a waiting shot is never added to before it is placed.
+    static func parent(cave: String, station: Station) -> URL? {
+        guard !station.isWaiting else { return nil }
+        return list(cave: cave).first { u in
             guard let d = try? Data(contentsOf: u, options: .alwaysMapped) else { return false }
-            return Core.summary(bundle: d, pair: nil)["station_id"] as? String == station
+            return ShotSummary(Core.summary(bundle: d, pair: nil)).stations(in: [station])?.over == station
         }
     }
 

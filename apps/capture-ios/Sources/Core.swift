@@ -5,6 +5,40 @@ struct Station: Codable, Hashable, Identifiable {
     let id: String
     let label: String
     let x: Double, y: Double, z: Double
+
+    /// A station typed by hand that the cave does not have yet: no id, no place. A shot over it is saved
+    /// **waiting for station** and placed once the cave carries the label (`StationLabel.find`).
+    static func waiting(label: String) -> Station { Station(id: "", label: label, x: 0, y: 0, z: 0) }
+    var isWaiting: Bool { id.isEmpty }
+}
+
+/// Typed station labels: how one is cleaned and how it is matched to the cave's stations (ignoring case and
+/// spaces, the core's `cave_capture::label_key`).
+enum StationLabel {
+    static let maxLength = 40
+
+    /// The typed text trimmed; nil when empty or longer than `maxLength`.
+    static func clean(_ typed: String) -> String? {
+        let t = typed.trimmingCharacters(in: .whitespacesAndNewlines)
+        return t.isEmpty || t.count > maxLength ? nil : t
+    }
+
+    /// The label as matched: lower case, no spaces.
+    static func key(_ label: String) -> String { String(label.filter { !$0.isWhitespace }).lowercased() }
+
+    /// The cave's station carrying `label`; never a waiting one, and nothing for an empty label.
+    static func find(_ label: String, in all: [Station]) -> Station? {
+        let k = key(label)
+        guard !k.isEmpty else { return nil }
+        return all.first { !$0.isWaiting && key($0.label) == k }
+    }
+
+    /// What a typed label picks: the cave's station when it has the label, else a waiting one; nil when the
+    /// text is not a usable label.
+    static func pick(_ typed: String, in all: [Station]) -> Station? {
+        guard let t = clean(typed) else { return nil }
+        return find(t, in: all) ?? .waiting(label: t)
+    }
 }
 
 struct CoreError: Error, LocalizedError { let message: String; var errorDescription: String? { message } }

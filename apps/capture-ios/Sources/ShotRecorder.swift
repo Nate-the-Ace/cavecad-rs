@@ -402,9 +402,9 @@ final class ShotRecorder: NSObject, ObservableObject, ARSessionDelegate {
     /// The recorder outlives the screen: at another station whatever the last screen left (the pass, its markers,
     /// the saved or failed state, the message) is cleared; a save still running finishes and is then let go.
     func prepare(cave: KeptCave, over: Station) {
-        let key = Self.stationKey(cave: cave.id, station: over.id)
+        let key = Self.stationKey(cave: cave.id, station: over)
         preparedPlace = (cave, over)
-        parent = ShotFiles.parent(cave: cave.id, station: over.id)
+        parent = ShotFiles.parent(cave: cave.id, station: over)
         parentMade = parent.flatMap { try? $0.resourceValues(forKeys: [.creationDateKey]).creationDate }
         let sameScreen = preparedStation == key
         preparedStation = key
@@ -432,7 +432,10 @@ final class ShotRecorder: NSObject, ObservableObject, ARSessionDelegate {
     }
 
     /// Which station a session or screen is over: station ids are only unique within a cave.
-    nonisolated static func stationKey(cave: String, station: String) -> String { "\(cave)/\(station)" }
+    /// A waiting station (no id) is keyed by its label as matched.
+    nonisolated static func stationKey(cave: String, station: Station) -> String {
+        "\(cave)/" + (station.isWaiting ? "waiting:\(StationLabel.key(station.label))" : station.id)
+    }
 
     /// The ready message for the station's state now.
     private var readyText: String { Self.readyMessage(resume: parent != nil) }
