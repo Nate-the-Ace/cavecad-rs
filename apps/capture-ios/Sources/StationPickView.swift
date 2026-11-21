@@ -78,6 +78,9 @@ struct StationPickView: View {
     let store: CaveStore
     @EnvironmentObject private var sync: ShotSync
     @State private var stations: [Station] = []
+    /// The cave's stations have been read (an empty list is then real: a new cave with no stations yet, where
+    /// every shot is a typed, waiting one), as opposed to not read yet.
+    @State private var stationsLoaded = false
     @State private var over: Station?
     @State private var problem: String?
     @State private var updating = false
@@ -207,11 +210,11 @@ struct StationPickView: View {
             if updating { ProgressView() } else { Button("Get latest") { getLatest() } }
         }
         // opening the cave and "Get latest" (a new kept copy) both sync its shots
-        .task(id: cave.keptAt) { sync.kick(cave.id); await loadStations() }
+        .task(id: cave.keptAt) { stationsLoaded = false; sync.kick(cave.id); await loadStations() }
         .refreshable { sync.kick(cave.id) }
         .onChange(of: sync.revisions[cave.id]) { Task { await loadSaved() } }
         .onChange(of: problem) { _, p in if let p { Log.write("stations", p) } }
-        .onAppear { if !stations.isEmpty { Task { await loadSaved() } } }
+        .onAppear { if stationsLoaded { Task { await loadSaved() } } }
     }
 
     /// A typed label: the cave's station with that label, else a waiting one. Nil (nothing picked) when the
@@ -237,12 +240,14 @@ struct StationPickView: View {
             if !canCapture { return .refused("viewer mode: this device has no LiDAR, so no capture") }
             if other {
                 // the "Other station…" entry: a label the cave lacks is taken as a waiting station
-                if stations.isEmpty, problem == nil { return .refused("stations not loaded yet") }
+                // a typed label is never taken as waiting before the real stations are in
+                if !stationsLoaded { return .refused("stations not loaded yet") }
                 guard let s = useTyped(label) else { return .refused("not a usable label: \(label)") }
                 capture()
                 return .ok("over \(s.label)" + (s.isWaiting ? " (waiting for station)" : ""))
             }
-            if stations.isEmpty { return .refused(problem.map { "no stations: \($0)" } ?? "stations not loaded yet") }
+            if !stationsLoaded { return .refused("stations not loaded yet") }
+            if stations.isEmpty, let problem { return .refused("no stations: \(problem)") }
             guard let s = stations.first(where: { $0.label == label })
                     ?? stations.first(where: { $0.label.localizedCaseInsensitiveCompare(label) == .orderedSame }) else {
                 return .refused("no station \(label) (\(stations.count) stations; other=1 takes it as waiting)")
@@ -269,6 +274,7 @@ struct StationPickView: View {
             // keep picks that still exist in the newer copy; a waiting pick becomes the station once it has come
             if let o = over { over = o.isWaiting ? (StationLabel.find(o.label, in: s) ?? o) : s.first(where: { $0.id == o.id }) }
         } catch { problem = error.localizedDescription }
+        stationsLoaded = true
         await loadSaved()
     }
 
