@@ -425,6 +425,85 @@ pub fn profile_sketches_3d(doc: &Document, use_adjustment: bool) -> Vec<Sketch3d
     out
 }
 
+/// Where a band station sits and which way the band runs there on the ground: what a slice along
+/// the passage (LiDAR profile walls) needs to land on the band exactly as its stations do.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct BandAxis {
+    /// The station's id as text.
+    pub id: String,
+    /// Its label.
+    pub label: String,
+    /// Distance along the run (the band's horizontal axis), metres.
+    pub s: f64,
+    /// Elevation (the band's vertical axis), metres.
+    pub z: f64,
+    /// The plan direction `[east, north]` (unit) in which `s` grows at this station: the mean of
+    /// its band legs' directions; a pitch takes the nearest band leg that has one, else north.
+    pub along: [f64; 2],
+}
+
+/// Every station of a run's band with its band position and ground direction (see [`BandAxis`]),
+/// or `None` if the cave has no such run.
+pub fn profile_axes(doc: &Document, key: &str, use_adjustment: bool) -> Option<Vec<BandAxis>> {
+    let s = solve(doc, use_adjustment);
+    let g = graph(&s);
+    let z_of = |id: Id| s.positions.get(&id).map(|p| p.z);
+    let grouped = group_runs_linked(&s.labels, &s.order, &leg_infos(&s));
+    let run = grouped.runs.iter().find(|r| r.key == key)?;
+    let tie = tie_stations(&s, &grouped).get(key).copied();
+    let band = unroll_band(run, tie, &g, &s.labels, &z_of, &s.ex.lruds);
+    let st = &band.stations;
+    // each band step's ground direction, turned to point the way s grows; None for a pitch
+    let steps: Vec<Option<[f64; 2]>> = st
+        .windows(2)
+        .map(|w| {
+            let (a, b) = (s.positions.get(&w[0].id)?, s.positions.get(&w[1].id)?);
+            let (mut x, mut y) = (b.x - a.x, b.y - a.y);
+            let l = x.hypot(y);
+            if l < 1e-6 {
+                return None;
+            }
+            if w[1].s < w[0].s {
+                (x, y) = (-x, -y);
+            }
+            Some([x / l, y / l])
+        })
+        .collect();
+    let nearest = |i: usize| -> [f64; 2] {
+        (0..steps.len())
+            .filter_map(|k| steps[k].map(|d| ((k as f64 + 0.5 - i as f64).abs(), d)))
+            .min_by(|a, b| a.0.total_cmp(&b.0))
+            .map_or([0.0, 1.0], |(_, d)| d)
+    };
+    Some(
+        st.iter()
+            .enumerate()
+            .map(|(i, x)| {
+                let near: Vec<[f64; 2]> = [i.checked_sub(1), (i < steps.len()).then_some(i)]
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|k| steps[k])
+                    .collect();
+                let sum = near
+                    .iter()
+                    .fold([0.0, 0.0], |a, d| [a[0] + d[0], a[1] + d[1]]);
+                let l = sum[0].hypot(sum[1]);
+                BandAxis {
+                    id: x.id.to_string(),
+                    label: x.label.clone(),
+                    s: x.s,
+                    z: x.z,
+                    along: if l > 1e-6 {
+                        [sum[0] / l, sum[1] / l]
+                    } else {
+                        nearest(i)
+                    },
+                }
+            })
+            .collect(),
+    )
+}
+
 /// The band's consecutive station pairs with their band positions: what a new stroke anchors to.
 pub fn profile_frames(doc: &Document, key: &str, use_adjustment: bool) -> Option<Vec<Frame>> {
     let s = solve(doc, use_adjustment);
@@ -463,6 +542,28 @@ mod tests {
 
     fn cave() -> Document {
         cave_fixture::from_shot_list(CAVE, ActorId(1)).unwrap()
+    }
+
+    #[test]
+    fn profile_axes_follow_the_band() {
+        let ax = profile_axes(&cave(), "A", false).unwrap();
+        let labels: Vec<&str> = ax.iter().map(|a| a.label.as_str()).collect();
+        assert_eq!(labels, ["A1", "A2", "A3"]);
+        let near =
+            |a: [f64; 2], b: [f64; 2]| (a[0] - b[0]).abs() < 1e-6 && (a[1] - b[1]).abs() < 1e-6;
+        assert!(near(ax[0].along, [0.0, 1.0]), "{:?}", ax[0].along); // A1 to A2 runs north
+        assert!(near(ax[2].along, [1.0, 0.0]), "{:?}", ax[2].along); // A2 to A3 runs east
+        let h = std::f64::consts::FRAC_1_SQRT_2;
+        assert!(
+            near(ax[1].along, [h, h]),
+            "the bend takes the mean: {:?}",
+            ax[1].along
+        );
+        let scene = profile_scene(&cave(), "A", false).unwrap();
+        for (a, d) in ax.iter().zip(&scene.stations) {
+            assert_eq!((a.s, a.z), (d.s, d.z), "the band's own positions");
+        }
+        assert!(profile_axes(&cave(), "nope", false).is_none());
     }
 
     #[test]

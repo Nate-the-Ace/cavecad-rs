@@ -72,6 +72,10 @@ pub struct StationSection {
     pub note: Option<String>,
     /// Sketches on this section.
     pub sketches: Vec<SectionSketch>,
+    /// The section plane's `across` direction (east, north, up): what the first coordinate measures.
+    pub right: [f64; 3],
+    /// The section plane's `up` direction (east, north, up): what the second coordinate measures.
+    pub up: [f64; 3],
 }
 
 fn dot(a: Vec3, b: Vec3) -> f64 {
@@ -363,6 +367,8 @@ pub fn section_at(
         .to_string(),
         note,
         sketches: sketches_of(doc, id, filter),
+        right: [frame.right.x, frame.right.y, frame.right.z],
+        up: [frame.up.x, frame.up.y, frame.up.z],
     })
 }
 
@@ -408,6 +414,15 @@ mod tests {
         let labels: Vec<_> = list.iter().map(|s| s.label.as_str()).collect();
         assert_eq!(labels, ["A1", "A2", "A3"]);
         assert!(list.iter().all(|s| s.outlined && s.sketches == 0));
+    }
+
+    #[test]
+    fn a_section_names_its_plane() {
+        // the legs run north: across is east, up is up
+        let s = at(&doc(BOX), "A2");
+        let near = |a: [f64; 3], b: [f64; 3]| a.iter().zip(&b).all(|(x, y)| (x - y).abs() < 1e-9);
+        assert!(near(s.right, [1.0, 0.0, 0.0]), "{:?}", s.right);
+        assert!(near(s.up, [0.0, 0.0, 1.0]), "{:?}", s.up);
     }
 
     #[test]

@@ -23,8 +23,8 @@ pub use maplines::{
 };
 pub use mesh::{ColorMode, Mesh, passage_mesh};
 pub use profile::{
-    BandSection, ProfileScene, RunInfo, Sketch3d, profile_frames, profile_scene,
-    profile_sketches_3d, runs,
+    BandAxis, BandSection, ProfileScene, RunInfo, Sketch3d, profile_axes, profile_frames,
+    profile_scene, profile_sketches_3d, runs,
 };
 pub use section::{
     MapSection, SectionSketch, SectionStation, StationSection, map_sections, placements,
@@ -35,9 +35,9 @@ pub use stations::{
 };
 pub use under::Shading;
 
-use cave_survey::ShotClass;
 use cave_doc::{Document, Field, Kind};
 use cave_id::Id;
+use cave_survey::ShotClass;
 use cave_survey::{LegKind, LegResult, Splay, extract, resolve};
 use serde::Serialize;
 use std::collections::HashMap;

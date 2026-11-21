@@ -1907,6 +1907,19 @@ pub fn profile_band(run: &str, adjusted: bool) -> String {
     })
 }
 
+/// Every station of a run's band with its band position and ground direction (JSON
+/// `[{id, label, s, z, along}]`), or `null` if there is no such run: where LiDAR profile walls land.
+#[wasm_bindgen]
+pub fn profile_axes(run: &str, adjusted: bool) -> String {
+    DOC.with(|d| {
+        let axes = d
+            .borrow()
+            .as_ref()
+            .and_then(|doc| cave_scene::profile_axes(doc, run, adjusted));
+        serde_json::to_string(&axes).unwrap_or_else(|_| "null".to_string())
+    })
+}
+
 /// Adds a stroke sketched on a run's band. `points` is JSON `[[s, z], ...]`; `widths` is JSON
 /// `[w, ...]` (pen pressure) or an empty string; `adjusted` says which positions the band was
 /// drawn from. The stroke is anchored to the band's stations. Goes through the document's one edit path and
