@@ -61,6 +61,13 @@ per station.
   licensed detector, so no network or heavy library); the printable card sheet ships with the app and,
   later, from CaveCAD.
 
+## Devices without LiDAR (Nathan, 2026-11-21)
+
+On an iPhone or iPad without LiDAR, Capture is a **viewer**: saved shots, the shot viewer, the overall view,
+card chains and the station-card print sheet. No Capture button, no capture screen, no gimbal; nothing says
+"no LiDAR" as an error. iPad gets a proper iPad layout (device family iPhone + iPad). Shots reach such a device
+through the Files app (Capture's folder is shown there) until server upload exists.
+
 ## Card chaining (Nathan, 2026-11-21)
 
 Shots at neighbouring stations are joined to each other on the phone through the station cards, with no
