@@ -106,9 +106,9 @@ CcBuf cc_cards_fit(const uint8_t *bundle, size_t len, const char *cards_json, ui
 /// "placed":false} for an unreadable shot.
 /// To draw a shot: place it with "pair" through cc_shot_placed_positions / _thin / cc_shot_summary
 /// (points relative to pair[0..3]), then move each point r to R(yaw_deg) r + shift (R turns
-/// counter-clockwise seen from above, about z; survey frame). "pair" starts at the origin for a shot
-/// whose station is not in the cave (floating chains: relative to the chain's first shot's
-/// station). "spot" is the shot's own station point after the fix, relative to pair[0..3]. A
+/// counter-clockwise seen from above, about z; survey frame). For a shot whose station is not in the
+/// cave, "pair" is where its chain placed it (to the mm), or the origin when it is not placed
+/// (floating chains: relative to the chain's first shot's station). "spot" is the shot's own station point after the fix, relative to pair[0..3]. A
 /// leg misfit (LiDAR vs survey station-to-station beyond max(10 cm, 3%)) is not used for chaining.
 CcBuf cc_chains(const char *stations_json, const uint8_t *const *bundles, const size_t *lens, size_t n);
 

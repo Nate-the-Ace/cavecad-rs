@@ -665,8 +665,18 @@ fn chains_json(
     for (k, p) in c.shots.iter().enumerate() {
         let h = &hs[k];
         let found = station_for(h, &refs);
-        // the pair a viewer places with the old way: its station (and target), or the origin
-        let station = found.map_or(zero, |(s, _)| refs[s].pos);
+        // the pair a viewer places with the old way: its station (and target); for a shot placed
+        // by its chain over a station the cave lacks, its placed spot (to the mm), so points stay
+        // relative and keep their millimetres; else (floating, waiting) the origin
+        let station = match (found, p.to_survey) {
+            (Some((s, _)), _) => refs[s].pos,
+            (None, Some(m)) if p.source == Source::Chain => {
+                let at = m.apply(cave_capture::capture_to_survey(p.station_point));
+                let mm = |v: f64| (v * 1000.0).round() / 1000.0;
+                Vec3::new(mm(at.x), mm(at.y), mm(at.z))
+            }
+            _ => zero,
+        };
         let target = match found.and_then(|(_, t)| t) {
             Some(t) => refs[t].pos,
             None if h.compass.is_some() => station,
@@ -1541,11 +1551,12 @@ mod tests {
             &[&s, &t],
         );
         assert_eq!(v["shots"][1]["source"], "chain");
-        assert_eq!(
-            v["shots"][1]["pair"][0], 0.0,
-            "A8 itself is still not in the cave"
+        // A8 itself is still not in the cave: its pair is where the chain put it
+        assert!(
+            (v["shots"][1]["pair"][0].as_f64().unwrap() - 103.0).abs() < 0.01,
+            "{v}"
         );
-        assert!((v["shots"][1]["spot"][0].as_f64().unwrap() - 103.0).abs() < 0.01);
+        assert!(v["shots"][1]["spot"][0].as_f64().unwrap().abs() < 0.001);
     }
 
     #[test]
