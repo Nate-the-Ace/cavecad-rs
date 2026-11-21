@@ -3,6 +3,12 @@ import Foundation
 /// Shots kept on the phone: Documents/shots/<caveId>/<shotId>.cvcap, each with its picture beside it
 /// (<shotId>.thumb.png, made on demand). Sign-out leaves them alone.
 enum ShotFiles {
+    /// Posted (object: the cave id) when a shot is saved or rewritten here, so sync sends it.
+    static let changed = Notification.Name("app.cavecad.capture.shotChanged")
+
+    /// A shot's id: its file name without `.cvcap` (the header's `shot_id`).
+    static func shotId(of url: URL) -> String { url.deletingPathExtension().lastPathComponent }
+
     static func folder(cave: String) -> URL {
         let u = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("shots").appendingPathComponent(cave)
@@ -12,6 +18,7 @@ enum ShotFiles {
     static func save(_ bundle: Data, cave: String, shot: String) throws -> URL {
         let u = folder(cave: cave).appendingPathComponent("\(shot).cvcap")
         try bundle.write(to: u, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+        NotificationCenter.default.post(name: changed, object: cave)
         return u
     }
     /// The shot's picture, beside it: <shotId>.thumb.png; for a shot its chain turns by `yawDeg` (whole degrees),
@@ -77,6 +84,7 @@ enum ShotFiles {
         do {
             try data.write(to: tmp, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
             _ = try FileManager.default.replaceItemAt(url, withItemAt: tmp)
+            NotificationCenter.default.post(name: changed, object: url.deletingLastPathComponent().lastPathComponent)
             return true
         } catch {
             try? FileManager.default.removeItem(at: tmp)
