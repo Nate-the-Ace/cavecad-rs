@@ -27,6 +27,11 @@ export function numpadAttrs(o: NumpadOptions = {}): Record<string, string> {
 }
 
 /** The text with its sign turned over: blank becomes "-" (so the number is typed after it), "-" becomes blank. */
+/** A touch that lifted within 10 px of where it landed is a tap; anything further was a swipe or a scroll. */
+export function isTap(from: { x: number; y: number }, to: { x: number; y: number }): boolean {
+  return Math.hypot(to.x - from.x, to.y - from.y) < 10;
+}
+
 export function flipSign(text: string): string {
   const m = /^(\s*)([+-]?)([\s\S]*)$/.exec(text)!;
   return m[1] + (m[2] === '-' ? '' : '-') + m[3];
@@ -89,10 +94,23 @@ export function numpad(node: HTMLInputElement, opts: NumpadOptions = {}) {
       b.hidden = document.activeElement !== node;
       b.addEventListener('pointerdown', (e) => e.preventDefault());
       b.addEventListener('mousedown', (e) => e.preventDefault());
-      // iOS: acting on touchend (and cancelling it) stops the tap turning into a click that moves the focus.
+      // iOS: acting on touchend (and cancelling it) stops the tap turning into a click that moves the focus. Only a
+      // tap counts: touchend comes back to the key even when a swipe that began on it scrolled the notebook, and
+      // that must not flip a clino reading's sign or overwrite a wall with P.
+      let start: { x: number; y: number } | null = null;
+      b.addEventListener('touchstart', (e) => {
+        const t = e.changedTouches[0];
+        start = t ? { x: t.clientX, y: t.clientY } : null;
+      });
+      b.addEventListener('touchcancel', () => (start = null));
       b.addEventListener('touchend', (e) => {
-        e.preventDefault();
+        const t = e.changedTouches[0];
+        const from = start;
+        start = null;
         e.stopPropagation();
+        if (!t || !from || !isTap(from, { x: t.clientX, y: t.clientY })) return;
+        if (document.elementFromPoint?.(t.clientX, t.clientY) !== b) return;
+        e.preventDefault();
         press(label);
       });
       b.addEventListener('click', (e) => {

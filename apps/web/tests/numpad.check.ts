@@ -1,5 +1,5 @@
 // The number-keyboard rule (src/lib/numpad.ts): which keyboard a field asks for, and what its touch keys do.
-import { flipSign, keyText, numpadAttrs, touchKeys } from '../src/lib/numpad.ts';
+import { isTap, flipSign, keyText, numpadAttrs, touchKeys } from '../src/lib/numpad.ts';
 
 let bad = 0;
 const ok = (c: boolean, m: string) => { if (!c) { bad++; console.log('FAIL', m); } };
@@ -29,3 +29,8 @@ ok(keyText('P', 'P') === '' && keyText(' p ', 'P') === '', 'pressing it again cl
 
 if (bad) { console.log(`${bad} failed`); process.exit(1); }
 console.log('numpad: all good');
+
+// A swipe that began on the ± or P key is not a press (review 2026-11-21: it flipped clino signs while scrolling).
+if (!isTap({ x: 10, y: 10 }, { x: 14, y: 16 })) throw new Error('a small wobble is still a tap');
+if (isTap({ x: 10, y: 10 }, { x: 10, y: 40 })) throw new Error('a 30 px swipe is not a tap');
+console.log('numpad tap rule: ok');
