@@ -115,6 +115,8 @@ final class ShotRecorder: NSObject, ObservableObject, ARSessionDelegate {
     @Published private(set) var parent: URL?
     /// When the parent was made, for the screen.
     @Published private(set) var parentMade: Date?
+    /// Set when the station's shot cannot be read: the one line saying this capture saves as a new shot.
+    @Published private(set) var parentNote: String?
     /// How this ARKit session's frame maps into the parent shot's frame (column-major 4x4). nil: unknown (the
     /// parent is from an earlier run, or tracking was reset): the cards may line the pass up, else Pause saves it
     /// as a separate shot. Identity: this session made (or continued) the shot in its own frame. Otherwise: the card fit, valid
@@ -404,7 +406,15 @@ final class ShotRecorder: NSObject, ObservableObject, ARSessionDelegate {
     func prepare(cave: KeptCave, over: Station) {
         let key = Self.stationKey(cave: cave.id, station: over)
         preparedPlace = (cave, over)
-        parent = ShotFiles.parent(cave: cave.id, station: over)
+        switch ShotFiles.parentPick(cave: cave.id, station: over) {
+        case .parent(let u): parent = u; parentNote = nil
+        case .none: parent = nil; parentNote = nil
+        case .unreadable(let u, let reason):
+            // never touched: the capture saves as a shot of its own
+            parent = nil
+            parentNote = ShotJob.unreadableParentLine(u, reason: reason)
+            Log.write("shot", parentNote ?? "")
+        }
         parentMade = parent.flatMap { try? $0.resourceValues(forKeys: [.creationDateKey]).creationDate }
         let sameScreen = preparedStation == key
         preparedStation = key
@@ -941,32 +951,42 @@ final class ShotRecorder: NSObject, ObservableObject, ARSessionDelegate {
         // Leaving for another station while saving lets the result go (the next screen is not its).
         let screen = preparedStation
         Task {
-            let (result, passes, separate) = await Task.detached { () -> (Result<URL, ShotFailure>, Int, Bool) in
+            let (result, passes, separate, note) = await Task.detached { () -> (Result<URL, ShotFailure>, Int, Bool, String?) in
                 var r: Result<URL, ShotFailure>
                 var separate = false
+                var note: String?
+                let passed: Result<ShotJob.PassSaved, ShotFailure>?
                 switch (mode, into) {
-                case (.sameSession, let u?): r = job.writePass(into: u, sameSession: true, transform: nil)
+                case (.sameSession, let u?): passed = job.writePass(into: u, sameSession: true, transform: nil)
                 // v1 limit: in a card-lined session ARKit's mesh is cumulative, so every later pass of the session
                 // adds the session's earlier geometry again (overlapping triangles are allowed by the spec).
-                case (.cards(let t), let u?): r = job.writePass(into: u, sameSession: false, transform: t)
-                case (.separateShot, _): r = job.write(); separate = true
-                default: r = job.write()
+                case (.cards(let t), let u?): passed = job.writePass(into: u, sameSession: false, transform: t)
+                default: passed = nil
                 }
-                // The earlier scan is gone or unreadable: the pass is kept as a shot of its own instead.
-                if case .failure(let f) = r, f.parentUnreadable {
-                    Log.write("shot", "the earlier scan could not be read: saving the pass as a separate shot")
-                    r = job.write(); separate = true
+                switch passed {
+                case .success(let s)?:
+                    r = .success(s.url)
+                    // The earlier scan could not be read: the pass was kept as a shot of its own instead.
+                    if let why = s.newShotBecause, let u = into {
+                        separate = true
+                        note = ShotJob.unreadableParentLine(u, reason: why)
+                    }
+                case .failure(let f)?: r = .failure(f)
+                case nil:
+                    r = job.write()
+                    separate = mode == .separateShot
                 }
-                guard case .success(let url) = r else { return (r, 0, separate) }
+                guard case .success(let url) = r else { return (r, 0, separate, note) }
                 let n = (try? Data(contentsOf: url, options: .alwaysMapped)).map { Core.summary(bundle: $0, pair: nil)["passes"] as? Int ?? 0 } ?? 0
-                return (r, n, separate)
+                return (r, n, separate, note)
             }.value
             switch result {
             case .success(let url):
                 // A fresh shot (first or separate) is in this session's own frame; a pass leaves the line-up as it was.
                 if mode == .newShot || separate, epoch == trackingEpoch { sessionToShot = Self.identity }
                 if epoch == trackingEpoch, sessionToShot != nil { sessionShot = url }
-                Log.write("shot", separate ? "saved as a separate shot (no line-up)" : "saved pass \(max(passes, 1))")
+                Log.write("shot", note != nil ? "saved as a new shot (the station's shot is unreadable)"
+                          : separate ? "saved as a separate shot (no line-up)" : "saved pass \(max(passes, 1))")
                 if chime {
                     AudioServicesPlaySystemSound(1025)
                     UINotificationFeedbackGenerator().notificationOccurred(.success)
@@ -978,13 +998,14 @@ final class ShotRecorder: NSObject, ObservableObject, ARSessionDelegate {
                     return
                 }
                 parent = url
+                parentNote = nil
                 parentMade = separate ? Date() : (parentMade ?? Date())
                 // The file changed: its new ghost replaces the old one.
                 dropGhost()
                 if thenEnd { end(); viewing = url; return }
                 // Shown while paused (ARKit's live mesh is hidden then) and kept as the next pass's parent.
                 loadGhost(url)
-                phase = .saved(url); message = separate ? Self.separateMessage : Self.savedMessage
+                phase = .saved(url); message = note ?? (separate ? Self.separateMessage : Self.savedMessage)
             case .failure(let m):
                 stopAfterSave = false
                 guard screen == preparedStation else { phase = .ready; message = readyText; return }
@@ -1339,8 +1360,6 @@ final class ShotRecorder: NSObject, ObservableObject, ARSessionDelegate {
 
 struct ShotFailure: Error {
     let message: String
-    /// A pass could not read the shot it adds to (nothing was written): Pause saves a separate shot instead.
-    var parentUnreadable = false
 }
 
 /// What a card check or line-up found, handed back from off the main actor.
@@ -1382,18 +1401,26 @@ final class ShotJob: @unchecked Sendable {
 
     private static let unwritable = ShotFailure(message: "The shot could not be written.")
 
+    /// The cards' last word: every sight line met with the final mesh.
+    private func finalCards() {
+        guard !cards.allSightings.isEmpty else { return }
+        cards.applyMesh(CardTracker.meshRanges(cards.allSightings, MeshSnapshot(parts, near: cards.points)))
+        cards.logLines.forEach { Log.write("cards", "final (full mesh): \($0)") }
+    }
+
     /// Writes the shot once; the photos and mesh are gone from the job afterwards.
     func write() -> Result<URL, ShotFailure> {
-        // The cards' last word: every sight line met with the final mesh.
-        if !cards.allSightings.isEmpty {
-            cards.applyMesh(CardTracker.meshRanges(cards.allSightings, MeshSnapshot(parts, near: cards.points)))
-            cards.logLines.forEach { Log.write("cards", "final (full mesh): \($0)") }
-        }
+        finalCards()
         var mesh = ShotRecorder.mergeAnchors(parts)
         parts = []
-        let shotId = UUID().uuidString.lowercased()
-
         var (kfs, jpegs, numbers) = joinedPhotos()
+        return writeShot(mesh: &mesh, kfs: kfs, jpegs: &jpegs, numbers: numbers)
+    }
+
+    /// Writes the merged mesh and joined photos as a new shot file; both are let go once encoded.
+    private func writeShot(mesh: inout MergedMesh, kfs: [[String: Any]], jpegs: inout Data, numbers: [Double]) -> Result<URL, ShotFailure> {
+        let shotId = UUID().uuidString.lowercased()
+        var numbers = numbers
         numbers.append(instrumentHeight)
         let start = [startCamera.x, startCamera.y, startCamera.z].map(Double.init)
         numbers += start + [compass.accuracyDeg]
@@ -1420,40 +1447,60 @@ final class ShotJob: @unchecked Sendable {
         catch { return .failure(ShotFailure(message: "Saving failed: \(error.localizedDescription)")) }
     }
 
+    /// A pass saved: into the parent, or (`newShotBecause` set: why the parent could not be read) as a new shot.
+    struct PassSaved: Equatable {
+        let url: URL
+        let newShotBecause: String?
+    }
+
+    /// The log and screen line when a station's shot cannot be read and the capture saves as a new shot.
+    nonisolated static func unreadableParentLine(_ parent: URL, reason: String) -> String {
+        "parent \(ShotFiles.shotId(of: parent)) unreadable (\(reason)): this capture saves as a new shot"
+    }
+
     /// Adds this job as a pass to the shot at `parent`. Same session: the mesh replaces the shot's (ARKit's
     /// whole current mesh, which holds the earlier passes) and the transform is identity. Otherwise `transform`
     /// (column-major, this pass's frame to the shot's, from the cards) moves the pass and its mesh is added.
-    /// The parent is rewritten through a temporary file; on any failure it is left as it was.
-    func writePass(into parent: URL, sameSession: Bool, transform: [Double]?) -> Result<URL, ShotFailure> {
-        guard let old = try? Data(contentsOf: parent) else {
-            return .failure(ShotFailure(message: "The earlier scan could not be read.", parentUnreadable: true))
-        }
-        if !cards.allSightings.isEmpty {
-            cards.applyMesh(CardTracker.meshRanges(cards.allSightings, MeshSnapshot(parts, near: cards.points)))
-            cards.logLines.forEach { Log.write("cards", "final (full mesh): \($0)") }
-        }
+    ///
+    /// Memory: the parent is mapped, not read in, and the core streams the new shot to a temporary file reading
+    /// the parent's photos in place, so no copy of the whole shot is ever held; the file is then swapped in with
+    /// one rename. On any failure the parent is left as it was. A parent that cannot be read (gone, truncated, a
+    /// newer format, a mesh that does not decode) is never touched: the capture is saved as a new shot instead.
+    func writePass(into parent: URL, sameSession: Bool, transform: [Double]?) -> Result<PassSaved, ShotFailure> {
+        let old = try? Data(contentsOf: parent, options: .alwaysMapped)
+        finalCards()
         var mesh = ShotRecorder.mergeAnchors(parts)
         parts = []
         var (kfs, jpegs, numbers) = joinedPhotos()
+        func asNewShot(_ reason: String) -> Result<PassSaved, ShotFailure> {
+            Log.write("shot", Self.unreadableParentLine(parent, reason: reason))
+            return writeShot(mesh: &mesh, kfs: kfs, jpegs: &jpegs, numbers: numbers)
+                .map { PassSaved(url: $0, newShotBecause: reason) }
+        }
+        guard let old else { return asNewShot("cannot open the file") }
         let identity: [Double] = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]
         let t = sameSession ? identity : (transform ?? identity)
-        numbers += t
         let pass: [String: Any] = [
             "captured_at_ms": Int64(Date().timeIntervalSince1970 * 1000),
             "aligned_by": sameSession ? "same_session" : "cards",
             "transform": t, "replace": sameSession, "tracking": tracking,
             "cards": cards.records.map(\.json), "keyframes": kfs, "flags": flags,
         ]
-        guard t.count == 16, numbers.allSatisfy(\.isFinite), JSONSerialization.isValidJSONObject(pass),
+        guard t.count == 16, (numbers + t).allSatisfy(\.isFinite), JSONSerialization.isValidJSONObject(pass),
               let pj = try? JSONSerialization.data(withJSONObject: pass)
         else { return .failure(Self.unwritable) }
-        let bundle = Core.addPass(bundle: old, pass: pj, positions: mesh.positions, normals: mesh.normals,
-                                  indices: mesh.indices, jpegs: jpegs)
-        jpegs = Data()
-        mesh = MergedMesh(positions: [], normals: [], indices: [])
-        guard !bundle.isEmpty else { return .failure(Self.unwritable) }
-        return ShotFiles.replace(parent, with: bundle)
-            ? .success(parent) : .failure(ShotFailure(message: "Saving the pass failed; the earlier scan is kept."))
+        var answer: [String: Any] = [:]
+        let swapped = ShotFiles.replace(parent) { tmp in
+            answer = Core.addPassToFile(bundle: old, pass: pj, positions: mesh.positions, normals: mesh.normals,
+                                        indices: mesh.indices, jpegs: jpegs, to: tmp)
+            // the written file must pass the header check before it replaces the parent
+            guard answer["ok"] as? Bool == true, let d = try? Data(contentsOf: tmp, options: .alwaysMapped) else { return false }
+            return Core.summary(bundle: d, pair: nil)["error"] == nil
+        }
+        if swapped { return .success(PassSaved(url: parent, newShotBecause: nil)) }
+        if answer["error"] as? String == "parent" { return asNewShot(answer["reason"] as? String ?? "unreadable") }
+        if answer["error"] as? String == "pass" { return .failure(Self.unwritable) }
+        return .failure(ShotFailure(message: "Saving the pass failed; the earlier scan is kept."))
     }
 
     /// Joins the photos into one JPEG run with their header entries, letting each photo go as soon as it is

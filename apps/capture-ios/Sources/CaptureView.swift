@@ -104,6 +104,11 @@ struct CaptureView: View {
                     Text("Adding to the scan from \(d.formatted(date: .omitted, time: .shortened))")
                         .font(.caption).padding(6).background(.thinMaterial, in: .capsule)
                 }
+                if let note = rec.parentNote {
+                    // the station's shot cannot be read: this capture saves as a new shot
+                    Text(note).font(.caption).foregroundStyle(.orange).multilineTextAlignment(.center)
+                        .padding(6).background(.thinMaterial, in: .rect(cornerRadius: 10))
+                }
                 Spacer()
                 // The controls sit on a solid dark panel with big, solid buttons: the live view behind is busy
                 // with mesh lines and coloured markers.

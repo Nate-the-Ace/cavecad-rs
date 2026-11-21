@@ -133,6 +133,25 @@ enum Core {
         } }
     }
 
+    /// Adds a pass to the shot in `bundle` (map the parent file: its photos are read in place) and streams the
+    /// result to the file at `to` (`cc_shot_add_pass_file`): no copy of the whole shot is ever held. The core's
+    /// answer: `{"ok","passes","bytes"}`, or `{"error":"parent","reason"}` when `bundle` is not a readable shot,
+    /// or `{"error":"pass"|"write"|"path"}`. On an error nothing is left at `to`.
+    static func addPassToFile(bundle: Data, pass: Data, positions: [Float], normals: [Float], indices: [UInt32], jpegs: Data,
+                              to: URL) -> [String: Any] {
+        guard let pj = String(data: pass, encoding: .utf8) else { return ["error": "pass"] }
+        let d = bundle.withUnsafeBytes { b in pj.withCString { pp in to.path.withCString { op in
+            positions.withUnsafeBufferPointer { p in normals.withUnsafeBufferPointer { n in
+                indices.withUnsafeBufferPointer { i in jpegs.withUnsafeBytes { j in
+                    take(cc_shot_add_pass_file(b.bindMemory(to: UInt8.self).baseAddress, b.count, pp,
+                                               p.baseAddress, p.count, n.baseAddress, n.count, i.baseAddress, i.count,
+                                               j.bindMemory(to: UInt8.self).baseAddress, j.count, op))
+                } }
+            } }
+        } } }
+        return (try? JSONSerialization.jsonObject(with: d) as? [String: Any]) ?? ["error": "internal"]
+    }
+
     /// The ghost of a shot (`cc_shot_ghost`), parsed in one bounds-checked pass over the bytes; nil
     /// when the core gave nothing or the counts do not add up.
     static func ghost(bundle: Data, cellM: Float = 0.05, minOutlineM: Float = 0.15) -> GhostMesh? {

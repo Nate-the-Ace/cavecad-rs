@@ -245,7 +245,7 @@ final class ShotRecorderTests: XCTestCase {
         let pass = ShotJob(caveId: cave, over: a, parts: [Self.tri], keyframes: [kf], startCamera: .zero, tracking: "normal",
                            systemVersion: "27", compass: CompassReading(trueNorth: true, accuracyDeg: 5, headingDeg: 0))
         guard case .success(let same) = pass.writePass(into: ua, sameSession: true, transform: nil) else { return XCTFail("pass not written") }
-        XCTAssertEqual(same, ua)
+        XCTAssertEqual(same, ShotJob.PassSaved(url: ua, newShotBecause: nil))
         let h = try Self.header(of: try Data(contentsOf: ua))
         XCTAssertEqual((h["passes"] as? [[String: Any]])?.count, 2)
         // the keyframes live beside the header on the wire: count them through the summary
@@ -256,20 +256,128 @@ final class ShotRecorderTests: XCTestCase {
         XCTAssertEqual(ShotFiles.parent(cave: cave, station: a), ua)
         XCTAssertEqual(ShotFiles.list(cave: cave).count, 2)
 
-        // a pass into a file that cannot be read fails and writes nothing
+        // a pass into a file that is gone is saved as a new shot (and the missing file is not made)
         let missing = ShotFiles.folder(cave: cave).appendingPathComponent("nope.cvcap")
         let lost = ShotJob(caveId: cave, over: a, parts: [Self.tri], keyframes: [], startCamera: .zero, tracking: "normal",
                            systemVersion: "27", compass: .none)
-        guard case .failure(let f) = lost.writePass(into: missing, sameSession: true, transform: nil) else { return XCTFail("pass into nothing") }
-        XCTAssertEqual(f.message, "The earlier scan could not be read.")
-        // Pause falls back to a separate shot on exactly this failure
-        XCTAssertTrue(f.parentUnreadable)
-        // ... and only on it: an unwritable pass (a non-finite transform) is a plain failure
+        guard case .success(let saved) = lost.writePass(into: missing, sameSession: true, transform: nil) else { return XCTFail("pass into nothing") }
+        XCTAssertEqual(saved.newShotBecause, "cannot open the file")
+        XCTAssertNotEqual(saved.url, missing)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: missing.path))
+        XCTAssertEqual(Core.summary(bundle: try Data(contentsOf: saved.url), pair: nil)["vertices"] as? Int, 3)
+        try FileManager.default.removeItem(at: saved.url)
+        // an unwritable pass (a non-finite transform) is a plain failure and leaves the parent as it was
+        let kept = try Data(contentsOf: ua)
         let nan = [Double](repeating: .nan, count: 16)
         guard case .failure(let g) = ShotJob(caveId: cave, over: a, parts: [Self.tri], keyframes: [], startCamera: .zero, tracking: "normal",
                                              systemVersion: "27", compass: .none).writePass(into: ua, sameSession: false, transform: nan)
         else { return XCTFail("a non-finite pass was written") }
-        XCTAssertFalse(g.parentUnreadable)
+        XCTAssertEqual(g.message, "The shot could not be written.")
+        XCTAssertEqual(try Data(contentsOf: ua), kept)
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: ShotFiles.folder(cave: cave).path).filter { $0.hasSuffix(".tmp") }, [])
+    }
+
+    /// The parent rule over header summaries, newest first: the station's newest shot decides.
+    func testPickParentRule() {
+        let a = Station(id: "a", label: "A1", x: 0, y: 0, z: 0)
+        let u1 = URL(fileURLWithPath: "/s/1.cvcap"), u2 = URL(fileURLWithPath: "/s/2.cvcap"), u3 = URL(fileURLWithPath: "/s/3.cvcap")
+        let ok: [String: Any] = ["station_id": "a", "vertices": 3]
+        let other: [String: Any] = ["station_id": "b", "vertices": 3]
+        let broken: [String: Any] = ["error": "Truncated", "unreadable": ["shot_id": "x", "station_id": "a", "station_label": "A1", "waiting": false]]
+        let brokenOther: [String: Any] = ["error": "NewerFormat(2)", "unreadable": ["station_id": "b", "station_label": "B1", "waiting": false]]
+        let junk: [String: Any] = ["error": "NotACapture"]
+        XCTAssertEqual(ShotFiles.pickParent([(URL, [String: Any])](), station: a), .none)
+        XCTAssertEqual(ShotFiles.pickParent([(u1, other), (u2, ok)], station: a), .parent(u2))
+        // newest over the station is unreadable: a new shot, even with an older readable one behind it
+        XCTAssertEqual(ShotFiles.pickParent([(u1, broken), (u2, ok)], station: a), .unreadable(u1, reason: "Truncated"))
+        // files that do not say whose they are, or are another station's, are passed over
+        XCTAssertEqual(ShotFiles.pickParent([(u1, junk), (u2, brokenOther), (u3, ok)], station: a), .parent(u3))
+        XCTAssertEqual(ShotFiles.pickParent([(u1, ok), (u2, broken)], station: a), .parent(u1))
+        // a waiting shot over a label the station now carries counts, readable or not
+        let waitingBroken: [String: Any] = ["error": "Truncated", "unreadable": ["station_id": "", "station_label": "a 1", "waiting": true]]
+        XCTAssertEqual(ShotFiles.pickParent([(u1, waitingBroken)], station: a), .unreadable(u1, reason: "Truncated"))
+        // a waiting station has no parent
+        XCTAssertEqual(ShotFiles.pickParent([(u1, ok)], station: .waiting(label: "A1")), .none)
+        XCTAssertEqual(ShotJob.unreadableParentLine(u1, reason: "Truncated"), "parent 1 unreadable (Truncated): this capture saves as a new shot")
+    }
+
+    /// A station's shot that cannot be read is found from its header when the screen opens, and a pass meant for
+    /// it (unreadable between open and save) is saved as a new shot; the unreadable file is never touched.
+    func testUnreadableParentSavesANewShot() throws {
+        let cave = "test-cave-unreadable"
+        defer { try? FileManager.default.removeItem(at: ShotFiles.folder(cave: cave)) }
+        let a = Station(id: "a", label: "A1", x: 0, y: 0, z: 0)
+        let compass = CompassReading(trueNorth: true, accuracyDeg: 5, headingDeg: 0)
+        let kf = ShotKeyframe(pose: matrix_identity_float4x4, intrinsics: matrix_identity_float3x3, w: 1, h: 1, jpeg: Data([5, 5, 5, 5]))
+        func job() -> ShotJob {
+            ShotJob(caveId: cave, over: a, parts: [Self.tri], keyframes: [kf], startCamera: .zero, tracking: "normal",
+                    systemVersion: "27", compass: compass)
+        }
+        guard case .success(let ua) = job().write() else { return XCTFail("not written") }
+        XCTAssertEqual(ShotFiles.parentPick(cave: cave, station: a), .parent(ua))
+        let whole = try Data(contentsOf: ua)
+
+        for (name, bytes, reason) in [
+            ("cut", whole.prefix(whole.count - 2), "Truncated"),
+            ("newer", { var d = whole; d[6] = 9; d[7] = 0; return d }(), "NewerFormat(9)"),
+        ] {
+            try bytes.write(to: ua)
+            // at open: the header check names it, and it is not the parent
+            XCTAssertEqual(ShotFiles.parentPick(cave: cave, station: a), .unreadable(ua, reason: reason), name)
+            XCTAssertNil(ShotFiles.parent(cave: cave, station: a), name)
+            // at save: the pass becomes a new shot and the unreadable file is left exactly as it was
+            guard case .success(let s) = job().writePass(into: ua, sameSession: true, transform: nil) else { return XCTFail(name) }
+            XCTAssertEqual(s.newShotBecause, reason, name)
+            XCTAssertNotEqual(s.url, ua, name)
+            XCTAssertEqual(try Data(contentsOf: ua), bytes, name)
+            let sum = Core.summary(bundle: try Data(contentsOf: s.url), pair: nil)
+            XCTAssertNil(sum["error"], name)
+            XCTAssertEqual(sum["keyframes"] as? Int, 1, name)
+            XCTAssertEqual(sum["station_id"] as? String, "a", name)
+            // the new shot is the station's newest: it is the next capture's parent
+            XCTAssertEqual(ShotFiles.parentPick(cave: cave, station: a), .parent(s.url), name)
+            try FileManager.default.removeItem(at: s.url)
+        }
+
+        // a header that reads but a mesh that does not decode: found only at save, same fallback
+        var badMesh = whole
+        // the triangle's last index (u32) is the last word before the photo: point it past the vertices
+        let at = badMesh.count - 4 - 4
+        badMesh.replaceSubrange(at..<(at + 4), with: [99, 0, 0, 0])
+        try badMesh.write(to: ua)
+        XCTAssertEqual(ShotFiles.parentPick(cave: cave, station: a), .parent(ua))
+        guard case .success(let s) = job().writePass(into: ua, sameSession: true, transform: nil) else { return XCTFail("bad mesh") }
+        XCTAssertEqual(s.newShotBecause, "BadMesh")
+        XCTAssertEqual(try Data(contentsOf: ua), badMesh)
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: ShotFiles.folder(cave: cave).path).filter { $0.hasSuffix(".tmp") }, [])
+    }
+
+    /// A pass streamed into the parent keeps every earlier photo and adds its own, pass after pass.
+    func testPassesStreamIntoTheParent() throws {
+        let cave = "test-cave-stream"
+        defer { try? FileManager.default.removeItem(at: ShotFiles.folder(cave: cave)) }
+        let a = Station(id: "a", label: "A1", x: 0, y: 0, z: 0)
+        let compass = CompassReading(trueNorth: true, accuracyDeg: 5, headingDeg: 0)
+        func job(_ byte: UInt8) -> ShotJob {
+            let kf = ShotKeyframe(pose: matrix_identity_float4x4, intrinsics: matrix_identity_float3x3, w: 1, h: 1,
+                                  jpeg: Data(repeating: byte, count: 1000))
+            return ShotJob(caveId: cave, over: a, parts: [Self.tri], keyframes: [kf, kf], startCamera: .zero, tracking: "normal",
+                           systemVersion: "27", compass: compass)
+        }
+        guard case .success(let u) = job(1).write() else { return XCTFail("not written") }
+        let first = try Data(contentsOf: u)
+        guard case .success(let p2) = job(2).writePass(into: u, sameSession: true, transform: nil),
+              case .success(let p3) = job(3).writePass(into: u, sameSession: false, transform: ShotRecorder.identity)
+        else { return XCTFail("passes not written") }
+        XCTAssertEqual([p2.url, p3.url], [u, u])
+        XCTAssertNil(p2.newShotBecause)
+        let out = try Data(contentsOf: u)
+        let sum = Core.summary(bundle: out, pair: nil)
+        XCTAssertEqual(sum["passes"] as? Int, 3)
+        XCTAssertEqual(sum["keyframes"] as? Int, 6)
+        // the photos sit back to back at the end of the file: first pass's, then each new pass's
+        XCTAssertEqual(out.suffix(6000), Data(repeating: 1, count: 2000) + Data(repeating: 2, count: 2000) + Data(repeating: 3, count: 2000))
+        XCTAssertEqual(first.suffix(2000), out.suffix(6000).prefix(2000))
     }
 
     func testOutlineRibbonsAndLineUpRule() {

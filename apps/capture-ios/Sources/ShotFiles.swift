@@ -66,28 +66,73 @@ enum ShotFiles {
         list(cave: cave).reduce(0) { $0 + Int64((try? $1.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0) }
     }
 
-    /// The newest shot of the cave taken over `station`, or nil. Files are mapped, not read in. A shot saved
-    /// waiting for its station counts once `station` (from the cave) carries its label; a waiting station
-    /// itself has no parent, so a waiting shot is never added to before it is placed.
+    /// What a capture over a station adds to.
+    enum ParentPick: Equatable {
+        /// No shot over the station: a new shot.
+        case none
+        /// The station's newest shot, readable: passes are added to it.
+        case parent(URL)
+        /// The station's newest shot cannot be read (`reason`, the core's word: `Truncated`, `NewerFormat(2)`, …):
+        /// the capture saves as a new shot and that file is never touched.
+        case unreadable(URL, reason: String)
+    }
+
+    /// The newest shot of the cave taken over `station`, or nil (none, or the newest is unreadable: see `parentPick`).
     static func parent(cave: String, station: Station) -> URL? {
-        guard !station.isWaiting else { return nil }
-        return list(cave: cave).first { u in
-            guard let d = try? Data(contentsOf: u, options: .alwaysMapped) else { return false }
-            return ShotSummary(Core.summary(bundle: d, pair: nil)).stations(in: [station])?.over == station
+        if case .parent(let u) = parentPick(cave: cave, station: station) { return u }
+        return nil
+    }
+
+    /// The station's newest shot and whether it can be read, from each file's header alone (mapped, cheap). A shot
+    /// saved waiting for its station counts once `station` (from the cave) carries its label; a waiting station
+    /// itself has no parent, so a waiting shot is never added to before it is placed.
+    static func parentPick(cave: String, station: Station) -> ParentPick {
+        guard !station.isWaiting else { return .none }
+        let heads = list(cave: cave).lazy.map { u -> (URL, [String: Any]) in
+            guard let d = try? Data(contentsOf: u, options: .alwaysMapped) else { return (u, ["error": "unreadable"]) }
+            return (u, Core.summary(bundle: d, pair: nil))
         }
+        return pickParent(heads, station: station)
+    }
+
+    /// The rule, over header summaries newest first (`cc_shot_summary` with no pair): the first shot over `station`
+    /// decides. Readable: it is the parent. Refused by the header check but its header still names the station
+    /// (`"unreadable"`): the capture saves as a new shot. A file that does not say whose it is is passed over.
+    static func pickParent<S: Sequence>(_ heads: S, station: Station) -> ParentPick where S.Element == (URL, [String: Any]) {
+        guard !station.isWaiting else { return .none }
+        for (u, sum) in heads {
+            if let e = sum["error"] as? String {
+                guard let head = sum["unreadable"] as? [String: Any],
+                      ShotSummary(head).stations(in: [station])?.over == station else { continue }
+                return .unreadable(u, reason: e)
+            }
+            if ShotSummary(sum).stations(in: [station])?.over == station { return .parent(u) }
+        }
+        return .none
     }
 
     /// Writes `data` beside `url`, then swaps it in; the old file stays as it was if anything fails.
     @discardableResult
     static func replace(_ url: URL, with data: Data) -> Bool {
+        replace(url) { tmp in
+            (try? data.write(to: tmp, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])) != nil
+        }
+    }
+
+    /// Has `write` fill a temporary file beside `url` (true: written), then swaps it in with one rename; the old
+    /// file stays as it was if anything fails, and no temporary file is left behind.
+    @discardableResult
+    static func replace(_ url: URL, writing write: (URL) -> Bool) -> Bool {
         let tmp = url.deletingLastPathComponent().appendingPathComponent(".\(UUID().uuidString).tmp")
+        defer { try? FileManager.default.removeItem(at: tmp) }
+        guard write(tmp) else { return false }
+        try? FileManager.default.setAttributes([.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication],
+                                               ofItemAtPath: tmp.path)
         do {
-            try data.write(to: tmp, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
             _ = try FileManager.default.replaceItemAt(url, withItemAt: tmp)
             NotificationCenter.default.post(name: changed, object: url.deletingLastPathComponent().lastPathComponent)
             return true
         } catch {
-            try? FileManager.default.removeItem(at: tmp)
             return false
         }
     }
