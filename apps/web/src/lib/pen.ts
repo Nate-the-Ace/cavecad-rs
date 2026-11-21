@@ -61,8 +61,8 @@ export class SideButtonMenu {
 
 /**
  * Palm rejection. Feed it every pen event on a canvas; ask it about every touch. A touch is
- * ignored while the pen is touching the screen or was near it a moment ago, or when the contact is
- * too big to be a fingertip. Mouse and pen are never ignored.
+ * ignored while the pen is touching the screen or was near it a moment ago, or, once a pen has been used,
+ * when the contact is too big to be a fingertip. Mouse and pen are never ignored.
  */
 export class PenGuard {
   private penDown = false;
@@ -105,8 +105,9 @@ export class PenGuard {
   allowTouch(e: Pick<PenEvent, 'timeStamp' | 'width' | 'height'>): boolean {
     if (this.penDown) return (this.lastRejected = 'a pen is touching the screen'), false;
     if (e.timeStamp - this.lastPen < PALM_HOLD_MS) return (this.lastRejected = 'just after a pen was lifted'), false;
+    // Size only means palm once a pen is in use: fingers-only, an iPad reports a pinching thumb well past PALM_SIZE.
     const size = Math.max(e.width ?? 0, e.height ?? 0);
-    if (size > PALM_SIZE) return (this.lastRejected = `the contact is ${Math.round(size)} px across, too big for a fingertip`), false;
+    if (this.lastPen > -Infinity && size > PALM_SIZE) return (this.lastRejected = `the contact is ${Math.round(size)} px across, too big for a fingertip`), false;
     return true;
   }
 }

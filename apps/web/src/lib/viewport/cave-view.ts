@@ -304,6 +304,15 @@ export class CaveView {
       },
       true,
     );
+    // A rejected touch is ignored for its whole life, not only when it lands: its moves would otherwise reach the
+    // orbit controls (they listen on the document) as moves of the finger they track, and the map jumps and spins.
+    const swallowIgnored = (e: PointerEvent) => {
+      if (e.pointerType !== 'touch' || !this.guard.ignored(e)) return;
+      if (e.type !== 'pointermove') this.guard.touchUp(e);
+      e.stopImmediatePropagation();
+      e.stopPropagation();
+    };
+    for (const type of ['pointermove', 'pointerup', 'pointercancel'] as const) canvas.addEventListener(type, swallowIgnored, true);
     const lift = (e: PointerEvent) => {
       if (e.pointerType === 'touch') {
         this.fingers.delete(e.pointerId);

@@ -127,6 +127,22 @@ CREATE TABLE IF NOT EXISTS cave_scans (
   PRIMARY KEY (cave_id, path)
 );
 CREATE INDEX IF NOT EXISTS cave_scans_sha ON cave_scans (sha);
+-- A cave's LiDAR shots (CaveCAD Capture's .cvcap files), one row per shot; the bytes are a file named by sha in the
+-- captures folder (captures.ts). Station and time come from the file's own header.
+CREATE TABLE IF NOT EXISTS cave_captures (
+  cave_id TEXT NOT NULL REFERENCES caves(id),
+  shot_id TEXT NOT NULL,
+  sha TEXT NOT NULL,
+  size INTEGER NOT NULL,
+  station_id TEXT NOT NULL,
+  station_label TEXT NOT NULL,
+  captured_at INTEGER NOT NULL,
+  device TEXT NOT NULL,
+  added_by TEXT NOT NULL,
+  added_at INTEGER NOT NULL,
+  PRIMARY KEY (cave_id, shot_id)
+);
+CREATE INDEX IF NOT EXISTS cave_captures_sha ON cave_captures (sha);
 -- A member's own patterns (linetypes, fills, motifs), there in every cave they open.
 CREATE TABLE IF NOT EXISTS member_patterns (
   member_id TEXT NOT NULL REFERENCES members(id),
