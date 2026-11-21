@@ -87,6 +87,31 @@ CcBuf cc_shot_ghost(const uint8_t *bundle, size_t len, float cell_m, float min_o
 /// {"error"} on a bad bundle or JSON.
 CcBuf cc_cards_fit(const uint8_t *bundle, size_t len, const char *cards_json, uint8_t same_session);
 
+/// Card chaining: every saved shot of a cave placed together (spec "Card chaining"). Shots at
+/// neighbouring stations (survey legs when given and both stations are known, else labels: same
+/// prefix, numbers one apart, A3 -> A4) are joined through their CURRENT/FORWARD/REAR cards; joined
+/// shots form chains, placed as a whole through any station the cave has, or floating around the
+/// chain's first shot while all their stations are waiting. Only headers are read: no mesh or photo
+/// is copied.
+/// stations_json: NUL-terminated UTF-8, NULL for none: either cc_stations' array [{"id","label","x",
+/// "y","z"}] or {"stations":[...],"legs":[["from_id","to_id"],...]}.
+/// bundles, lens: n pointers to .cvcap bytes and their lengths (BYTES); NULL only when n is 0.
+/// Returns {"shots":[one per input, in order],"chains":[{"k","shots":[input indices],"labels":[..],
+/// "placed":bool}],"counts":{"shots","chains","by_chain","flagged"}} or {"error"}. Each shot:
+/// {"index","shot_id","label","source":"chain"|"card+compass"|"compass"|"tap"|"floating"|"waiting"|
+/// "unplaced","placed":bool (in the cave),"chain":k|null,"pair":[6]|null,"fix":{"yaw_deg","shift":[3]}
+/// |null,"spot":[3]|null,"turn_deg"|null,"joined":[labels],"one_point":bool,"misfit":bool,
+/// "flags":[{"kind":"leg_misfit","with","lidar_m","survey_m","off_m","limit_m"}|{"kind":"cards_misfit",
+/// "with","off_m","limit_m"}|{"kind":"one_point","with"}]}, or {"index","error","source":"unplaced",
+/// "placed":false} for an unreadable shot.
+/// To draw a shot: place it with "pair" through cc_shot_placed_positions / _thin / cc_shot_summary
+/// (points relative to pair[0..3]), then move each point r to R(yaw_deg) r + shift (R turns
+/// counter-clockwise seen from above, about z; survey frame). "pair" starts at the origin for a shot
+/// whose station is not in the cave (floating chains: relative to the chain's first shot's
+/// station). "spot" is the shot's own station point after the fix, relative to pair[0..3]. A
+/// leg misfit (LiDAR vs survey station-to-station beyond max(10 cm, 3%)) is not used for chaining.
+CcBuf cc_chains(const char *stations_json, const uint8_t *const *bundles, const size_t *lens, size_t n);
+
 /// The gimbal (Osmo Mobile 7 over Bluetooth): one runner on its own thread. The doors below queue a
 /// command or flip a flag and return at once; poll cc_gimbal_status for what happened.
 ///

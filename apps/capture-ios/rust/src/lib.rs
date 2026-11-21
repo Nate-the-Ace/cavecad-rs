@@ -4,9 +4,9 @@
 #![allow(unsafe_code)]
 
 use cave_capture::{
-    CardSeen, Keyframe, KeyframeRef, NewPass, PassMesh, Shot, ShotHeader, add_pass, card_offsets,
-    cards_fit, check_header, decode, document_from_room, encode, encode_parts, ghost,
-    mesh_positions, placement, stations, thin_points,
+    CardSeen, Keyframe, KeyframeRef, NewPass, PassMesh, Shot, ShotHeader, StationRef, add_pass,
+    card_offsets, cards_fit, chains, check_header, decode, display_fix, document_from_room, encode,
+    encode_parts, ghost, mesh_positions, placement, station_for, stations, thin_points,
 };
 use cave_survey::Vec3;
 use serde::Deserialize;
@@ -593,6 +593,198 @@ pub unsafe extern "C" fn cc_cards_fit(
                     })
                 })}),
             )
+        },
+        internal,
+    )
+}
+
+#[derive(Deserialize)]
+struct StationIn {
+    id: String,
+    label: String,
+    x: f64,
+    y: f64,
+    z: f64,
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum StationsIn {
+    Plain(Vec<StationIn>),
+    WithLegs {
+        stations: Vec<StationIn>,
+        #[serde(default)]
+        legs: Vec<(String, String)>,
+    },
+}
+
+fn r3(v: Vec3) -> [f64; 3] {
+    [v.x, v.y, v.z]
+}
+
+/// The chain result as JSON (see `capture_core.h`, `cc_chains`). `heads[i]` is `None` for a shot
+/// that could not be read.
+fn chains_json(
+    heads: &[Result<ShotHeader, String>],
+    stations: &[StationIn],
+    legs: &[(String, String)],
+) -> serde_json::Value {
+    use cave_capture::chain::{Flag, Source};
+    let refs: Vec<StationRef> = stations
+        .iter()
+        .map(|s| StationRef {
+            id: &s.id,
+            label: &s.label,
+            pos: Vec3::new(s.x, s.y, s.z),
+        })
+        .collect();
+    // chain the readable shots; map back to input order
+    let readable: Vec<usize> = (0..heads.len()).filter(|&i| heads[i].is_ok()).collect();
+    let hs: Vec<ShotHeader> = readable
+        .iter()
+        .map(|&i| heads[i].clone().expect("readable"))
+        .collect();
+    let c = chains(&hs, &refs, legs);
+    let label_of = |k: usize| -> String {
+        station_for(&hs[k], &refs)
+            .map(|(s, _)| refs[s].label.to_string())
+            .unwrap_or_else(|| hs[k].station_label.clone())
+    };
+    let zero = Vec3::new(0.0, 0.0, 0.0);
+    let mut out: Vec<serde_json::Value> = heads
+        .iter()
+        .enumerate()
+        .map(|(i, h)| match h {
+            Err(e) => {
+                serde_json::json!({ "index": i, "error": e, "source": "unplaced", "placed": false })
+            }
+            Ok(_) => serde_json::Value::Null,
+        })
+        .collect();
+    let (mut by_chain, mut flagged) = (0usize, 0usize);
+    for (k, p) in c.shots.iter().enumerate() {
+        let h = &hs[k];
+        let found = station_for(h, &refs);
+        // the pair a viewer places with the old way: its station (and target), or the origin
+        let station = found.map_or(zero, |(s, _)| refs[s].pos);
+        let target = match found.and_then(|(_, t)| t) {
+            Some(t) => refs[t].pos,
+            None if h.compass.is_some() => station,
+            // a tap shot with no target: any sideways point lets the old placement run; the fix corrects it
+            None => station.plus(Vec3::new(1.0, 0.0, 0.0)),
+        };
+        let usable = placement(h, station, Some(target)).is_some();
+        let (pair, fix, spot) = match (p.to_survey, usable) {
+            (Some(m), true) => {
+                let fix = display_fix(h, &m, station, Some(target));
+                let spot = m
+                    .apply(cave_capture::capture_to_survey(p.station_point))
+                    .minus(station);
+                (true, fix, Some(spot))
+            }
+            // waiting compass shot in no chain: drawn around its own spot, as before
+            (None, true) if p.source == Source::Waiting && h.compass.is_some() => {
+                (true, Some(cave_capture::Rigid::IDENTITY), Some(zero))
+            }
+            _ => (false, None, None),
+        };
+        if p.source == Source::Chain {
+            by_chain += 1;
+        }
+        if !p.flags.is_empty() {
+            flagged += 1;
+        }
+        let flags: Vec<serde_json::Value> = p
+            .flags
+            .iter()
+            .map(|f| match *f {
+                Flag::LegMisfit { other, lidar_m, survey_m, off_m, limit_m } => serde_json::json!({
+                    "kind": "leg_misfit", "with": label_of(other),
+                    "lidar_m": lidar_m, "survey_m": survey_m, "off_m": off_m, "limit_m": limit_m }),
+                Flag::CardsMisfit { other, residual_m, limit_m } => serde_json::json!({
+                    "kind": "cards_misfit", "with": label_of(other), "off_m": residual_m, "limit_m": limit_m }),
+                Flag::OnePoint { other } => serde_json::json!({ "kind": "one_point", "with": label_of(other) }),
+            })
+            .collect();
+        out[readable[k]] = serde_json::json!({
+            "index": readable[k],
+            "shot_id": h.shot_id,
+            "label": label_of(k),
+            "source": p.source.name(),
+            "placed": matches!(p.source, Source::Chain | Source::CardCompass | Source::Compass | Source::Tap) && p.to_survey.is_some(),
+            "chain": p.chain,
+            "pair": pair.then_some([station.x, station.y, station.z, target.x, target.y, target.z]),
+            "fix": fix.map(|f| serde_json::json!({ "yaw_deg": f.yaw_deg(), "shift": r3(f.shift) })),
+            "spot": spot.map(r3),
+            "turn_deg": p.to_survey.map(|m| m.placement([0.0; 3]).turn_deg),
+            "joined": p.joined.iter().map(|&j| label_of(j)).collect::<Vec<_>>(),
+            "one_point": p.one_point(),
+            "misfit": p.misfit(),
+            "flags": flags,
+        });
+    }
+    let chain_list: Vec<serde_json::Value> = c
+        .chains
+        .iter()
+        .enumerate()
+        .map(|(k, ch)| {
+            serde_json::json!({
+                "k": k,
+                "shots": ch.shots.iter().map(|&m| readable[m]).collect::<Vec<_>>(),
+                "labels": ch.shots.iter().map(|&m| label_of(m)).collect::<Vec<_>>(),
+                "placed": ch.placed,
+            })
+        })
+        .collect();
+    serde_json::json!({
+        "shots": out,
+        "chains": chain_list,
+        "counts": { "shots": heads.len(), "chains": c.chains.len(), "by_chain": by_chain, "flagged": flagged },
+    })
+}
+
+/// See `capture_core.h`.
+///
+/// # Safety
+/// `stations_json` NUL-terminated or null; `bundles` and `lens` null or valid for `n` entries, each
+/// bundle pointer null or valid for its length.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn cc_chains(
+    stations_json: *const c_char,
+    bundles: *const *const u8,
+    lens: *const usize,
+    n: usize,
+) -> CcBuf {
+    guard(
+        || {
+            let (stations, legs) = match unsafe { text(stations_json) } {
+                Err(()) => return err("stations are not valid UTF-8"),
+                Ok(None) => (Vec::new(), Vec::new()),
+                Ok(Some(t)) => match serde_json::from_str::<StationsIn>(t) {
+                    Ok(StationsIn::Plain(s)) => (s, Vec::new()),
+                    Ok(StationsIn::WithLegs { stations, legs }) => (stations, legs),
+                    Err(_) => return err("stations are not JSON"),
+                },
+            };
+            if (bundles.is_null() || lens.is_null()) && n > 0 {
+                return err("no bundles");
+            }
+            let ptrs = unsafe { slice(bundles, n) };
+            let lens = unsafe { slice(lens, n) };
+            // headers only: no mesh or photo is copied
+            let heads: Vec<Result<ShotHeader, String>> = ptrs
+                .iter()
+                .zip(lens)
+                .map(|(&p, &l)| {
+                    if p.is_null() && l > 0 {
+                        return Err("null bundle".to_string());
+                    }
+                    check_header(unsafe { slice(p, l) })
+                        .map(|i| i.header)
+                        .map_err(|e| format!("{e:?}"))
+                })
+                .collect();
+            give_json(chains_json(&heads, &stations, &legs))
         },
         internal,
     )
@@ -1246,6 +1438,141 @@ mod tests {
         }))
         .unwrap();
         assert!(sum["compass"].is_null());
+    }
+
+    /// A compass shot whose frame is turned `yaw_deg` (counter-clockwise) and shifted `at` from the
+    /// survey, seeing `cards` (id, true survey point); its mesh is three points near the camera.
+    fn chain_shot(
+        label: &str,
+        id: &str,
+        yaw_deg: f64,
+        at: [f64; 3],
+        cards: &[(u32, [f64; 3])],
+    ) -> Vec<u8> {
+        let (s, c) = yaw_deg.to_radians().sin_cos();
+        // survey → survey-axis capture: undo the shift, turn back; then to capture axes (x, z, -y)
+        let cap = |p: [f64; 3]| {
+            let (x, y, z) = (p[0] - at[0], p[1] - at[1], p[2] - at[2]);
+            let (ex, ny) = (c * x + s * y, -s * x + c * y);
+            [ex, z, -ny]
+        };
+        let cards: Vec<serde_json::Value> = cards
+            .iter()
+            .map(|&(cid, p)| serde_json::json!({"id": cid, "word": "", "point": cap(p), "corners": [], "sightings": 9, "spread_m": 0.01}))
+            .collect();
+        let h = serde_json::json!({
+            "shot_id": format!("shot-{label}"), "cave_id": "c", "station_id": id, "station_label": label,
+            "captured_at_ms": 0, "device": "t", "instrument_height_m": 0.3, "start_camera": cap([at[0], at[1], at[2]]),
+            "taps": [], "compass": {"true_north": true, "accuracy_deg": 5.0},
+            "tracking": "normal", "arkit_version": "26.1", "gravity": [0, -1, 0], "keyframes": [], "cards": cards,
+        });
+        bundle_of(&h.to_string())
+    }
+
+    fn run_chains(stations: &str, shots: &[&[u8]]) -> serde_json::Value {
+        let st = CString::new(stations).unwrap();
+        let ptrs: Vec<*const u8> = shots.iter().map(|b| b.as_ptr()).collect();
+        let lens: Vec<usize> = shots.iter().map(|b| b.len()).collect();
+        serde_json::from_slice(&read(unsafe {
+            cc_chains(st.as_ptr(), ptrs.as_ptr(), lens.as_ptr(), shots.len())
+        }))
+        .unwrap()
+    }
+
+    const A3: [f64; 3] = [10.0, 20.0, 5.0];
+    const A4: [f64; 3] = [14.0, 23.0, 4.5];
+
+    #[test]
+    fn chains_place_neighbours_and_correct_the_compass() {
+        // T's compass was 10° out; A3 and A4 are both placed, so the chain gives the true heading
+        let s = chain_shot("A3", "a3", 0.0, [10.0, 20.0, 5.3], &[(2, A3), (12, A4)]);
+        let t = chain_shot("A4", "a4", 10.0, [14.0, 23.0, 4.8], &[(2, A4), (26, A3)]);
+        let junk = [1u8, 2, 3];
+        let st = r#"[{"id":"a3","label":"A3","x":10,"y":20,"z":5},{"id":"a4","label":"A4","x":14,"y":23,"z":4.5}]"#;
+        let v = run_chains(st, &[&s, &junk, &t]);
+        assert_eq!(v["counts"]["shots"], 3);
+        assert_eq!(v["counts"]["chains"], 1);
+        assert_eq!(v["counts"]["by_chain"], 2);
+        assert_eq!(v["counts"]["flagged"], 0);
+        assert!(v["shots"][1]["error"].is_string(), "{v}");
+        let t0 = &v["shots"][2];
+        assert_eq!(t0["source"], "chain", "{t0}");
+        assert_eq!(t0["placed"], true);
+        assert_eq!(t0["joined"][0], "A3");
+        assert_eq!(t0["pair"][0], 14.0);
+        let yaw = t0["fix"]["yaw_deg"].as_f64().unwrap();
+        assert!((yaw - 10.0).abs() < 0.5, "{t0}");
+        // its station point (the CURRENT card) lands on A4
+        for k in 0..3 {
+            assert!(t0["spot"][k].as_f64().unwrap().abs() < 0.01, "{t0}");
+        }
+        assert_eq!(v["chains"][0]["shots"], serde_json::json!([0, 2]));
+        assert_eq!(v["chains"][0]["labels"], serde_json::json!(["A3", "A4"]));
+    }
+
+    #[test]
+    fn waiting_chain_floats_round_its_first_shot() {
+        let a7 = [100.0, 50.0, -3.0];
+        let a8 = [103.0, 54.0, -3.5];
+        let s = chain_shot("A7", "", 0.0, [100.0, 50.0, -2.7], &[(2, a7), (12, a8)]);
+        let t = chain_shot("A8", "", 0.0, [103.0, 54.0, -3.2], &[(2, a8), (26, a7)]);
+        let v = run_chains(
+            r#"{"stations":[{"id":"a3","label":"A3","x":10,"y":20,"z":5}],"legs":[]}"#,
+            &[&s, &t],
+        );
+        assert_eq!(v["chains"][0]["placed"], false);
+        let t0 = &v["shots"][1];
+        assert_eq!(t0["source"], "floating");
+        assert_eq!(t0["placed"], false);
+        assert_eq!(
+            t0["pair"],
+            serde_json::json!([0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
+        );
+        let want = [3.0, 4.0, -0.5];
+        for k in 0..3 {
+            assert!(
+                (t0["spot"][k].as_f64().unwrap() - want[k]).abs() < 0.01,
+                "{t0}"
+            );
+        }
+        // A7 arrives: placed through it
+        let v = run_chains(
+            r#"[{"id":"x","label":"a7","x":100,"y":50,"z":-3}]"#,
+            &[&s, &t],
+        );
+        assert_eq!(v["shots"][1]["source"], "chain");
+        assert_eq!(
+            v["shots"][1]["pair"][0], 0.0,
+            "A8 itself is still not in the cave"
+        );
+        assert!((v["shots"][1]["spot"][0].as_f64().unwrap() - 103.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn chains_flag_a_leg_misfit_and_refuse_junk() {
+        let s = chain_shot("A3", "a3", 0.0, [10.0, 20.0, 5.3], &[(2, A3), (12, A4)]);
+        let t = chain_shot("A4", "a4", 0.0, [14.0, 23.0, 4.8], &[(2, A4), (26, A3)]);
+        let st = r#"[{"id":"a3","label":"A3","x":10,"y":20,"z":5},{"id":"a4","label":"A4","x":14.4,"y":23.3,"z":4.5}]"#;
+        let v = run_chains(st, &[&s, &t]);
+        assert_eq!(v["counts"]["chains"], 0);
+        assert_eq!(v["counts"]["flagged"], 2);
+        let f = &v["shots"][0]["flags"][0];
+        assert_eq!(f["kind"], "leg_misfit");
+        assert_eq!(f["with"], "A4");
+        assert!((f["off_m"].as_f64().unwrap() - 0.5).abs() < 0.01, "{f}");
+        assert_eq!(v["shots"][0]["source"], "card+compass");
+        assert_eq!(v["shots"][0]["misfit"], true);
+        let bad = CString::new("nope").unwrap();
+        let out: serde_json::Value = serde_json::from_slice(&read(unsafe {
+            cc_chains(bad.as_ptr(), std::ptr::null(), std::ptr::null(), 0)
+        }))
+        .unwrap();
+        assert!(out["error"].is_string());
+        let out: serde_json::Value = serde_json::from_slice(&read(unsafe {
+            cc_chains(std::ptr::null(), std::ptr::null(), std::ptr::null(), 2)
+        }))
+        .unwrap();
+        assert!(out["error"].is_string());
     }
 
     #[test]
