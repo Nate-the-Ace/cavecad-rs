@@ -300,7 +300,10 @@ pub fn run() {
             capture::capture_link_state,
             capture::capture_link,
             capture::capture_shots,
-            capture::capture_shot_points
+            capture::capture_shot_points,
+            capture::capture_plan_walls,
+            capture::capture_profile_walls,
+            capture::capture_section
         ])
         .run(tauri::generate_context!())
         .expect("the CaveCAD desktop app could not start");

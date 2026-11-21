@@ -9,6 +9,7 @@
 //! Off iOS everything here answers "not available" and the plugin is a no-op.
 
 use cave_capture::chain::{Rigid, Source, chains};
+use cave_capture::slice::{comes_within, mesh_triangles, plan_walls, profile_walls, section};
 use cave_capture::{
     ShotHeader, StationRef, capture_to_survey, check_header, mesh_positions, station_for,
     thin_points,
@@ -371,6 +372,131 @@ pub fn list_shots(root: &Path, cave_id: &str, stations: &[St]) -> Result<Vec<Sho
     Ok(rows)
 }
 
+/// A shot file's path in the cave's folder, refusing anything but a plain `.cvcap` name.
+fn shot_path(root: &Path, cave_id: &str, file: &str) -> Result<PathBuf, String> {
+    if !file.ends_with(".cvcap") || file.contains(['/', '\\']) {
+        return Err("that is not a shot file".into());
+    }
+    let dir = cave_dir(root, cave_id)?;
+    Ok(crate::files::safe_join(&dir, file).ok_or("that is not a shot file")?)
+}
+
+/// A placed shot as the web view passes it back (from its [`ShotRow`]).
+#[derive(Clone, Debug, Deserialize)]
+pub struct Placed {
+    /// File name inside the cave's folder.
+    pub file: String,
+    /// `[yaw rad, shift x, y, z]`, as its row has it.
+    pub rigid: [f64; 4],
+    /// Its anchor, as its row has it.
+    pub anchor: [f64; 3],
+}
+
+/// A placed shot's mesh with the same placement as [`shot_points`] (survey axes, `rigid` applied),
+/// minus `origin`; positions xyz f32 and triangle indices. Photos and normals are never read.
+pub fn placed_mesh(
+    root: &Path,
+    cave_id: &str,
+    file: &str,
+    rigid: [f64; 4],
+    origin: [f64; 3],
+) -> Result<(Vec<f32>, Vec<u32>), String> {
+    let m = map_file(&shot_path(root, cave_id, file)?)?;
+    let (info, positions, indices) = mesh_triangles(&m).map_err(|e| format!("{e:?}"))?;
+    if info.header.cave_id != cave_id {
+        return Err("another cave's shot".into());
+    }
+    let r = Rigid {
+        yaw: rigid[0],
+        shift: Vec3::new(rigid[1], rigid[2], rigid[3]),
+    };
+    let mut rel = Vec::with_capacity(positions.len());
+    for c in positions.as_chunks::<3>().0 {
+        let q = r.apply(capture_to_survey([c[0] as f64, c[1] as f64, c[2] as f64]));
+        rel.extend_from_slice(&[
+            (q.x - origin[0]) as f32,
+            (q.y - origin[1]) as f32,
+            (q.z - origin[2]) as f32,
+        ]);
+    }
+    Ok((rel, indices))
+}
+
+/// Polylines rounded to the millimetre (smaller to send; the slice is simplified to 1 cm anyway).
+fn to_mm(lines: Vec<Vec<[f64; 2]>>) -> Vec<Vec<[f64; 2]>> {
+    lines
+        .into_iter()
+        .map(|l| l.into_iter().map(|p| [mm(p[0]), mm(p[1])]).collect())
+        .collect()
+}
+
+/// A placed shot's plan walls: its mesh cut level at `height_m` above its anchor (0 = the
+/// station's own height), as `[east, north]` polylines in metres from the anchor.
+pub fn plan_walls_of(
+    root: &Path,
+    cave_id: &str,
+    shot: &Placed,
+    height_m: f64,
+) -> Result<Vec<Vec<[f64; 2]>>, String> {
+    let (p, i) = placed_mesh(root, cave_id, &shot.file, shot.rigid, shot.anchor)?;
+    Ok(to_mm(plan_walls(&p, &i, height_m)))
+}
+
+/// A placed shot's profile walls: its mesh cut by the vertical plane through its anchor along the
+/// ground direction `along` (`[east, north]`, the band's at that station), as `[s, dz]` polylines:
+/// metres along `along` and up from the anchor.
+pub fn profile_walls_of(
+    root: &Path,
+    cave_id: &str,
+    shot: &Placed,
+    along: [f64; 2],
+) -> Result<Vec<Vec<[f64; 2]>>, String> {
+    let (p, i) = placed_mesh(root, cave_id, &shot.file, shot.rigid, shot.anchor)?;
+    Ok(to_mm(profile_walls(&p, &i, [along[0], along[1], 0.0])))
+}
+
+/// How near a shot's points must come to a station to cut its cross section, metres.
+pub const SECTION_REACH_M: f64 = 3.0;
+
+/// A cross section cut from the LiDAR rooms.
+#[derive(Debug, Default, Serialize, PartialEq)]
+pub struct SectionCut {
+    /// `[across, up]` polylines, metres from the station.
+    pub lines: Vec<Vec<[f64; 2]>>,
+    /// Shots that gave at least one line.
+    pub shots: usize,
+}
+
+/// The cross section at the station at `at` (survey metres) in the plane of `right` and `up` (the
+/// section panel's own frame), cut from every placed shot whose points come within
+/// [`SECTION_REACH_M`] of it, so a neighbouring room counts too. A shot that cannot be read is
+/// skipped.
+pub fn section_of(
+    root: &Path,
+    cave_id: &str,
+    shots: &[Placed],
+    at: [f64; 3],
+    right: [f64; 3],
+    up: [f64; 3],
+) -> Result<SectionCut, String> {
+    cave_dir(root, cave_id)?;
+    let mut out = SectionCut::default();
+    for sh in shots {
+        let Ok((p, i)) = placed_mesh(root, cave_id, &sh.file, sh.rigid, at) else {
+            continue;
+        };
+        if !comes_within(&p, [0.0; 3], SECTION_REACH_M) {
+            continue;
+        }
+        let lines = section(&p, &i, right, up);
+        if !lines.is_empty() {
+            out.shots += 1;
+            out.lines.extend(to_mm(lines));
+        }
+    }
+    Ok(out)
+}
+
 /// A placed shot's points: `rigid` (from its row) applied to the survey-axis capture points,
 /// minus `anchor`, thinned on a `cell_m` grid; x y z f32 per point.
 pub fn shot_points(
@@ -381,12 +507,7 @@ pub fn shot_points(
     anchor: [f64; 3],
     cell_m: f32,
 ) -> Result<Vec<f32>, String> {
-    if !file.ends_with(".cvcap") || file.contains(['/', '\\']) {
-        return Err("that is not a shot file".into());
-    }
-    let dir = cave_dir(root, cave_id)?;
-    let path = crate::files::safe_join(&dir, file).ok_or("that is not a shot file")?;
-    let m = map_file(&path)?;
+    let m = map_file(&shot_path(root, cave_id, file)?)?;
     let (info, positions) = mesh_positions(&m).map_err(|e| format!("{e:?}"))?;
     if info.header.cave_id != cave_id {
         return Err("another cave's shot".into());
@@ -450,6 +571,50 @@ pub async fn capture_shot_points(
         bytes.extend_from_slice(&v.to_le_bytes());
     }
     Ok(Response::new(bytes))
+}
+
+/// One placed shot's plan walls (see [`plan_walls_of`]).
+#[tauri::command]
+pub async fn capture_plan_walls(
+    linked: State<'_, Linked>,
+    cave_id: String,
+    shot: Placed,
+    height_m: f64,
+) -> Result<Vec<Vec<[f64; 2]>>, String> {
+    let root = root_of(&linked)?;
+    tauri::async_runtime::spawn_blocking(move || plan_walls_of(&root, &cave_id, &shot, height_m))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// One placed shot's profile walls (see [`profile_walls_of`]).
+#[tauri::command]
+pub async fn capture_profile_walls(
+    linked: State<'_, Linked>,
+    cave_id: String,
+    shot: Placed,
+    along: [f64; 2],
+) -> Result<Vec<Vec<[f64; 2]>>, String> {
+    let root = root_of(&linked)?;
+    tauri::async_runtime::spawn_blocking(move || profile_walls_of(&root, &cave_id, &shot, along))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// The LiDAR cross section at a station (see [`section_of`]).
+#[tauri::command]
+pub async fn capture_section(
+    linked: State<'_, Linked>,
+    cave_id: String,
+    shots: Vec<Placed>,
+    at: [f64; 3],
+    right: [f64; 3],
+    up: [f64; 3],
+) -> Result<SectionCut, String> {
+    let root = root_of(&linked)?;
+    tauri::async_runtime::spawn_blocking(move || section_of(&root, &cave_id, &shots, at, right, up))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 #[cfg(test)]
@@ -608,6 +773,152 @@ mod tests {
         assert!(shot_points(&root, "cave1", "../x.cvcap", r, a, 0.1).is_err());
         assert!(shot_points(&root, "cave1", "s1.thumb.png", r, a, 0.1).is_err());
         assert!(shot_points(&root, "..", "s1.cvcap", r, a, 0.1).is_err());
+    }
+
+    /// A shot whose mesh is a closed box, capture frame (y up): `lo`..`hi` as x, y, z.
+    fn box_shot(lo: [f32; 3], hi: [f32; 3]) -> Vec<u8> {
+        let mut header: ShotHeader = serde_json::from_str(COMPASS).unwrap();
+        header.captured_at_ms = 2000;
+        let mut positions = Vec::new();
+        for i in 0..8 {
+            positions.extend([
+                if i & 1 == 0 { lo[0] } else { hi[0] },
+                if i & 2 == 0 { lo[1] } else { hi[1] },
+                if i & 4 == 0 { lo[2] } else { hi[2] },
+            ]);
+        }
+        let quads = [
+            [0, 1, 3, 2],
+            [4, 6, 7, 5],
+            [0, 4, 5, 1],
+            [2, 3, 7, 6],
+            [0, 2, 6, 4],
+            [1, 5, 7, 3],
+        ];
+        let indices: Vec<u32> = quads
+            .iter()
+            .flat_map(|q| [q[0], q[1], q[2], q[0], q[2], q[3]])
+            .collect();
+        encode(&Shot {
+            header,
+            normals: vec![0.0; positions.len()],
+            positions,
+            indices,
+            keyframes: vec![],
+        })
+        .unwrap()
+    }
+
+    fn bbox(lines: &[Vec<[f64; 2]>]) -> [f64; 4] {
+        let mut b = [f64::MAX, f64::MAX, f64::MIN, f64::MIN];
+        for p in lines.iter().flatten() {
+            b = [
+                b[0].min(p[0]),
+                b[1].min(p[1]),
+                b[2].max(p[0]),
+                b[3].max(p[1]),
+            ];
+        }
+        b
+    }
+
+    fn same(a: [f64; 4], b: [f64; 4]) -> bool {
+        a.iter().zip(&b).all(|(x, y)| (x - y).abs() < 0.002)
+    }
+
+    #[test]
+    fn capture_walls_and_sections_slice_the_placed_room() {
+        let root = tmp("slice");
+        // a room 4 m by 3 m in capture x/z, floor 1 m below the camera start, ceiling 2 m above
+        fs::write(
+            root.join("cave1/s1.cvcap"),
+            box_shot([-2.0, -1.0, -1.5], [2.0, 2.0, 1.5]),
+        )
+        .unwrap();
+        let rows = list_shots(&root, "cave1", &stations()).unwrap();
+        let r = &rows[0];
+        let shot = Placed {
+            file: r.file.clone(),
+            rigid: r.rigid.unwrap(),
+            anchor: r.anchor.unwrap(),
+        };
+        // the walls follow the room's points exactly as the rooms layer places them
+        let pts = shot_points(&root, "cave1", "s1.cvcap", shot.rigid, shot.anchor, 0.0).unwrap();
+        let (mut lo, mut hi) = ([f32::MAX; 3], [f32::MIN; 3]);
+        for c in pts.as_chunks::<3>().0 {
+            for k in 0..3 {
+                lo[k] = lo[k].min(c[k]);
+                hi[k] = hi[k].max(c[k]);
+            }
+        }
+        let want = [lo[0], lo[1], hi[0], hi[1]].map(f64::from);
+        let plan = plan_walls_of(&root, "cave1", &shot, 0.0).unwrap();
+        assert_eq!(plan.len(), 1, "{plan:?}");
+        assert_eq!(plan[0].first(), plan[0].last(), "closed");
+        assert!(same(bbox(&plan), want), "{:?} vs {want:?}", bbox(&plan));
+        assert!(
+            plan_walls_of(&root, "cave1", &shot, 10.0)
+                .unwrap()
+                .is_empty()
+        );
+
+        // a section: across is east, up is up; the room is cut through the station
+        let st = stations();
+        let at = [st[0].x, st[0].y, st[0].z];
+        let cut = section_of(
+            &root,
+            "cave1",
+            std::slice::from_ref(&shot),
+            at,
+            [1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0],
+        )
+        .unwrap();
+        assert_eq!(cut.shots, 1);
+        let b = bbox(&cut.lines);
+        let a = shot.anchor;
+        assert!(same(
+            [b[0], b[1], b[2], b[3]],
+            [
+                f64::from(lo[0]) + a[0] - at[0],
+                f64::from(lo[2]) + a[2] - at[2],
+                f64::from(hi[0]) + a[0] - at[0],
+                f64::from(hi[2]) + a[2] - at[2]
+            ]
+        ));
+        // a station 10 m off: the room is out of reach
+        let far = section_of(
+            &root,
+            "cave1",
+            std::slice::from_ref(&shot),
+            [st[1].x, st[1].y, st[1].z],
+            [1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0],
+        )
+        .unwrap();
+        assert_eq!(far, SectionCut::default());
+
+        // profile walls looking north: floor and ceiling heights of the room, its north-south length
+        let prof = profile_walls_of(&root, "cave1", &shot, [0.0, 1.0]).unwrap();
+        let b = bbox(&prof);
+        assert!(
+            same(
+                b,
+                [
+                    f64::from(lo[1]),
+                    f64::from(lo[2]),
+                    f64::from(hi[1]),
+                    f64::from(hi[2])
+                ]
+            ),
+            "{b:?}"
+        );
+        // an unreadable or foreign file is an error, not a panic
+        let bad = Placed {
+            file: "../x.cvcap".into(),
+            ..shot
+        };
+        assert!(plan_walls_of(&root, "cave1", &bad, 0.0).is_err());
     }
 
     #[test]
