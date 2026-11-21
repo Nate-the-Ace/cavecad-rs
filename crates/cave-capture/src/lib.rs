@@ -8,6 +8,7 @@ pub mod frame;
 pub mod passes;
 pub mod place;
 pub mod shared;
+pub mod slice;
 pub mod stations;
 pub mod thin;
 
