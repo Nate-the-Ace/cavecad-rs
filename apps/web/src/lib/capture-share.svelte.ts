@@ -50,7 +50,10 @@ function schedule() {
   } else {
     lastChangeAt = Date.now();
   }
-  timer = setTimeout(() => void publishOpen(), opened ? 0 : 2000);
+  timer = setTimeout(() => {
+    timer = undefined;
+    void publishOpen();
+  }, opened ? 0 : 2000);
 }
 
 /** The shelf's other caves with a room, one at a time, idle between. */
@@ -78,5 +81,15 @@ export async function startCaptureShare(): Promise<void> {
       untrack(schedule);
     });
   });
+  // Switching to Capture right after an edit: iOS pauses this page before the 2 s wait ends, so a station just
+  // surveyed would not reach Capture. Leaving the app writes what is waiting at once.
+  const flush = () => {
+    if (document.visibilityState !== 'hidden' || timer === undefined) return;
+    clearTimeout(timer);
+    timer = undefined;
+    void publishOpen();
+  };
+  document.addEventListener('visibilitychange', flush);
+  window.addEventListener('pagehide', flush);
   void publishShelf();
 }
