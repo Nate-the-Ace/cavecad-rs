@@ -54,6 +54,7 @@ class CaptureLinkPlugin: Plugin, UIDocumentPickerDelegate {
       add[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
       st = SecItemAdd(add as CFDictionary, nil)
     }
+    NSLog("[capture-link] writeStations cave=%@ bytes=%d group=%@ status=%d", a.caveId, data.count, Self.group, st)
     if st == errSecSuccess {
       invoke.resolve(["bytes": data.count])
     } else {
@@ -63,6 +64,7 @@ class CaptureLinkPlugin: Plugin, UIDocumentPickerDelegate {
 
   @objc public func deleteStations(_ invoke: Invoke) throws {
     let a = try invoke.parseArgs(CaveArgs.self)
+    NSLog("[capture-link] deleteStations cave=%@", a.caveId)
     let st = SecItemDelete(Self.base(a.caveId) as CFDictionary)
     if st == errSecSuccess || st == errSecItemNotFound {
       invoke.resolve([:])
@@ -155,5 +157,6 @@ class CaptureLinkPlugin: Plugin, UIDocumentPickerDelegate {
 
 @_cdecl("init_plugin_capture_link")
 func initPlugin() -> Plugin {
+  NSLog("[capture-link] plugin loaded, group %@", CaptureLinkPlugin.group)
   return CaptureLinkPlugin()
 }
