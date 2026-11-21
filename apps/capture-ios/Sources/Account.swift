@@ -93,13 +93,22 @@ final class Account: NSObject, ObservableObject, ASWebAuthenticationPresentation
         email = (me["member"] as? [String: Any])?["email"] as? String ?? me["email"] as? String
     }
 
-    /// Signs out and forgets the caves kept on the phone. Captured shots (Documents/shots) stay.
+    /// Signs out (the "Sign out" button) and forgets the caves kept on the phone. Captured shots (Documents/shots)
+    /// stay.
     func signOut() {
+        signInEnded()
+        problem = nil
+        CaveStore.forgetKept()
+    }
+
+    /// The server said the sign-in ended (a 401: token expired or revoked): signed out, but the caves kept on the
+    /// phone stay, so a cave trip without signal still has its offline copies. Signing in again carries on.
+    func signInEnded() {
         Keychain.delete()
         token = nil
         email = nil
         deviceId = nil
-        CaveStore.forgetKept()
+        problem = "Your sign-in ended. Sign in again to sync; the caves kept on this phone stay."
     }
 
     /// This phone's id as a CaveCAD device. The server's cave calls all name one (`X-Cave-Device`); it is
@@ -147,18 +156,18 @@ final class Account: NSObject, ObservableObject, ASWebAuthenticationPresentation
         return req
     }
 
-    /// An authenticated GET. Throws on no connection or a refusal; a 401 signs out.
+    /// An authenticated GET. Throws on no connection or a refusal; a 401 ends the sign-in (kept caves stay).
     func get(_ path: String, query: [URLQueryItem] = [], device: Bool = true) async throws -> Data {
         let (data, resp) = try await URLSession.shared.data(for: authorized(path, query: query, device: device))
         try check(resp)
         return data
     }
 
-    /// Throws unless the answer is a success; a 401 (the sign-in ended) signs out.
+    /// Throws unless the answer is a success; a 401 (the sign-in ended) signs out but keeps the kept caves.
     func check(_ resp: URLResponse) throws {
         let status = (resp as? HTTPURLResponse)?.statusCode ?? 0
         Log.write("http", "\(resp.url?.path ?? "?") -> \(status)")
-        if status == 401 { signOut() }
+        if status == 401 { signInEnded() }
         guard (200..<300).contains(status) else { throw URLError(.badServerResponse) }
     }
 

@@ -54,3 +54,18 @@ final class SignOutTests: XCTestCase {
         XCTAssertTrue(store.keptIds.isEmpty)
     }
 }
+
+@MainActor
+final class SignInEndedTests: XCTestCase {
+    func testSignInEndingKeepsKeptCaves() throws {
+        let k = KeptCave(id: "kept-ended-cave", name: "Test", snapshot: nil, entries: [], last: 0, keptAt: Date())
+        let url = CaveStore.folder.appendingPathComponent("kept-ended-cave.json")
+        try JSONEncoder().encode(k).write(to: url)
+        defer { try? FileManager.default.removeItem(at: url) }
+        let account = Account()
+        account.signInEnded()
+        XCTAssertNil(account.token)
+        XCTAssertNotNil(account.problem, "says the sign-in ended")
+        XCTAssertTrue(CaveStore.keptIdsOnDisk().contains("kept-ended-cave"), "a 401 never deletes the offline copies")
+    }
+}
