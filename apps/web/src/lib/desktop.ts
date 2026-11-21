@@ -95,3 +95,48 @@ export const updatePrepareNative = (base: string, token: string, channel: 'stabl
 
 /** Installs the update `updatePrepareNative` kept, and restarts into it. */
 export const updateInstallNative = (): Promise<void> => call('update_install');
+
+// ---- CaveCAD Capture on the same iPhone or iPad (src-tauri/src/capture.rs, tauri-plugin-capture-link) ----
+
+/** True only in CaveCAD on iPhone and iPad, where Capture can be linked. */
+export const captureLinkAvailable = async (): Promise<boolean> => isDesktop() && (await call<boolean>('capture_link_available').catch(() => false));
+
+/** Writes one cave's shared stations JSON into the keychain group shared with Capture. The bytes written, or null when unchanged. */
+export const captureShareStations = (caveId: string, json: string): Promise<number | null> => call('capture_share_stations', { caveId, json });
+
+/** Deletes one cave's shared stations (the cave left this device). */
+export const captureForgetStations = (caveId: string): Promise<void> => call('capture_forget_stations', { caveId });
+
+/** Where the link to Capture's shots folder stands. */
+export type CaptureLinkState = { linked: boolean; stale: boolean; problem: string };
+
+/** Resolves the remembered Capture folder (cheap: call on every focus). */
+export const captureLinkState = (): Promise<CaptureLinkState> => call('capture_link_state');
+
+/** Shows the Files picker to link Capture's folder. */
+export const captureLink = (): Promise<CaptureLinkState> => call('capture_link');
+
+/** One shot file of the open cave, placed as Capture places it. */
+export type ShotRow = {
+  file: string;
+  shotId: string;
+  label: string;
+  capturedAtMs: number;
+  modifiedMs: number;
+  status: 'placed' | 'waiting' | 'gone' | 'unreadable';
+  source: string;
+  /** The station the room follows in the view; null when drawn at `anchor` only. */
+  stationId: string | null;
+  anchor: [number, number, number] | null;
+  /** [yaw rad, shift x, y, z]: survey-axis capture points to survey. */
+  rigid: [number, number, number, number] | null;
+  vertices: number;
+};
+
+/** The open cave's shots in Capture's folder. `stations` are the shared stations (`engine.captureStations`). */
+export const captureShots = (caveId: string, stations: { id: string; label: string; x: number; y: number; z: number }[]): Promise<ShotRow[]> =>
+  call('capture_shots', { caveId, stations });
+
+/** One placed shot's points, thinned on `cellM`, relative to its anchor (x y z per point). */
+export const captureShotPoints = async (caveId: string, file: string, rigid: number[], anchor: number[], cellM: number): Promise<Float32Array> =>
+  new Float32Array(await call<ArrayBuffer>('capture_shot_points', { caveId, file, rigid, anchor, cellM }));

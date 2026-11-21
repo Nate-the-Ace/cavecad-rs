@@ -20,6 +20,8 @@
   import { closeCycle, offerStack, type Candidate } from '../lib/cycle.svelte';
   import { snap, clearPick, cycle, escapePick, pickBuiltUp, toggleSnap } from '../lib/snap.svelte';
   import SnapButton from './SnapButton.svelte';
+  import { captureRooms, captureShots, linkCaptureShots } from '../lib/capture-shots.svelte';
+  import { roomAt } from '../lib/capture-pure';
   import { cave, changed, filter, haloFade, haloReach, option, setOption, selectedIds, selectIds, toggleSelected, setPick, setShowSections, setShown, wireFilter, toolStyle } from '../lib/cave.svelte';
   import { tolerancePx } from '../lib/commands';
   import { ViewCube } from '../lib/viewport/view-cube';
@@ -430,6 +432,23 @@
     }
   }
 
+  // LiDAR rooms from CaveCAD Capture on this phone: each sits on its station as the view shows it (Adjusted or not).
+  $effect(() => {
+    const list = captureRooms.layers;
+    const sc = scene;
+    const on = option('captureRooms', true);
+    if (!viewReady || !view) return;
+    const shown = new Map((sc?.stations ?? []).map((s) => [s.id, s.at] as [string, [number, number, number]]));
+    const rooms = list.flatMap((l) => {
+      const at = roomAt(l, shown);
+      return at ? [{ key: l.key, at, points: l.points, color: l.color }] : [];
+    });
+    untrack(() => {
+      view?.setCaptureRooms(rooms);
+      view?.setShowCaptureRooms(on);
+    });
+  });
+
   // Every edit (a notebook reading, a station, an undo) redraws the survey, without re-framing it.
   let rereadFrame = 0;
   $effect(() => {
@@ -667,6 +686,17 @@
             <label title="Contour lines of the ground; the thicker ones are labelled with their height"><input type="checkbox" checked={option('surfaceContours', true)} onchange={(e) => setOption('surfaceContours', e.currentTarget.checked)} /> Contours</label>
             <label title="The ground as a see-through surface, best seen from the side"><input type="checkbox" checked={option('surfaceTerrain', false)} onchange={(e) => setOption('surfaceTerrain', e.currentTarget.checked)} /> Terrain</label>
           {/if}
+          {#if captureShots.available}
+            {@const n = captureShots.rows}
+            <h4>LiDAR rooms</h4>
+            {#if captureShots.linked}
+              <label title="The rooms scanned with CaveCAD Capture on this phone, each on its station"><input type="checkbox" checked={option('captureRooms', true)} onchange={(e) => setOption('captureRooms', e.currentTarget.checked)} /> Rooms</label>
+              <p class="note">{n.filter((r) => r.status === 'placed').length} placed · {n.filter((r) => r.status === 'waiting').length} waiting for station · {n.filter((r) => r.status === 'gone').length} station gone</p>
+            {/if}
+            {#if captureShots.problem}<p class="note warn">{captureShots.problem}</p>{/if}
+            <button title="Pick CaveCAD Capture's folder in Files (On My iPhone › Capture) so its rooms show here" onclick={() => void linkCaptureShots()}>{captureShots.linked ? 'Link again…' : 'Link Capture shots…'}</button>
+            <p class="note">Read from CaveCAD Capture on this phone. Nothing is uploaded or saved into the cave.</p>
+          {/if}
           <h4>Types</h4>
           {#each listed as t}
             <label><input type="checkbox" checked={!filter.hiddenTypes.includes(t.key)} onchange={(e) => (setShown('types', t.key, e.currentTarget.checked), refresh())} /> <span class="sw" style:background={swatch(t.key).color}></span>{t.label}</label>
@@ -740,4 +770,6 @@
   .pop { position: absolute; top: calc(100% + 10px); left: 0; z-index: 5; min-width: 200px; max-height: 60vh; overflow: auto; display: flex; flex-direction: column; gap: 4px; padding: 8px 10px; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: 0 6px 20px rgb(0 0 0 / 0.25); }
   .pop h4 { margin: 4px 0 0; font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); }
   .pop label { color: var(--text); }
+  .pop .note { margin: 0; font-size: 11px; color: var(--muted); max-width: 220px; }
+  .pop .note.warn { color: var(--warn, #c60); }
 </style>

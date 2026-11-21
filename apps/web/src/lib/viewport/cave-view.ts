@@ -234,6 +234,7 @@ export class CaveView {
     this.persp.position.copy(viewDirection(HOME_DIR).multiplyScalar(50));
     this.scene.add(this.content);
     this.scene.add(this.surfaceGroup);
+    this.scene.add(this.captureGroup);
     this.scene.add(new THREE.AmbientLight(0xffffff, 0.9));
     this.scene.add(this.headlamp);
     this.controls = new OrbitControls(this.persp, canvas);
@@ -682,6 +683,7 @@ export class CaveView {
     ray.setFromCamera(new THREE.Vector2(0, 0), this.camera);
     const targets: THREE.Object3D[] = [this.content];
     if (this.passage) targets.push(this.passage);
+    if (this.captureGroup.visible && this.captureGroup.children.length) targets.push(this.captureGroup);
     const hit = ray.intersectObjects(targets, true).find((h) => h.object.visible);
     if (!hit) return;
     const offset = this.camera.position.clone().sub(this.controls.target);
@@ -1098,6 +1100,46 @@ export class CaveView {
       this.passage.visible = this.showPassage;
       this.scene.add(this.passage);
     }
+    this.requestRender();
+  }
+
+  // ---- LiDAR rooms from CaveCAD Capture on the same phone (lib/capture-shots.svelte.ts) ----
+
+  /** The rooms: one THREE.Points each, its points relative to its object position (its station). Kept out of fit(). */
+  private captureGroup = new THREE.Group();
+  private showCapture = true;
+
+  /** Shows the LiDAR rooms. A room whose key is unchanged keeps its geometry and only moves to `at`. */
+  setCaptureRooms(list: { key: string; at: [number, number, number]; points: Float32Array; color: number }[]) {
+    const want = new Map(list.map((r) => [r.key, r]));
+    for (const c of [...this.captureGroup.children]) {
+      if (want.has(c.name)) continue;
+      const p = c as THREE.Points;
+      this.captureGroup.remove(p);
+      p.geometry.dispose();
+      (p.material as THREE.Material).dispose();
+    }
+    const have = new Map(this.captureGroup.children.map((c) => [c.name, c]));
+    for (const r of list) {
+      let p = have.get(r.key);
+      if (!p) {
+        const g = new THREE.BufferGeometry();
+        g.setAttribute('position', new THREE.BufferAttribute(r.points, 3));
+        g.computeBoundingSphere();
+        const m = new THREE.PointsMaterial({ color: r.color, size: 2.5, sizeAttenuation: false });
+        p = new THREE.Points(g, m);
+        p.name = r.key;
+        this.captureGroup.add(p);
+      }
+      p.position.set(r.at[0], r.at[1], r.at[2]);
+    }
+    this.captureGroup.visible = this.showCapture;
+    this.requestRender();
+  }
+
+  setShowCaptureRooms(on: boolean) {
+    this.showCapture = on;
+    this.captureGroup.visible = on;
     this.requestRender();
   }
 
@@ -2427,6 +2469,7 @@ export class CaveView {
   }
 
   dispose() {
+    this.setCaptureRooms([]);
     cancelAnimationFrame(this.pending);
     cancelAnimationFrame(this.anim);
     this.controls.dispose();

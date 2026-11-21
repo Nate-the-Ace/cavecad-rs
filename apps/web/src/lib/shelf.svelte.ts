@@ -9,6 +9,7 @@ import { readOnly } from './readonly';
 import { engine, type CaveSummary } from './engine';
 import { currentHome, folder, type Home } from './cavefolder.svelte';
 import type { Dir } from './folder-handle';
+import { captureForgetStations, isDesktop } from './desktop';
 
 export interface ShelfRecord {
   id: string;
@@ -231,6 +232,9 @@ export async function setRecordHome(id: string, home: Home | null) {
 
 /** Removes a cave from the shelf (only the copy kept in this browser). */
 export async function forgetCave(id: string) {
+  // CaveCAD on iPhone/iPad: Capture on this device no longer gets this cave's stations (a no-op elsewhere)
+  const room = shelf.records.find((r) => r.id === id)?.roomId;
+  if (room && isDesktop()) void captureForgetStations(room).catch(() => {});
   try {
     const d = await db();
     const tx = d.transaction(['meta', 'dxf', 'homes'], 'readwrite');

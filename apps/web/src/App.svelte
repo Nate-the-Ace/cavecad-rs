@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { startCaptureShare } from './lib/capture-share.svelte';
+  import { startCaptureShots } from './lib/capture-shots.svelte';
   import { selectAllInLastView } from './lib/select-all';
   import SnapMenu from './components/SnapMenu.svelte';
   import { copyEvent, deleteSelection, pasteEvent } from './lib/view-clip.svelte';
@@ -163,6 +165,7 @@
         engineReady = true;
         syncDrawing();
         await loadShelf();
+        void startCaptureShare().then(startCaptureShots); // CaveCAD on iPhone/iPad: stations to Capture, its LiDAR rooms back
         // A clean slate: the shelf opens first (an old live link opens it from the moved page instead).
         if (!cave.hasCave && shelf.startup && !moved) shelf.open = true;
         const shot = shotPanel(); // Handbook screenshot capture (development builds only)
