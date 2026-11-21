@@ -61,6 +61,21 @@ per station.
   licensed detector, so no network or heavy library); the printable card sheet ships with the app and,
   later, from CaveCAD.
 
+## Stations not on the server yet (Nathan, 2026-11-21)
+
+A shot can be taken at a station the server has not seen yet (surveyed earlier on the same trip, with no
+signal). Two ways in, both:
+
+- **From CaveCAD on the same phone:** Capture reads CaveCAD's offline copy of the cave through the shared App
+  Group folder, so stations surveyed in CaveCAD on this trip appear in the picker with their positions.
+- **Typed:** an "Other station…" entry where the label is typed (paper notes, another device). The shot is
+  saved **waiting for station**: its compass reading and cards are kept, its position is not known.
+
+A waiting shot is placed by itself once its station label appears in the cave Capture has (shared folder,
+"Get latest", or a later download): placement is derived, so nothing is redone. Labels are matched as typed,
+ignoring case and spaces. Waiting shots are listed as such and upload with the rest once uploads exist
+(build-order step 5).
+
 ## Hard limits (stated, not solved)
 
 - **Range.** iPhone LiDAR is good to about 5 m. Bigger rooms need more shots. The app shows where nothing
