@@ -77,7 +77,14 @@ struct StationPickView: View {
     @State var cave: KeptCave
     let store: CaveStore
     @EnvironmentObject private var sync: ShotSync
+    /// The stations to stand over: the kept copy's merged with CaveCAD's on this phone (`SharedStore.merge`). Waiting
+    /// shots, chains and the saved list all resolve against this list.
     @State private var stations: [Station] = []
+    /// The kept copy's own stations (from the core), before the merge.
+    @State private var keptStations: [Station] = []
+    /// Ids of stations only CaveCAD on this phone has (not in the kept copy yet).
+    @State private var fromCaveCAD: Set<String> = []
+    @Environment(\.scenePhase) private var phase
     /// The cave's stations have been read (an empty list is then real: a new cave with no stations yet, where
     /// every shot is a typed, waiting one), as opposed to not read yet.
     @State private var stationsLoaded = false
@@ -108,8 +115,13 @@ struct StationPickView: View {
                     picker($over)
                     Button("Other station…") { typed = ""; askOther = true }
                 } footer: {
-                    if let o = over, o.isWaiting {
-                        Text("\(o.label) is not in this copy of the cave yet. The shot is saved waiting for its station and placed once the cave has it.")
+                    VStack(alignment: .leading, spacing: 6) {
+                        if let o = over, o.isWaiting {
+                            Text("\(o.label) is not in this copy of the cave yet. The shot is saved waiting for its station and placed once the cave has it.")
+                        }
+                        if !fromCaveCAD.isEmpty {
+                            Text("\(fromCaveCAD.count) station\(fromCaveCAD.count == 1 ? "" : "s") marked \u{201C}from CaveCAD on this phone\u{201D} \(fromCaveCAD.count == 1 ? "was" : "were") added in CaveCAD here and \(fromCaveCAD.count == 1 ? "is" : "are") not in this copy of the cave yet. Shots over \(fromCaveCAD.count == 1 ? "it" : "them") are placed as usual.")
+                        }
                     }
                 }
             } else if saved.isEmpty {
@@ -184,7 +196,8 @@ struct StationPickView: View {
         #endif
         .navigationTitle(cave.name)
         // when this cave was last downloaded to the phone (the kept offline copy)
-        .modifier(Subtitle(text: "Last Synced on: \(cave.keptAt.formatted(.dateTime.month(.twoDigits).day(.twoDigits).year(.twoDigits)))"))
+        .modifier(Subtitle(text: cave.isOnlyInCaveCAD ? "Only in CaveCAD on this phone"
+                           : "Last Synced on: \(cave.keptAt.formatted(.dateTime.month(.twoDigits).day(.twoDigits).year(.twoDigits)))"))
         .confirmationDialog("Delete all \(saved.count) shots of \(cave.name) from this device and the server?", isPresented: $askDeleteAll,
                             titleVisibility: .visible) {
             Button("Delete all shots", role: .destructive) {
@@ -214,7 +227,12 @@ struct StationPickView: View {
         .refreshable { sync.kick(cave.id) }
         .onChange(of: sync.revisions[cave.id]) { Task { await loadSaved() } }
         .onChange(of: problem) { _, p in if let p { Log.write("stations", p) } }
-        .onAppear { if stationsLoaded { Task { await loadSaved() } } }
+        .onAppear { if stationsLoaded { Task { await mergeShared(); await loadSaved() } } }
+        // back from CaveCAD (or anywhere): its stations may have changed. Not under the capture screen: the pick it
+        // was opened with stays put until it is closed (onAppear merges then).
+        .onChange(of: phase) { _, p in
+            if p == .active, stationsLoaded, !capturing { Task { if await mergeShared() { await loadSaved() } } }
+        }
     }
 
     /// A typed label: the cave's station with that label, else a waiting one. Nil (nothing picked) when the
@@ -268,14 +286,28 @@ struct StationPickView: View {
     private func loadStations() async {
         let snapshot = cave.snapshot, entries = cave.entries
         do {
-            let s = try await Task.detached { try Core.stations(snapshot: snapshot, entries: entries) }.value
-            stations = s
+            keptStations = try await Task.detached { try Core.stations(snapshot: snapshot, entries: entries) }.value
             problem = nil
-            // keep picks that still exist in the newer copy; a waiting pick becomes the station once it has come
-            if let o = over { over = o.isWaiting ? (StationLabel.find(o.label, in: s) ?? o) : s.first(where: { $0.id == o.id }) }
-        } catch { problem = error.localizedDescription }
+        } catch { keptStations = []; problem = error.localizedDescription }
+        await mergeShared(log: true)
         stationsLoaded = true
         await loadSaved()
+    }
+
+    /// Merges CaveCAD's shared stations (read from the keychain again) into the kept ones; true when the list
+    /// changed (the caller then reads the saved shots again). Logged when it changed, or always with `log`.
+    @discardableResult
+    private func mergeShared(log: Bool = false) async -> Bool {
+        let caveId = cave.id, kept = keptStations, keptAt = cave.keptAt
+        let m = await Task.detached { SharedStore.merge(kept: kept, shared: SharedStore.of(cave: caveId), keptAt: keptAt) }.value
+        let changed = m.stations != stations || m.fromCaveCAD != fromCaveCAD
+        if log || changed { Log.write("stations", "\(kept.count) kept + \(m.fromCaveCAD.count) from CaveCAD on this phone") }
+        guard changed else { return false }
+        stations = m.stations
+        fromCaveCAD = m.fromCaveCAD
+        // keep picks that still exist; a waiting pick becomes the station once it has come
+        if let o = over { over = o.isWaiting ? (StationLabel.find(o.label, in: m.stations) ?? o) : m.stations.first(where: { $0.id == o.id }) }
+        return true
     }
 
     /// The cave's saved shots, newest first, each with its own stations (header only: cheap).
@@ -328,7 +360,9 @@ struct StationPickView: View {
     private func picker(_ sel: Binding<Station?>) -> some View {
         Picker("Station", selection: sel) {
             Text("—").tag(Station?.none)
-            ForEach(stations) { Text($0.label).tag(Station?.some($0)) }
+            ForEach(stations) { s in
+                Text(fromCaveCAD.contains(s.id) ? "\(s.label) · from CaveCAD on this phone" : s.label).tag(Station?.some(s))
+            }
             if let o = over, o.isWaiting { Text("\(o.label) (waiting)").tag(Station?.some(o)) }
         }
     }

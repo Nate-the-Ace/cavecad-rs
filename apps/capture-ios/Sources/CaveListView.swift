@@ -15,6 +15,7 @@ struct CaveListView: View {
                         Spacer()
                         if busy == cave.id { ProgressView() }
                         else if store.keptIds.contains(cave.id) { Text("kept for offline").font(.caption).foregroundStyle(.secondary) }
+                        else if store.onlyInCaveCAD.contains(cave.id) { Text("from CaveCAD on this phone").font(.caption).foregroundStyle(.secondary) }
                     }
                 }
             }
@@ -48,7 +49,7 @@ struct CaveListView: View {
                 return .refused("no cave \"\(key)\" in the list (\(store.caves.count) listed\(store.offline ? ", offline" : ""))")
             }
             open(cave)
-            if opened != nil { return .ok("opened the kept copy") }
+            if let o = opened { return .ok(o.isOnlyInCaveCAD ? "opened: only in CaveCAD on this phone" : "opened the kept copy") }
             return .ok("not kept: downloading (watch for [caves] lines)")
         case .back:
             opened = nil
@@ -64,6 +65,12 @@ struct CaveListView: View {
     private func open(_ cave: CaveInfo) {
         store.problem = nil
         if store.keptIds.contains(cave.id), let k = store.load(cave.id) { Log.write("caves", "opened kept copy (\(k.entries.count) entries)"); opened = k; return }
+        // never downloaded here: CaveCAD on this phone shares its stations, so it opens at once, offline too
+        if store.onlyInCaveCAD.contains(cave.id) {
+            Log.write("caves", "opened a cave only in CaveCAD on this phone")
+            opened = KeptCave.onlyInCaveCAD(id: cave.id, name: cave.name)
+            return
+        }
         Task {
             busy = cave.id
             defer { busy = nil }

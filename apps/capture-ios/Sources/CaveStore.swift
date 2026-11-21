@@ -19,6 +19,9 @@ final class CaveStore: ObservableObject {
     @Published var problem: String? { didSet { if let problem { Log.write("caves", problem) } } }
     /// Ids of the caves kept on the phone (one file each), so rows need not read the files.
     @Published private(set) var keptIds: Set<String> = []
+    /// Caves listed only because CaveCAD on this phone shares their stations (SharedStations.swift): not kept here,
+    /// and possibly not on the server yet. They open as an empty copy carrying CaveCAD's stations.
+    @Published private(set) var onlyInCaveCAD: Set<String> = []
     private let account: Account
 
     /// The stream (catch-up then live) waits this long for each read.
@@ -80,16 +83,35 @@ final class CaveStore: ObservableObject {
         return files.compactMap { try? JSONDecoder().decode(KeptCave.self, from: Data(contentsOf: $0)) }
     }
 
+    /// The cave list: the server's (online) or the kept caves (offline, `server` nil), then the caves CaveCAD on this
+    /// phone shares that neither has nor keeps (created in CaveCAD, maybe offline), so they can be captured in.
+    nonisolated static func listing(server: [CaveInfo]?, kept: [CaveInfo], shared: [CaveInfo]) -> (caves: [CaveInfo], onlyInCaveCAD: Set<String>) {
+        let base = server ?? kept
+        var seen = Set(base.map(\.id)).union(kept.map(\.id))
+        var out = base, only = Set<String>()
+        for c in shared where seen.insert(c.id).inserted {
+            out.append(c)
+            only.insert(c.id)
+        }
+        return (out, only)
+    }
+
     func refresh() async {
         reloadKept()
+        let keptList = kept().map { CaveInfo(id: $0.id, name: $0.name) }
+        let shared = await Task.detached { SharedStore.all().map { CaveInfo(id: $0.caveId, name: $0.name.isEmpty ? $0.caveId : $0.name) } }.value
+        var server: [CaveInfo]?
         do {
-            caves = Self.parseCaves(try await account.get("api/caves"))
+            server = Self.parseCaves(try await account.get("api/caves"))
             offline = false
         } catch {
             offline = true
-            caves = kept().map { CaveInfo(id: $0.id, name: $0.name) }
-            Log.write("caves", "offline (\((error as? URLError)?.code.rawValue ?? 0)): listing \(caves.count) kept cave(s)")
+            Log.write("caves", "offline (\((error as? URLError)?.code.rawValue ?? 0)): listing \(keptList.count) kept cave(s)")
         }
+        let l = Self.listing(server: server, kept: keptList, shared: shared)
+        caves = l.caves
+        onlyInCaveCAD = l.onlyInCaveCAD
+        if !l.onlyInCaveCAD.isEmpty { Log.write("caves", "\(l.onlyInCaveCAD.count) cave(s) only in CaveCAD on this phone") }
     }
 
     /// Reads the cave's stream until it says it is live. Runs off the main actor: a big cave is many lines.
@@ -123,6 +145,7 @@ final class CaveStore: ObservableObject {
         let data = try JSONEncoder().encode(k)
         try data.write(to: Self.folder.appendingPathComponent("\(cave.id).json"), options: .atomic)
         keptIds.insert(cave.id)
+        onlyInCaveCAD.remove(cave.id)
         return k
     }
 

@@ -96,6 +96,13 @@ enum SyncPlan {
         nextChunk(have: have, total: total, chunk: chunk).map { "bytes=\($0.lowerBound)-\($0.upperBound - 1)" }
     }
 
+    enum ListNotFound: Equatable { case serverMissing, caveNotOnServer }
+
+    /// What a 404 on a cave's captures list means. For a cave kept here (downloaded, so the server has it): the
+    /// server keeps no captures. For one not kept (only in CaveCAD on this phone, made offline): the server does not
+    /// have the cave yet, so its shots wait here and the next pass (opening it, coming back to the app) tries again.
+    static func listNotFound(caveKept: Bool) -> ListNotFound { caveKept ? .serverMissing : .caveNotOnServer }
+
     /// Seconds to wait before retry `attempt` (0-based) after no connection: 5, 10, 20, … at most 5 minutes.
     static func backoff(attempt: Int) -> TimeInterval {
         min(300, 5 * pow(2, Double(min(attempt, 10))))
@@ -328,6 +335,8 @@ final class ShotSync: ObservableObject {
     @Published private(set) var serverMissing = false
     /// The last try found no connection.
     @Published private(set) var offline = false
+    /// Caves the server does not have yet (made in CaveCAD on this phone): their shots wait here.
+    @Published private(set) var notOnServer: Set<String> = []
 
     private weak var account: Account?
     private var api: CaptureAPI?
@@ -340,7 +349,9 @@ final class ShotSync: ObservableObject {
     /// The cave line under the saved shots.
     func line(cave: String) -> String {
         var s = (summaries[cave] ?? CaveSyncSummary(shots: 0, toUpload: 0)).line
-        if serverMissing { s += " · Sync not available on the server yet" } else if offline { s += " · no connection" }
+        if serverMissing { s += " · Sync not available on the server yet" }
+        else if notOnServer.contains(cave) { s += " · cave not on the server yet" }
+        else if offline { s += " · no connection" }
         return s
     }
 
@@ -473,11 +484,16 @@ final class ShotSync: ObservableObject {
         let server: [RemoteShot]
         do {
             server = try await api.list(cave: cave)
+        } catch SyncError.unavailable where SyncPlan.listNotFound(caveKept: CaveStore.keptIdsOnDisk().contains(cave)) == .caveNotOnServer {
+            if notOnServer.insert(cave).inserted { Log.write("sync", "list: the server does not have this cave yet (only in CaveCAD on this phone); shots wait here") }
+            offline = false
+            return true
         } catch let e as SyncError {
             return stopped(e, cave: cave, what: "list")
         } catch { return stopped(.network, cave: cave, what: "list") }
         if serverMissing { Log.write("sync", "captures available on the server again") }
         serverMissing = false
+        notOnServer.remove(cave)
         offline = false
 
         // deletes made here
