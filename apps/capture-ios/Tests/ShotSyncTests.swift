@@ -139,10 +139,10 @@ final class StubProtocol: URLProtocol, @unchecked Sendable {
     typealias Reply = (status: Int, headers: [String: String], body: Data)
     private static let lock = NSLock()
     nonisolated(unsafe) private static var _seen: [Seen] = []
-    nonisolated(unsafe) private static var _answer: (Seen) -> Reply = { _ in (500, [:], Data()) }
+    nonisolated(unsafe) private static var _answer: @Sendable (Seen) -> Reply = { _ in (500, [:], Data()) }
 
     static var seen: [Seen] { lock.withLock { _seen } }
-    static func answer(_ f: @escaping (Seen) -> Reply) { lock.withLock { _seen = []; _answer = f } }
+    static func answer(_ f: @escaping @Sendable (Seen) -> Reply) { lock.withLock { _seen = []; _answer = f } }
 
     static func session() -> URLSession {
         let c = URLSessionConfiguration.ephemeral
@@ -188,7 +188,7 @@ final class CaptureAPITests: XCTestCase {
     private func json(_ s: String, _ status: Int = 200) -> StubProtocol.Reply { (status, ["Content-Type": "application/json"], Data(s.utf8)) }
 
     func testListAndNotDeployed() async throws {
-        StubProtocol.answer { _ in self.json(#"{"captures":[{"shotId":"s","sha":"aa","size":3,"capturedAt":5,"stationLabel":"A1"}]}"#) }
+        StubProtocol.answer { _ in FakeCaptures.json(#"{"captures":[{"shotId":"s","sha":"aa","size":3,"capturedAt":5,"stationLabel":"A1"}]}"#) }
         let list = try await api().list(cave: cave)
         XCTAssertEqual(list.map(\.shotId), ["s"])
         let r = StubProtocol.seen[0]
@@ -197,13 +197,13 @@ final class CaptureAPITests: XCTestCase {
         XCTAssertEqual(r.headers["Authorization"], "Bearer t0k")
         XCTAssertEqual(r.headers["X-Cave-Device"], "dev1")
 
-        StubProtocol.answer { _ in self.json(#"{"error":"not-found"}"#, 404) }
+        StubProtocol.answer { _ in FakeCaptures.json(#"{"error":"not-found"}"#, 404) }
         do { _ = try await api().list(cave: cave); XCTFail("404 must say not available") }
         catch { XCTAssertEqual(error as? SyncError, .unavailable) }
     }
 
     func testUploadStatus() async throws {
-        StubProtocol.answer { _ in self.json(#"{"have":4194304}"#) }
+        StubProtocol.answer { _ in FakeCaptures.json(#"{"have":4194304}"#) }
         let have = try await api().uploadHave(cave: cave, sha: sha)
         XCTAssertEqual(have, 4_194_304)
         XCTAssertEqual(StubProtocol.seen[0].url.path, "/api/caves/\(cave)/captures/\(sha)/upload")
@@ -212,7 +212,7 @@ final class CaptureAPITests: XCTestCase {
 
     func testPutChunkShapeAndAnswers() async throws {
         let chunk = Data(repeating: 7, count: 1000)
-        StubProtocol.answer { _ in self.json(#"{"have":5000}"#) }
+        StubProtocol.answer { _ in FakeCaptures.json(#"{"have":5000}"#) }
         let a = try await api().put(cave: cave, sha: sha, offset: 4000, total: 9000, chunk: chunk)
         XCTAssertEqual(a, .have(5000))
         let r = StubProtocol.seen[0]
@@ -225,28 +225,28 @@ final class CaptureAPITests: XCTestCase {
         XCTAssertEqual(r.headers["X-Cave-Device"], "dev1")
         XCTAssertEqual(r.body, chunk)
 
-        StubProtocol.answer { _ in self.json(#"{"error":"offset","have":3000}"#, 409) }
+        StubProtocol.answer { _ in FakeCaptures.json(#"{"error":"offset","have":3000}"#, 409) }
         let conflict = try await api().put(cave: cave, sha: sha, offset: 4000, total: 9000, chunk: chunk)
         XCTAssertEqual(conflict, .conflict(3000))
 
-        StubProtocol.answer { _ in self.json(#"{"capture":{"shotId":"s","sha":"x"}}"#) }
+        StubProtocol.answer { _ in FakeCaptures.json(#"{"capture":{"shotId":"s","sha":"x"}}"#) }
         let done = try await api().put(cave: cave, sha: sha, offset: 8000, total: 9000, chunk: chunk)
         XCTAssertEqual(done, .done)
 
-        StubProtocol.answer { _ in self.json(#"{"error":"bad-sha"}"#, 422) }
+        StubProtocol.answer { _ in FakeCaptures.json(#"{"error":"bad-sha"}"#, 422) }
         do { _ = try await api().put(cave: cave, sha: sha, offset: 8000, total: 9000, chunk: chunk); XCTFail() }
         catch { XCTAssertEqual(error as? SyncError, .refused(422, "bad-sha")) }
     }
 
     func testDeleteSendsJsonType() async throws {
-        StubProtocol.answer { _ in self.json(#"{"ok":true}"#) }
+        StubProtocol.answer { _ in FakeCaptures.json(#"{"ok":true}"#) }
         try await api().delete(cave: cave, shotId: "shot-1")
         let r = StubProtocol.seen[0]
         XCTAssertEqual(r.method, "DELETE")
         XCTAssertEqual(r.url.path, "/api/caves/\(cave)/captures/shot-1")
         XCTAssertEqual(r.headers["Content-Type"], "application/json")
         // already gone on the server: done as well
-        StubProtocol.answer { _ in self.json(#"{"error":"not-found"}"#, 404) }
+        StubProtocol.answer { _ in FakeCaptures.json(#"{"error":"not-found"}"#, 404) }
         try await api().delete(cave: cave, shotId: "shot-1")
     }
 
@@ -281,5 +281,296 @@ final class CaptureAPITests: XCTestCase {
         } catch { XCTAssertEqual(error as? SyncError, .badDownload) }
         XCTAssertFalse(FileManager.default.fileExists(atPath: final.path))
         XCTAssertFalse(FileManager.default.fileExists(atPath: part.path), "a bad part is thrown away, the next try starts over")
+    }
+}
+
+final class SyncPlanEdgeTests: XCTestCase {
+    func testChunkToSendNeverCrashesOnAnEmptyFile() {
+        XCTAssertNil(SyncPlan.chunkToSend(have: 0, total: 0), "an empty file has nothing to send: refused, not a crash")
+        XCTAssertNil(SyncPlan.chunkToSend(have: 5, total: 0))
+        XCTAssertEqual(SyncPlan.chunkToSend(have: 0, total: 10), 0..<10)
+        XCTAssertEqual(SyncPlan.chunkToSend(have: 10, total: 10), 9..<10, "server has it all but kept nothing: resend the last byte")
+    }
+
+    func testDownloadReserve() {
+        let gb: Int64 = 1_000_000_000
+        XCTAssertEqual(SyncPlan.downloadReserve, 2 * gb)
+        XCTAssertTrue(SyncPlan.downloadFits(need: 1 * gb, free: 3 * gb))
+        XCTAssertFalse(SyncPlan.downloadFits(need: 1 * gb + 1, free: 3 * gb), "would leave less than 2 GB")
+        XCTAssertFalse(SyncPlan.downloadFits(need: 0, free: gb), "already under the reserve: nothing comes down")
+        XCTAssertTrue(SyncPlan.downloadFits(need: 5 * gb, free: nil), "unknown free space does not stop a download")
+    }
+}
+
+/// True the first time only (a hook that fires once, from the URL loading thread).
+final class Once: @unchecked Sendable {
+    private let lock = NSLock()
+    private var fired = false
+    func first() -> Bool { lock.withLock { defer { fired = true }; return !fired } }
+}
+
+/// A captures server in memory, for whole sync passes through `StubProtocol`.
+final class FakeCaptures: @unchecked Sendable {
+    private let lock = NSLock()
+    private var shots: [String: (sha: String, data: Data)] = [:]
+    private var parts: [String: Data] = [:]
+    private(set) var deletedIds: [String] = []
+    /// Answers before the fake's own (status overrides, hooks); nil falls through.
+    var before: (@Sendable (StubProtocol.Seen) -> StubProtocol.Reply?)? {
+        get { lock.withLock { _before } }
+        set { lock.withLock { _before = newValue } }
+    }
+    private var _before: (@Sendable (StubProtocol.Seen) -> StubProtocol.Reply?)?
+
+    func add(_ id: String, _ data: Data) { lock.withLock { shots[id] = (ShotHash.hex(data), data) } }
+    var deleted: [String] { lock.withLock { deletedIds } }
+
+    static func json(_ s: String, _ status: Int = 200) -> StubProtocol.Reply { (status, ["Content-Type": "application/json"], Data(s.utf8)) }
+
+    func answer(_ seen: StubProtocol.Seen) -> StubProtocol.Reply {
+        if let r = before?(seen) { return r }
+        let parts = seen.url.path.split(separator: "/").map(String.init) // api caves <cave> captures [x] [upload]
+        let q = URLComponents(url: seen.url, resolvingAgainstBaseURL: false)?.queryItems ?? []
+        return lock.withLock {
+            switch (seen.method, parts.count) {
+            case ("GET", 4):
+                let list = shots.map { #"{"shotId":"\#($0.key)","sha":"\#($0.value.sha)","size":\#($0.value.data.count),"capturedAt":0,"stationLabel":""}"# }
+                return Self.json(#"{"captures":[\#(list.joined(separator: ","))]}"#)
+            case ("GET", 6):
+                return Self.json(#"{"have":\#(self.parts[parts[4]]?.count ?? 0)}"#)
+            case ("PUT", 5):
+                let sha = parts[4], offset = Int(q.first { $0.name == "offset" }!.value!)!, total = Int(q.first { $0.name == "total" }!.value!)!
+                var have = self.parts[sha] ?? Data()
+                guard offset == have.count else { return Self.json(#"{"error":"offset","have":\#(have.count)}"#, 409) }
+                have.append(seen.body)
+                self.parts[sha] = have
+                return have.count == total ? Self.json(#"{"capture":{"sha":"\#(sha)"}}"#) : Self.json(#"{"have":\#(have.count)}"#)
+            case ("GET", 5):
+                guard let file = shots.values.first(where: { $0.sha == parts[4] })?.data else { return Self.json(#"{"error":"not-found"}"#, 404) }
+                guard let r = seen.headers["Range"], let m = r.wholeMatch(of: /bytes=(\d+)-(\d+)/) else { return (200, [:], file) }
+                let a = Int(m.1)!, b = min(Int(m.2)!, file.count - 1)
+                return (206, [:], file.subdata(in: a..<(b + 1)))
+            case ("DELETE", 5):
+                shots[parts[4]] = nil
+                deletedIds.append(parts[4])
+                return Self.json(#"{"ok":true}"#)
+            default:
+                return Self.json(#"{"error":"bad-request"}"#, 400)
+            }
+        }
+    }
+}
+
+/// Whole passes of `ShotSync` against `FakeCaptures`: the orderings a cave trip makes (a delete while a pass runs,
+/// the sign-in ending, a view-only member, a full phone, iOS ending background time).
+@MainActor
+final class ShotSyncPassTests: XCTestCase {
+    private var cave = ""
+    private var fake = FakeCaptures()
+    private var ended = 0
+
+    override func setUp() async throws {
+        cave = "test-sync-\(UUID().uuidString.prefix(8))"
+        fake = FakeCaptures()
+        ended = 0
+        let f = fake
+        StubProtocol.answer { @Sendable seen in f.answer(seen) }
+    }
+
+    override func tearDown() async throws {
+        try? FileManager.default.removeItem(at: ShotFiles.folder(cave: cave))
+        try? FileManager.default.removeItem(at: CaveSyncState.url(cave: cave))
+    }
+
+    private func makeSync(request: (@Sendable (String, [URLQueryItem]) async throws -> URLRequest)? = nil) -> ShotSync {
+        let s = ShotSync()
+        let api = CaptureAPI(session: StubProtocol.session(), request: request ?? { path, query in
+            var c = URLComponents(string: "https://cavecad.test/")!
+            c.path = "/" + path
+            if !query.isEmpty { c.queryItems = query }
+            return URLRequest(url: c.url!)
+        })
+        s.attach(api: api, signedIn: { true }, signInEnded: { [weak self] in self?.ended += 1 })
+        s.freeSpace = { 100_000_000_000 }
+        return s
+    }
+
+    private func shot(_ text: String, size: Int = 0) -> Data {
+        var d = SyncPlan.magic + Data(text.utf8)
+        if size > d.count { d.append(Data(repeating: 7, count: size - d.count)) }
+        return d
+    }
+
+    @discardableResult
+    private func writeLocal(_ id: String, _ data: Data) throws -> URL {
+        let u = ShotFiles.folder(cave: cave).appendingPathComponent("\(id).cvcap")
+        try data.write(to: u)
+        return u
+    }
+
+    private func waitIdle(_ s: ShotSync, file: StaticString = #filePath, line: UInt = #line) async {
+        for _ in 0..<1000 where !s.idle { try? await Task.sleep(nanoseconds: 10_000_000) }
+        XCTAssertTrue(s.idle, "the pass never finished", file: file, line: line)
+    }
+
+    private func onDisk() -> CaveSyncState { CaveSyncState.load(from: CaveSyncState.url(cave: cave)) }
+
+    /// Runs `body` on the main actor from the stub's thread and waits for it, so it lands mid-request.
+    private nonisolated static func onMain(_ body: @escaping @MainActor () -> Void) {
+        let done = DispatchSemaphore(value: 0)
+        DispatchQueue.main.async { MainActor.assumeIsolated { body() }; done.signal() }
+        done.wait()
+    }
+
+    func testDeleteDuringAnUploadReachesTheServer() async throws {
+        let file = try writeLocal("shotA", shot("a"))
+        let s = makeSync()
+        let cave = cave
+        let once = Once()
+        fake.before = { @Sendable seen in
+            guard seen.method == "PUT", once.first() else { return nil }
+            Self.onMain { ShotFiles.delete(file); s.deleted(cave: cave, shotIds: ["shotA"]) }
+            return nil
+        }
+        s.kick(cave)
+        await waitIdle(s)
+        XCTAssertEqual(fake.deleted, ["shotA"], "the delete made while the pass ran was not overwritten by the pass's save")
+        XCTAssertEqual(onDisk().pendingDeletes, [])
+        XCTAssertNil(onDisk().shots["shotA"])
+        XCTAssertFalse(FileManager.default.fileExists(atPath: file.path))
+    }
+
+    func testDeleteDuringADownloadDiscardsItAndIsNotFetchedBack() async throws {
+        let v1 = shot("one"), v2 = shot("two, from the other phone", size: 5 << 20)
+        let file = try writeLocal("shotS", v1)
+        let mtime = (try FileManager.default.attributesOfItem(atPath: file.path)[.modificationDate] as! Date).timeIntervalSince1970
+        var st = CaveSyncState()
+        st.shots["shotS"] = ShotRecord(sha: ShotHash.hex(v1), size: Int64(v1.count), modified: mtime, syncedSha: ShotHash.hex(v1))
+        try st.save(to: CaveSyncState.url(cave: cave))
+        fake.add("shotS", v2) // a newer version: this phone's unchanged copy is replaced by a download
+        let s = makeSync()
+        let cave = cave
+        let once = Once()
+        fake.before = { @Sendable seen in
+            guard seen.headers["Range"] != nil, once.first() else { return nil }
+            Self.onMain { ShotFiles.delete(file); s.deleted(cave: cave, shotIds: ["shotS"]) }
+            return nil
+        }
+        s.kick(cave)
+        await waitIdle(s)
+        let folder = ShotFiles.folder(cave: cave)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: file.path), "the deleted shot was not moved back into place")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: folder.appendingPathComponent("shotS.cvcap.part").path), "its part is thrown away")
+        XCTAssertEqual(fake.deleted, ["shotS"])
+        XCTAssertEqual(onDisk().pendingDeletes, [])
+        XCTAssertEqual(StubProtocol.seen.filter { $0.headers["Range"] != nil }.count, 1, "stopped after the range in flight, never fetched back")
+    }
+
+    func testUnauthorizedEndsTheSignInButKeepsKeptCaves() async throws {
+        try writeLocal("shotA", shot("a"))
+        let kept = CaveStore.folder.appendingPathComponent("\(cave).json")
+        try JSONEncoder().encode(KeptCave(id: cave, name: "Kept", snapshot: nil, entries: [], last: 0, keptAt: Date())).write(to: kept)
+        defer { try? FileManager.default.removeItem(at: kept) }
+        fake.before = { @Sendable _ in FakeCaptures.json(#"{"error":"unauthorized"}"#, 401) }
+        let s = makeSync()
+        s.kick(cave)
+        await waitIdle(s)
+        XCTAssertEqual(ended, 1, "a 401 ends the sign-in")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: kept.path), "the offline copy of the cave stays")
+        XCTAssertTrue(CaveStore.keptIdsOnDisk().contains(cave))
+    }
+
+    func testViewOnlyUploadIsRefusedAndDownloadsStillRun() async throws {
+        let a = shot("mine")
+        try writeLocal("shotA", a)
+        fake.add("shotB", shot("theirs"))
+        fake.before = { @Sendable seen in
+            seen.method == "PUT" || seen.url.path.hasSuffix("/upload") ? FakeCaptures.json(#"{"error":"watcher"}"#, 403) : nil
+        }
+        let s = makeSync()
+        s.kick(cave)
+        await waitIdle(s)
+        XCTAssertEqual(onDisk().shots["shotA"]?.rejectedSha, ShotHash.hex(a), "refused for that shot, not sent again until it changes")
+        XCTAssertEqual(s.state(cave: cave, shot: "shotA"), .refused)
+        XCTAssertEqual(try Data(contentsOf: ShotFiles.folder(cave: cave).appendingPathComponent("shotB.cvcap")), shot("theirs"),
+                       "the others' shots still came down")
+        XCTAssertEqual(s.state(cave: cave, shot: "shotB"), .fromServer)
+    }
+
+    func testEmptyAndForeignFilesAreLeftOutAndRepairedFromTheServer() async throws {
+        try writeLocal("empty", Data())
+        try writeLocal("junk", Data("not a shot at all".utf8))
+        let good = shot("good")
+        try writeLocal("good", good)
+        let hashed = ShotSync.hashLocal(cave: cave, state: CaveSyncState())
+        XCTAssertEqual(hashed.local.map(\.shotId), ["good"])
+        XCTAssertEqual(Set(hashed.skipped), ["empty", "junk"])
+
+        fake.add("empty", shot("the real empty"))
+        let s = makeSync()
+        s.kick(cave)
+        await waitIdle(s)
+        XCTAssertEqual(try Data(contentsOf: ShotFiles.folder(cave: cave).appendingPathComponent("empty.cvcap")), shot("the real empty"),
+                       "a good copy on the server comes down over an empty file")
+        XCTAssertFalse(StubProtocol.seen.contains { $0.method == "PUT" && $0.body.isEmpty }, "nothing empty was sent")
+        XCTAssertNil(s.state(cave: cave, shot: "junk"))
+    }
+
+    func testNoSignalDuringADownloadIsOfflineNotAWriteFailure() async throws {
+        let theirs = shot("theirs")
+        fake.add("shotB", theirs)
+        let sha = ShotHash.hex(theirs)
+        let s = makeSync { path, query in
+            if path.hasSuffix(sha) { throw URLError(.notConnectedToInternet) } // the device call failing: no signal
+            var c = URLComponents(string: "https://cavecad.test/")!
+            c.path = "/" + path
+            if !query.isEmpty { c.queryItems = query }
+            return URLRequest(url: c.url!)
+        }
+        try writeLocal("shotA", shot("a"))
+        s.kick(cave)
+        await waitIdle(s)
+        XCTAssertTrue(s.offline, "a URLError on download is the no-signal path (retried with backoff)")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: ShotFiles.folder(cave: cave).appendingPathComponent("shotB.cvcap").path))
+    }
+
+    func testDownloadKeepsTwoGigabytesFree() async throws {
+        fake.add("shotB", shot("theirs", size: 1000))
+        let s = makeSync()
+        s.freeSpace = { SyncPlan.downloadReserve + 500 }
+        s.kick(cave)
+        await waitIdle(s)
+        XCTAssertFalse(StubProtocol.seen.contains { $0.headers["Range"] != nil }, "skipped before asking for a byte")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: ShotFiles.folder(cave: cave).appendingPathComponent("shotB.cvcap").path))
+        XCTAssertFalse(s.offline)
+    }
+
+    func testBackgroundTimeRunningOutStopsCleanlyAndResumes() async throws {
+        let a = shot("big", size: 5 << 20) // two chunks
+        try writeLocal("shotA", a)
+        let s = makeSync()
+        let once = Once()
+        fake.before = { @Sendable seen in
+            guard seen.method == "PUT", once.first() else { return nil }
+            Self.onMain { s.backgroundTimeRanOut() } // iOS ends the time while the first chunk is in flight
+            return nil
+        }
+        s.kick(cave)
+        await waitIdle(s)
+        XCTAssertTrue(s.paused)
+        XCTAssertFalse(s.offline, "not a lost connection: no backoff")
+        XCTAssertTrue(s.testStatus().contains("queued=1"), s.testStatus())
+        XCTAssertEqual(StubProtocol.seen.filter { $0.method == "PUT" }.count, 1, "no new chunk after the time ran out")
+        XCTAssertNil(onDisk().shots["shotA"]?.syncedSha)
+
+        s.kick(cave) // a save in the background: queued, not started
+        XCTAssertTrue(s.idle)
+        s.resume() // the app is opened again
+        await waitIdle(s)
+        XCTAssertFalse(s.paused)
+        let puts = StubProtocol.seen.filter { $0.method == "PUT" }
+        XCTAssertEqual(puts.count, 2, "carried on from what the server held, not from zero")
+        XCTAssertEqual(URLComponents(url: puts[1].url, resolvingAgainstBaseURL: false)?.queryItems?.first { $0.name == "offset" }?.value, "4194304")
+        XCTAssertEqual(onDisk().shots["shotA"]?.syncedSha, ShotHash.hex(a))
     }
 }

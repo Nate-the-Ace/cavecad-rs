@@ -65,6 +65,23 @@ the app, opening a cave, "Get latest", pull to refresh on the station screen, an
   For a cave not kept here (only in CaveCAD on this phone) a 404 means the server lacks that cave instead:
   "cave not on the server yet", the other caves keep syncing.
 - Log area `sync`: list counts, each upload start/resume/409/done/failure (status code only), each download.
+- One state per cave in memory, written on every change: a delete made while a pass runs is never lost, and a
+  download of a shot deleted meanwhile is thrown away (its `.part` too) instead of being moved into place.
+- Background: each chunk, range and hash holds its own background task. When iOS ends the background time the
+  transfer stops at once (every stored chunk/range stays; nothing is marked offline) and carries on from there
+  when the app is opened again.
+- 401: the sign-in ended (token cleared, sign-in screen), but the caves kept on the phone are NOT deleted; only
+  the "Sign out" button forgets them. 403 on an upload (view-only member): that shot is marked refused and the
+  pass goes on to the downloads.
+- Not shots: an empty file, or one not starting `CVCAP\0` (possible now Documents shows in Files), is never
+  hashed or sent; a good copy on the server comes down over it.
+- Downloads keep 2 GB free for captures (`download skipped: keeps 2 GB free for captures`), on every device;
+  no signal during a download is the ordinary retry-with-backoff path.
+
+### Known limits
+
+- Two LiDAR devices adding passes to the same shot can overwrite each other: the last upload wins, and the
+  other device's passes on that shot are replaced by it.
 
 ## Driving a test run from the Mac (Debug builds only)
 

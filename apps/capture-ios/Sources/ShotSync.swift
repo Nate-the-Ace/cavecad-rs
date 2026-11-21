@@ -108,6 +108,27 @@ enum SyncPlan {
         min(300, 5 * pow(2, Double(min(attempt, 10))))
     }
 
+    /// The chunk to send when the server holds `have` of `total`: the next one, or, when the server holds every
+    /// byte but did not keep the file (an answer lost mid-check), the last byte again. Nil for an empty file
+    /// (nothing can be sent; the caller refuses it).
+    static func chunkToSend(have: Int64, total: Int64) -> Range<Int64>? {
+        guard total > 0 else { return nil }
+        return nextChunk(have: have, total: total) ?? nextChunk(have: total - 1, total: total)
+    }
+
+    /// Free space a download must leave on the phone, so a capture in the cave never runs out of room.
+    static let downloadReserve: Int64 = 2_000_000_000
+
+    /// Whether fetching `need` more bytes leaves at least `reserve` free. Unknown free space does not stop it.
+    static func downloadFits(need: Int64, free: Int64?, reserve: Int64 = downloadReserve) -> Bool {
+        guard let free else { return true }
+        return free - max(0, need) >= reserve
+    }
+
+    /// A shot file's first bytes: anything else (an empty file, something dropped into the folder through Files)
+    /// is not a shot and is neither hashed nor sent.
+    static let magic = Data("CVCAP\0".utf8)
+
     struct Decision: Equatable {
         var upload: [LocalShot] = []
         var download: [RemoteShot] = []
@@ -284,35 +305,52 @@ struct CaptureAPI: Sendable {
     /// Downloads `shot` into `part` from where `part` ends (4 MiB ranges), checks its SHA-256 and moves it to
     /// `final` (replacing an older version). A part that fails the check is deleted, so the next try starts over.
     func download(cave: String, shot: RemoteShot, part: URL, to final: URL) async throws {
+        while try await !fetchNext(cave: cave, shot: shot, part: part) {}
+        guard Self.verified(part, shot: shot) else { throw SyncError.badDownload }
+        try Self.install(part, to: final)
+    }
+
+    /// Fetches the next range of `shot` onto the end of `part` (made if missing); true when `part` is whole.
+    /// The part is only written once a whole range has arrived, so a stopped transfer leaves it resumable.
+    func fetchNext(cave: String, shot: RemoteShot, part: URL) async throws -> Bool {
         let fm = FileManager.default
         if !fm.fileExists(atPath: part.path) {
             fm.createFile(atPath: part.path, contents: nil, attributes: [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication])
         }
-        var have = Self.size(part)
-        while let range = SyncPlan.range(have: have, total: shot.size) {
-            var req = try await request("\(base(cave))/\(shot.sha)", [])
-            req.timeoutInterval = Self.transferTimeout
-            req.setValue(range, forHTTPHeaderField: "Range")
-            let (data, status) = try await send(req)
-            if status == 416 { break } // the part already reaches the end
-            try Self.check(status, data)
-            if status == 206 {
-                let h = try FileHandle(forWritingTo: part)
-                defer { try? h.close() }
-                try h.seek(toOffset: UInt64(have))
-                try h.write(contentsOf: data)
-                try h.truncate(atOffset: UInt64(have) + UInt64(data.count))
-            } else {
-                try data.write(to: part) // the whole file (a server that ignored the range)
-            }
-            let now = Self.size(part)
-            guard now > have else { throw SyncError.network }
-            have = now
+        let have = Self.size(part)
+        guard let range = SyncPlan.range(have: have, total: shot.size) else { return true }
+        var req = try await request("\(base(cave))/\(shot.sha)", [])
+        req.timeoutInterval = Self.transferTimeout
+        req.setValue(range, forHTTPHeaderField: "Range")
+        let (data, status) = try await send(req)
+        if status == 416 { return true } // the part already reaches the end
+        try Self.check(status, data)
+        if status == 206 {
+            let h = try FileHandle(forWritingTo: part)
+            defer { try? h.close() }
+            try h.seek(toOffset: UInt64(have))
+            try h.write(contentsOf: data)
+            try h.truncate(atOffset: UInt64(have) + UInt64(data.count))
+        } else {
+            try data.write(to: part) // the whole file (a server that ignored the range)
         }
-        guard Self.size(part) == shot.size, ShotHash.verify(part, sha: shot.sha) else {
-            try? fm.removeItem(at: part)
-            throw SyncError.badDownload
+        let now = Self.size(part)
+        guard now > have else { throw SyncError.network }
+        return now >= shot.size
+    }
+
+    /// Whether `part` is exactly `shot` (size and SHA-256); a part that is not is deleted, so the next try starts over.
+    static func verified(_ part: URL, shot: RemoteShot) -> Bool {
+        guard size(part) == shot.size, ShotHash.verify(part, sha: shot.sha) else {
+            try? FileManager.default.removeItem(at: part)
+            return false
         }
+        return true
+    }
+
+    /// Moves a verified part into place, replacing an older version of the shot.
+    static func install(_ part: URL, to final: URL) throws {
+        let fm = FileManager.default
         if fm.fileExists(atPath: final.path) { _ = try fm.replaceItemAt(final, withItemAt: part) }
         else { try fm.moveItem(at: part, to: final) }
     }
@@ -325,6 +363,10 @@ struct CaptureAPI: Sendable {
 /// Runs shot sync for the whole app (one per run, so it carries on across screen changes): one cave at a time,
 /// one upload at a time, retried with backoff when there is no signal. State per cave is kept on disk
 /// (`CaveSyncState`), so an upload resumes after a relaunch from what the server says it holds.
+///
+/// Each cave's state lives in memory here (`caveStates`) and every change goes through `mutate`, which also
+/// writes it to disk: a pass and a delete made on the phone while it runs change the same state, so neither
+/// overwrites the other's.
 @MainActor
 final class ShotSync: ObservableObject {
     /// Per cave: each shot's state (by shot id), the cave line, and a counter bumped when files arrived.
@@ -337,14 +379,30 @@ final class ShotSync: ObservableObject {
     @Published private(set) var offline = false
     /// Caves the server does not have yet (made in CaveCAD on this phone): their shots wait here.
     @Published private(set) var notOnServer: Set<String> = []
+    /// iOS ended the background time: the transfer stopped where it was (state saved) and nothing starts again
+    /// until the app is opened (`resume`).
+    private(set) var paused = false
 
     private weak var account: Account?
     private var api: CaptureAPI?
+    /// Signed in (a token to send).
+    private var signedIn: @MainActor () -> Bool = { false }
+    /// The server said the sign-in ended (401).
+    private var signInEnded: @MainActor () -> Void = {}
+    /// Free bytes on the phone's data volume; nil when unknown.
+    var freeSpace: () -> Int64? = {
+        let home = URL(fileURLWithPath: NSHomeDirectory())
+        return (try? home.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey]))?.volumeAvailableCapacityForImportantUsage
+    }
+    private var caveStates: [String: CaveSyncState] = [:]
     private var queue: [String] = []
     private var worker: Task<Void, Never>?
     private var retries: [String: Task<Void, Never>] = [:]
     private var attempts: [String: Int] = [:]
     private var observer: NSObjectProtocol?
+    /// The background task held while one transfer step runs (a chunk, a range, a hash), and how many steps hold it.
+    private var bgTask: UIBackgroundTaskIdentifier = .invalid
+    private var bgHolds = 0
 
     /// The cave line under the saved shots.
     func line(cave: String) -> String {
@@ -360,21 +418,35 @@ final class ShotSync: ObservableObject {
     func attach(_ account: Account) {
         guard self.account !== account else { return }
         self.account = account
-        api = CaptureAPI(session: URLSession(configuration: .default)) { path, query in
+        attach(api: CaptureAPI(session: URLSession(configuration: .default)) { path, query in
             try await account.authorized(path, query: query)
-        }
+        }, signedIn: { [weak account] in account?.token != nil }, signInEnded: { [weak account] in account?.signInEnded() })
         observer = NotificationCenter.default.addObserver(forName: ShotFiles.changed, object: nil, queue: .main) { [weak self] n in
             let cave = n.object as? String
             MainActor.assumeIsolated { if let cave { self?.kick(cave) } }
         }
     }
 
+    /// The server calls and the sign-in it runs under (the account's; tests pass stubs).
+    func attach(api: CaptureAPI, signedIn: @escaping @MainActor () -> Bool, signInEnded: @escaping @MainActor () -> Void) {
+        self.api = api
+        self.signedIn = signedIn
+        self.signInEnded = signInEnded
+    }
+
     /// Syncs every cave with shots on this device (launch, coming back to the app, signing in).
     func syncAll() {
+        resume()
         let root = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent("shots")
         let caves = ((try? FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)) ?? [])
             .filter { $0.hasDirectoryPath }.map(\.lastPathComponent)
         for c in caves { kick(c) }
+    }
+
+    /// The app is in front again: carry on with what the background stop left queued.
+    func resume() {
+        paused = false
+        startIfIdle()
     }
 
     /// Syncs one cave as soon as the worker is free.
@@ -385,8 +457,11 @@ final class ShotSync: ObservableObject {
         startIfIdle()
     }
 
+    /// No pass running and none waiting to start.
+    var idle: Bool { worker == nil }
+
     private func startIfIdle() {
-        guard worker == nil, !queue.isEmpty else { return }
+        guard worker == nil, !paused, !queue.isEmpty else { return }
         worker = Task { [weak self] in
             await self?.run()
             self?.worker = nil
@@ -394,31 +469,92 @@ final class ShotSync: ObservableObject {
         }
     }
 
+    // MARK: state
+
+    /// The cave's sync state (read from disk the first time).
+    private func current(_ cave: String) -> CaveSyncState {
+        if let s = caveStates[cave] { return s }
+        let s = CaveSyncState.load(from: CaveSyncState.url(cave: cave))
+        caveStates[cave] = s
+        return s
+    }
+
+    /// Changes the cave's state and writes it to disk.
+    private func mutate(_ cave: String, _ change: (inout CaveSyncState) -> Void) {
+        var s = current(cave)
+        change(&s)
+        caveStates[cave] = s
+        try? s.save(to: CaveSyncState.url(cave: cave))
+    }
+
+    private func isDeleted(_ cave: String, _ shotId: String) -> Bool { current(cave).pendingDeletes.contains(shotId) }
+
     /// Shots deleted on this device: deleted on the server too (queued until there is a connection).
     func deleted(cave: String, shotIds: [String]) {
-        let url = CaveSyncState.url(cave: cave)
-        var st = CaveSyncState.load(from: url)
-        for id in shotIds {
-            st.shots[id] = nil
-            if !st.pendingDeletes.contains(id) { st.pendingDeletes.append(id) }
+        mutate(cave) { st in
+            for id in shotIds {
+                st.shots[id] = nil
+                if !st.pendingDeletes.contains(id) { st.pendingDeletes.append(id) }
+            }
         }
-        try? st.save(to: url)
         Log.write("sync", "delete queued: \(shotIds.count) shot(s)")
         kick(cave)
     }
 
+    // MARK: background time
+
+    /// Runs one transfer step under a background task, so it may finish if the app is sent to the background.
+    /// When iOS ends the time, `backgroundTimeRanOut` stops the worker and ends the task at once.
+    private func held<T>(_ step: () async throws -> T) async rethrows -> T {
+        holdBackground()
+        defer { releaseBackground() }
+        return try await step()
+    }
+
+    private func holdBackground() {
+        bgHolds += 1
+        guard bgTask == .invalid, !paused else { return }
+        bgTask = UIApplication.shared.beginBackgroundTask(withName: "shot sync") { [weak self] in
+            MainActor.assumeIsolated { self?.backgroundTimeRanOut() }
+        }
+    }
+
+    private func releaseBackground() {
+        bgHolds = max(0, bgHolds - 1)
+        if bgHolds == 0 { endBackgroundTask() }
+    }
+
+    private func endBackgroundTask() {
+        guard bgTask != .invalid else { return }
+        UIApplication.shared.endBackgroundTask(bgTask)
+        bgTask = .invalid
+    }
+
+    /// iOS's background time is up: stop the transfer in flight (every chunk and range already stored stays
+    /// stored, the next pass resumes from it) and give the time back now, before iOS ends the app.
+    func backgroundTimeRanOut() {
+        Log.write("sync", "background time ran out: stopped, carries on from where it got to when the app is opened")
+        paused = true
+        worker?.cancel()
+        endBackgroundTask()
+    }
+
+    // MARK: passes
+
     private func run() async {
-        let bg = UIApplication.shared.beginBackgroundTask(withName: "shot sync")
-        defer { if bg != .invalid { UIApplication.shared.endBackgroundTask(bg) } }
-        while let cave = queue.first {
+        while !paused, !Task.isCancelled, let cave = queue.first {
             queue.removeFirst()
             let ok = await syncCave(cave)
+            if paused || Task.isCancelled {
+                if !queue.contains(cave) { queue.insert(cave, at: 0) }
+                return
+            }
             if ok { attempts[cave] = 0 } else { retryLater(cave) }
         }
     }
 
     private func retryLater(_ cave: String) {
-        guard !serverMissing, account?.token != nil else { return }
+        guard !serverMissing, signedIn() else { return }
         let n = attempts[cave, default: 0]
         attempts[cave] = n + 1
         let wait = SyncPlan.backoff(attempt: n)
@@ -434,15 +570,25 @@ final class ShotSync: ObservableObject {
 
     private static func short(_ id: String) -> String { String(id.prefix(8)) }
 
+    /// Whether the file starts like a shot (`CVCAP\0`); an empty or foreign file does not.
+    nonisolated static func looksLikeShot(_ url: URL) -> Bool {
+        guard let h = try? FileHandle(forReadingFrom: url) else { return false }
+        defer { try? h.close() }
+        return (try? h.read(upToCount: SyncPlan.magic.count)) == SyncPlan.magic
+    }
+
     /// Hashes the cave's shots (only those changed since they were last hashed); drops records of shots gone.
-    nonisolated static func hashLocal(cave: String, state: CaveSyncState) -> ([LocalShot], CaveSyncState) {
-        var st = state, out: [LocalShot] = []
+    /// Files that are not shots (empty, or not starting `CVCAP\0`) are left out and named in `skipped`: they are
+    /// never sent, and a good copy on the server comes down over them.
+    nonisolated static func hashLocal(cave: String, state: CaveSyncState) -> (local: [LocalShot], state: CaveSyncState, skipped: [String]) {
+        var st = state, out: [LocalShot] = [], skipped: [String] = []
         let files = ShotFiles.list(cave: cave)
         for u in files {
             let id = ShotFiles.shotId(of: u)
             let attrs = try? FileManager.default.attributesOfItem(atPath: u.path)
             let size = (attrs?[.size] as? NSNumber)?.int64Value ?? 0
             let modified = (attrs?[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0
+            guard size > 0, looksLikeShot(u) else { skipped.append(id); continue }
             if let r = st.shots[id], r.size == size, r.modified == modified {
                 out.append(LocalShot(shotId: id, sha: r.sha, size: size)); continue
             }
@@ -456,13 +602,15 @@ final class ShotSync: ObservableObject {
         let here = Set(out.map(\.shotId))
         for id in st.shots.keys where !here.contains(id) { st.shots[id] = nil }
         st.pendingDeletes.removeAll { here.contains($0) }
-        return (out, st)
+        return (out, st, skipped)
     }
 
-    private func publish(cave: String, local: [LocalShot], state st: CaveSyncState, uploading: (String, Double)? = nil) {
+    private func publish(cave: String, local: [LocalShot], uploading: (String, Double)? = nil) {
+        let st = current(cave)
         var m: [String: ShotSyncState] = [:]
         var toUpload = 0
-        for l in local {
+        let shown = local.filter { !st.pendingDeletes.contains($0.shotId) }
+        for l in shown {
             let r = st.shots[l.shotId]
             if let u = uploading, u.0 == l.shotId { m[l.shotId] = .uploading(u.1); toUpload += 1 }
             else if r?.syncedSha == l.sha { m[l.shotId] = r?.fromServer == true ? .fromServer : .uploaded }
@@ -470,20 +618,32 @@ final class ShotSync: ObservableObject {
             else { m[l.shotId] = .waiting; toUpload += 1 }
         }
         states[cave] = m
-        summaries[cave] = CaveSyncSummary(shots: local.count, toUpload: toUpload)
+        summaries[cave] = CaveSyncSummary(shots: shown.count, toUpload: toUpload)
     }
 
     /// One pass over a cave: deletes, uploads, downloads. False when it stopped for want of a connection.
     private func syncCave(_ cave: String) async -> Bool {
-        guard let api, account?.token != nil else { return true }
-        let url = CaveSyncState.url(cave: cave)
-        var (local, st) = await Task.detached { Self.hashLocal(cave: cave, state: CaveSyncState.load(from: url)) }.value
-        publish(cave: cave, local: local, state: st)
-        let save = { (s: CaveSyncState) -> Void in _ = try? s.save(to: url) }
-        save(st)
-        let server: [RemoteShot]
+        guard let api, signedIn() else { return true }
+        let before = current(cave)
+        let hashed = await held { await Task.detached { Self.hashLocal(cave: cave, state: before) }.value }
+        var local = hashed.local
+        if !hashed.skipped.isEmpty {
+            Log.write("sync", "not a shot, left out: \(hashed.skipped.map(Self.short).joined(separator: ", ")) (empty or not a .cvcap)")
+        }
+        // shots deleted here while hashing: the delete wins over the hash
+        let late = current(cave).pendingDeletes.filter { !before.pendingDeletes.contains($0) }
+        mutate(cave) { st in
+            st = hashed.state
+            for id in late {
+                st.shots[id] = nil
+                if !st.pendingDeletes.contains(id) { st.pendingDeletes.append(id) }
+            }
+        }
+        local.removeAll { late.contains($0.shotId) }
+        publish(cave: cave, local: local)
+        var server: [RemoteShot]
         do {
-            server = try await api.list(cave: cave)
+            server = try await held { try await api.list(cave: cave) }
         } catch SyncError.unavailable where SyncPlan.listNotFound(caveKept: CaveStore.keptIdsOnDisk().contains(cave)) == .caveNotOnServer {
             if notOnServer.insert(cave).inserted { Log.write("sync", "list: the server does not have this cave yet (only in CaveCAD on this phone); shots wait here") }
             offline = false
@@ -497,82 +657,115 @@ final class ShotSync: ObservableObject {
         offline = false
 
         // deletes made here
-        for id in st.pendingDeletes {
+        for id in current(cave).pendingDeletes {
             do {
-                try await api.delete(cave: cave, shotId: id)
-                st.pendingDeletes.removeAll { $0 == id }
-                save(st)
+                try await held { try await api.delete(cave: cave, shotId: id) }
+                mutate(cave) { $0.pendingDeletes.removeAll { $0 == id } }
+                // the list was taken before this delete: never fetch the shot straight back
+                server.removeAll { $0.shotId == id }
                 Log.write("sync", "deleted on the server: \(Self.short(id))")
             } catch let e as SyncError {
-                if case .refused(403, _) = e { st.pendingDeletes.removeAll { $0 == id }; save(st); Log.write("sync", "delete refused (403): view-only cave"); continue }
+                if case .refused(403, _) = e {
+                    mutate(cave) { $0.pendingDeletes.removeAll { $0 == id } }
+                    Log.write("sync", "delete refused (403): view-only cave")
+                    continue
+                }
                 return stopped(e, cave: cave, what: "delete")
             } catch { return stopped(.network, cave: cave, what: "delete") }
         }
 
-        let d = SyncPlan.decide(local: local, server: server, state: st)
-        for (id, sha) in d.inSync { st.shots[id]?.syncedSha = sha }
-        save(st)
-        publish(cave: cave, local: local, state: st)
+        let d = SyncPlan.decide(local: local, server: server, state: current(cave))
+        mutate(cave) { st in for (id, sha) in d.inSync { st.shots[id]?.syncedSha = sha } }
+        publish(cave: cave, local: local)
         Log.write("sync", "list: \(server.count) on the server, \(local.count) here; \(d.upload.count) to upload, \(d.download.count) to download")
 
         // uploads, one at a time
         for shot in d.upload {
-            guard account?.token != nil else { return true }
-            switch await upload(api, cave: cave, shot: shot, state: &st, local: local, save: save) {
+            guard signedIn(), !Task.isCancelled else { return true }
+            if isDeleted(cave, shot.shotId) { continue }
+            switch await upload(api, cave: cave, shot: shot, local: local) {
             case .done:
-                st.shots[shot.shotId]?.syncedSha = shot.sha
-                st.shots[shot.shotId]?.rejectedSha = nil
-                save(st)
+                mutate(cave) { st in
+                    st.shots[shot.shotId]?.syncedSha = shot.sha
+                    st.shots[shot.shotId]?.rejectedSha = nil
+                }
             case .refused(let why):
-                st.shots[shot.shotId]?.rejectedSha = shot.sha
-                save(st)
+                mutate(cave) { $0.shots[shot.shotId]?.rejectedSha = shot.sha }
                 Log.write("sync", "upload refused \(Self.short(shot.shotId)): \(why)")
             case .changed:
                 Log.write("sync", "upload \(Self.short(shot.shotId)): file changed while sending; will hash and send again")
-                publish(cave: cave, local: local, state: st)
+                publish(cave: cave, local: local)
                 queue.append(cave)
                 return true
             case .stop(let e):
-                publish(cave: cave, local: local, state: st)
+                publish(cave: cave, local: local)
                 return stopped(e, cave: cave, what: "upload")
             }
-            publish(cave: cave, local: local, state: st)
+            publish(cave: cave, local: local)
         }
 
         // downloads
         let folder = ShotFiles.folder(cave: cave)
         var arrived = 0
+        defer { if arrived > 0 { bump(cave) } }
         for r in d.download {
-            guard account?.token != nil else { return true }
+            guard signedIn(), !Task.isCancelled else { return true }
             let final = folder.appendingPathComponent("\(r.shotId).cvcap"), part = folder.appendingPathComponent("\(r.shotId).cvcap.part")
+            if isDeleted(cave, r.shotId) { try? FileManager.default.removeItem(at: part); continue }
             let partHave = CaptureAPI.size(part)
+            guard SyncPlan.downloadFits(need: r.size - partHave, free: freeSpace()) else {
+                Log.write("sync", "download skipped \(Self.short(r.shotId)) (\(r.size) bytes): keeps 2 GB free for captures")
+                continue
+            }
             Log.write("sync", "download start \(Self.short(r.shotId)) \(r.size) bytes" + (partHave > 0 ? ", resuming from \(partHave)" : ""))
             do {
-                try await api.download(cave: cave, shot: r, part: part, to: final)
+                // one range per background task; a shot deleted here meanwhile stops coming down
+                while try await held({ try await api.fetchNext(cave: cave, shot: r, part: part) }) == false {
+                    if isDeleted(cave, r.shotId) || Task.isCancelled { break }
+                }
             } catch let e as SyncError {
                 switch e {
-                case .badDownload: Log.write("sync", "download \(Self.short(r.shotId)) failed its SHA-256 check; will start over"); continue
                 case .notFound: Log.write("sync", "download \(Self.short(r.shotId)): gone from the server"); continue
-                default: if arrived > 0 { bump(cave) }; return stopped(e, cave: cave, what: "download")
+                default: return stopped(e, cave: cave, what: "download")
                 }
+            } catch is URLError {
+                return stopped(.network, cave: cave, what: "download")
             } catch {
-                Log.write("sync", "download \(Self.short(r.shotId)) could not be written"); continue
+                if Task.isCancelled { return stopped(.network, cave: cave, what: "download") }
+                Log.write("sync", "download \(Self.short(r.shotId)) could not be written: \(error.localizedDescription)"); continue
+            }
+            if Task.isCancelled { return true }
+            if isDeleted(cave, r.shotId) {
+                try? FileManager.default.removeItem(at: part)
+                Log.write("sync", "download \(Self.short(r.shotId)) dropped: deleted on this phone meanwhile")
+                continue
+            }
+            let good = await held { await Task.detached { CaptureAPI.verified(part, shot: r) }.value }
+            guard good else { Log.write("sync", "download \(Self.short(r.shotId)) failed its SHA-256 check; will start over"); continue }
+            // checked again on the main actor right before the move, so a delete made meanwhile always wins
+            if isDeleted(cave, r.shotId) {
+                try? FileManager.default.removeItem(at: part)
+                Log.write("sync", "download \(Self.short(r.shotId)) dropped: deleted on this phone meanwhile")
+                continue
+            }
+            do { try CaptureAPI.install(part, to: final) } catch {
+                Log.write("sync", "download \(Self.short(r.shotId)) could not be written: \(error.localizedDescription)"); continue
             }
             if r.capturedAt > 0 {
                 try? FileManager.default.setAttributes([.creationDate: Date(timeIntervalSince1970: Double(r.capturedAt) / 1000)], ofItemAtPath: final.path)
             }
             let modified = ((try? FileManager.default.attributesOfItem(atPath: final.path))?[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0
-            let was = st.shots[r.shotId]
-            st.shots[r.shotId] = ShotRecord(sha: r.sha, size: r.size, modified: modified, syncedSha: r.sha, fromServer: was?.fromServer ?? true)
+            mutate(cave) { st in
+                let was = st.shots[r.shotId]
+                st.shots[r.shotId] = ShotRecord(sha: r.sha, size: r.size, modified: modified, syncedSha: r.sha, fromServer: was?.fromServer ?? true)
+            }
             for t in ShotFiles.thumbnails(of: final) { try? FileManager.default.removeItem(at: t) }
-            save(st)
             if !local.contains(where: { $0.shotId == r.shotId }) { local.append(LocalShot(shotId: r.shotId, sha: r.sha, size: r.size)) }
             else { local = local.map { $0.shotId == r.shotId ? LocalShot(shotId: r.shotId, sha: r.sha, size: r.size) : $0 } }
             arrived += 1
             Log.write("sync", "download done \(Self.short(r.shotId))")
-            publish(cave: cave, local: local, state: st)
+            publish(cave: cave, local: local)
         }
-        if arrived > 0 { bump(cave) }
         return true
     }
 
@@ -580,14 +773,16 @@ final class ShotSync: ObservableObject {
 
     /// Logs why a pass stopped; false (retry later) only when there was no connection or the server failed.
     private func stopped(_ e: SyncError, cave: String, what: String) -> Bool {
+        // stopped by the end of background time, not by the network: resumes when the app is opened
+        if paused || Task.isCancelled { return true }
         switch e {
         case .unavailable, .notFound:
             if !serverMissing { Log.write("sync", "\(what): the server has no capture storage (404); shots stay on this device") }
             serverMissing = true
             return true
         case .unauthorized:
-            Log.write("sync", "\(what): 401, signing out")
-            account?.signOut()
+            Log.write("sync", "\(what): 401, the sign-in ended (caves kept on the phone stay)")
+            signInEnded()
             return true
         case .refused(403, _):
             Log.write("sync", "\(what): 403 (view-only in this cave); nothing sent")
@@ -604,34 +799,36 @@ final class ShotSync: ObservableObject {
 
     private enum UploadOutcome { case done, refused(String), changed, stop(SyncError) }
 
-    private func upload(_ api: CaptureAPI, cave: String, shot: LocalShot, state st: inout CaveSyncState, local: [LocalShot],
-                        save: (CaveSyncState) -> Void) async -> UploadOutcome {
+    private func upload(_ api: CaptureAPI, cave: String, shot: LocalShot, local: [LocalShot]) async -> UploadOutcome {
         let file = ShotFiles.folder(cave: cave).appendingPathComponent("\(shot.shotId).cvcap")
         let id = Self.short(shot.shotId)
-        let modified = st.shots[shot.shotId]?.modified
+        let modified = current(cave).shots[shot.shotId]?.modified
         func map(_ e: Error) -> UploadOutcome {
             guard let e = e as? SyncError else { return .stop(.network) }
             switch e {
             case .refused(413, let c), .refused(422, let c): return .refused("\(c.isEmpty ? "too big" : c)")
+            // a view-only member: this shot cannot go up, the rest of the pass (downloads) still runs
+            case .refused(403, let c): return .refused("view-only in this cave (403\(c.isEmpty ? "" : " \(c)"))")
             default: Log.write("sync", "upload \(id) failed: \(e)"); return .stop(e)
             }
         }
         var have: Int64
-        do { have = try await api.uploadHave(cave: cave, sha: shot.sha) } catch { return map(error) }
-        let known = st.shots[shot.shotId]?.uploaded ?? 0
+        do { have = try await held { try await api.uploadHave(cave: cave, sha: shot.sha) } } catch { return map(error) }
+        let known = current(cave).shots[shot.shotId]?.uploaded ?? 0
         Log.write("sync", have > 0 ? "upload resume \(id) from \(have) of \(shot.size) (this device had \(known))"
                                    : "upload start \(id) \(shot.size) bytes")
         var conflicts = 0
         while true {
+            if Task.isCancelled { return .stop(.network) }
+            if isDeleted(cave, shot.shotId) { return .done }
             // a pass rewrote the file meanwhile: what was hashed is not what would be sent
             let now = ((try? FileManager.default.attributesOfItem(atPath: file.path))?[.modificationDate] as? Date)?.timeIntervalSince1970
             if now != modified { return .changed }
-            // the server holds every byte but did not keep it (an answer lost mid-check): resend the last chunk
-            let r = SyncPlan.nextChunk(have: have, total: shot.size) ?? SyncPlan.nextChunk(have: max(0, shot.size - 1), total: shot.size)!
+            guard let r = SyncPlan.chunkToSend(have: have, total: shot.size) else { return .refused("empty file") }
             let chunk: Data
             do { chunk = try await Task.detached { try Self.read(file, r) }.value } catch { return .changed }
             let answer: PutAnswer
-            do { answer = try await api.put(cave: cave, sha: shot.sha, offset: r.lowerBound, total: shot.size, chunk: chunk) }
+            do { answer = try await held { try await api.put(cave: cave, sha: shot.sha, offset: r.lowerBound, total: shot.size, chunk: chunk) } }
             catch {
                 if case .refused(422, "bad-sha")? = error as? SyncError,
                    await Task.detached(operation: { try? ShotHash.file(file) }).value != shot.sha { return .changed }
@@ -640,13 +837,12 @@ final class ShotSync: ObservableObject {
             switch answer {
             case .done:
                 Log.write("sync", "upload done \(id)")
-                st.shots[shot.shotId]?.uploaded = shot.size
+                mutate(cave) { $0.shots[shot.shotId]?.uploaded = shot.size }
                 return .done
             case .have(let n):
                 have = n
-                st.shots[shot.shotId]?.uploaded = n
-                save(st)
-                publish(cave: cave, local: local, state: st, uploading: (shot.shotId, Double(n) / Double(max(1, shot.size))))
+                mutate(cave) { $0.shots[shot.shotId]?.uploaded = n }
+                publish(cave: cave, local: local, uploading: (shot.shotId, Double(n) / Double(max(1, shot.size))))
             case .conflict(let n):
                 conflicts += 1
                 Log.write("sync", "upload \(id): 409, the server has \(n)")
@@ -667,7 +863,7 @@ final class ShotSync: ObservableObject {
 
     /// For `action=status`: server state, queue, and each cave's counts.
     func testStatus() -> String {
-        let s = serverMissing ? "server-missing" : offline ? "offline" : "ok"
+        let s = serverMissing ? "server-missing" : paused ? "paused" : offline ? "offline" : "ok"
         let caves = summaries.sorted { $0.key < $1.key }.map { "\(Self.short($0.key)):\($0.value.shots)/\($0.value.toUpload)" }
         return "sync=\(s) running=\(worker != nil ? 1 : 0) queued=\(queue.count) shots/to-upload=[\(caves.joined(separator: " "))]"
     }
