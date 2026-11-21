@@ -25,6 +25,11 @@ eq(isEraser({ pointerType: 'pen', buttons: 1, button: 0 }, true), false, 'ordina
 eq(isEraser({ pointerType: 'pen', buttons: 32, button: 0 }, true), true, 'eraser end, setting on');
 eq(isEraser({ pointerType: 'mouse', buttons: 2, button: 2 }, true), false, 'a mouse right button never erases');
 
+// Palm rejection is for a hand resting while a pen draws: with no pen ever used, a big contact (an iPad reports a
+// thumb in a pinch well past PALM_SIZE) is still a finger, or two-finger pan and zoom break (2026-11-21).
+const fingersOnly = new PenGuard();
+eq(fingersOnly.allowTouch({ timeStamp: 10, width: 130, height: 110 }), true, 'a big thumb is a finger when no pen has been used');
+
 // Palm rejection.
 const g = new PenGuard();
 const touch = (t: number, size = 0) => ({ timeStamp: t, width: size, height: size });
