@@ -16,7 +16,18 @@ cave failed to open on the phone. The tests passed because they were written fro
 | A shot waiting for its station (typed label, empty `station_id`) is placed by the station whose `Field::StationLabel` matches, ignoring case and spaces; the first in survey order wins a tie | `crates/cave-scene/src/solved.rs` `solve` (labels) | `cave_capture::label_key`, `StationLabel.find` |
 | Card chaining: shots at neighbouring stations (survey legs when known, else labels with the same prefix and numbers one apart) are joined through their CURRENT/FORWARD/REAR cards and placed as a chain; derived each time, nothing written to the shot. CaveCAD placing shots must use the same result to agree with the phone | (none yet in CaveCAD) | `cave_capture::chain::chains`, `cc_chains`, `Core.chains` |
 | Captures: `GET /api/caves/:id/captures` → `{captures:[{shotId, sha, size, stationLabel, capturedAt, …}]}`; upload `GET …/captures/:sha/upload` → `{have}`, then `PUT …/captures/:sha?offset&total` (`application/octet-stream`, ≤ 8 MiB) → `{have}` / 409 `{error:"offset", have}` / `{capture}`; `GET …/captures/:sha` with `Range` → 206; `DELETE …/captures/:shotId` needs `Content-Type: application/json`; a new file for a shot id replaces it; 404 on the list = no capture storage on the server | `apps/server/src/captures.ts`, `api.ts` (routes, octet-stream exemption), `CAPTURES.md` | `CaptureAPI`, `ShotSync` |
+| Shared stations (same phone, offline): keychain generic password, service `cavecad.stations`, account = server cave id, access group `<TeamPrefix>app.cavecad.shared`, written only by CaveCAD; data is JSON `{v:1, caveId, name, updatedAt (ms since 1970, last change in CaveCAD), stations:[{id, label, x, y, z}]}`, camelCase, adjusted positions (as the row above) rounded to 1 mm, ids = the document's station ids. Reference text: `crates/cave-capture/tests/fixtures/shared-stations.json` (Capture's test embeds it) | `crates/cave-capture/src/shared.rs`, `apps/web/src/lib/capture-share.svelte.ts`, `apps/desktop/src-tauri/plugins/tauri-plugin-capture-link/ios/Sources/CaptureLinkPlugin.swift` | `SharedStations.swift` (`SharedStore.of/all/merge`), `CaveStore.listing`, `StationPickView.mergeShared` |
 | Sign-in: `/signin?desktop=1&challenge&state` → `cavecad://auth?code&state` → `POST /api/desktop-token {code, verifier}` → `{token}`; then `Authorization: Bearer` | `apps/server/src/signin.ts`, `handoff.ts`, `api.ts` | `Account` |
+
+# What CaveCAD relies on in Capture
+
+The reverse promises: CaveCAD on the same phone reads these, so changing one breaks it.
+
+| Fact | Owner (Capture code) | CaveCAD code |
+| --- | --- | --- |
+| Shots are `Documents/shots/<caveId>/<shotId>.cvcap` (thumbnails `<shotId>.thumb.png` beside them, `.cvcap.part` while downloading), `<caveId>` = the server cave id; format `crates/cave-capture/src/bundle.rs` | `Sources/ShotFiles.swift`, `ShotSync.swift` (downloads) | `apps/desktop/src-tauri/src/capture.rs` (listing, `shots_root`) |
+| Documents is exposed in Files as "On My iPhone › Capture" (`UIFileSharingEnabled`, `LSSupportsOpeningDocumentsInPlace`); the person links that folder (or its `shots`) once in CaveCAD | `Resources/Info.plist` | `CaptureLinkPlugin.swift` (picker, bookmark), `capture.rs` |
+| Capture never writes the `cavecad.stations` items and reads them from the shared group only; its own secrets are written in `<TeamPrefix>app.cavecad.capture`, listed first in its entitlements | `Sources/Keychain.swift`, `Resources/CaveCADCapture.entitlements`, `project.yml` | `CaptureLinkPlugin.swift` |
 
 Debugging on the phone: `apps/capture-ios/pull-log.sh <udid>` copies `Documents/capture.log` and a
 screenshot to `apps/capture-ios/build/device/` and prints the log's tail.
