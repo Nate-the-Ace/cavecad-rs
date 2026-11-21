@@ -364,3 +364,13 @@ it swings the pan motor to keep the heading). Measured with the clamp top's dire
 - Bench, timed moves at 15°/s: the 14-target first list of a ring landed every stop within 3°.
 - `PROTOCOL.md` is the clean write-up of all of this for others; the Rust library (`targets` module, `Osmo::targets_*`)
   rebuilds Mimo's captured panorama lists byte for byte (tests).
+
+## Phone camera sweep, first bench pass (2026-11-21)
+
+Hand-free gimbal pass from Capture, phone portrait in the clamp, target mode at ~8 s per move. Sweep plan
+(window yaw -195..80, pitch -10..30, 13 targets in one list) ran steps 0-6, then **target 7 was never reached**
+(the list stops, the gimbal goes home). The compass followed the pan: home 352°, out to +80 (72°), back past
+home to about -185 (163-172°). So the stall is at the far negative end: the pan stop is joint -202 and the tilt
+joint sits on its stop there. The window's far end is now -180; a missed target now logs the asked yaw/pitch and
+the joints it stopped at. Coverage after the 7 steps: 217 of 396 cells. Fill did not run (pass ended on the miss).
+Compass in the clamp read ±13-19° true north, steady through the pass.

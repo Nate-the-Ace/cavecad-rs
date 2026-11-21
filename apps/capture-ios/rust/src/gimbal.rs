@@ -315,7 +315,16 @@ async fn run(
             if !arrived {
                 // a dropped list sends the gimbal home by itself
                 let _ = o.targets_exit().await;
-                return Err(format!("target {} of list {} not reached", i + 1, n + 1));
+                let at = joints(o)
+                    .map(|j| format!("pan {:.0} tilt {:.0} roll {:.0}", j[0], j[1], j[2]))
+                    .unwrap_or_else(|| "no attitude".into());
+                return Err(format!(
+                    "target {} of list {} not reached (asked yaw {:.0} pitch {:.0}; joints {at})",
+                    i + 1,
+                    n + 1,
+                    t.yaw,
+                    t.pitch
+                ));
             }
             done += 1;
             let j = joints(o);

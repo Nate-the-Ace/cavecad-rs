@@ -13,8 +13,10 @@ pub struct Window {
 }
 
 /// The OM7 holding the phone portrait, camera out, inside its joint windows with a margin (FINDINGS; bench-tuned).
+/// Bench 2026-11-21: a sweep to -195 stalled at step 7 of 13 (pan stop is joint -202, and at that pan the tilt
+/// joint sits on its own stop), so the far end keeps 22 degrees from the pan stop.
 pub const OM7_CAMERA: Window = Window {
-    yaw: (-195.0, 80.0),
+    yaw: (-180.0, 80.0),
     pitch: (-10.0, 30.0),
 };
 
