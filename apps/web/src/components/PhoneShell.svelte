@@ -5,12 +5,12 @@
   // so switching back finds it as it was. The ribbon is not shown: what the survey needs from it (connecting an
   // instrument, the shot settings) is in the Capture panel on a phone.
   import type { Component } from 'svelte';
-  import { Activity, BookOpen, Crosshair, Library, Map as MapIcon, Mountain, Scissors, Table2 } from '@lucide/svelte';
+  import { Activity, BookOpen, Crosshair, Library, Map as MapIcon, Mountain, Scissors, SquareTerminal } from '@lucide/svelte';
   import { surface } from '../lib/surface.svelte';
   import MapPanel from '../panels/MapPanel.svelte';
   import ProfilePanel from '../panels/ProfilePanel.svelte';
   import SectionPanel from '../panels/SectionPanel.svelte';
-  import StationsPanel from '../panels/StationsPanel.svelte';
+  import ConsolePanel from './Console.svelte';
   import NotebookPanel from '../panels/NotebookPanel.svelte';
   import SurveyPanel from '../panels/SurveyPanel.svelte';
   import { cave, unsaved } from '../lib/cave.svelte';
@@ -23,8 +23,8 @@
     map: { label: 'Map', icon: MapIcon, panel: MapPanel },
     section: { label: 'Section', icon: Scissors, panel: SectionPanel },
     notebook: { label: 'Notebook', icon: BookOpen, panel: NotebookPanel },
-    stations: { label: 'Stations', icon: Table2, panel: StationsPanel },
     profile: { label: 'Profile', icon: Activity, panel: ProfilePanel },
+    console: { label: 'Console', icon: SquareTerminal, panel: ConsolePanel },
   };
 
   // made once opened, then kept

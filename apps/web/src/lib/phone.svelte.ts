@@ -9,7 +9,8 @@ const QUERY = `(max-width: ${PHONE_WIDTH}px), (max-height: ${PHONE_HEIGHT}px)`;
 const TAB_KEY = 'cavecad.phoneTab';
 
 /** The panels the phone layout offers, in tab order (ids as the workspace knows them). */
-export const PHONE_TABS = ['survey', 'map', 'section', 'notebook', 'stations', 'profile'] as const;
+// Stations is left off the phone (2026-11-21, Nathan): the Console is needed there more (the link to Capture logs to it).
+export const PHONE_TABS = ['survey', 'map', 'section', 'notebook', 'profile', 'console'] as const;
 export type PhoneTab = (typeof PHONE_TABS)[number];
 
 const media = typeof window !== 'undefined' && window.matchMedia ? window.matchMedia(QUERY) : null;
