@@ -21,6 +21,8 @@ final class TestCommandTests: XCTestCase {
         XCTAssertEqual(parse("cavecadcapture://test?action=stop"), .success(.stop))
         XCTAssertEqual(parse("cavecadcapture://test?action=status"), .success(.status))
         XCTAssertEqual(parse("cavecadcapture://test?action=back"), .success(.back))
+        XCTAssertEqual(parse("cavecadcapture://test?action=sync"), .success(.sync))
+        XCTAssertEqual(TestCommand.sync.text, "sync")
         XCTAssertEqual(parse("CaveCADCapture://TEST?action=STOP"), .success(.stop))
     }
 

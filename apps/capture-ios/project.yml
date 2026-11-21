@@ -29,7 +29,7 @@ targets:
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         PRODUCT_NAME: CaveCAD Capture
         INFOPLIST_FILE: Resources/Info.plist
-        TARGETED_DEVICE_FAMILY: "1"
+        TARGETED_DEVICE_FAMILY: "1,2"  # iPhone + iPad (iPads without LiDAR are viewers)
         SWIFT_OBJC_BRIDGING_HEADER: Sources/CaveCADCapture-Bridging-Header.h
         HEADER_SEARCH_PATHS: "$(SRCROOT)/Vendor/apriltag"
         # Info.plist goes through the C preprocessor so the test URL scheme is registered in Debug only;

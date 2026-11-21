@@ -13,6 +13,10 @@
   <key>UIRequiredDeviceCapabilities</key><array><string>arkit</string></array>
   <key>UILaunchScreen</key><dict/>
   <key>UISupportedInterfaceOrientations</key><array><string>UIInterfaceOrientationPortrait</string></array>
+  <key>UISupportedInterfaceOrientations~ipad</key><array>
+    <string>UIInterfaceOrientationPortrait</string><string>UIInterfaceOrientationPortraitUpsideDown</string>
+    <string>UIInterfaceOrientationLandscapeLeft</string><string>UIInterfaceOrientationLandscapeRight</string>
+  </array>
 #ifdef CAPTURE_TEST_URLS
   <!-- Debug only (project.yml): test commands from the Mac, cavecadcapture://test?action=... (TestCommand.swift) -->
   <key>CFBundleURLTypes</key><array><dict>

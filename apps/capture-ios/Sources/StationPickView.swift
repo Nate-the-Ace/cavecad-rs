@@ -76,6 +76,7 @@ func withChains(_ shots: [SavedShot], _ chains: ChainResult) -> [SavedShot] {
 struct StationPickView: View {
     @State var cave: KeptCave
     let store: CaveStore
+    @EnvironmentObject private var sync: ShotSync
     @State private var stations: [Station] = []
     @State private var over: Station?
     @State private var problem: String?
@@ -94,17 +95,28 @@ struct StationPickView: View {
         self.store = store
     }
 
+    /// LiDAR devices take shots; others only view them (spec "Devices without LiDAR").
+    private var canCapture: Bool { DeviceMode.canCapture }
+
     var body: some View {
         List {
-            Section {
-                picker($over)
-                Button("Other station…") { typed = ""; askOther = true }
-            } footer: {
-                if let o = over, o.isWaiting {
-                    Text("\(o.label) is not in this copy of the cave yet. The shot is saved waiting for its station and placed once the cave has it.")
+            if canCapture {
+                Section {
+                    picker($over)
+                    Button("Other station…") { typed = ""; askOther = true }
+                } footer: {
+                    if let o = over, o.isWaiting {
+                        Text("\(o.label) is not in this copy of the cave yet. The shot is saved waiting for its station and placed once the cave has it.")
+                    }
+                }
+            } else if saved.isEmpty {
+                Section {
+                    Text("No shots of this cave on this device yet. Shots taken on a LiDAR iPhone or iPad appear here once they are uploaded.")
+                        .foregroundStyle(.secondary)
+                    Text(sync.line(cave: cave.id)).font(.caption).foregroundStyle(.secondary)
                 }
             }
-            if over != nil {
+            if canCapture, over != nil {
                 // a button driving `capturing` (not a NavigationLink), so a test command takes the same path
                 Button { capture() } label: {
                     HStack {
@@ -117,6 +129,7 @@ struct StationPickView: View {
             if !saved.isEmpty {
                 // Each shot is shown with its own station, whatever is picked above.
                 Section {
+                    Text(sync.line(cave: cave.id)).font(.caption).foregroundStyle(.secondary)
                     NavigationLink { OverallView(shots: saved, stations: stations) } label: {
                         Label("Overall", systemImage: "cube.transparent").font(.headline)
                     }
@@ -143,12 +156,13 @@ struct StationPickView: View {
                         let gone = rows.map { saved[$0] }
                         // the Overall row comes first, outside this ForEach: rows here index `saved` directly
                         for s in gone { Log.write("shots", "deleted one shot: \(ShotFiles.delete(s.url) ? "ok" : "failed")") }
+                        sync.deleted(cave: cave.id, shotIds: gone.map { ShotFiles.shotId(of: $0.url) })
                         Task { await loadSaved() }
                     }
                 } header: {
                     Text("Saved shots")
                 } footer: {
-                    Text("Overall shows every shot at its own station; shots chained to a neighbour are placed through their cards. A chain whose stations the cave lacks is drawn beside the rest; a lone shot waiting for its station is left out until the cave has it. Swipe a shot left to delete it from this phone.")
+                    Text("Overall shows every shot at its own station; shots chained to a neighbour are placed through their cards. A chain whose stations the cave lacks is drawn beside the rest; a lone shot waiting for its station is left out until the cave has it. Swipe a shot left to delete it from this device and the server.")
                 }
                 Section {
                     Button("Delete all shots of this cave (\(ByteCountFormatter.string(fromByteCount: savedBytes, countStyle: .file)))",
@@ -161,22 +175,24 @@ struct StationPickView: View {
             if let over { CaptureView(cave: cave, over: over) }
         }
         #if DEBUG
-        .onAppear { TestRemote.shared.stationScreen = testCommand }
+        .onAppear { TestRemote.shared.stationScreen = testCommand; TestRemote.shared.caveId = cave.id }
         .onChange(of: over?.label, initial: true) { TestRemote.shared.station = over?.label }
         .onChange(of: capturing, initial: true) { TestRemote.shared.capturing = capturing }
         #endif
         .navigationTitle(cave.name)
         // when this cave was last downloaded to the phone (the kept offline copy)
         .modifier(Subtitle(text: "Last Synced on: \(cave.keptAt.formatted(.dateTime.month(.twoDigits).day(.twoDigits).year(.twoDigits)))"))
-        .confirmationDialog("Delete all \(saved.count) shots of \(cave.name) from this phone?", isPresented: $askDeleteAll,
+        .confirmationDialog("Delete all \(saved.count) shots of \(cave.name) from this device and the server?", isPresented: $askDeleteAll,
                             titleVisibility: .visible) {
             Button("Delete all shots", role: .destructive) {
                 let caveId = cave.id
+                let ids = ShotFiles.list(cave: caveId).map(ShotFiles.shotId(of:))
                 Log.write("shots", "deleted all shots of a cave: \(ShotFiles.deleteAll(cave: caveId))")
+                sync.deleted(cave: caveId, shotIds: ids)
                 Task { await loadSaved() }
             }
         } message: {
-            Text("Shots not yet sent anywhere are lost. This cannot be undone.")
+            Text("They are deleted for everyone in the cave. This cannot be undone.")
         }
         .alert("Other station", isPresented: $askOther) {
             TextField("Station label", text: $typed)
@@ -190,7 +206,10 @@ struct StationPickView: View {
         .toolbar {
             if updating { ProgressView() } else { Button("Get latest") { getLatest() } }
         }
-        .task(id: cave.keptAt) { await loadStations() }
+        // opening the cave and "Get latest" (a new kept copy) both sync its shots
+        .task(id: cave.keptAt) { sync.kick(cave.id); await loadStations() }
+        .refreshable { sync.kick(cave.id) }
+        .onChange(of: sync.revisions[cave.id]) { Task { await loadSaved() } }
         .onChange(of: problem) { _, p in if let p { Log.write("stations", p) } }
         .onAppear { if !stations.isEmpty { Task { await loadSaved() } } }
     }
@@ -215,6 +234,7 @@ struct StationPickView: View {
     private func testCommand(_ c: TestCommand) -> TestOutcome {
         switch c {
         case .station(let label, let other):
+            if !canCapture { return .refused("viewer mode: this device has no LiDAR, so no capture") }
             if other {
                 // the "Other station…" entry: a label the cave lacks is taken as a waiting station
                 if stations.isEmpty, problem == nil { return .refused("stations not loaded yet") }
@@ -291,6 +311,10 @@ struct StationPickView: View {
                 Text(s.title)
                 ForEach(s.misfitLines, id: \.self) { Text($0).font(.caption).foregroundStyle(.orange) }
                 if !made.isEmpty { Text(made).font(.caption).foregroundStyle(.secondary) }
+                if let st = sync.state(cave: cave.id, shot: ShotFiles.shotId(of: s.url)) {
+                    Text(st.text(serverMissing: sync.serverMissing)).font(.caption2)
+                        .foregroundStyle(st == .uploaded || st == .fromServer ? Color.secondary : st == .refused ? Color.orange : Color.blue)
+                }
             }
         }
     }

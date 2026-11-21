@@ -21,6 +21,8 @@ enum TestCommand: Equatable, Sendable {
     case status
     /// Leaves the capture screen (or, on the station screen, goes back to the cave list).
     case back
+    /// Runs shot sync now: the open cave, else every cave with shots here.
+    case sync
 
     static let scheme = "cavecadcapture"
     static let host = "test"
@@ -55,6 +57,7 @@ enum TestCommand: Equatable, Sendable {
         case "stop": return .success(.stop)
         case "status": return .success(.status)
         case "back": return .success(.back)
+        case "sync": return .success(.sync)
         default: return .failure(.unknownAction(action))
         }
     }
@@ -71,6 +74,7 @@ enum TestCommand: Equatable, Sendable {
         case .stop: "stop"
         case .status: "status"
         case .back: "back"
+        case .sync: "sync"
         }
     }
 }
@@ -107,6 +111,9 @@ final class TestRemote {
 
     weak var account: Account?
     weak var recorder: ShotRecorder?
+    weak var sync: ShotSync?
+    /// The open cave's id (set by the station screen), for `sync`.
+    var caveId: String?
     /// The open cave's name (the station screen is up), the station picked there, and the capture screen shown.
     private(set) var cave: String?
     var station: String?
@@ -122,7 +129,7 @@ final class TestRemote {
 
     func caveOpened(_ name: String?) {
         cave = name
-        if name == nil { station = nil; capturing = false }
+        if name == nil { station = nil; capturing = false; caveId = nil }
     }
 
     var screen: String {
@@ -165,6 +172,12 @@ final class TestRemote {
             handler = captureScreen
         case .status:
             return .ok(nil)
+        case .sync:
+            guard account?.token != nil else { return .refused("signed out") }
+            guard let sync else { return .refused("no sync") }
+            if let caveId { sync.kick(caveId); return .ok("this cave (watch for [sync] lines)") }
+            sync.syncAll()
+            return .ok("every cave with shots here")
         }
         guard let handler else { return .refused("that screen has not appeared") }
         return handler(c)
@@ -173,7 +186,7 @@ final class TestRemote {
     /// One line: screen, cave, station, recorder phase, gimbal, tracking, light.
     func logStatus(_ why: String) {
         let place = "screen=\(screen) cave=\(cave ?? "-") station=\(station ?? "-")"
-        Log.write("test", "\(why): \(place) \(recorder?.testStatus() ?? "recorder=none")")
+        Log.write("test", "\(why): \(place) \(recorder?.testStatus() ?? "recorder=none") \(sync?.testStatus() ?? "sync=none")")
     }
 }
 #endif
