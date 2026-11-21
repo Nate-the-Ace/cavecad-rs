@@ -482,7 +482,58 @@ dependencies = [
 ]
 
 [[package]]
+name = "cave-capture"
+version = "0.0.1"
+dependencies = [
+ "cave-doc",
+ "cave-id",
+ "cave-survey",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "cave-doc"
+version = "0.0.1"
+dependencies = [
+ "cave-geom",
+ "cave-id",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "cave-folder"
+version = "0.0.1"
+dependencies = [
+ "serde",
+]
+
+[[package]]
+name = "cave-geom"
+version = "0.0.1"
+dependencies = [
+ "serde",
+]
+
+[[package]]
+name = "cave-id"
+version = "0.0.1"
+dependencies = [
+ "serde",
+]
+
+[[package]]
+name = "cave-survey"
+version = "0.0.1"
+dependencies = [
+ "cave-doc",
+ "cave-id",
+ "cave-sweep",
+]
+
+[[package]]
+name = "cave-sweep"
 version = "0.0.1"
 dependencies = [
  "serde",
@@ -493,13 +544,17 @@ name = "cavecad-desktop"
 version = "0.0.1"
 dependencies = [
  "btleplug",
+ "cave-capture",
  "cave-folder",
+ "cave-survey",
  "futures",
+ "memmap2",
  "objc2 0.6.5",
  "serde",
  "serde_json",
  "tauri",
  "tauri-build",
+ "tauri-plugin-capture-link",
  "tauri-plugin-deep-link",
  "tauri-plugin-dialog",
  "tauri-plugin-opener",
@@ -2325,6 +2380,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98"
 
 [[package]]
+name = "memmap2"
+version = "0.9.12"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6b0ca1155a9ecc25aa12e8313a119f32edf0255fea2f44839c4ac0a12b2ac157"
+dependencies = [
+ "libc",
+]
+
+[[package]]
 name = "memoffset"
 version = "0.9.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4141,6 +4205,16 @@ dependencies = [
  "serde_json",
  "tauri-utils",
  "walkdir",
+]
+
+[[package]]
+name = "tauri-plugin-capture-link"
+version = "0.0.1"
+dependencies = [
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-plugin",
 ]
 
 [[package]]

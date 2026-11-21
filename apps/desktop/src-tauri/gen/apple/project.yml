@@ -60,6 +60,12 @@ targets:
         CFBundleVersion: "0.0.1"
     entitlements:
       path: cavecad-desktop_iOS/cavecad-desktop_iOS.entitlements
+      # Own group FIRST (the default for keychain items written with no group), the group shared with
+      # CaveCAD Capture second (tauri-plugin-capture-link writes the cave's stations there).
+      properties:
+        keychain-access-groups:
+          - $(AppIdentifierPrefix)app.cavecad.desktop
+          - $(AppIdentifierPrefix)app.cavecad.shared
     scheme:
       environmentVariables:
         RUST_BACKTRACE: full

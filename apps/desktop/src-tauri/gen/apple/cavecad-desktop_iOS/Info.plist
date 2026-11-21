@@ -57,5 +57,7 @@
 	<string>CaveCAD uses your location to place the cave entrance on the map and find the likely entrance nearby.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>CaveCAD uses your location to place the cave entrance on the map and find the likely entrance nearby.</string>
+	<key>AppIdentifierPrefix</key>
+	<string>$(AppIdentifierPrefix)</string>
 </dict>
 </plist>

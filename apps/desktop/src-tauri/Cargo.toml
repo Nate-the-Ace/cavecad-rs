@@ -26,6 +26,11 @@ tauri-plugin-dialog = "2"
 tauri-plugin-opener = "2"
 tauri-plugin-deep-link = "2"
 cave-folder = { path = "../../../crates/cave-folder" }
+# CaveCAD Capture on the same iPhone/iPad (src/capture.rs): shot files, placing, shared stations.
+cave-capture = { path = "../../../crates/cave-capture" }
+cave-survey = { path = "../../../crates/cave-survey" }
+memmap2 = "0.9"
+tauri-plugin-capture-link = { path = "plugins/tauri-plugin-capture-link" }
 # Bluetooth for surveying instruments (src/ble.rs): the app's web view has no Web Bluetooth.
 btleplug = "0.11"
 futures = "0.3"

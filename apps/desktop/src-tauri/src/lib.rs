@@ -5,6 +5,7 @@
 
 mod ble;
 mod bridge;
+mod capture;
 mod cavefolder;
 mod files;
 // The app updating itself is desktop only: on the iPad, Xcode (or later the App Store) installs updates.
@@ -262,6 +263,9 @@ pub fn run() {
         })
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_capture_link::init())
+        .manage(capture::Shared::default())
+        .manage(capture::Linked::default())
         .manage(update::Pending::default())
         .manage(ble::Ble::default())
         .manage(bridge::Waiting::default())
@@ -289,7 +293,14 @@ pub fn run() {
             ble::ble_disconnect,
             ble::ble_read,
             ble::ble_write,
-            ble::ble_subscribe
+            ble::ble_subscribe,
+            capture::capture_link_available,
+            capture::capture_share_stations,
+            capture::capture_forget_stations,
+            capture::capture_link_state,
+            capture::capture_link,
+            capture::capture_shots,
+            capture::capture_shot_points
         ])
         .run(tauri::generate_context!())
         .expect("the CaveCAD desktop app could not start");

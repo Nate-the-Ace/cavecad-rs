@@ -7,5 +7,8 @@
 	<string>CaveCAD connects to your survey instrument (such as a Cavway X1) over Bluetooth to take shots straight into the notebook.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>CaveCAD uses your location to place the cave entrance on the map and find the likely entrance nearby.</string>
+	<!-- "<TeamID>." for the keychain group shared with CaveCAD Capture (tauri-plugin-capture-link). -->
+	<key>AppIdentifierPrefix</key>
+	<string>$(AppIdentifierPrefix)</string>
 </dict>
 </plist>
