@@ -58,9 +58,10 @@ pub struct ShotHeader {
     pub shot_id: String,
     /// The server cave it belongs to.
     pub cave_id: String,
-    /// The station the rig stood over (a `cave_id::Id` as text).
+    /// The station the rig stood over (a `cave_id::Id` as text). Empty for a shot **waiting for its
+    /// station**: the label was typed and the cave did not have it yet (see [`ShotHeader::is_waiting`]).
     pub station_id: String,
-    /// That station's label at the time.
+    /// That station's label at the time; for a waiting shot, the label as typed.
     pub station_label: String,
     /// When it was captured (milliseconds since 1970, from the phone).
     pub captured_at_ms: i64,
@@ -94,6 +95,15 @@ pub struct ShotHeader {
     /// absent (empty) in older files.
     #[serde(default)]
     pub flags: Vec<String>,
+}
+
+impl ShotHeader {
+    /// A shot waiting for its station: taken over a typed label the cave did not have yet. It is
+    /// placed by matching `station_label` against the cave's stations
+    /// ([`crate::stations::labels_match`]) once one carries it; the file is never rewritten for that.
+    pub fn is_waiting(&self) -> bool {
+        self.station_id.is_empty()
+    }
 }
 
 /// One kept camera frame, for colouring the mesh later.

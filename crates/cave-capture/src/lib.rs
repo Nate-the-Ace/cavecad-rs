@@ -19,5 +19,5 @@ pub use passes::{
     CardFit, Ghost, IDENTITY, NewPass, Pass, PassMesh, add_pass, apply_dir, apply_point,
     card_offsets, cards_fit, ghost, mul,
 };
-pub use stations::{StationSeed, document_from_room, stations};
+pub use stations::{StationSeed, document_from_room, label_key, labels_match, stations};
 pub use thin::thin_points;

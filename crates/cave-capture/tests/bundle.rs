@@ -271,3 +271,32 @@ fn header_without_cards_still_reads() {
     .unwrap();
     assert!(h.cards.is_empty());
 }
+
+#[test]
+fn waiting_shot_round_trips_with_an_empty_station_id() {
+    // a shot at a station typed by hand, not in the cave yet: no id, the typed label kept
+    let mut s = sample();
+    s.header.station_id = String::new();
+    s.header.station_label = "A7".into();
+    assert!(s.header.is_waiting());
+    let bytes = encode(&s).unwrap();
+    assert_eq!(
+        bytes[MAGIC.len()..MAGIC.len() + 2],
+        1u16.to_le_bytes(),
+        "still FORMAT 1"
+    );
+    let back = decode(&bytes).unwrap();
+    assert_eq!(back.header.station_id, "");
+    assert_eq!(back.header.station_label, "A7");
+    assert!(
+        cave_capture::check_header(&bytes)
+            .unwrap()
+            .header
+            .is_waiting()
+    );
+}
+
+#[test]
+fn a_shot_with_a_station_id_is_not_waiting() {
+    assert!(!sample().header.is_waiting());
+}

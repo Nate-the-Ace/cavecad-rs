@@ -290,6 +290,9 @@ fn summary(bundle: *const u8, len: usize, station_and_target: *const f64) -> CcB
         "keyframes": info.keyframes,
         "passes": info.header.passes.len(),
         "placed": false,
+        "station_label": info.header.station_label,
+        // typed label the cave did not have: placed once Swift finds the label among the stations
+        "waiting": info.header.is_waiting(),
         "station_id": info.header.station_id,
         "target_station_id": info.header.taps.first().map(|t| t.target_station_id.clone()),
         "compass": info.header.compass.map(|c| serde_json::json!({ "true_north": c.true_north, "accuracy_deg": c.accuracy_deg })),
@@ -1202,6 +1205,48 @@ mod tests {
             pts[0].abs() < 1e-5 && (pts[1] - 5.0).abs() < 1e-5 && (pts[2] - 0.3).abs() < 1e-5,
             "{pts:?}"
         );
+    }
+
+    #[test]
+    fn waiting_shot_summary_works_unplaced_and_places_by_pair() {
+        // station typed by hand, not in the cave yet: empty station id, the typed label kept
+        let b = bundle_of(&COMPASS.replace(
+            r#""station_id":"a","station_label":"A""#,
+            r#""station_id":"","station_label":"A7""#,
+        ));
+        assert!(!b.is_empty());
+        let sum: serde_json::Value = serde_json::from_slice(&read(unsafe {
+            cc_shot_summary(b.as_ptr(), b.len(), std::ptr::null())
+        }))
+        .unwrap();
+        assert!(sum["error"].is_null(), "{sum}");
+        assert_eq!(sum["placed"], false);
+        assert_eq!(sum["waiting"], true);
+        assert_eq!(sum["station_id"], "");
+        assert_eq!(sum["station_label"], "A7");
+        assert_eq!(sum["vertices"], 3);
+        // once the label is found, Swift passes that station's xyz: placed like any compass shot
+        let st = [10.0, 20.0, 5.0, 10.0, 20.0, 5.0];
+        let sum: serde_json::Value = serde_json::from_slice(&read(unsafe {
+            cc_shot_summary(b.as_ptr(), b.len(), st.as_ptr())
+        }))
+        .unwrap();
+        assert_eq!(sum["placed"], true, "{sum}");
+        assert_eq!(
+            sum["waiting"], true,
+            "placement is derived: the file still says waiting"
+        );
+    }
+
+    #[test]
+    fn shot_with_a_station_is_not_waiting() {
+        let b = bundle_of(COMPASS);
+        let sum: serde_json::Value = serde_json::from_slice(&read(unsafe {
+            cc_shot_summary(b.as_ptr(), b.len(), std::ptr::null())
+        }))
+        .unwrap();
+        assert_eq!(sum["waiting"], false);
+        assert_eq!(sum["station_label"], "A");
     }
 
     #[test]

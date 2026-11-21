@@ -117,3 +117,15 @@ fn errors_do_not_echo_cave_data() {
     let err = document_from_room(Some(&snap), &[]).unwrap_err();
     assert!(!err.contains("Truitt"), "{err}");
 }
+
+#[test]
+fn labels_match_ignoring_case_and_spaces() {
+    use cave_capture::stations::{label_key, labels_match};
+    assert_eq!(label_key(" a 7 "), "a7");
+    assert_eq!(label_key("Bx12"), "bx12");
+    assert!(labels_match("A7", "a 7"));
+    assert!(labels_match("  A7\t", "a7"));
+    assert!(!labels_match("A7", "A71"));
+    assert!(!labels_match("", ""), "an empty label matches nothing");
+    assert!(!labels_match("  ", "A7"));
+}

@@ -17,6 +17,22 @@ pub struct StationSeed {
     pub pos: Vec3,
 }
 
+/// A station label as matched against a typed one: lower case, every space removed (`" A 7"` and
+/// `"a7"` are the same station).
+pub fn label_key(label: &str) -> String {
+    label
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .flat_map(char::to_lowercase)
+        .collect()
+}
+
+/// Two labels name the same station: equal ignoring case and spaces. An empty label matches nothing.
+pub fn labels_match(a: &str, b: &str) -> bool {
+    let k = label_key(a);
+    !k.is_empty() && k == label_key(b)
+}
+
 #[derive(Deserialize)]
 struct Ops {
     /// The CaveCAD client writes the ops as one JSON text inside the JSON (`"ops":"[...]"`); a plain
