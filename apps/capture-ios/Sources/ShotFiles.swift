@@ -14,9 +14,22 @@ enum ShotFiles {
         try bundle.write(to: u, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
         return u
     }
-    /// The shot's picture, beside it: <shotId>.thumb.png.
-    static func thumbnail(of shot: URL) -> URL {
-        shot.deletingPathExtension().appendingPathExtension("thumb.png")
+    /// The shot's picture, beside it: <shotId>.thumb.png; for a shot its chain turns by `yawDeg` (whole degrees),
+    /// <shotId>.y<yaw>.thumb.png, so a picture is made again when the chain turns the shot differently.
+    static func thumbnail(of shot: URL, yawDeg: Int = 0) -> URL {
+        let base = shot.deletingPathExtension()
+        return yawDeg == 0 ? base.appendingPathExtension("thumb.png")
+            : base.deletingLastPathComponent().appendingPathComponent("\(base.lastPathComponent).y\(yawDeg).thumb.png")
+    }
+
+    /// Every picture of the shot (any turn).
+    static func thumbnails(of shot: URL) -> [URL] {
+        let id = shot.deletingPathExtension().lastPathComponent
+        let all = (try? FileManager.default.contentsOfDirectory(at: shot.deletingLastPathComponent(), includingPropertiesForKeys: nil)) ?? []
+        return all.filter { u in
+            let n = u.lastPathComponent
+            return n == "\(id).thumb.png" || (n.hasPrefix("\(id).y") && n.hasSuffix(".thumb.png"))
+        }
     }
 
     /// Deletes one shot file (and its picture) from the phone. Refuses anything that is not a .cvcap in the
@@ -27,7 +40,7 @@ enum ShotFiles {
             .appendingPathComponent("shots").standardizedFileURL.path + "/"
         let path = url.standardizedFileURL.path
         guard url.pathExtension == "cvcap", path.hasPrefix(root) else { return false }
-        try? FileManager.default.removeItem(at: thumbnail(of: url))
+        for t in thumbnails(of: url) { try? FileManager.default.removeItem(at: t) }
         do { try FileManager.default.removeItem(at: url); return true } catch { return false }
     }
 

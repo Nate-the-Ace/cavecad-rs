@@ -9,6 +9,10 @@ Needs an iPhone with LiDAR (Pro models), Xcode, XcodeGen (`brew install xcodegen
         xcodebuild test -scheme CaveCADCapture -destination 'platform=iOS Simulator,name=iPhone 18 Pro' CODE_SIGNING_ALLOWED=NO
 
 Shots are kept on the phone in Documents/shots/<cave>/<shot>.cvcap (format: `crates/cave-capture/src/bundle.rs`).
+Saved shots are placed together each time the list refreshes (`Core.chains` → `cc_chains`, headers only): shots at
+neighbouring stations are chained through their station cards ("chained to A4"); a chain whose stations the cave lacks
+floats ("chain A7–A9 · waiting for station") and drops into place when one arrives. The log gets
+`[shots] chains: n shots, k chains, p placed by chain, m flagged` on every refresh.
 Caves downloaded for offline use are in Application Support/caves (deleted on sign-out; shots are not).
 The phone registers itself as a device on the CaveCAD account the first time it lists caves.
 

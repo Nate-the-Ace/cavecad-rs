@@ -102,18 +102,25 @@ actor ThumbnailMaker {
     private var renderer: SCNRenderer?
 
     /// The shot's picture as PNG bytes: the kept one while it is fresh, else made now and kept. Nil when the
-    /// shot cannot be read or placed with `pair`.
-    func picture(shot: URL, pair: [Double]) -> Data? {
-        let thumb = ShotFiles.thumbnail(of: shot)
+    /// shot cannot be read or placed with `pair`. A shot placed by its chain is turned by the chain's fix
+    /// (`chain`); its picture is kept per whole degree of that turn.
+    func picture(shot: URL, pair: [Double], chain: ChainPlace? = nil) -> Data? {
+        let yaw = Int((chain?.fixYawDeg ?? 0).rounded())
+        let thumb = ShotFiles.thumbnail(of: shot, yawDeg: yaw)
         if !ShotThumbnail.isStale(shotModified: ShotThumbnail.modified(shot), thumbModified: ShotThumbnail.modified(thumb)),
            let d = try? Data(contentsOf: thumb) {
             return d
         }
         guard let data = try? Data(contentsOf: shot, options: .alwaysMapped) else { return nil }
-        let points = Core.placedPointsThin(bundle: data, pair: pair)
+        let raw = Core.placedPointsThin(bundle: data, pair: pair)
+        let points = chain?.apply(raw) ?? raw
         if renderer == nil, let device = MTLCreateSystemDefaultDevice() { renderer = SCNRenderer(device: device, options: nil) }
         guard let renderer, let png = ShotThumbnail.render(points: points, with: renderer) else { return nil }
         try? png.write(to: thumb, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+        // pictures made for an earlier turn of the chain are out of date
+        for old in ShotFiles.thumbnails(of: shot) where old.lastPathComponent != thumb.lastPathComponent {
+            try? FileManager.default.removeItem(at: old)
+        }
         return png
     }
 }
@@ -125,6 +132,8 @@ struct ShotThumbView: View {
     let pair: [Double]?
     /// The shot file's date, so a rewritten shot gets a new picture.
     let modified: Date?
+    /// Its place after card chaining; the picture follows the chain's turn.
+    var chain: ChainPlace? = nil
 
     private enum Shown { case making, picture(UIImage), none }
     @State private var shown = Shown.making
@@ -140,9 +149,9 @@ struct ShotThumbView: View {
         .frame(width: ShotThumbnail.side, height: ShotThumbnail.side)
         .background(Color(white: 0.13))
         .clipShape(RoundedRectangle(cornerRadius: 8))
-        .task(id: "\(url.path)|\(modified?.timeIntervalSince1970 ?? 0)") {
+        .task(id: "\(url.path)|\(modified?.timeIntervalSince1970 ?? 0)|\(Int((chain?.fixYawDeg ?? 0).rounded()))|\(pair ?? [])") {
             guard let pair else { shown = .none; return }
-            let png = await ThumbnailMaker.shared.picture(shot: url, pair: pair)
+            let png = await ThumbnailMaker.shared.picture(shot: url, pair: pair, chain: chain)
             shown = png.flatMap { UIImage(data: $0, scale: ShotThumbnail.scale) }.map(Shown.picture) ?? .none
         }
     }

@@ -18,9 +18,33 @@ struct SavedShot: Identifiable, Sendable {
     var waitingLabel: String? = nil
     /// Saved waiting, now placed because the cave carries its label (`over` is that station).
     var fromWaiting = false
+    /// Its place after card chaining, and its chain (nil when in none).
+    var chain: ChainPlace? = nil
+    var chainInfo: ChainInfo? = nil
     var id: URL { url }
 
+    /// The six numbers to draw it with: the chain's when it has them, else its own.
+    var drawPair: [Double]? { chain?.pair ?? pair }
+
+    /// What to say about its chain: "chained to A4", "chain A7–A9 · waiting for station"; nil when in none.
+    var chainNote: String? {
+        guard let c = chain else { return nil }
+        if c.isFloating, let info = chainInfo { return "chain \(info.span) · waiting for station" }
+        if c.isChained { return c.joined.isEmpty ? "placed by its chain" : "chained to \(c.joined.joined(separator: ", "))" }
+        return nil
+    }
+
+    /// Misfits with neighbours, with their numbers (shown in orange).
+    var misfitLines: [String] { (chain?.misfits ?? []).map { $0.text(own: chain?.label ?? "") } }
+
+    /// Can be opened: placed, drawn around its own spot while waiting, or in a chain.
+    var canOpen: Bool { over != nil || waitingLabel != nil || drawPair != nil }
+
     var title: String {
+        if let c = chain, let note = chainNote {
+            if c.isFloating { return note }
+            return "over \(over?.label ?? c.label) · \(note)"
+        }
         if let waitingLabel { return "\(waitingLabel) · waiting for station" }
         guard let over else { return "station gone" }
         return "over \(over.label)" + (forward.map { " → \($0.label)" } ?? "")
@@ -33,6 +57,16 @@ struct SavedShot: Identifiable, Sendable {
             let id = s.url.deletingPathExtension().lastPathComponent
             return logged.insert(id).inserted ? "waiting shot \(id) placed at \(o.label)" : nil
         }
+    }
+}
+
+/// Saved shots with their chaining (`Core.chains`) filled in; `chains` gave the places in the same order.
+func withChains(_ shots: [SavedShot], _ chains: ChainResult) -> [SavedShot] {
+    shots.enumerated().map { i, s in
+        var s = s
+        s.chain = i < chains.places.count ? chains.places[i] : nil
+        s.chainInfo = chains.info(s.chain)
+        return s
     }
 }
 
@@ -89,7 +123,12 @@ struct StationPickView: View {
                     ForEach(saved) { s in
                         let made = [s.made?.formatted(date: .abbreviated, time: .shortened), s.compassLabel]
                             .compactMap { $0 }.joined(separator: " · ")
-                        if let o = s.over {
+                        if s.chain?.pair != nil {
+                            NavigationLink {
+                                ShotView(url: s.url, stations: s.over.map { [$0] + (s.forward.map { [$0] } ?? []) } ?? [],
+                                         chain: s.chain, chainNote: s.chainNote)
+                            } label: { row(s, made: made) }
+                        } else if let o = s.over {
                             NavigationLink { ShotView(url: s.url, stations: [o] + (s.forward.map { [$0] } ?? [])) } label: {
                                 row(s, made: made)
                             }
@@ -109,7 +148,7 @@ struct StationPickView: View {
                 } header: {
                     Text("Saved shots")
                 } footer: {
-                    Text("Overall shows every shot at its own station; shots waiting for their station are left out until the cave has it. Swipe a shot left to delete it from this phone.")
+                    Text("Overall shows every shot at its own station; shots chained to a neighbour are placed through their cards. A chain whose stations the cave lacks is drawn beside the rest; a lone shot waiting for its station is left out until the cave has it. Swipe a shot left to delete it from this phone.")
                 }
                 Section {
                     Button("Delete all shots of this cave (\(ByteCountFormatter.string(fromByteCount: savedBytes, countStyle: .file)))",
@@ -218,7 +257,8 @@ struct StationPickView: View {
         let caveId = cave.id, all = stations
         savedBytes = await Task.detached { ShotFiles.bytes(cave: caveId) }.value
         saved = await Task.detached {
-            ShotFiles.list(cave: caveId).map { u in
+            let list = ShotFiles.list(cave: caveId)
+            let shots = list.map { u in
                 let made = try? u.resourceValues(forKeys: [.creationDateKey]).creationDate
                 let head = (try? Data(contentsOf: u, options: .alwaysMapped))
                     .map { ShotSummary(Core.summary(bundle: $0, pair: nil)) }
@@ -227,6 +267,9 @@ struct StationPickView: View {
                                  pair: head?.viewPair(in: all), modified: ShotThumbnail.modified(u),
                                  waitingLabel: head?.waitingLabel(in: all), fromWaiting: head?.isWaiting == true && found != nil)
             }
+            let chains = Core.chains(stations: all, shots: list)
+            Log.write("shots", chains.logLine)
+            return withChains(shots, chains)
         }.value
         for line in SavedShot.newlyPlaced(saved, logged: &placedWaitingLogged) { Log.write("shots", line) }
     }
@@ -243,9 +286,10 @@ struct StationPickView: View {
 
     private func row(_ s: SavedShot, made: String) -> some View {
         HStack(spacing: 12) {
-            ShotThumbView(url: s.url, pair: s.pair, modified: s.modified)
+            ShotThumbView(url: s.url, pair: s.drawPair, modified: s.modified, chain: s.chain)
             VStack(alignment: .leading, spacing: 4) {
                 Text(s.title)
+                ForEach(s.misfitLines, id: \.self) { Text($0).font(.caption).foregroundStyle(.orange) }
                 if !made.isEmpty { Text(made).font(.caption).foregroundStyle(.secondary) }
             }
         }

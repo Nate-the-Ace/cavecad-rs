@@ -103,6 +103,10 @@ struct ShotView: View {
     let url: URL
     /// Stations to find the shot's own in (the cave's, or just the one it was captured over).
     let stations: [Station]
+    /// Its place after card chaining (`Core.chains`); nil to place it by its own station alone.
+    var chain: ChainPlace? = nil
+    /// What to say about its chain ("chained to A4", "chain A7–A9 · waiting for station").
+    var chainNote: String? = nil
     @State private var summary: ShotSummary?
     @State private var over: Station?
     @State private var forward: Station?
@@ -113,9 +117,16 @@ struct ShotView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            if let waiting {
+            if let chainNote {
+                Text(chainNote).font(.footnote).foregroundStyle(chain?.isFloating == true ? .orange : .secondary)
+                    .multilineTextAlignment(.center).padding(8)
+            } else if let waiting {
                 Text("Waiting for station \(waiting): not placed in the cave yet. Shown around its own spot.")
                     .font(.footnote).foregroundStyle(.orange).multilineTextAlignment(.center).padding(8)
+            }
+            ForEach(Array((chain?.misfits ?? []).enumerated()), id: \.offset) { _, f in
+                Text(f.text(own: chain?.label ?? "")).font(.footnote).foregroundStyle(.orange)
+                    .multilineTextAlignment(.center).padding(.horizontal, 8)
             }
             if let scene {
                 OrbitView(scene: scene).frame(maxHeight: .infinity)
@@ -139,9 +150,10 @@ struct ShotView: View {
                 }.font(.caption).padding(8)
             }
         }
-        .navigationTitle(waiting.map { "\($0) · waiting" } ?? over.map { "over \($0.label)" } ?? "Shot")
+        .navigationTitle(chain.map { c in c.placed ? "over \(c.label)" : "\(c.label) · waiting" }
+                         ?? waiting.map { "\($0) · waiting" } ?? over.map { "over \($0.label)" } ?? "Shot")
         .task {
-            let url = url, stations = stations
+            let url = url, stations = stations, chain = chain
             // Reading and placing a shot is heavy: off the main actor, then shown here.
             let (s, found, waitingLabel, ok, points) = await Task.detached {
                 () -> (ShotSummary, (over: Station, forward: Station?)?, String?, Bool, [Float]) in
@@ -150,9 +162,15 @@ struct ShotView: View {
                 }
                 let head = ShotSummary(Core.summary(bundle: data, pair: nil))
                 let found = head.stations(in: stations), waiting = head.waitingLabel(in: stations)
-                guard head.error == nil, let p = head.viewPair(in: stations) else { return (head, found, waiting, false, []) }
-                let s = ShotSummary(Core.summary(bundle: data, pair: p))
-                return (s, found, waiting, true, s.placed ? Core.placedPositions(bundle: data, pair: p) : [])
+                guard head.error == nil, let p = chain?.pair ?? head.viewPair(in: stations) else { return (head, found, waiting, false, []) }
+                var s = ShotSummary(Core.summary(bundle: data, pair: p))
+                guard let chain else { return (s, found, waiting, true, s.placed ? Core.placedPositions(bundle: data, pair: p) : []) }
+                // placed by its chain: the old placement moved by the chain's fix (cards too)
+                s.cards = s.cards.map { c in
+                    let q = chain.apply(SIMD3<Double>(Double(c.point.x), Double(c.point.y), Double(c.point.z)))
+                    return CardPlaced(card: c.card, point: SIMD3(Float(q.x), Float(q.y), Float(q.z)), sightings: c.sightings, spreadM: c.spreadM)
+                }
+                return (s, found, waiting, true, s.placed ? chain.apply(Core.placedPositions(bundle: data, pair: p)) : [])
             }.value
             summary = s
             // still waiting: its own spot is the origin, marked with the typed label
@@ -160,7 +178,11 @@ struct ShotView: View {
             forward = found?.forward
             waiting = waitingLabel
             placeable = ok
-            if let o = over, s.placed, !points.isEmpty { scene = Self.scene(points: points, over: o, forward: forward, cards: s.cards) }
+            if chain != nil, over == nil, let c = chain { over = Station.waiting(label: c.label) }
+            let at = chain?.spot.map { SIMD3(Float($0.x), Float($0.y), Float($0.z)) } ?? .zero
+            if let o = over, s.placed, !points.isEmpty {
+                scene = Self.scene(points: points, over: o, forward: forward, cards: s.cards, overAt: at)
+            }
         }
     }
 
@@ -185,7 +207,10 @@ struct ShotView: View {
     }
 
     /// Points come relative to the station over, so the scene's origin is that station.
-    static func scene(points: [Float], over: Station, forward: Station?, cards: [CardPlaced] = []) -> SCNScene {
+    /// `overAt` is where the shot's own station point is drawn (survey frame, relative to the scene's origin):
+    /// zero, or for a shot placed by its chain, where the chain put its station point.
+    static func scene(points: [Float], over: Station, forward: Station?, cards: [CardPlaced] = [],
+                      overAt: SIMD3<Float> = .zero) -> SCNScene {
         let s = SCNScene()
         let verts = sceneVertices(points)
         let src = SCNGeometrySource(vertices: verts)
@@ -200,7 +225,8 @@ struct ShotView: View {
             let n = SCNNode(geometry: SCNSphere(radius: 0.1))
             n.geometry?.firstMaterial?.diffuse.contents = colour
             // relative to the station over, in Double first (survey coordinates can be large)
-            n.position = SCNVector3(Float(st.x - over.x), Float(st.z - over.z), Float(-(st.y - over.y)))
+            n.position = st == over ? SCNVector3(overAt.x, overAt.z, -overAt.y)
+                : SCNVector3(Float(st.x - over.x), Float(st.z - over.z), Float(-(st.y - over.y)))
             s.rootNode.addChildNode(n)
         }
         // cards the scan saw: a labelled ball at each, relative to the station like the room
