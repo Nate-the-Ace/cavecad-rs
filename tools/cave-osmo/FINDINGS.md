@@ -374,3 +374,13 @@ home to about -185 (163-172°). So the stall is at the far negative end: the pan
 joint sits on its stop there. The window's far end is now -180; a missed target now logs the asked yaw/pitch and
 the joints it stopped at. Coverage after the 7 steps: 217 of 396 cells. Fill did not run (pass ended on the miss).
 Compass in the clamp read ±13-19° true north, steady through the pass.
+
+## Phone camera sweep, second bench pass (2026-11-21, window -180..80)
+
+Driven from the Mac over Wi-Fi (test commands + live log, no cable). Full pass, no stall: sweep 13/13 in 84 s
+(~6.5 s a step), coverage 276/396 cells; fill 11 targets in 61 s, coverage 281/396 at the end (+5 only); total
+145 s, saved with no flags. Light 790-1430 lux indoors, tracking normal throughout. `mount` read false for two
+steps at the far pan (roll joint leaves 80-112 when the pan couples in portrait) and came back; harmless, but the
+mount check must only gate the START, not the pass. Compass in the clamp: ±30° at alignment, ±11° at stop.
+Open: fill gained little. Either its yaw sign is wrong (aims away from the holes) or the holes are where the camera
+cannot reach/mesh (straight up, under the tripod). Next bench: watch which way the first fill move turns.
