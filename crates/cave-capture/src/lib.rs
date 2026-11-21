@@ -7,6 +7,7 @@ pub mod chain;
 pub mod frame;
 pub mod passes;
 pub mod place;
+pub mod shared;
 pub mod stations;
 pub mod thin;
 
@@ -26,5 +27,6 @@ pub use passes::{
     card_offsets, cards_fit, ghost, mul,
 };
 pub use place::{StationRef, placement, relative_points, station_for};
+pub use shared::{SharedStation, SharedStations, shared_stations};
 pub use stations::{StationSeed, document_from_room, label_key, labels_match, stations};
 pub use thin::thin_points;
