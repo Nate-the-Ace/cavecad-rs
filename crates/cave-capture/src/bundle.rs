@@ -356,6 +356,24 @@ pub fn check_header(bytes: &[u8]) -> Result<HeaderInfo, BundleError> {
     })
 }
 
+/// The header and the mesh positions (xyz per vertex) only: no normals, indices or photos are
+/// read or copied. Checks the file as [`check_header`] does (whole length, as the header says) and
+/// that every position is finite, so it refuses what [`decode`] refuses for the positions it reads.
+pub fn mesh_positions(bytes: &[u8]) -> Result<(HeaderInfo, Vec<f32>), BundleError> {
+    let info = check_header(bytes)?;
+    let mut r = Reader {
+        b: bytes,
+        at: MAGIC.len() + 2,
+    };
+    let len = r.u32()? as usize;
+    r.take(len)?;
+    let positions = r.f32s(info.vertices * 3)?;
+    if !positions.iter().all(|v| v.is_finite()) {
+        return Err(BundleError::BadMesh);
+    }
+    Ok((info, positions))
+}
+
 struct Reader<'a> {
     b: &'a [u8],
     at: usize,

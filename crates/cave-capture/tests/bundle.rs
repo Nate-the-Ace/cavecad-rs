@@ -2,6 +2,7 @@
 
 use cave_capture::bundle::{
     BundleError, CardSeen, HeadingTap, Keyframe, MAGIC, Shot, ShotHeader, decode, encode,
+    mesh_positions,
 };
 
 fn sample() -> Shot {
@@ -299,4 +300,28 @@ fn waiting_shot_round_trips_with_an_empty_station_id() {
 #[test]
 fn a_shot_with_a_station_id_is_not_waiting() {
     assert!(!sample().header.is_waiting());
+}
+
+#[test]
+fn mesh_positions_match_decode() {
+    let b = encode(&sample()).unwrap();
+    let (info, pos) = mesh_positions(&b).unwrap();
+    assert_eq!(pos, decode(&b).unwrap().positions);
+    assert_eq!(info.header, sample().header);
+    assert_eq!(info.vertices, 3);
+}
+
+#[test]
+fn mesh_positions_refuses_what_decode_refuses() {
+    let b = encode(&sample()).unwrap();
+    assert_eq!(
+        mesh_positions(&b[..b.len() - 1]),
+        Err(BundleError::Truncated)
+    );
+    assert_eq!(mesh_positions(b"nope"), Err(BundleError::NotACapture));
+    let mut nan = b.clone();
+    let fifth_position = mesh_start(&nan) + 4 * 4;
+    nan[fifth_position..fifth_position + 4].copy_from_slice(&f32::NAN.to_le_bytes());
+    assert_eq!(decode(&nan), Err(BundleError::BadMesh));
+    assert_eq!(mesh_positions(&nan), Err(BundleError::BadMesh));
 }

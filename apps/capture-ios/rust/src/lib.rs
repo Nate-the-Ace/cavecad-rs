@@ -5,8 +5,8 @@
 
 use cave_capture::{
     CardSeen, Keyframe, KeyframeRef, NewPass, PassMesh, Shot, ShotHeader, add_pass, card_offsets,
-    cards_fit, check_header, decode, document_from_room, encode, encode_parts, from_compass, ghost,
-    heading_from_tap, stations, thin_points,
+    cards_fit, check_header, decode, document_from_room, encode, encode_parts, ghost,
+    mesh_positions, placement, stations, thin_points,
 };
 use cave_survey::Vec3;
 use serde::Deserialize;
@@ -219,34 +219,20 @@ pub unsafe extern "C" fn cc_shot_encode(
     )
 }
 
-/// A compass shot places from its station alone (the target half of `st` is ignored); an older tap
-/// shot needs its target.
+/// The shot placed over `st[0..3]`; the target `st[3..6]` is used only by an older tap shot
+/// ([`cave_capture::placement`]).
 fn place(shot: &Shot, st: &[f64]) -> Option<cave_capture::Placement> {
     let station = Vec3 {
         x: st[0],
         y: st[1],
         z: st[2],
     };
-    if shot.header.compass.is_some() {
-        return from_compass(
-            station,
-            shot.header.start_camera,
-            shot.header.instrument_height_m,
-        );
-    }
-    let tap = shot.header.taps.first()?;
     let target = Vec3 {
         x: st[3],
         y: st[4],
         z: st[5],
     };
-    heading_from_tap(
-        station,
-        target,
-        tap.dir,
-        shot.header.start_camera,
-        shot.header.instrument_height_m,
-    )
+    placement(&shot.header, station, Some(target))
 }
 
 fn placed_points(shot: &Shot, st: &[f64]) -> Option<(Vec<Vec3>, f64)> {
@@ -357,29 +343,32 @@ fn positions_of(bundle: *const u8, len: usize, station_and_target: *const f64) -
 }
 
 /// The placed mesh points relative to the station (`station_and_target[0..3]`), x y z per point;
-/// empty when the shot cannot be read or placed.
+/// empty when the shot cannot be read or placed. Reads positions only (no photo is copied).
 fn relative_points(bundle: *const u8, len: usize, station_and_target: *const f64) -> Vec<f32> {
     let st = unsafe { slice(station_and_target, 6) };
-    let Ok(shot) = decode(unsafe { slice(bundle, len) }) else {
-        return Vec::new();
-    };
     if st.len() != 6 {
         return Vec::new();
     }
-    let Some((pts, _)) = placed_points(&shot, st) else {
+    let Ok((info, positions)) = mesh_positions(unsafe { slice(bundle, len) }) else {
         return Vec::new();
     };
-    // Relative to the station, in f64 before narrowing: survey coordinates can be millions of
-    // metres, where f32 keeps only about half a metre.
-    let mut out = Vec::with_capacity(pts.len() * 3);
-    for q in pts {
-        out.extend_from_slice(&[
-            (q.x - st[0]) as f32,
-            (q.y - st[1]) as f32,
-            (q.z - st[2]) as f32,
-        ]);
+    if positions.is_empty() {
+        return Vec::new();
     }
-    out
+    let station = Vec3 {
+        x: st[0],
+        y: st[1],
+        z: st[2],
+    };
+    let target = Vec3 {
+        x: st[3],
+        y: st[4],
+        z: st[5],
+    };
+    let Some(p) = placement(&info.header, station, Some(target)) else {
+        return Vec::new();
+    };
+    cave_capture::relative_points(&positions, &p, station)
 }
 
 fn le_bytes(v: &[f32]) -> Vec<u8> {
