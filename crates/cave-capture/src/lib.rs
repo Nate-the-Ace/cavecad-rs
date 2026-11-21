@@ -3,6 +3,7 @@
 //! `docs/superpowers/specs/2026-11-17-lidar-room-capture-design.md`).
 
 pub mod bundle;
+pub mod chain;
 pub mod frame;
 pub mod passes;
 pub mod place;
@@ -12,6 +13,10 @@ pub mod thin;
 pub use bundle::{
     BundleError, CardSeen, Compass, HeaderInfo, HeadingTap, Keyframe, KeyframeRef, Shot,
     ShotHeader, check_header, decode, encode, encode_parts, mesh_positions,
+};
+pub use chain::{
+    Chain, Chains, Dir, FitShot, Flag, PairFit, Rigid, ShotPlace, Source, chains, display_fix,
+    leg_neighbours, neighbours, pair_fit,
 };
 pub use frame::{
     PIVOT_HEIGHT_M, Placement, bearing_deg, capture_to_survey, from_compass, heading_from_tap,
