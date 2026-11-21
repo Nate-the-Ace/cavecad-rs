@@ -367,6 +367,7 @@ name = "cave-wasm"
 version = "0.0.1"
 dependencies = [
  "cave-brush",
+ "cave-capture",
  "cave-doc",
  "cave-draw",
  "cave-dxf",

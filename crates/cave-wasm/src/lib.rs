@@ -758,6 +758,49 @@ pub fn room_id() -> String {
     })
 }
 
+/// The shared-stations JSON (`cave_capture::shared`) of `doc`: its adjusted stations for CaveCAD
+/// Capture on the same device. `null` when the cave has no room id (it is not on the server).
+fn capture_stations_of(doc: &Document, name: &str, updated_at: f64) -> String {
+    let id = cave_draw::room_id(doc);
+    if id.is_empty() {
+        return "null".into();
+    }
+    let s = cave_capture::stations(doc);
+    serde_json::to_string(&cave_capture::shared_stations(
+        &id,
+        name,
+        updated_at as i64,
+        &s,
+    ))
+    .unwrap_or_else(|_| "null".into())
+}
+
+/// The open cave's stations as CaveCAD Capture reads them from the keychain (adjusted, to the mm),
+/// JSON `{v,caveId,name,updatedAt,stations[{id,label,x,y,z}]}`; `null` with no cave or no room id.
+#[wasm_bindgen]
+pub fn capture_stations(name: &str, updated_at: f64) -> String {
+    DOC.with(|d| {
+        d.borrow()
+            .as_ref()
+            .map(|doc| capture_stations_of(doc, name, updated_at))
+            .unwrap_or_else(|| "null".into())
+    })
+}
+
+/// As [`capture_stations`] for a cave that is not open, from its native ops text; `null` when the
+/// ops do not all apply or it has no room id.
+#[wasm_bindgen]
+pub fn capture_stations_of_native(ops: &str, name: &str, updated_at: f64) -> String {
+    serde_json::from_str::<Vec<cave_doc::Op>>(ops)
+        .ok()
+        .and_then(|ops| {
+            let mut doc = Document::new(ActorId(1));
+            ops.iter().all(|op| doc.apply(op).is_ok()).then_some(doc)
+        })
+        .map(|doc| capture_stations_of(&doc, name, updated_at))
+        .unwrap_or_else(|| "null".into())
+}
+
 /// Sets the open cave's room id. One edit in the settings history. Returns `ok` or `error: ...`.
 #[wasm_bindgen]
 pub fn set_room_id(id: &str) -> String {
@@ -2174,6 +2217,34 @@ mod tests {
             assert!(!r["message"].as_str().unwrap().is_empty());
         }
         assert_eq!(scene(false, "{}"), before, "the open cave is untouched");
+    }
+
+    #[test]
+    fn capture_stations_match_capture() {
+        open_demo(CAVE);
+        assert_eq!(capture_stations("Demo", 1.0), "null", "no room id yet");
+        assert_eq!(set_room_id("room_12345678"), "ok");
+        let text = capture_stations("Demo", 1_763_700_000_000.0);
+        let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(v["caveId"], room_id());
+        assert_eq!(v["name"], "Demo");
+        assert_eq!(v["updatedAt"], 1_763_700_000_000i64);
+        let want = DOC.with(|d| cave_capture::stations(d.borrow().as_ref().unwrap()));
+        let got = v["stations"].as_array().unwrap();
+        assert_eq!(got.len(), want.len());
+        assert!(!want.is_empty());
+        for (g, w) in got.iter().zip(&want) {
+            assert_eq!(g["id"], w.id.to_string());
+            assert_eq!(g["label"], w.label);
+            for (k, c) in [("x", w.pos.x), ("y", w.pos.y), ("z", w.pos.z)] {
+                assert!((g[k].as_f64().unwrap() - c).abs() <= 0.0005, "{k}");
+            }
+        }
+        assert_eq!(
+            capture_stations_of_native(&sync_snapshot(), "Demo", 1_763_700_000_000.0),
+            text
+        );
+        assert_eq!(capture_stations_of_native("{bad", "Demo", 1.0), "null");
     }
 
     #[test]

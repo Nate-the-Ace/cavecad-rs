@@ -12,6 +12,7 @@ workspace = true
 
 [dependencies]
 cave-log = { path = "../cave-log" }
+cave-capture = { path = "../cave-capture" }
 cave-doc = { path = "../cave-doc" }
 cave-fixture = { path = "../cave-fixture" }
 cave-formats = { path = "../cave-formats" }
