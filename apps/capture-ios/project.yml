@@ -18,6 +18,14 @@ targets:
         excludes: ["LICENSE.md", "VENDORED.txt", "**/*.h"]
         compilerFlags: ["-w", "-O2"]
     resources: [Resources]
+    # Keychain groups: the app's own FIRST (the default group for any unscoped write, so the token never lands in
+    # the shared one), then the group CaveCAD on this phone shares its stations in (SharedStations.swift).
+    entitlements:
+      path: Resources/CaveCADCapture.entitlements
+      properties:
+        keychain-access-groups:
+          - $(AppIdentifierPrefix)app.cavecad.capture
+          - $(AppIdentifierPrefix)app.cavecad.shared
     dependencies:
       - framework: CaptureCore.xcframework
         embed: false

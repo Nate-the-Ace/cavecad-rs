@@ -25,4 +25,10 @@
   </dict></array>
 #endif
   <key>CaveCADServer</key><string>https://cavecad.com</string>
+  <!-- the team prefix, for the keychain groups (Keychain.swift); empty in an unsigned build -->
+  <key>AppIdentifierPrefix</key><string>$(AppIdentifierPrefix)</string>
+  <!-- Documents (shots/, capture.log) shows in Files as On My iPhone > Capture; CaveCAD on this phone reads shots
+       from there (CAVECAD-CONTRACT.md "What CaveCAD relies on in Capture") -->
+  <key>UIFileSharingEnabled</key><true/>
+  <key>LSSupportsOpeningDocumentsInPlace</key><true/>
 </dict></plist>
