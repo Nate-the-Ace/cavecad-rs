@@ -42,6 +42,8 @@ CcBuf cc_shot_encode(const char *header_json,
 /// before the cave had it: station_label is that label, matched ignoring case and spaces); target_station_id the first heading tap's
 /// station (null when there is no tap, as in every compass shot); compass is null for a tap shot.
 /// With a NULL station_and_target only the header is read (cheap) and the shot is not placed.
+/// A file the header check refuses gives {"error":"Truncated"|...}, plus "unreadable":{"shot_id",
+/// "station_id","station_label","waiting"} when its header JSON could still be read (best effort).
 /// min/max are absolute survey coordinates. "placed" is false when a tap shot has no usable tap or
 /// bearing, when a number is not finite, or when the mesh is empty.
 CcBuf cc_shot_summary(const uint8_t *bundle, size_t len, const double *station_and_target);
@@ -71,6 +73,22 @@ CcBuf cc_shot_add_pass(const uint8_t *bundle, size_t len, const char *pass_json,
                        const float *normals, size_t n_normals,
                        const uint32_t *indices, size_t n_indices,
                        const uint8_t *jpegs, size_t n_jpegs);
+
+/// As cc_shot_add_pass, but the new bundle goes straight to the file at out_path (NUL-terminated
+/// UTF-8; created or truncated), streamed through a small buffer and synced: no whole-bundle buffer
+/// is ever made, and the parent's photos are read in place from bundle (map the parent file rather
+/// than reading it in). Write to a temporary file beside the parent and swap it in yourself.
+/// Returns JSON {"ok":true,"passes":n,"bytes":n}; or {"error":"parent","reason":"Truncated"|
+/// "NewerFormat(n)"|"NotACapture"|"BadHeader"|"BadMesh"} when bundle is not a readable shot (save the
+/// capture as a new shot instead; the parent is never touched); or {"error":"pass"} (the pass is
+/// refused), {"error":"write"} (the file could not be written), {"error":"path"}. On any error
+/// nothing is left at out_path.
+CcBuf cc_shot_add_pass_file(const uint8_t *bundle, size_t len, const char *pass_json,
+                            const float *positions, size_t n_positions,
+                            const float *normals, size_t n_normals,
+                            const uint32_t *indices, size_t n_indices,
+                            const uint8_t *jpegs, size_t n_jpegs,
+                            const char *out_path);
 
 /// The shot's mesh simplified on a cell_m grid, with its hole outlines (shorter than min_outline_m
 /// dropped). Little-endian binary: u32 vertex_floats, u32 index_count, u32 outline_count; then

@@ -1,7 +1,9 @@
 //! Passes in a shot: the pass record and `add_pass`.
 
 use cave_capture::{
-    CardSeen, Keyframe, NewPass, PassMesh, Shot, ShotHeader, add_pass, decode, encode,
+    BundleError, CardSeen, Keyframe, KeyframeRef, NewPass, NewPassRef, PassMesh, Shot, ShotHeader,
+    add_pass, add_pass_ref, check_header, decode, decode_ref, encode, encode_parts, peek_header,
+    write_parts,
 };
 
 fn card(id: u32, p: [f64; 3]) -> CardSeen {
@@ -525,4 +527,142 @@ fn old_json_without_flags_reads_empty() {
     )
     .unwrap();
     assert!(h.flags.is_empty());
+}
+
+/// True when `inner` lies wholly inside `outer`'s memory: borrowed, not copied.
+fn within(inner: &[u8], outer: &[u8]) -> bool {
+    let (o, i) = (outer.as_ptr_range(), inner.as_ptr_range());
+    o.start <= i.start && i.end <= o.end
+}
+
+fn borrowed_pass<'a>(p: &'a NewPass) -> NewPassRef<'a> {
+    NewPassRef {
+        captured_at_ms: p.captured_at_ms,
+        aligned_by: p.aligned_by.clone(),
+        transform: p.transform,
+        mesh: p.mesh,
+        positions: &p.positions,
+        normals: &p.normals,
+        indices: &p.indices,
+        keyframes: p.keyframes.iter().map(KeyframeRef::from).collect(),
+        cards: p.cards.clone(),
+        tracking: p.tracking.clone(),
+        flags: p.flags.clone(),
+    }
+}
+
+/// Adding a pass to a long shot holds no extra copy of its photos: the parent is read with every JPEG
+/// left in the file's bytes, the merged shot borrows from the parent and the new pass, and it streams
+/// to the writer. The bytes are exactly what the owned path (`decode`, `add_pass`, `encode`) gives.
+#[test]
+fn pass_added_without_copying_a_photo() {
+    for (aligned, t, mesh) in [
+        ("same_session", identity(), PassMesh::Replace),
+        ("cards", yaw_shift(0.3, [1.0, 0.0, -2.0]), PassMesh::Add),
+    ] {
+        let parent = encode(&shot()).unwrap();
+        let pass = new_pass(aligned, t, mesh);
+
+        let r = decode_ref(&parent).unwrap();
+        assert!(r.keyframes.iter().all(|k| within(k.jpeg, &parent)));
+        let merged = add_pass_ref(r, borrowed_pass(&pass)).unwrap();
+        let (old, new) = merged.keyframes.split_at(2);
+        assert!(old.iter().all(|k| within(k.jpeg, &parent)));
+        assert!(
+            new.iter()
+                .zip(&pass.keyframes)
+                .all(|(k, o)| std::ptr::eq(k.jpeg, o.jpeg.as_slice()))
+        );
+
+        let mut file = Vec::new();
+        let n = write_parts(
+            &mut file,
+            &merged.header,
+            &merged.positions,
+            &merged.normals,
+            &merged.indices,
+            &merged.keyframes,
+        )
+        .unwrap();
+        assert_eq!(n, file.len());
+        let before = add_pass(&decode(&parent).unwrap(), pass.clone()).unwrap();
+        assert_eq!(file, encode(&before).unwrap());
+        // parent + new pass decodes equal to the owned result, photos and all
+        assert_eq!(decode(&file).unwrap(), before);
+        assert_eq!(decode(&file).unwrap().keyframes.len(), 3);
+        assert!(check_header(&file).is_ok());
+    }
+}
+
+#[test]
+fn encoded_bundle_is_sized_once() {
+    let s = add_pass(
+        &shot(),
+        new_pass("same_session", identity(), PassMesh::Replace),
+    )
+    .unwrap();
+    let refs: Vec<KeyframeRef> = s.keyframes.iter().map(KeyframeRef::from).collect();
+    let b = encode_parts(&s.header, &s.positions, &s.normals, &s.indices, &refs).unwrap();
+    assert_eq!(b.capacity(), b.len());
+}
+
+#[test]
+fn refused_shot_writes_nothing() {
+    let mut s = shot();
+    s.positions[0] = f32::NAN;
+    let refs: Vec<KeyframeRef> = s.keyframes.iter().map(KeyframeRef::from).collect();
+    let mut out = Vec::new();
+    assert_eq!(
+        write_parts(
+            &mut out,
+            &s.header,
+            &s.positions,
+            &s.normals,
+            &s.indices,
+            &refs
+        ),
+        Err(BundleError::BadMesh)
+    );
+    assert!(out.is_empty());
+    struct Full;
+    impl std::io::Write for Full {
+        fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
+            Err(std::io::Error::other("full"))
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    let s = shot();
+    let refs: Vec<KeyframeRef> = s.keyframes.iter().map(KeyframeRef::from).collect();
+    assert_eq!(
+        write_parts(
+            &mut Full,
+            &s.header,
+            &s.positions,
+            &s.normals,
+            &s.indices,
+            &refs
+        ),
+        Err(BundleError::Unwritable)
+    );
+}
+
+/// An unreadable shot still tells which station it was taken over when its header survived.
+#[test]
+fn peek_reads_the_header_of_a_refused_file() {
+    let b = encode(&shot()).unwrap();
+    // truncated in the photos
+    let cut = &b[..b.len() - 3];
+    assert_eq!(check_header(cut), Err(BundleError::Truncated));
+    assert_eq!(peek_header(cut).unwrap().station_id, "a");
+    // a newer format
+    let mut newer = b.clone();
+    newer[6..8].copy_from_slice(&9u16.to_le_bytes());
+    assert_eq!(check_header(&newer), Err(BundleError::NewerFormat(9)));
+    assert_eq!(peek_header(&newer).unwrap().station_label, "A");
+    // nothing left to read
+    assert_eq!(peek_header(&b[..20]), None);
+    assert_eq!(peek_header(b"junk"), None);
+    assert_eq!(peek_header(&b), Some(shot().header));
 }

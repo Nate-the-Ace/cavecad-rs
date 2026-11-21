@@ -4,9 +4,10 @@
 #![allow(unsafe_code)]
 
 use cave_capture::{
-    CardSeen, Keyframe, KeyframeRef, NewPass, PassMesh, Shot, ShotHeader, StationRef, add_pass,
-    card_offsets, cards_fit, chains, check_header, decode, display_fix, document_from_room, encode,
-    encode_parts, ghost, mesh_positions, placement, station_for, stations, thin_points,
+    BundleError, CardSeen, KeyframeRef, NewPassRef, PassMesh, Shot, ShotHeader, ShotRef,
+    StationRef, add_pass_ref, card_offsets, cards_fit, chains, check_header, decode, decode_ref,
+    display_fix, document_from_room, encode_parts, ghost, mesh_positions, peek_header, placement,
+    station_for, stations, thin_points, write_parts,
 };
 use cave_survey::Vec3;
 use serde::Deserialize;
@@ -268,7 +269,18 @@ fn summary(bundle: *const u8, len: usize, station_and_target: *const f64) -> CcB
     // The header alone answers the counts and which stations the shot was taken from.
     let info = match check_header(bytes) {
         Ok(i) => i,
-        Err(e) => return err(&format!("{e:?}")),
+        Err(e) => {
+            // Which station an unreadable shot was taken over, when its header survived: so Capture
+            // saves over it as a new shot instead of silently adding to an older one.
+            let mut out = serde_json::json!({ "error": format!("{e:?}") });
+            if let Some(h) = peek_header(bytes) {
+                out["unreadable"] = serde_json::json!({
+                    "shot_id": h.shot_id, "station_id": h.station_id,
+                    "station_label": h.station_label, "waiting": h.is_waiting(),
+                });
+            }
+            return give_json(out);
+        }
     };
     let mut out = serde_json::json!({
         "vertices": info.vertices,
@@ -413,6 +425,95 @@ struct PassIn {
     keyframes: Vec<KeyIn>,
 }
 
+/// Why a pass could not be built.
+enum PassErr {
+    /// The parent bytes are not a readable shot (nothing is written: save the capture as a new shot).
+    Parent(BundleError),
+    /// The pass itself (its JSON, mesh or numbers) is refused.
+    Pass,
+}
+
+/// The parent with the pass added, every photo borrowed (from `bundle` and `jpegs`), no bundle built.
+///
+/// # Safety
+/// As `cc_shot_add_pass`.
+#[allow(clippy::too_many_arguments)]
+unsafe fn pass_added<'a>(
+    bundle: *const u8,
+    len: usize,
+    pass_json: *const c_char,
+    positions: *const f32,
+    n_positions: usize,
+    normals: *const f32,
+    n_normals: usize,
+    indices: *const u32,
+    n_indices: usize,
+    jpegs: *const u8,
+    n_jpegs: usize,
+) -> Result<ShotRef<'a>, PassErr> {
+    if (positions.is_null() && n_positions > 0)
+        || (normals.is_null() && n_normals > 0)
+        || (indices.is_null() && n_indices > 0)
+        || (jpegs.is_null() && n_jpegs > 0)
+    {
+        return Err(PassErr::Pass);
+    }
+    let Ok(Some(t)) = (unsafe { text(pass_json) }) else {
+        return Err(PassErr::Pass);
+    };
+    let Ok(p) = serde_json::from_str::<PassIn>(t) else {
+        return Err(PassErr::Pass);
+    };
+    let Ok(transform) = <[f64; 16]>::try_from(p.transform.as_slice()) else {
+        return Err(PassErr::Pass);
+    };
+    let jpeg_bytes: &'a [u8] = unsafe { slice(jpegs, n_jpegs) };
+    let mut at = 0usize;
+    let mut keyframes = Vec::with_capacity(p.keyframes.len());
+    for k in &p.keyframes {
+        let (Ok(pose), Ok(intrinsics)) = (
+            <[f32; 16]>::try_from(k.pose.as_slice()),
+            <[f32; 9]>::try_from(k.intrinsics.as_slice()),
+        ) else {
+            return Err(PassErr::Pass);
+        };
+        let Some(end) = at.checked_add(k.jpeg_len) else {
+            return Err(PassErr::Pass);
+        };
+        let Some(jpeg) = jpeg_bytes.get(at..end) else {
+            return Err(PassErr::Pass);
+        };
+        at = end;
+        keyframes.push(KeyframeRef {
+            pose,
+            intrinsics,
+            width: k.width,
+            height: k.height,
+            jpeg,
+        });
+    }
+    // The parent is read last, so a bad pass never reports the parent as unreadable.
+    let old = decode_ref(unsafe { slice(bundle, len) }).map_err(PassErr::Parent)?;
+    let new = NewPassRef {
+        captured_at_ms: p.captured_at_ms,
+        aligned_by: p.aligned_by,
+        transform,
+        mesh: if p.replace {
+            PassMesh::Replace
+        } else {
+            PassMesh::Add
+        },
+        positions: unsafe { slice(positions, n_positions) },
+        normals: unsafe { slice(normals, n_normals) },
+        indices: unsafe { slice(indices, n_indices) },
+        keyframes,
+        cards: p.cards,
+        tracking: p.tracking,
+        flags: p.flags,
+    };
+    add_pass_ref(old, new).map_err(|_| PassErr::Pass)
+}
+
 /// See `capture_core.h`.
 ///
 /// # Safety
@@ -434,76 +535,122 @@ pub unsafe extern "C" fn cc_shot_add_pass(
 ) -> CcBuf {
     guard(
         || {
-            if (positions.is_null() && n_positions > 0)
-                || (normals.is_null() && n_normals > 0)
-                || (indices.is_null() && n_indices > 0)
-                || (jpegs.is_null() && n_jpegs > 0)
-            {
-                return empty();
-            }
-            let Ok(old) = decode(unsafe { slice(bundle, len) }) else {
-                return empty();
-            };
-            let Ok(Some(t)) = (unsafe { text(pass_json) }) else {
-                return empty();
-            };
-            let Ok(p) = serde_json::from_str::<PassIn>(t) else {
-                return empty();
-            };
-            let Ok(transform) = <[f64; 16]>::try_from(p.transform.as_slice()) else {
+            let Ok(s) = (unsafe {
+                pass_added(
+                    bundle,
+                    len,
+                    pass_json,
+                    positions,
+                    n_positions,
+                    normals,
+                    n_normals,
+                    indices,
+                    n_indices,
+                    jpegs,
+                    n_jpegs,
+                )
+            }) else {
                 return empty();
             };
-            let jpeg_bytes = unsafe { slice(jpegs, n_jpegs) };
-            let mut at = 0usize;
-            let mut keyframes = Vec::with_capacity(p.keyframes.len());
-            for k in &p.keyframes {
-                let (Ok(pose), Ok(intrinsics)) = (
-                    <[f32; 16]>::try_from(k.pose.as_slice()),
-                    <[f32; 9]>::try_from(k.intrinsics.as_slice()),
-                ) else {
-                    return empty();
-                };
-                let Some(end) = at.checked_add(k.jpeg_len) else {
-                    return empty();
-                };
-                let Some(jpeg) = jpeg_bytes.get(at..end) else {
-                    return empty();
-                };
-                at = end;
-                keyframes.push(Keyframe {
-                    pose,
-                    intrinsics,
-                    width: k.width,
-                    height: k.height,
-                    jpeg: jpeg.to_vec(),
-                });
-            }
-            let new = NewPass {
-                captured_at_ms: p.captured_at_ms,
-                aligned_by: p.aligned_by,
-                transform,
-                mesh: if p.replace {
-                    PassMesh::Replace
-                } else {
-                    PassMesh::Add
-                },
-                positions: unsafe { slice(positions, n_positions) }.to_vec(),
-                normals: unsafe { slice(normals, n_normals) }.to_vec(),
-                indices: unsafe { slice(indices, n_indices) }.to_vec(),
-                keyframes,
-                cards: p.cards,
-                tracking: p.tracking,
-                flags: p.flags,
-            };
-            let Ok(shot) = add_pass(&old, new) else {
-                return empty();
-            };
-            match encode(&shot) {
+            match encode_parts(
+                &s.header,
+                &s.positions,
+                &s.normals,
+                &s.indices,
+                &s.keyframes,
+            ) {
                 Ok(b) if check_header(&b).is_ok() => give(b),
                 _ => empty(),
             }
         },
         empty,
+    )
+}
+
+/// Writes a pass-added shot to `path` (created or truncated) through a small buffer, flushed and
+/// synced. On any error the file is removed. Returns the bytes written.
+fn write_shot_file(path: &str, s: &ShotRef) -> Result<usize, BundleError> {
+    let out = (|| {
+        let f = std::fs::File::create(path).map_err(|_| BundleError::Unwritable)?;
+        let mut w = std::io::BufWriter::with_capacity(1 << 16, f);
+        let n = write_parts(
+            &mut w,
+            &s.header,
+            &s.positions,
+            &s.normals,
+            &s.indices,
+            &s.keyframes,
+        )?;
+        let f = w.into_inner().map_err(|_| BundleError::Unwritable)?;
+        f.sync_all().map_err(|_| BundleError::Unwritable)?;
+        let on_disk = f.metadata().map_err(|_| BundleError::Unwritable)?.len();
+        if on_disk != n as u64 {
+            return Err(BundleError::Unwritable);
+        }
+        Ok(n)
+    })();
+    if out.is_err() {
+        let _ = std::fs::remove_file(path);
+    }
+    out
+}
+
+/// See `capture_core.h`.
+///
+/// # Safety
+/// Every pointer must be null or valid for its stated length (strings NUL-terminated).
+#[unsafe(no_mangle)]
+#[allow(clippy::too_many_arguments)]
+pub unsafe extern "C" fn cc_shot_add_pass_file(
+    bundle: *const u8,
+    len: usize,
+    pass_json: *const c_char,
+    positions: *const f32,
+    n_positions: usize,
+    normals: *const f32,
+    n_normals: usize,
+    indices: *const u32,
+    n_indices: usize,
+    jpegs: *const u8,
+    n_jpegs: usize,
+    out_path: *const c_char,
+) -> CcBuf {
+    guard(
+        || {
+            let Ok(Some(path)) = (unsafe { text(out_path) }) else {
+                return err("path");
+            };
+            let s = match unsafe {
+                pass_added(
+                    bundle,
+                    len,
+                    pass_json,
+                    positions,
+                    n_positions,
+                    normals,
+                    n_normals,
+                    indices,
+                    n_indices,
+                    jpegs,
+                    n_jpegs,
+                )
+            } {
+                Ok(s) => s,
+                Err(PassErr::Parent(e)) => {
+                    return give_json(
+                        serde_json::json!({ "error": "parent", "reason": format!("{e:?}") }),
+                    );
+                }
+                Err(PassErr::Pass) => return err("pass"),
+            };
+            let passes = s.header.passes.len();
+            match write_shot_file(path, &s) {
+                Ok(n) => give_json(serde_json::json!({ "ok": true, "passes": passes, "bytes": n })),
+                Err(BundleError::Unwritable) => err("write"),
+                Err(_) => err("pass"),
+            }
+        },
+        internal,
     )
 }
 
@@ -1170,6 +1317,143 @@ mod tests {
         };
         assert!(fit(0)["fit"].is_null());
         assert!(fit(1)["offsets"].is_array());
+    }
+
+    /// `cc_shot_add_pass_file` against `old`, writing to `path`; the JSON it answers.
+    fn add_to_file(old: &[u8], path: &std::path::Path, pass: &str) -> serde_json::Value {
+        let pass = CString::new(pass).unwrap();
+        let out = CString::new(path.to_str().unwrap()).unwrap();
+        let pos = [0f32, 0.0, -1.0, 1.0, 0.0, -1.0, 0.0, 1.0, -1.0];
+        let nor = [0f32; 9];
+        let idx = [0u32, 1, 2];
+        let jpg = [7u8, 7, 7];
+        serde_json::from_slice(&read(unsafe {
+            cc_shot_add_pass_file(
+                old.as_ptr(),
+                old.len(),
+                pass.as_ptr(),
+                pos.as_ptr(),
+                9,
+                nor.as_ptr(),
+                9,
+                idx.as_ptr(),
+                3,
+                jpg.as_ptr(),
+                3,
+                out.as_ptr(),
+            )
+        }))
+        .unwrap()
+    }
+
+    const PASS: &str = r#"{"captured_at_ms":5,"aligned_by":"same_session","transform":[1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1],
+        "replace":true,"tracking":"normal","cards":[],
+        "keyframes":[{"pose":[1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1],"intrinsics":[1,0,0,0,1,0,0,0,1],"width":1,"height":1,"jpeg_len":3}]}"#;
+
+    fn scratch(name: &str) -> std::path::PathBuf {
+        let d = std::env::temp_dir().join(format!("capture-ffi-{}-{name}", std::process::id()));
+        std::fs::create_dir_all(&d).unwrap();
+        d.join("pass.tmp")
+    }
+
+    /// The streamed file is byte for byte what the in-memory path gives, and parent + pass decode
+    /// as before (a second pass too).
+    #[test]
+    fn add_pass_to_file_matches_the_buffer() {
+        let b = sample_bundle();
+        let path = scratch("same");
+        let v = add_to_file(&b, &path, PASS);
+        assert_eq!(v["ok"], true);
+        assert_eq!(v["passes"], 2);
+        let file = std::fs::read(&path).unwrap();
+        assert_eq!(v["bytes"], file.len());
+        let pass = CString::new(PASS).unwrap();
+        let pos = [0f32, 0.0, -1.0, 1.0, 0.0, -1.0, 0.0, 1.0, -1.0];
+        let nor = [0f32; 9];
+        let idx = [0u32, 1, 2];
+        let jpg = [7u8, 7, 7];
+        let buf = read(unsafe {
+            cc_shot_add_pass(
+                b.as_ptr(),
+                b.len(),
+                pass.as_ptr(),
+                pos.as_ptr(),
+                9,
+                nor.as_ptr(),
+                9,
+                idx.as_ptr(),
+                3,
+                jpg.as_ptr(),
+                3,
+            )
+        });
+        assert_eq!(file, buf);
+        let shot = decode(&file).unwrap();
+        let parent = decode(&b).unwrap();
+        assert_eq!(shot.header.station_id, parent.header.station_id);
+        assert_eq!(shot.keyframes.len(), parent.keyframes.len() + 1);
+        // a pass onto the written file: three passes, the earlier photos intact
+        let path2 = scratch("second");
+        assert_eq!(add_to_file(&file, &path2, PASS)["passes"], 3);
+        let again = decode(&std::fs::read(&path2).unwrap()).unwrap();
+        assert_eq!(again.keyframes[..shot.keyframes.len()], shot.keyframes[..]);
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+        let _ = std::fs::remove_dir_all(path2.parent().unwrap());
+    }
+
+    /// An unreadable parent is named as such (so Capture saves a new shot) and nothing is written;
+    /// a bad pass is a plain failure, never blamed on the parent.
+    #[test]
+    fn unreadable_parent_is_reported_and_writes_nothing() {
+        let b = sample_bundle();
+        let mut newer = b.clone();
+        newer[6..8].copy_from_slice(&9u16.to_le_bytes());
+        let mut bad_mesh = b.clone();
+        // the last index (u32 2) past the 3 vertices: the header is fine, the decode is not
+        let at = bad_mesh.len() - 4;
+        bad_mesh[at..].copy_from_slice(&99u32.to_le_bytes());
+        for (name, parent, reason) in [
+            ("cut", b[..b.len() - 2].to_vec(), "Truncated"),
+            ("newer", newer, "NewerFormat(9)"),
+            ("junk", b"junk".to_vec(), "NotACapture"),
+            ("mesh", bad_mesh, "BadMesh"),
+        ] {
+            let path = scratch(name);
+            let v = add_to_file(&parent, &path, PASS);
+            assert_eq!(v["error"], "parent", "{name}");
+            assert_eq!(v["reason"], reason, "{name}");
+            assert!(!path.exists(), "{name}");
+            let _ = std::fs::remove_dir_all(path.parent().unwrap());
+        }
+        let path = scratch("badpass");
+        assert_eq!(add_to_file(&b, &path, "{}")["error"], "pass");
+        assert_eq!(add_to_file(b"junk", &path, "{}")["error"], "pass");
+        assert!(!path.exists());
+        // an unwritable place
+        let nowhere = std::path::Path::new("/nonexistent-dir/x.tmp");
+        assert_eq!(add_to_file(&b, nowhere, PASS)["error"], "write");
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    /// A header-only summary of an unreadable shot still says which station it was over.
+    #[test]
+    fn summary_of_an_unreadable_shot_names_its_station() {
+        let b = sample_bundle();
+        let cut = &b[..b.len() - 2];
+        let v: serde_json::Value = serde_json::from_slice(&read(unsafe {
+            cc_shot_summary(cut.as_ptr(), cut.len(), std::ptr::null())
+        }))
+        .unwrap();
+        assert_eq!(v["error"], "Truncated");
+        let h = decode(&b).unwrap().header;
+        assert_eq!(v["unreadable"]["station_id"], h.station_id);
+        assert_eq!(v["unreadable"]["shot_id"], h.shot_id);
+        let v: serde_json::Value = serde_json::from_slice(&read(unsafe {
+            cc_shot_summary(b"junk".as_ptr(), 4, std::ptr::null())
+        }))
+        .unwrap();
+        assert_eq!(v["error"], "NotACapture");
+        assert!(v["unreadable"].is_null());
     }
 
     #[test]

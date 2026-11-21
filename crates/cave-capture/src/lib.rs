@@ -14,7 +14,8 @@ pub mod thin;
 
 pub use bundle::{
     BundleError, CardSeen, Compass, HeaderInfo, HeadingTap, Keyframe, KeyframeRef, Shot,
-    ShotHeader, check_header, decode, encode, encode_parts, mesh_positions,
+    ShotHeader, ShotRef, check_header, decode, decode_ref, encode, encode_parts, mesh_positions,
+    peek_header, write_parts,
 };
 pub use chain::{
     Chain, Chains, Dir, FitShot, Flag, PairFit, Rigid, ShotPlace, Source, chains, display_fix,
@@ -24,8 +25,8 @@ pub use frame::{
     PIVOT_HEIGHT_M, Placement, bearing_deg, capture_to_survey, from_compass, heading_from_tap,
 };
 pub use passes::{
-    CardFit, Ghost, IDENTITY, NewPass, Pass, PassMesh, add_pass, apply_dir, apply_point,
-    card_offsets, cards_fit, ghost, mul,
+    CardFit, Ghost, IDENTITY, NewPass, NewPassRef, Pass, PassMesh, add_pass, add_pass_ref,
+    apply_dir, apply_point, card_offsets, cards_fit, ghost, mul,
 };
 pub use place::{StationRef, placement, relative_points, station_for};
 pub use shared::{SharedStation, SharedStations, shared_stations};

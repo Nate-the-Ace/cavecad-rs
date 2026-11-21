@@ -4,6 +4,7 @@
 //! lengths live in the header, so a reader never guesses.
 
 use serde::{Deserialize, Serialize};
+use std::io::Write;
 
 /// First bytes of every capture bundle.
 pub const MAGIC: &[u8] = b"CVCAP\0";
@@ -149,6 +150,8 @@ pub enum BundleError {
     BadHeader,
     /// Mesh arrays disagree, an index points past the vertices, or a number is not finite.
     BadMesh,
+    /// The writer given to [`write_parts`] refused the bytes (disk full, closed file).
+    Unwritable,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -185,21 +188,76 @@ pub struct KeyframeRef<'a> {
     pub jpeg: &'a [u8],
 }
 
-/// Writes a shot as bundle bytes. `BadMesh` for anything [`decode`] would refuse: ragged arrays
-/// (positions or indices not a multiple of three, normals not one per vertex), a number that is
-/// not finite anywhere in the file (header, poses, cards, passes), or an index past the vertices.
-pub fn encode(shot: &Shot) -> Result<Vec<u8>, BundleError> {
-    let refs: Vec<KeyframeRef> = shot
-        .keyframes
-        .iter()
-        .map(|k| KeyframeRef {
+impl<'a> From<&'a Keyframe> for KeyframeRef<'a> {
+    fn from(k: &'a Keyframe) -> Self {
+        KeyframeRef {
             pose: k.pose,
             intrinsics: k.intrinsics,
             width: k.width,
             height: k.height,
             jpeg: &k.jpeg,
-        })
-        .collect();
+        }
+    }
+}
+
+/// A shot whose photos are borrowed from elsewhere (the parent file's bytes, the phone's joined
+/// buffer): header and mesh owned, every JPEG a slice. Adding a pass to a long shot through this
+/// never copies a photo ([`decode_ref`], [`crate::passes::add_pass_ref`], [`write_parts`]).
+#[derive(Clone, Debug, PartialEq)]
+pub struct ShotRef<'a> {
+    /// The header.
+    pub header: ShotHeader,
+    /// Vertex positions, xyz per vertex.
+    pub positions: Vec<f32>,
+    /// Vertex normals, xyz per vertex.
+    pub normals: Vec<f32>,
+    /// Triangle vertex indices, three per triangle.
+    pub indices: Vec<u32>,
+    /// Kept camera frames, photos borrowed.
+    pub keyframes: Vec<KeyframeRef<'a>>,
+}
+
+impl ShotRef<'_> {
+    /// The owned shot (every photo copied).
+    pub fn into_shot(self) -> Shot {
+        Shot {
+            header: self.header,
+            positions: self.positions,
+            normals: self.normals,
+            indices: self.indices,
+            keyframes: self
+                .keyframes
+                .into_iter()
+                .map(|k| Keyframe {
+                    pose: k.pose,
+                    intrinsics: k.intrinsics,
+                    width: k.width,
+                    height: k.height,
+                    jpeg: k.jpeg.to_vec(),
+                })
+                .collect(),
+        }
+    }
+}
+
+impl Shot {
+    /// The shot with its photos borrowed (the mesh and header are copied, the photos are not).
+    pub fn borrowed(&self) -> ShotRef<'_> {
+        ShotRef {
+            header: self.header.clone(),
+            positions: self.positions.clone(),
+            normals: self.normals.clone(),
+            indices: self.indices.clone(),
+            keyframes: self.keyframes.iter().map(KeyframeRef::from).collect(),
+        }
+    }
+}
+
+/// Writes a shot as bundle bytes. `BadMesh` for anything [`decode`] would refuse: ragged arrays
+/// (positions or indices not a multiple of three, normals not one per vertex), a number that is
+/// not finite anywhere in the file (header, poses, cards, passes), or an index past the vertices.
+pub fn encode(shot: &Shot) -> Result<Vec<u8>, BundleError> {
+    let refs: Vec<KeyframeRef> = shot.keyframes.iter().map(KeyframeRef::from).collect();
     encode_parts(
         &shot.header,
         &shot.positions,
@@ -232,14 +290,19 @@ fn header_is_finite(h: &ShotHeader) -> bool {
         })
 }
 
-/// [`encode`] from borrowed parts. The output is sized once (photos included) and never grows.
-pub fn encode_parts(
+/// The header JSON and the exact bundle size, once everything [`decode`] would refuse is ruled out.
+struct Plan {
+    json: Vec<u8>,
+    size: usize,
+}
+
+fn plan(
     header: &ShotHeader,
     positions: &[f32],
     normals: &[f32],
     indices: &[u32],
     keyframes: &[KeyframeRef],
-) -> Result<Vec<u8>, BundleError> {
+) -> Result<Plan, BundleError> {
     let n = positions.len() / 3;
     if !positions.len().is_multiple_of(3)
         || normals.len() != positions.len()
@@ -278,29 +341,72 @@ pub fn encode_parts(
         keyframes: wire_keyframes,
     };
     let json = serde_json::to_vec(&wire).map_err(|_| BundleError::BadHeader)?;
-    let json_len = u32::try_from(json.len()).map_err(|_| BundleError::BadHeader)?;
+    u32::try_from(json.len()).map_err(|_| BundleError::BadHeader)?;
     let size = MAGIC.len()
         + 2
         + 4
         + json.len()
         + (positions.len() + normals.len() + indices.len()) * 4
         + photo_bytes;
-    let mut out = Vec::with_capacity(size);
-    out.extend_from_slice(MAGIC);
-    out.extend_from_slice(&FORMAT.to_le_bytes());
-    out.extend_from_slice(&json_len.to_le_bytes());
-    out.extend_from_slice(&json);
+    Ok(Plan { json, size })
+}
+
+fn write_body<W: Write>(
+    w: &mut W,
+    plan: &Plan,
+    positions: &[f32],
+    normals: &[f32],
+    indices: &[u32],
+    keyframes: &[KeyframeRef],
+) -> std::io::Result<()> {
+    w.write_all(MAGIC)?;
+    w.write_all(&FORMAT.to_le_bytes())?;
+    w.write_all(&(plan.json.len() as u32).to_le_bytes())?;
+    w.write_all(&plan.json)?;
     for v in positions.iter().chain(normals) {
-        out.extend_from_slice(&v.to_le_bytes());
+        w.write_all(&v.to_le_bytes())?;
     }
     for i in indices {
-        out.extend_from_slice(&i.to_le_bytes());
+        w.write_all(&i.to_le_bytes())?;
     }
     for k in keyframes {
-        out.extend_from_slice(k.jpeg);
+        w.write_all(k.jpeg)?;
     }
-    debug_assert_eq!(out.len(), size);
+    Ok(())
+}
+
+/// [`encode`] from borrowed parts. The output is sized once (photos included) and never grows.
+pub fn encode_parts(
+    header: &ShotHeader,
+    positions: &[f32],
+    normals: &[f32],
+    indices: &[u32],
+    keyframes: &[KeyframeRef],
+) -> Result<Vec<u8>, BundleError> {
+    let p = plan(header, positions, normals, indices, keyframes)?;
+    let mut out = Vec::with_capacity(p.size);
+    write_body(&mut out, &p, positions, normals, indices, keyframes)
+        .map_err(|_| BundleError::Unwritable)?;
+    debug_assert_eq!(out.len(), p.size);
     Ok(out)
+}
+
+/// [`encode_parts`] straight into a writer (a file), so no whole-bundle buffer is ever made; the
+/// bytes are exactly what [`encode_parts`] gives. Checked first, so a refused shot writes nothing.
+/// Returns the bytes written. `Unwritable` when the writer fails part way (the caller discards the
+/// partial output); the writer is not flushed.
+pub fn write_parts<W: Write>(
+    w: &mut W,
+    header: &ShotHeader,
+    positions: &[f32],
+    normals: &[f32],
+    indices: &[u32],
+    keyframes: &[KeyframeRef],
+) -> Result<usize, BundleError> {
+    let p = plan(header, positions, normals, indices, keyframes)?;
+    write_body(w, &p, positions, normals, indices, keyframes)
+        .map_err(|_| BundleError::Unwritable)?;
+    Ok(p.size)
 }
 
 /// What [`check_header`] finds: the header and the counts, with no array read.
@@ -354,6 +460,27 @@ pub fn check_header(bytes: &[u8]) -> Result<HeaderInfo, BundleError> {
         keyframes: wire.keyframes.len(),
         header: wire.header,
     })
+}
+
+/// The header of a file [`check_header`] refuses, read as far as it can be: magic, any format
+/// number, then the header JSON's `header` object (unknown fields ignored). `None` when even that
+/// is not there. For telling which station an unreadable shot belongs to; never trust it for more.
+pub fn peek_header(bytes: &[u8]) -> Option<ShotHeader> {
+    #[derive(Deserialize)]
+    struct Peek {
+        header: ShotHeader,
+    }
+    if !bytes.starts_with(MAGIC) {
+        return None;
+    }
+    let mut r = Reader {
+        b: bytes,
+        at: MAGIC.len(),
+    };
+    r.u16().ok()?;
+    let len = r.u32().ok()? as usize;
+    let p: Peek = serde_json::from_slice(r.take(len).ok()?).ok()?;
+    Some(p.header)
 }
 
 /// The header and the mesh positions (xyz per vertex) only: no normals, indices or photos are
@@ -418,6 +545,13 @@ impl<'a> Reader<'a> {
 
 /// Reads bundle bytes back into a shot, checking everything a viewer or the matcher relies on.
 pub fn decode(bytes: &[u8]) -> Result<Shot, BundleError> {
+    decode_ref(bytes).map(ShotRef::into_shot)
+}
+
+/// [`decode`] with every photo left in `bytes` (borrowed, never copied): the same checks, the same
+/// refusals. Map a long shot's file and read it through this to add a pass without its photos
+/// ever being held twice.
+pub fn decode_ref(bytes: &[u8]) -> Result<ShotRef<'_>, BundleError> {
     if !bytes.starts_with(MAGIC) {
         return Err(BundleError::NotACapture);
     }
@@ -452,8 +586,8 @@ pub fn decode(bytes: &[u8]) -> Result<Shot, BundleError> {
             .intrinsics
             .try_into()
             .map_err(|_| BundleError::BadHeader)?;
-        let jpeg = r.take(k.jpeg_len as usize)?.to_vec();
-        keyframes.push(Keyframe {
+        let jpeg = r.take(k.jpeg_len as usize)?;
+        keyframes.push(KeyframeRef {
             pose,
             intrinsics,
             width: k.width,
@@ -469,7 +603,7 @@ pub fn decode(bytes: &[u8]) -> Result<Shot, BundleError> {
     if !finite || !in_range {
         return Err(BundleError::BadMesh);
     }
-    Ok(Shot {
+    Ok(ShotRef {
         header: wire.header,
         positions,
         normals,

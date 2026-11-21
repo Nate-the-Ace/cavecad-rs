@@ -1,7 +1,7 @@
 //! Several scanning passes in one shot: the pass record, adding a pass, the ghost of a scan, and
 //! lining a pass up from the station cards. Pure: bytes and numbers in, data out.
 
-use crate::bundle::{BundleError, CardSeen, Keyframe, Shot};
+use crate::bundle::{BundleError, CardSeen, Keyframe, KeyframeRef, Shot, ShotRef};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap, HashSet};
 
@@ -59,6 +59,33 @@ pub struct NewPass {
     /// How tracking went in this pass: `normal`, `limited` or `lost`.
     pub tracking: String,
     /// Flags for the pass: `gimbal`, `tracking lost`, `gimbal lost`, `low battery`.
+    pub flags: Vec<String>,
+}
+
+/// [`NewPass`] with its arrays and photos borrowed (the phone's buffers), for [`add_pass_ref`].
+#[derive(Clone, Debug, PartialEq)]
+pub struct NewPassRef<'a> {
+    /// When the pass was captured (milliseconds since 1970).
+    pub captured_at_ms: i64,
+    /// `same_session` or `cards`.
+    pub aligned_by: String,
+    /// Column-major 4x4 from this pass's frame to the shot's frame.
+    pub transform: [f64; 16],
+    /// Replace or add the mesh.
+    pub mesh: PassMesh,
+    /// Vertex positions, xyz per vertex.
+    pub positions: &'a [f32],
+    /// Vertex normals, xyz per vertex.
+    pub normals: &'a [f32],
+    /// Triangle indices, three per triangle.
+    pub indices: &'a [u32],
+    /// The pass's kept photos, borrowed.
+    pub keyframes: Vec<KeyframeRef<'a>>,
+    /// The cards the pass placed.
+    pub cards: Vec<CardSeen>,
+    /// How tracking went in this pass: `normal`, `limited` or `lost`.
+    pub tracking: String,
+    /// Flags for the pass.
     pub flags: Vec<String>,
 }
 
@@ -131,6 +158,42 @@ fn better(new: &CardSeen, old: &CardSeen) -> bool {
 /// pass placed replaces the same id only if it is the better estimate; the rest are kept or added), and the pass recorded. A shot with no pass list gets its
 /// first pass recorded too. `BadMesh` for ragged new arrays or an index past the new vertices.
 pub fn add_pass(old: &Shot, p: NewPass) -> Result<Shot, BundleError> {
+    let NewPass {
+        captured_at_ms,
+        aligned_by,
+        transform,
+        mesh,
+        positions,
+        normals,
+        indices,
+        keyframes,
+        cards,
+        tracking,
+        flags,
+    } = p;
+    let r = add_pass_ref(
+        old.borrowed(),
+        NewPassRef {
+            captured_at_ms,
+            aligned_by,
+            transform,
+            mesh,
+            positions: &positions,
+            normals: &normals,
+            indices: &indices,
+            keyframes: keyframes.iter().map(KeyframeRef::from).collect(),
+            cards,
+            tracking,
+            flags,
+        },
+    )?;
+    Ok(r.into_shot())
+}
+
+/// [`add_pass`] without copying a photo: `old` is taken whole (its mesh and header are moved, not
+/// cloned) and the result's photos borrow from `old`'s bytes and the new pass's. Write it with
+/// [`crate::bundle::write_parts`].
+pub fn add_pass_ref<'a>(old: ShotRef<'a>, p: NewPassRef<'a>) -> Result<ShotRef<'a>, BundleError> {
     if !p.positions.len().is_multiple_of(3)
         || p.normals.len() != p.positions.len()
         || !p.indices.len().is_multiple_of(3)
@@ -155,23 +218,23 @@ pub fn add_pass(old: &Shot, p: NewPass) -> Result<Shot, BundleError> {
         let q = apply_dir(&m, [v[0] as f64, v[1] as f64, v[2] as f64]);
         normals.extend(q.iter().map(|x| *x as f32));
     }
-    let mut out = old.clone();
+    let mut out = old;
     if out.header.passes.is_empty() {
         out.header.passes.push(Pass {
-            captured_at_ms: old.header.captured_at_ms,
+            captured_at_ms: out.header.captured_at_ms,
             aligned_by: "first".into(),
             transform: IDENTITY,
             first_keyframe: 0,
-            keyframe_count: old.keyframes.len() as u32,
-            cards: old.header.cards.clone(),
-            flags: old.header.flags.clone(),
+            keyframe_count: out.keyframes.len() as u32,
+            cards: out.header.cards.clone(),
+            flags: out.header.flags.clone(),
         });
     }
     match p.mesh {
         PassMesh::Replace => {
             out.positions = positions;
             out.normals = normals;
-            out.indices = p.indices.clone();
+            out.indices = p.indices.to_vec();
         }
         PassMesh::Add => {
             let base = (out.positions.len() / 3) as u32;
@@ -181,7 +244,9 @@ pub fn add_pass(old: &Shot, p: NewPass) -> Result<Shot, BundleError> {
         }
     }
     let first_keyframe = out.keyframes.len() as u32;
-    for k in &p.keyframes {
+    let keyframe_count = p.keyframes.len() as u32;
+    out.keyframes.reserve_exact(p.keyframes.len());
+    for k in p.keyframes {
         let mut pose64 = [0.0; 16];
         for (d, s) in pose64.iter_mut().zip(k.pose.iter()) {
             *d = *s as f64;
@@ -191,7 +256,7 @@ pub fn add_pass(old: &Shot, p: NewPass) -> Result<Shot, BundleError> {
         for (d, s) in pose.iter_mut().zip(moved.iter()) {
             *d = *s as f32;
         }
-        out.keyframes.push(Keyframe { pose, ..k.clone() });
+        out.keyframes.push(KeyframeRef { pose, ..k });
     }
     let mut cards: Vec<CardSeen> = Vec::new();
     for c in p.cards.iter().rev() {
@@ -200,7 +265,7 @@ pub fn add_pass(old: &Shot, p: NewPass) -> Result<Shot, BundleError> {
         }
     }
     cards.reverse();
-    let mut merged: Vec<CardSeen> = out.header.cards.clone();
+    let mut merged: Vec<CardSeen> = std::mem::take(&mut out.header.cards);
     for n in &cards {
         match merged.iter_mut().find(|o| o.id == n.id) {
             Some(o) => {
@@ -219,7 +284,7 @@ pub fn add_pass(old: &Shot, p: NewPass) -> Result<Shot, BundleError> {
         aligned_by: p.aligned_by,
         transform: m,
         first_keyframe,
-        keyframe_count: p.keyframes.len() as u32,
+        keyframe_count,
         cards,
         flags: p.flags,
     });
