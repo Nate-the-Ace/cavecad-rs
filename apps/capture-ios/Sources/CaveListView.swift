@@ -30,8 +30,34 @@ struct CaveListView: View {
                                                  set: { if $0 == nil { opened = nil } })) { _ in
                 if let opened { StationPickView(cave: opened, store: store) }
             }
+            #if DEBUG
+            .onAppear { TestRemote.shared.caveList = testCommand }
+            .onChange(of: opened?.id, initial: true) { TestRemote.shared.caveOpened(opened?.name) }
+            #endif
         }
     }
+
+    #if DEBUG
+    /// Test commands for this screen (TestRemote): open a cave as tapping its row does; back from its station screen.
+    private func testCommand(_ c: TestCommand) -> TestOutcome {
+        switch c {
+        case .open(let key):
+            if busy != nil { return .refused("a download is running") }
+            guard let cave = store.caves.first(where: { $0.id == key })
+                    ?? store.caves.first(where: { $0.name.localizedCaseInsensitiveCompare(key) == .orderedSame }) else {
+                return .refused("no cave \"\(key)\" in the list (\(store.caves.count) listed\(store.offline ? ", offline" : ""))")
+            }
+            open(cave)
+            if opened != nil { return .ok("opened the kept copy") }
+            return .ok("not kept: downloading (watch for [caves] lines)")
+        case .back:
+            opened = nil
+            return .ok(nil)
+        default:
+            return .refused("not a cave list command")
+        }
+    }
+    #endif
 
     /// A kept cave opens from the phone at once (no signal needed); "Get latest" on the next screen refreshes it.
     /// A cave not kept yet is downloaded first.

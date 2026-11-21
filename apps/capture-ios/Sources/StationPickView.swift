@@ -31,6 +31,8 @@ struct StationPickView: View {
     @State private var saved: [SavedShot] = []
     @State private var savedBytes: Int64 = 0
     @State private var askDeleteAll = false
+    /// The capture screen is shown (Capture tapped, or a test command).
+    @State private var capturing = false
 
     init(cave: KeptCave, store: CaveStore) {
         _cave = State(initialValue: cave)
@@ -40,8 +42,15 @@ struct StationPickView: View {
     var body: some View {
         List {
             Section { picker($over) }
-            if let over {
-                NavigationLink("Capture") { CaptureView(cave: cave, over: over) }.font(.headline)
+            if over != nil {
+                // a button driving `capturing` (not a NavigationLink), so a test command takes the same path
+                Button { capture() } label: {
+                    HStack {
+                        Text("Capture").font(.headline).foregroundStyle(.primary)
+                        Spacer()
+                        Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(.tertiary)
+                    }
+                }
             }
             if !saved.isEmpty {
                 // Each shot is shown with its own station, whatever is picked above.
@@ -78,6 +87,14 @@ struct StationPickView: View {
             }
             if let problem { Text(problem).foregroundStyle(.red) }
         }
+        .navigationDestination(isPresented: $capturing) {
+            if let over { CaptureView(cave: cave, over: over) }
+        }
+        #if DEBUG
+        .onAppear { TestRemote.shared.stationScreen = testCommand }
+        .onChange(of: over?.label, initial: true) { TestRemote.shared.station = over?.label }
+        .onChange(of: capturing, initial: true) { TestRemote.shared.capturing = capturing }
+        #endif
         .navigationTitle(cave.name)
         // when this cave was last downloaded to the phone (the kept offline copy)
         .modifier(Subtitle(text: "Last Synced on: \(cave.keptAt.formatted(.dateTime.month(.twoDigits).day(.twoDigits).year(.twoDigits)))"))
@@ -98,6 +115,34 @@ struct StationPickView: View {
         .onChange(of: problem) { _, p in if let p { Log.write("stations", p) } }
         .onAppear { if !stations.isEmpty { Task { await loadSaved() } } }
     }
+
+    /// Capture: the capture screen over the picked station.
+    private func capture() {
+        guard over != nil else { return }
+        capturing = true
+    }
+
+    #if DEBUG
+    /// Test commands for this screen (TestRemote): pick a station and Capture; back from the capture screen.
+    private func testCommand(_ c: TestCommand) -> TestOutcome {
+        switch c {
+        case .station(let label):
+            if stations.isEmpty { return .refused(problem.map { "no stations: \($0)" } ?? "stations not loaded yet") }
+            guard let s = stations.first(where: { $0.label == label })
+                    ?? stations.first(where: { $0.label.localizedCaseInsensitiveCompare(label) == .orderedSame }) else {
+                return .refused("no station \(label) (\(stations.count) stations)")
+            }
+            over = s
+            capture()
+            return .ok("over \(s.label)")
+        case .back:
+            capturing = false
+            return .ok(nil)
+        default:
+            return .refused("not a station screen command")
+        }
+    }
+    #endif
 
     /// Stations come from the Rust core, off the main actor; the result is published back here.
     private func loadStations() async {

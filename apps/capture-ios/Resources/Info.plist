@@ -13,5 +13,12 @@
   <key>UIRequiredDeviceCapabilities</key><array><string>arkit</string></array>
   <key>UILaunchScreen</key><dict/>
   <key>UISupportedInterfaceOrientations</key><array><string>UIInterfaceOrientationPortrait</string></array>
+#ifdef CAPTURE_TEST_URLS
+  <!-- Debug only (project.yml): test commands from the Mac, cavecadcapture://test?action=... (TestCommand.swift) -->
+  <key>CFBundleURLTypes</key><array><dict>
+    <key>CFBundleURLName</key><string>app.cavecad.capture.test</string>
+    <key>CFBundleURLSchemes</key><array><string>cavecadcapture</string></array>
+  </dict></array>
+#endif
   <key>CaveCADServer</key><string>https://cavecad.com</string>
 </dict></plist>

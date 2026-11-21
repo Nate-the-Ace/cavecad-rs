@@ -11,3 +11,24 @@ Needs an iPhone with LiDAR (Pro models), Xcode, XcodeGen (`brew install xcodegen
 Shots are kept on the phone in Documents/shots/<cave>/<shot>.cvcap (format: `crates/cave-capture/src/bundle.rs`).
 Caves downloaded for offline use are in Application Support/caves (deleted on sign-out; shots are not).
 The phone registers itself as a device on the CaveCAD account the first time it lists caves.
+
+## Driving a test run from the Mac (Debug builds only)
+
+Debug builds register the URL scheme `cavecadcapture` and take test commands over the cable; Release builds
+register no scheme and compile no handler (`Sources/TestCommand.swift`, `Resources/Info.plist` under
+`CAPTURE_TEST_URLS`, set for Debug in `project.yml`). Each command goes through the same functions the screen's
+buttons call, under the same enable rules, and is logged as `[test] got …` and then `[test] … ok` or
+`[test] … refused: <why>`.
+
+    apps/capture-ios/live-log.sh <udid>                          # the app's own log lines, live (idevicesyslog)
+    apps/capture-ios/test-cmd.sh <udid> 'action=status'          # one line: screen, cave, station, phase, gimbal, tracking, lux
+    apps/capture-ios/test-cmd.sh <udid> 'action=open&cave=Truitt Cave'   # cave id or name; from the cave list
+    apps/capture-ios/test-cmd.sh <udid> 'action=station&label=A3'        # pick the station and go to Capture
+    apps/capture-ios/test-cmd.sh <udid> 'action=gimbal&on=1'             # the Gimbal switch (0 turns it off)
+    apps/capture-ios/test-cmd.sh <udid> 'action=start'                   # also pause, resume, stop
+    apps/capture-ios/test-cmd.sh <udid> 'action=back'                    # leave the capture screen (from stations: the cave list)
+
+`test-cmd.sh` is `xcrun devicectl device process launch --device <udid> --payload-url 'cavecadcapture://test?<query>'
+app.cavecad.capture`: without `--terminate-existing` the running app is not restarted, it just opens the URL.
+While a gimbal pass runs, a `[test] pass: …` status line is logged every 5 s. `live-log.sh <udid> all` shows
+every line of the app's process, system frameworks included.

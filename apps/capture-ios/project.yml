@@ -31,6 +31,13 @@ targets:
         TARGETED_DEVICE_FAMILY: "1"
         SWIFT_OBJC_BRIDGING_HEADER: Sources/CaveCADCapture-Bridging-Header.h
         HEADER_SEARCH_PATHS: "$(SRCROOT)/Vendor/apriltag"
+        # Info.plist goes through the C preprocessor so the test URL scheme is registered in Debug only;
+        # -C keeps "//" (the server URL) from being read as a comment
+        INFOPLIST_PREPROCESS: "YES"
+        INFOPLIST_OTHER_PREPROCESSOR_FLAGS: "-C"
+      configs:
+        Debug:
+          INFOPLIST_PREPROCESSOR_DEFINITIONS: "CAPTURE_TEST_URLS=1"
   CaveCADCaptureTests:
     type: bundle.unit-test
     platform: iOS

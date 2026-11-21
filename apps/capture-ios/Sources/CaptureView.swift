@@ -134,9 +134,68 @@ struct CaptureView: View {
             }
         }
         .navigationDestination(item: $rec.viewing) { url in ShotView(url: url, stations: [over]) }
-        .onAppear { rec.prepare(cave: cave, over: over); rec.run() }
+        .onAppear {
+            rec.prepare(cave: cave, over: over); rec.run()
+            #if DEBUG
+            TestRemote.shared.captureScreen = testCommand
+            #endif
+        }
         .onDisappear { rec.leave() }
     }
+
+    /// The phase is ready: Start (or Resume) begins the pass the screen is ready for.
+    private var isReady: Bool { if case .ready = rec.phase { true } else { false } }
+
+    /// Start and Resume are shown with LiDAR, or when ready (where `start` explains there is none).
+    private var startShown: Bool { ShotRecorder.hasLiDAR || isReady }
+
+    /// Start / Resume: paused or failed, the next pass in the same session; ready, the pass the screen is ready for.
+    private func startOrResume() {
+        if !isReady { rec.scanMore() }
+        rec.start()
+    }
+
+    private func pause() { rec.pause(cave: cave, over: over) }
+    private func stop() { rec.finish(cave: cave, over: over) }
+
+    #if DEBUG
+    /// Test commands for this screen (TestRemote), under the rules the switch and buttons follow.
+    private func testCommand(_ c: TestCommand) -> TestOutcome {
+        let shown = ShotRecorder.controls(rec.phase, hasParent: rec.parent != nil)
+        let buttons = "buttons [\(shown.map { "\($0)" }.joined(separator: ", "))]"
+        func refusal(_ want: ShotRecorder.Control) -> String? {
+            guard shown.contains(want) else { return "no \(want) button now (\(buttons))" }
+            if want == .start || want == .resume {
+                if !startShown { return "no \(want) button: no LiDAR" }
+                if rec.findingNorth { return "\(want) disabled: finding north" }
+            }
+            return nil
+        }
+        switch c {
+        case .gimbal(let on):
+            if gimbalLocked { return .refused("the Gimbal switch is locked mid-pass") }
+            if rec.gimbalMode == on { return .ok("already \(on ? "on" : "off")") }
+            rec.gimbalMode = on
+            return .ok(on ? "connecting" : "switched off")
+        case .start, .resume:
+            let want: ShotRecorder.Control = c == .start ? .start : .resume
+            if let why = refusal(want) { return .refused(why) }
+            startOrResume()
+            if case .capturing = rec.phase { return .ok(rec.gimbalMode ? "gimbal pass" : "pass by hand") }
+            return .refused("pressed; still not capturing: \(rec.message)")
+        case .pause:
+            if let why = refusal(.pause) { return .refused(why) }
+            pause()
+            return .ok(rec.message)
+        case .stop:
+            if let why = refusal(.stop) { return .refused(why) }
+            stop()
+            return .ok(rec.message)
+        default:
+            return .refused("not a capture screen command")
+        }
+    }
+    #endif
 
     /// Capturing or saving: the Gimbal switch cannot change mid-pass.
     private var gimbalLocked: Bool {
@@ -146,19 +205,14 @@ struct CaptureView: View {
     @ViewBuilder private func button(_ c: ShotRecorder.Control) -> some View {
         switch c {
         case .start, .resume:
-            // paused or failed: the next pass in the same session; ready: the pass the screen is ready for
-            let ready: Bool = { if case .ready = rec.phase { true } else { false } }()
-            if ShotRecorder.hasLiDAR || ready {
-                Button(c == .start ? "Start" : "Resume") {
-                    if !ready { rec.scanMore() }
-                    rec.start()
-                }
-                .buttonStyle(BigButton(colour: .green)).disabled(rec.findingNorth)
+            if startShown {
+                Button(c == .start ? "Start" : "Resume") { startOrResume() }
+                    .buttonStyle(BigButton(colour: .green)).disabled(rec.findingNorth)
             }
         case .pause:
-            Button("Pause") { rec.pause(cave: cave, over: over) }.buttonStyle(BigButton(colour: .orange))
+            Button("Pause") { pause() }.buttonStyle(BigButton(colour: .orange))
         case .stop:
-            Button("Stop") { rec.finish(cave: cave, over: over) }.buttonStyle(BigButton(colour: .red))
+            Button("Stop") { stop() }.buttonStyle(BigButton(colour: .red))
         case .viewShot:
             if case .saved(let url) = rec.phase {
                 NavigationLink("View") { ShotView(url: url, stations: [over]) }.buttonStyle(BigButton(colour: .blue))

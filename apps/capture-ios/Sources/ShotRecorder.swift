@@ -1071,6 +1071,34 @@ final class ShotRecorder: NSObject, ObservableObject, ARSessionDelegate {
         UIApplication.shared.isIdleTimerDisabled = false
     }
 
+    #if DEBUG
+    /// The recorder's part of a test `status` line (TestRemote).
+    func testStatus() -> String {
+        let phaseName: String = switch phase {
+        case .ready: "ready"
+        case .capturing: "capturing"
+        case .saving: "saving"
+        case .saved(let u): "saved(\(u.lastPathComponent))"
+        case .failed(let m): "failed(\(m))"
+        }
+        let f = session.currentFrame
+        let tracking: String = f.map {
+            switch $0.camera.trackingState {
+            case .normal: "normal"
+            case .notAvailable: "lost"
+            case .limited(let r): "limited(\(r))"
+            }
+        } ?? "none"
+        let lux = f?.lightEstimate.map { String(Int($0.ambientIntensity.rounded())) } ?? "none"
+        let s = gimbalStatus
+        let stage = gimbalRun.map { "\($0.stage)" + ($0.holdReason.map { " holding(\($0))" } ?? "") } ?? "none"
+        return "phase=\(phaseName) photos=\(keyframeCount) findingNorth=\(findingNorth) "
+            + "gimbal=\(gimbalMode ? "on" : "off") pass=\(stage) state=\(s.state) step=\(s.step)/\(s.steps) "
+            + "connected=\(s.connected) mount=\(s.mountOK) error=\(s.error ?? "none") "
+            + "tracking=\(tracking) lux=\(lux) message=\"\(message)\""
+    }
+    #endif
+
     // MARK: gimbal passes
 
     /// ARKit's tracking as a gimbal pass reads it.
@@ -1230,6 +1258,13 @@ final class ShotRecorder: NSObject, ObservableObject, ARSessionDelegate {
             Log.write("gimbal", "fill \(run.planned) targets (coverage \(c) cells)")
         }
         if wasStage != .ending, run.stage == .ending { Log.write("gimbal", "ending the pass: going home") }
+        #if DEBUG
+        // a status line every 5 s while the pass runs, for watching it live from the Mac (live-log.sh)
+        if now - TestRemote.shared.lastPassStatus >= 5 {
+            TestRemote.shared.lastPassStatus = now
+            TestRemote.shared.logStatus("pass")
+        }
+        #endif
         if case .finished(let flags) = out { gimbalFinished(flags, now: now); return }
         refreshCoverage(now: now)
     }
