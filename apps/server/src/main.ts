@@ -43,6 +43,7 @@ const whoIs = makeWhoIs({ db, tailnet, devIdentity, secure });
 const deps = {
   db, passKey, adminEmail, publicUrl, mailer, tailnet, whoIs,
   scansDir: resolve(env.SCANS_DIR ?? join(dirname(resolve(env.DB_PATH ?? 'cavecad.sqlite')), 'scans')),
+  capturesDir: resolve(env.CAPTURES_DIR ?? join(dirname(resolve(env.DB_PATH ?? 'cavecad.sqlite')), 'captures')),
 };
 const signin = {
   db, publicUrl, secure,

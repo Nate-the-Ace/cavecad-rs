@@ -12,6 +12,7 @@ import { serveStatic } from './static.ts';
 import { send, sendBadBody, readJson } from './http.ts';
 import { handleRooms } from './rooms-api.ts';
 import { handleScans, sweepScans } from './scans.ts';
+import { handleCaptures, sweepCaptures } from './captures.ts';
 import { handlePatterns } from './patterns.ts';
 import { handlePrefs } from './prefs.ts';
 import { cancelInvited, inviteGuest, ownsAnyCave } from './rooms.ts';
@@ -27,6 +28,8 @@ export type ApiDeps = {
   mailer: MailerConfig;
   /** Where scanned pages are kept (a folder); absent, the server keeps none. */
   scansDir?: string;
+  /** Where LiDAR shots (`.cvcap`) are kept (a folder); absent, the server keeps none. */
+  capturesDir?: string;
   /** Reached through `tailscale serve` only: /api/me says so, and the page hides sign-out and switching account. */
   tailnet?: boolean;
   now?: () => number;
@@ -50,7 +53,10 @@ function refusedCrossSite(d: ApiDeps, req: IncomingMessage, res: ServerResponse,
   const type = String(req.headers['content-type'] ?? '').toLowerCase();
   // JSON only (a type a plain form cannot send, so the browser always asks first); a scan page's bytes are
   // application/octet-stream, which a form cannot send either, and only to a cave's scans.
-  const pageUpload = type.startsWith('application/octet-stream') && /^\/api\/caves\/[A-Za-z0-9_-]{8,64}\/scans$/.test(path);
+  // A LiDAR shot's chunks are the same, and only to one capture's upload path.
+  const pageUpload =
+    type.startsWith('application/octet-stream') &&
+    (/^\/api\/caves\/[A-Za-z0-9_-]{8,64}\/scans$/.test(path) || (method === 'PUT' && /^\/api\/caves\/[A-Za-z0-9_-]{8,64}\/captures\/[0-9a-f]{64}$/.test(path)));
   if (!type.startsWith('application/json') && !pageUpload) return send(res, 415, { error: 'bad-request' }), true;
   const desktop = DESKTOP_ORIGINS.includes(origin);
   const bearer = /^Bearer \S/.test(String(req.headers.authorization ?? ''));
@@ -127,10 +133,15 @@ export async function handleApi(d: ApiDeps, req: IncomingMessage, res: ServerRes
     // A cave's scanned pages: kept in the scans folder (none set: the server keeps no pages).
     const sc = /^\/api\/caves\/([A-Za-z0-9_-]{8,64})\/scans(?:\/([0-9a-f]{64}))?$/.exec(path);
     if (sc) return d.scansDir ? await handleScans(d.db, d.scansDir, me.id, req, res, sc[1], sc[2] ?? '', now) : send(res, 404, { error: 'not-found' });
+    // A cave's LiDAR shots: kept in the captures folder (none set: the server keeps none).
+    const cp = /^\/api\/caves\/([A-Za-z0-9_-]{8,64})\/captures(?:\/([A-Za-z0-9_.:-]{1,100})(\/upload)?)?$/.exec(path);
+    if (cp) return d.capturesDir ? await handleCaptures(d.db, d.capturesDir, me.id, req, res, cp[1], cp[2] ?? '', !!cp[3], now) : send(res, 404, { error: 'not-found' });
     if (path === '/api/devices' || path === '/api/caves' || path.startsWith('/api/caves/')) {
       await handleRooms(d.db, me.id, req, res, now);
       // a deleted cave's pages go with it (a file another cave still uses stays)
       if (d.scansDir && method === 'DELETE' && /^\/api\/caves\/[A-Za-z0-9_-]{8,64}$/.test(path) && res.statusCode === 200) sweepScans(d.db, d.scansDir);
+      const gone = /^\/api\/caves\/([A-Za-z0-9_-]{8,64})$/.exec(path);
+      if (d.capturesDir && method === 'DELETE' && gone && res.statusCode === 200) sweepCaptures(d.db, d.capturesDir, gone[1]);
       return;
     }
     if (path === '/api/me' && method === 'GET') {
