@@ -61,6 +61,24 @@ per station.
   licensed detector, so no network or heavy library); the printable card sheet ships with the app and,
   later, from CaveCAD.
 
+## Card chaining (Nathan, 2026-11-21)
+
+Shots at neighbouring stations are joined to each other on the phone through the station cards, with no
+survey positions and no CaveCAD. At A3 the CURRENT card marks A3 and FORWARD marks A4; at A4 CURRENT marks A4
+and REAR marks A3. Each shot measures both station points, so two shots share two points: with gravity known
+and scale locked, that fixes the turn and shift between them (one shared point plus the compass is the weaker
+fallback, flagged).
+
+- **Neighbours:** from the survey legs when Capture has them, else from the labels (same prefix, number ±1:
+  A3 → A4). A junction or a label that does not follow the pattern is not guessed: those shots stay unchained.
+- **Chains:** neighbouring shots form a chain. A chain with any placed station is placed as a whole; a chain of
+  only waiting stations holds together and drops into place when one of its stations arrives.
+- **Check:** the LiDAR's own A3→A4 vector is compared with the survey leg when there is one; a misfit beyond
+  max(10 cm, 3% of the leg) is flagged on both shots, never silently used.
+- **Order of trust for a shot's place:** its CURRENT card + a chained neighbour > CURRENT card + compass >
+  compass at the station. The shot records which was used.
+- Derived, as all placement: no file is rewritten; the chain is worked out from the shots each time.
+
 ## Stations not on the server yet (Nathan, 2026-11-21)
 
 A shot can be taken at a station the server has not seen yet (surveyed earlier on the same trip, with no
