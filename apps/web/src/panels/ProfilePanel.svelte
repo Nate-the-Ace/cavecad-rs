@@ -13,7 +13,7 @@
   import { openContextMenu } from '../lib/context-menu.svelte';
   import { lineItems, offerLineStack, viewItems } from '../lib/context-items';
   import { closeCycle, type Candidate } from '../lib/cycle.svelte';
-  import { cave, changed, filter, option, selectedIds, selectIds, toggleSelected, setPick, setShowSections, haloFade, haloReach, toolStyle } from '../lib/cave.svelte';
+  import { cave, changed, filter, option, setOption, selectedIds, selectIds, toggleSelected, setPick, setShowSections, haloFade, haloReach, toolStyle } from '../lib/cave.svelte';
   import { defaultBandOffset, drawHandles, drawStrokes, glyphCurves, hits, leaderEnd, ornamentFor } from '../lib/section-glyph';
   import { LineEditor, endpointNear, joinFit } from '../lib/line-editor';
 import { PaneSnap } from '../lib/snap-pane';
@@ -34,6 +34,8 @@ import { planFrame } from '../lib/snap-types';
   import { engine, loadEngine, type ProfileScene, type RunInfo, type ScanPlacement } from '../lib/engine';
   import { drawScan } from '../lib/scan-draw';
   import { givePoint, have, scanImage, scans, waitingForPoint } from '../lib/scans.svelte';
+  import { captureShots, profileWalls } from '../lib/capture-shots.svelte';
+  import { cssColor, onBand, tagSpot } from '../lib/capture-pure';
 
   let wrap: HTMLDivElement;
   let canvas: HTMLCanvasElement;
@@ -182,6 +184,35 @@ import { planFrame } from '../lib/snap-types';
     // refresh() both reads and writes panel state; only the three values above may re-trigger it.
     untrack(refresh);
   });
+  // LiDAR profile walls from CaveCAD Capture on this phone: each room on the band cut upright along the band at its
+  // station, then put where the band puts that station, so they follow the band when the survey changes.
+  let lidar: { lines: [number, number][][]; color: number }[] = [];
+  let lidarSeq = 0;
+  function loadLidar() {
+    const seq = ++lidarSeq;
+    const run = cave.run;
+    const axes = captureShots.linked && option('captureProfileWalls', true) && run ? engine.profileAxes(run, cave.adjusted) : null;
+    if (!axes) {
+      lidar = [];
+      schedule();
+      return;
+    }
+    void profileWalls(run, axes).then((walls) => {
+      if (seq !== lidarSeq) return;
+      lidar = walls.map((w) => ({ lines: onBand(w.lines, w.at), color: w.color }));
+      schedule();
+    });
+  }
+  $effect(() => {
+    void cave.version;
+    void cave.adjusted;
+    void cave.run;
+    void captureShots.rows;
+    void captureShots.linked;
+    void option('captureProfileWalls', true);
+    untrack(loadLidar);
+  });
+
   // Frame the band only when the run itself changes, not after every sketch.
   let framed = '';
   $effect(() => {
@@ -313,6 +344,18 @@ import { planFrame } from '../lib/snap-types';
       g.fillRect(x - 1.5, y - 1.5, 3, 3);
     }
     g.setLineDash([]);
+    // LiDAR walls: solid, in each room's own colour (the colour of its points on the map), with a small tag
+    for (const w of lidar) {
+      const col = cssColor(w.color);
+      for (const line of w.lines) stroke(g, line, null, col, 2.4);
+      const tag = tagSpot(w.lines);
+      if (tag) {
+        const [x, y] = toScreen(tag[0], tag[1]);
+        g.fillStyle = col;
+        g.font = '600 10px system-ui, sans-serif';
+        g.fillText('LiDAR', x + 4, y - 4);
+      }
+    }
     for (const l of band.legs) stroke(g, [[l[0], l[1]], [l[2], l[3]]], null, c.text, 2);
     const look = looks();
     drawStrokes(g, editor.display(), toScreen, look, 1, new Set(selectedIds()), (band?.stations ?? []).map((s) => [s.s, s.z] as [number, number]));
@@ -912,6 +955,7 @@ import { planFrame } from '../lib/snap-types';
       {#each runs as r}<option value={r.key}>{r.key} · {r.stations} stations · {formatLength(r.length, cave.units)}{r.tie ? ` · from ${r.tie}` : ''}</option>{/each}
     </select>
     <label class="show" title="Show the cross sections drawn at stations, next to their stations (drag one to place it)"><input type="checkbox" checked={cave.showSections.profile} onchange={(e) => (setShowSections('profile', e.currentTarget.checked), schedule())} /> Sections</label>
+    {#if captureShots.linked}<label class="show" title="The LiDAR rooms on this run, cut upright along the passage at their stations: floor and ceiling, solid in each room's colour"><input type="checkbox" checked={option('captureProfileWalls', true)} onchange={(e) => setOption('captureProfileWalls', e.currentTarget.checked)} /> LiDAR walls</label>{/if}
     <PanelUndo scope="profile" label="in the profile" />
     <button title="Fit band (or double middle-click)" onclick={fit}><Maximize size={15} /></button>
   </div>

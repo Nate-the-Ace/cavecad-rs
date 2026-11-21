@@ -207,6 +207,7 @@ export const READS: readonly string[] = [
   'palette',
   'profileRuns',
   'profileBand',
+  'profileAxes',
   'passageMesh',
   'editState',
   'hoppedLines',

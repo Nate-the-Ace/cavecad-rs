@@ -20,7 +20,7 @@
   import { closeCycle, offerStack, type Candidate } from '../lib/cycle.svelte';
   import { snap, clearPick, cycle, escapePick, pickBuiltUp, toggleSnap } from '../lib/snap.svelte';
   import SnapButton from './SnapButton.svelte';
-  import { captureRooms, captureShots, linkCaptureShots } from '../lib/capture-shots.svelte';
+  import { captureRooms, captureShots, captureWalls, linkCaptureShots } from '../lib/capture-shots.svelte';
   import { roomAt } from '../lib/capture-pure';
   import { cave, changed, filter, haloFade, haloReach, option, setOption, selectedIds, selectIds, toggleSelected, setPick, setShowSections, setShown, wireFilter, toolStyle } from '../lib/cave.svelte';
   import { tolerancePx } from '../lib/commands';
@@ -449,6 +449,23 @@
     });
   });
 
+  // Their LiDAR plan walls, cut at each room's station height, follow the station the same way.
+  $effect(() => {
+    const list = captureWalls.layers;
+    const sc = scene;
+    const on = option('captureWalls', true);
+    if (!viewReady || !view) return;
+    const shown = new Map((sc?.stations ?? []).map((s) => [s.id, s.at] as [string, [number, number, number]]));
+    const walls = list.flatMap((l) => {
+      const at = roomAt(l, shown);
+      return at ? [{ key: l.key, at, lines: l.lines, color: l.color }] : [];
+    });
+    untrack(() => {
+      view?.setCaptureWalls(walls);
+      view?.setShowCaptureWalls(on);
+    });
+  });
+
   // Every edit (a notebook reading, a station, an undo) redraws the survey, without re-framing it.
   let rereadFrame = 0;
   $effect(() => {
@@ -691,6 +708,7 @@
             <h4>LiDAR rooms</h4>
             {#if captureShots.linked}
               <label title="The rooms scanned with CaveCAD Capture on this phone, each on its station"><input type="checkbox" checked={option('captureRooms', true)} onchange={(e) => setOption('captureRooms', e.currentTarget.checked)} /> Rooms</label>
+              <label title="Each room's walls, cut level at its station's height, drawn solid in the room's colour"><input type="checkbox" checked={option('captureWalls', true)} onchange={(e) => setOption('captureWalls', e.currentTarget.checked)} /> LiDAR walls</label>
               <p class="note">{n.filter((r) => r.status === 'placed').length} placed · {n.filter((r) => r.status === 'waiting').length} waiting for station · {n.filter((r) => r.status === 'gone').length} station gone</p>
             {/if}
             {#if captureShots.problem}<p class="note warn">{captureShots.problem}</p>{/if}

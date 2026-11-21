@@ -56,3 +56,37 @@ export function counts(rows: { status: string }[]): { placed: number; waiting: n
   for (const r of rows) if (r.status in c) c[r.status as keyof typeof c]++;
   return c;
 }
+
+/** What a shot's slices depend on: the file (and when it changed) and its placement (no thinning cell). */
+export function placeKey(row: { file: string; modifiedMs: number; rigid: number[] | null; anchor: number[] | null }): string {
+  return pointsKey(row, 0);
+}
+
+/** Profile walls `[s, up]` from a shot's station put on the band: at the station's band `s` and `z`, as the band places its stations. */
+export function onBand(lines: [number, number][][], at: { s: number; z: number }): [number, number][][] {
+  return lines.map((l) => l.map((p) => [at.s + p[0], at.z + p[1]] as [number, number]));
+}
+
+/** The colour of a LiDAR cross section (rooms merge there, so one colour, not the rooms' own): a magenta no survey type uses. */
+export const LIDAR_SECTION_COLOR = 0xd63384;
+
+/** A 0xRRGGBB colour as CSS. */
+export function cssColor(c: number): string {
+  return `#${c.toString(16).padStart(6, '0')}`;
+}
+
+/** Where the small "LiDAR" tag goes: the highest point of the longest line (out of the way of the floor), or null. */
+export function tagSpot(lines: [number, number][][]): [number, number] | null {
+  let best: [number, number][] | null = null;
+  let most = -1;
+  for (const l of lines) {
+    let len = 0;
+    for (let i = 1; i < l.length; i++) len += Math.hypot(l[i][0] - l[i - 1][0], l[i][1] - l[i - 1][1]);
+    if (len > most) {
+      most = len;
+      best = l;
+    }
+  }
+  if (!best || !best.length) return null;
+  return best.reduce((a, p) => (p[1] > a[1] ? p : a), best[0]);
+}

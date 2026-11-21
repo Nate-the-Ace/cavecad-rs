@@ -235,6 +235,7 @@ export class CaveView {
     this.scene.add(this.content);
     this.scene.add(this.surfaceGroup);
     this.scene.add(this.captureGroup);
+    this.scene.add(this.captureWallGroup);
     this.scene.add(new THREE.AmbientLight(0xffffff, 0.9));
     this.scene.add(this.headlamp);
     this.controls = new OrbitControls(this.persp, canvas);
@@ -627,6 +628,7 @@ export class CaveView {
     this.overlay.style.height = `${this.height}px`;
     for (const m of this.materials) m.resolution.set(this.width, this.height);
     for (const m of this.surfaceMaterials) m.resolution.set(this.width, this.height);
+    for (const c of this.captureWallGroup.children) ((c as LineSegments2).material as LineMaterial).resolution.set(this.width, this.height);
     this.persp.aspect = this.width / this.height;
     this.persp.updateProjectionMatrix();
     this.setOrthoHeight(this.visibleHalfHeight());
@@ -1134,6 +1136,51 @@ export class CaveView {
       p.position.set(r.at[0], r.at[1], r.at[2]);
     }
     this.captureGroup.visible = this.showCapture;
+    this.requestRender();
+  }
+
+  /** The rooms' LiDAR plan walls: one fat line set each, solid, in its room's colour, drawn over everything (depth off) so they
+   *  read on a phone over the points and the passage. Points relative to the object position (its station). */
+  private captureWallGroup = new THREE.Group();
+  private showCaptureWalls = true;
+
+  /** Shows the LiDAR plan walls. `lines` are `[east, north]` metres from `at`, at its height. A set whose key is unchanged only moves. */
+  setCaptureWalls(list: { key: string; at: [number, number, number]; lines: [number, number][][]; color: number }[]) {
+    const want = new Map(list.map((r) => [r.key, r]));
+    for (const c of [...this.captureWallGroup.children]) {
+      if (want.has(c.name)) continue;
+      const m = c as LineSegments2;
+      this.captureWallGroup.remove(m);
+      m.geometry.dispose();
+      (m.material as LineMaterial).dispose();
+    }
+    const have = new Map(this.captureWallGroup.children.map((c) => [c.name, c]));
+    for (const r of list) {
+      let m = have.get(r.key);
+      if (!m) {
+        const segs: number[] = [];
+        for (const l of r.lines) for (let i = 1; i < l.length; i++) segs.push(l[i - 1][0], l[i - 1][1], 0, l[i][0], l[i][1], 0);
+        if (!segs.length) continue;
+        const geo = new LineSegmentsGeometry();
+        geo.setPositions(segs);
+        const mat = new LineMaterial({ color: r.color, linewidth: 2.6, depthTest: false, depthWrite: false });
+        mat.resolution.set(this.width, this.height);
+        const line = new LineSegments2(geo, mat);
+        line.name = r.key;
+        line.renderOrder = 5;
+        line.frustumCulled = false;
+        this.captureWallGroup.add(line);
+        m = line;
+      }
+      m.position.set(r.at[0], r.at[1], r.at[2]);
+    }
+    this.captureWallGroup.visible = this.showCaptureWalls;
+    this.requestRender();
+  }
+
+  setShowCaptureWalls(on: boolean) {
+    this.showCaptureWalls = on;
+    this.captureWallGroup.visible = on;
     this.requestRender();
   }
 
@@ -2470,6 +2517,7 @@ export class CaveView {
 
   dispose() {
     this.setCaptureRooms([]);
+    this.setCaptureWalls([]);
     cancelAnimationFrame(this.pending);
     cancelAnimationFrame(this.anim);
     this.controls.dispose();

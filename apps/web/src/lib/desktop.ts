@@ -140,3 +140,19 @@ export const captureShots = (caveId: string, stations: { id: string; label: stri
 /** One placed shot's points, thinned on `cellM`, relative to its anchor (x y z per point). */
 export const captureShotPoints = async (caveId: string, file: string, rigid: number[], anchor: number[], cellM: number): Promise<Float32Array> =>
   new Float32Array(await call<ArrayBuffer>('capture_shot_points', { caveId, file, rigid, anchor, cellM }));
+
+/** A placed shot as its row has it, passed back for slicing. */
+export type PlacedShot = { file: string; rigid: number[]; anchor: number[] };
+
+/** A LiDAR slice: 2-D polylines in metres (a closed one repeats its first point). */
+export type SliceLines = [number, number][][];
+
+/** One placed shot's plan walls: cut level at `heightM` above its anchor, `[east, north]` metres from the anchor. */
+export const captureShotPlanWalls = (caveId: string, shot: PlacedShot, heightM: number): Promise<SliceLines> => call('capture_plan_walls', { caveId, shot, heightM });
+
+/** One placed shot's profile walls: cut upright along `along` ([east, north]) through its anchor, `[s, up]` metres from the anchor. */
+export const captureShotProfileWalls = (caveId: string, shot: PlacedShot, along: [number, number]): Promise<SliceLines> => call('capture_profile_walls', { caveId, shot, along });
+
+/** The LiDAR cross section at the station at `at`, in the plane of `right` and `up`: `[across, up]` metres from it, from every shot within 3 m. */
+export const captureSection = (caveId: string, shots: PlacedShot[], at: number[], right: number[], up: number[]): Promise<{ lines: SliceLines; shots: number }> =>
+  call('capture_section', { caveId, shots, at, right, up });

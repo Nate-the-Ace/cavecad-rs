@@ -31,11 +31,13 @@ import { planFrame } from '../lib/snap-types';
   import { openNewText, openTextEdit } from '../lib/text-edit.svelte';
   import { openContextMenu } from '../lib/context-menu.svelte';
   import { lineItems, offerLineStack, viewItems } from '../lib/context-items';
-  import { cave, changed, option, selectedIds, selectIds, toggleSelected, filter, wireFilter, haloFade, haloReach, toolStyle } from '../lib/cave.svelte';
+  import { cave, changed, option, setOption, selectedIds, selectIds, toggleSelected, filter, wireFilter, haloFade, haloReach, toolStyle } from '../lib/cave.svelte';
   import { drawScan } from '../lib/scan-draw';
   import { givePoint, have, scanImage, scans, waitingForPoint } from '../lib/scans.svelte';
   import { engine, loadEngine, type ScanPlacement, type SectionStation, type StationSection } from '../lib/engine';
   import { metresPer, niceNumber, unitName } from '../lib/units';
+  import { captureShots, sectionCut } from '../lib/capture-shots.svelte';
+  import { LIDAR_SECTION_COLOR, cssColor, tagSpot } from '../lib/capture-pure';
 
   let wrap: HTMLDivElement;
   let canvas: HTMLCanvasElement;
@@ -149,6 +151,7 @@ import { planFrame } from '../lib/snap-types';
     placed = cave.station ? engine.scanPlacements(`section:${cave.station}`, cave.adjusted).filter((p) => !filter.hiddenTrips.includes(p.trip) && have(p.path)) : [];
     fixedHere = !!cave.station && engine.scene(cave.adjusted).stations.some((x) => x.id === cave.station && x.benchmark);
     frameOnce();
+    loadLidar();
     schedule();
   }
 
@@ -177,6 +180,34 @@ import { planFrame } from '../lib/snap-types';
     void height;
     untrack(frameOnce);
     schedule();
+  });
+
+  // The LiDAR cross section from CaveCAD Capture on this phone: every room within 3 m of the station, cut in the very
+  // plane this panel draws in (the section's own right and up), [across, up] metres from the station.
+  let lidar: [number, number][][] = [];
+  let lidarSeq = 0;
+  function loadLidar() {
+    const seq = ++lidarSeq;
+    const s = section;
+    if (!s || !captureShots.linked || !option('captureSection', true)) {
+      lidar = [];
+      schedule();
+      return;
+    }
+    sectionCut(s.id, s.label, s.right, s.up)
+      .then((cut) => {
+        if (seq !== lidarSeq) return;
+        lidar = cut?.lines ?? [];
+        schedule();
+      })
+      .catch((e) => engine.log('warn', 'capture', `LiDAR section at ${s.label} not cut: ${String(e)}`));
+  }
+  // (refresh() cuts it again whenever the section itself is read again)
+  $effect(() => {
+    void captureShots.rows;
+    void captureShots.linked;
+    void option('captureSection', true);
+    untrack(loadLidar);
   });
 
   /** Frames the section whenever a different station is shown (not after every stroke). */
@@ -274,6 +305,30 @@ import { planFrame } from '../lib/snap-types';
       g.lineJoin = 'round';
       g.stroke();
       g.setLineDash([]);
+    }
+    // the LiDAR section: solid magenta (rooms merge here, so one colour), with a small tag
+    if (lidar.length) {
+      const col = cssColor(LIDAR_SECTION_COLOR);
+      g.strokeStyle = col;
+      g.lineWidth = 2.4;
+      g.lineJoin = 'round';
+      g.lineCap = 'round';
+      for (const l of lidar) {
+        g.beginPath();
+        l.forEach((p, i) => {
+          const [x, y] = toScreen(p[0], p[1]);
+          if (i === 0) g.moveTo(x, y);
+          else g.lineTo(x, y);
+        });
+        g.stroke();
+      }
+      const tag = tagSpot(lidar);
+      if (tag) {
+        const [x, y] = toScreen(tag[0], tag[1]);
+        g.fillStyle = col;
+        g.font = '600 10px system-ui, sans-serif';
+        g.fillText('LiDAR', x + 4, y - 4);
+      }
     }
     g.fillStyle = c.muted;
     for (const p of s.measured) {
@@ -818,6 +873,7 @@ import { planFrame } from '../lib/snap-types';
       {#each stations as s}<option value={s.id}>{s.label}{s.outlined ? '' : ' (no walls)'}{s.sketches ? ` · ${s.sketches} sketch${s.sketches === 1 ? '' : 'es'}` : ''}</option>{/each}
     </select>
     <button title="Next station" disabled={index < 0 || index >= stations.length - 1} onclick={() => step(1)}><ChevronRight size={15} /></button>
+    {#if captureShots.linked}<label class="show" title="The LiDAR rooms within 3 m of this station, cut in this section's plane (solid magenta)"><input type="checkbox" checked={option('captureSection', true)} onchange={(e) => setOption('captureSection', e.currentTarget.checked)} /> LiDAR section</label>{/if}
     <PanelUndo scope="section" label="in this cross section" />
     <button title="Fit (or double middle-click)" onclick={fit}><Maximize size={15} /></button>
   </div>
@@ -836,6 +892,7 @@ import { planFrame } from '../lib/snap-types';
   .bar { position: absolute; top: 8px; left: 8px; right: 8px; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; padding: 6px 8px; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); font-size: 12px; width: fit-content; max-width: calc(100% - 16px); }
   select, button { font: inherit; padding: 3px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--text); cursor: pointer; display: inline-grid; place-items: center; }
   select { max-width: 200px; }
+  .show { display: flex; gap: 4px; align-items: center; color: var(--muted); }
   button:disabled { opacity: 0.4; cursor: default; }
   .note { position: absolute; left: 8px; right: 8px; bottom: 8px; padding: 6px 10px; font-size: 12px; color: var(--muted); background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); }
   .note.warn { color: var(--text); border-color: var(--warn); }

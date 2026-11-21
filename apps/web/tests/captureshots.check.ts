@@ -1,4 +1,4 @@
-import { cellFor, colorFor, counts, fnv32, pointsKey, roomAt, POINT_BUDGET } from '../src/lib/capture-pure.ts';
+import { cellFor, colorFor, counts, cssColor, fnv32, onBand, placeKey, pointsKey, roomAt, tagSpot, POINT_BUDGET } from '../src/lib/capture-pure.ts';
 
 let bad = 0;
 const ok = (c: boolean, m: string) => { if (!c) { bad++; console.log('FAIL', m); } };
@@ -30,6 +30,14 @@ ok(roomAt({ stationId: null, anchor: null }, shown) === null, 'nothing to place 
 
 const n = counts([{ status: 'placed' }, { status: 'placed' }, { status: 'waiting' }, { status: 'gone' }, { status: 'unreadable' }]);
 ok(n.placed === 2 && n.waiting === 1 && n.gone === 1 && n.unreadable === 1, 'counts');
+
+ok(placeKey(row) === placeKey({ ...row }), 'a placement key is stable');
+ok(placeKey(row) !== placeKey({ ...row, rigid: [0.2, 1, 2, 3] }), 'a moved shot slices again');
+const band = onBand([[[-1, -0.5], [2, 1.5]]], { s: 10, z: 300 });
+ok(band[0][0].join() === '9,299.5' && band[0][1].join() === '12,301.5', 'profile walls sit on the band at their station');
+ok(cssColor(0xd63384) === '#d63384' && cssColor(0x0000ff) === '#0000ff', 'css colours keep six digits');
+ok(tagSpot([]) === null, 'no lines, no tag');
+ok(tagSpot([[[0, 0], [1, 0]], [[0, 0], [0, 3], [5, 2]]])?.join() === '0,3', 'the tag sits at the top of the longest line');
 
 if (bad) { console.log(`${bad} failed`); process.exit(1); }
 console.log('captureshots: ok');
