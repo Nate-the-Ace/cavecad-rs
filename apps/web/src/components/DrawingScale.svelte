@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { numpad } from '../lib/numpad';
   // The drawing's scale, 1:N. Dashes and hatches are sized on paper at this scale: set it to the scale you will print the map at
   // and a dashed line looks the same on paper at 1:500 or 1:2000 (on screen it grows as you zoom in, like a printed map under a
   // magnifier). Everyone in a shared session sees the same scale, and it is saved with the cave.
@@ -63,7 +64,7 @@
     <span>Scale 1:</span>
     {#if typing}
       <!-- svelte-ignore a11y_autofocus -->
-      <input type="number" min="10" max="100000" step="1" autofocus bind:value={typed} aria-label="Custom drawing scale" onchange={commit} onblur={commit} onkeydown={(e) => e.key === 'Escape' && (typing = false)} />
+      <input type="number" min="10" max="100000" step="1" use:numpad={{ integer: true, enter: 'done' }} autofocus bind:value={typed} aria-label="Custom drawing scale" onchange={commit} onblur={commit} onkeydown={(e) => e.key === 'Escape' && (typing = false)} />
     {:else}
       <select value={String(drawing.scale)} aria-label="Drawing scale" disabled={!cave.hasCave} onchange={(e) => pick(e.currentTarget.value)}>
         {#each options as n}<option value={String(n)}>{n}</option>{/each}

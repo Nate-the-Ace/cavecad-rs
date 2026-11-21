@@ -34,3 +34,7 @@ select option { background: var(--panel); color: var(--text); }
   --dv-separator-border: var(--line);
   --dv-paneview-header-border-color: var(--line);
 }
+
+/* The ± (and other) keys a number field shows beside itself on a touch screen while it is typed in (lib/numpad.ts). */
+.numpad-key { flex: none; font: inherit; font-size: 13px; line-height: 1; min-width: 2em; min-height: 1.9em; margin-left: 3px; padding: 2px 6px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel-2); color: var(--text); touch-action: manipulation; user-select: none; -webkit-user-select: none; vertical-align: middle; }
+.numpad-key[hidden] { display: none; }

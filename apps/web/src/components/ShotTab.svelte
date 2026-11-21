@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { numpad } from '../lib/numpad';
   // The groups of the tab for a picked survey leg or splay: where it runs, what was measured (tape,
   // bearing, inclination, and the back readings), its note, and the flags that leave it off the map or out
   // of the survey. Edits go to the shot as one undoable step in the Stations history.
@@ -81,11 +82,11 @@
 {:else if part === 'reading'}
   <div class="grid">
     <LengthField id="shot-distance" label="Tape" min={0} bind:value={distance} />
-    <label class="a">Azimuth<input bind:value={angles.azimuth} inputmode="decimal" aria-label="Azimuth" onchange={() => angle('azimuth')} />°</label>
-    <label class="a">Incl.<input bind:value={angles.inclination} inputmode="decimal" aria-label="Inclination" onchange={() => angle('inclination')} />°</label>
+    <label class="a">Azimuth<input bind:value={angles.azimuth} use:numpad aria-label="Azimuth" onchange={() => angle('azimuth')} />°</label>
+    <label class="a">Incl.<input bind:value={angles.inclination} use:numpad={{ signed: true }} aria-label="Inclination" onchange={() => angle('inclination')} />°</label>
     <span></span>
-    <label class="a">Back az.<input bind:value={angles.back_azimuth} inputmode="decimal" aria-label="Back azimuth" onchange={() => angle('back_azimuth')} />°</label>
-    <label class="a">Back incl.<input bind:value={angles.back_inclination} inputmode="decimal" aria-label="Back inclination" onchange={() => angle('back_inclination')} />°</label>
+    <label class="a">Back az.<input bind:value={angles.back_azimuth} use:numpad aria-label="Back azimuth" onchange={() => angle('back_azimuth')} />°</label>
+    <label class="a">Back incl.<input bind:value={angles.back_inclination} use:numpad={{ signed: true }} aria-label="Back inclination" onchange={() => angle('back_inclination')} />°</label>
   </div>
 {:else if part === 'note'}
   <div class="col note">

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { numpad } from '../lib/numpad';
   // A picked viewframe's settings in the ribbon: its scale, its lock, working inside it, deleting it.
   import { Lock, LockOpen, Maximize2, Trash2 } from '@lucide/svelte';
   import { cave } from '../lib/cave.svelte';
@@ -44,7 +45,7 @@
       </select>
     </label>
     <label>Custom
-      <input type="text" value={scaleRatio(fpi)} disabled={locked} onchange={(e) => typed(e.currentTarget.value)} title="Type a scale such as 1:250" size="8" />
+      <input type="text" use:numpad={{ enter: 'done' }} value={scaleRatio(fpi)} disabled={locked} onchange={(e) => typed(e.currentTarget.value)} title="Type a scale such as 1:250" size="8" />
     </label>
   </div>
 {:else if part === 'lock'}

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { numpad } from '../lib/numpad';
   // What can be done to the selected line: change what it is, close or open its curve. (Delete and
   // Done sit in the tab's Command group.) Each is one undoable edit in the view the line was drawn in.
   import { openPatternFor, patternFor } from '../lib/pattern-focus.svelte';
@@ -265,11 +266,11 @@
     {#if symbolShapes}
       <label class="detail" title="How big the symbol is: the distance from where it sits to its tip. Keeps where it sits.">
         <span>Size</span>
-        <input class="num" type="text" value={symbolSize === null ? '' : lengthText(symbolSize, cave.units)} placeholder={symbolSize === null ? 'VARIOUS' : ''} aria-label="Symbol size" onchange={(e) => { const m = parseLength(e.currentTarget.value, cave.units); if (m !== null && m > 0) shape({ size: m }); }} />
+        <input class="num" type="text" use:numpad={{ enter: 'done' }} value={symbolSize === null ? '' : lengthText(symbolSize, cave.units)} placeholder={symbolSize === null ? 'VARIOUS' : ''} aria-label="Symbol size" onchange={(e) => { const m = parseLength(e.currentTarget.value, cave.units); if (m !== null && m > 0) shape({ size: m }); }} />
       </label>
       <label class="detail" title="Which way the symbol points, in degrees clockwise from up in this view. Keeps where it sits.">
         <span>Rotation</span>
-        <input class="num" type="number" min="0" max="360" step="1" value={symbolTurn === null ? '' : Math.round(symbolTurn)} placeholder={symbolTurn === null ? 'VARIOUS' : ''} aria-label="Symbol rotation in degrees" onchange={(e) => { const v = Number(e.currentTarget.value); if (e.currentTarget.value !== '' && Number.isFinite(v)) shape({ rotation: ((v % 360) + 360) % 360 }); }} />
+        <input class="num" type="number" min="0" max="360" step="1" use:numpad={{ integer: true, signed: true, enter: 'done' }} value={symbolTurn === null ? '' : Math.round(symbolTurn)} placeholder={symbolTurn === null ? 'VARIOUS' : ''} aria-label="Symbol rotation in degrees" onchange={(e) => { const v = Number(e.currentTarget.value); if (e.currentTarget.value !== '' && Number.isFinite(v)) shape({ rotation: ((v % 360) + 360) % 360 }); }} />
       </label>
     {/if}
     {#if info && shaped.includes(info.kind)}

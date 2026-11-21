@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { numpad } from '../lib/numpad';
   // The Survey Notebook: one trip laid out the way a cave survey notes page is. Stations run down the
   // left with their passage dimensions (L R U D) beside them; each shot's tape, compass and clino
   // (foresight and backsight) sit on the line between the two stations. A gap is a chain breaking: the
@@ -262,7 +263,7 @@
         <label>Team <input class="wide" value={page.team} maxlength="200" onchange={(e) => field('team', e.currentTarget.value)} onkeydown={enter} /></label>
         <label>Instruments <input value={page.instruments} maxlength="200" onchange={(e) => field('instruments', e.currentTarget.value)} onkeydown={enter} /></label>
         <label title="Readings taken back from the far station. Shows the backsight columns; a trip that has any backsights shows them anyway."><input type="checkbox" checked={backsights} disabled={hasBacksights} onchange={(e) => page && (backsightsSet[page.trip] = e.currentTarget.checked)} /> Backsights</label>
-        <label title="Magnetic declination, degrees east. Changing it turns every bearing in this trip; the compass cells keep what was read.">Decl. <input class="num" value={page.declination ?? ''} onchange={(e) => declination(e.currentTarget.value)} onkeydown={enter} />°</label>
+        <label title="Magnetic declination, degrees east. Changing it turns every bearing in this trip; the compass cells keep what was read.">Decl. <input class="num" use:numpad={{ signed: true, enter: 'done' }} value={page.declination ?? ''} onchange={(e) => declination(e.currentTarget.value)} onkeydown={enter} />°</label>
       {/key}
     {/if}
     {#if message}<span class="msg" role="alert">{message}</span>{/if}
@@ -296,7 +297,7 @@
                   {#each SIDES as s}
                     <td class="lr">
                       {#if r.lrud && r.lrud_editable}
-                        <input class="num" value={lrudText(r.lrud[s], r.lrud[`${s}_open`], units)} aria-label="{s} of {r.label}" onchange={(e) => side(r, s, e.currentTarget.value)} onkeydown={enter} />
+                        <input class="num" use:numpad={{ keys: ['P'], enter: 'done' }} value={lrudText(r.lrud[s], r.lrud[`${s}_open`], units)} aria-label="{s} of {r.label}" onchange={(e) => side(r, s, e.currentTarget.value)} onkeydown={enter} />
                       {:else if r.lrud}
                         <span class="ro" title="Recorded on another trip's page">{lrudText(r.lrud[s], r.lrud[`${s}_open`], units)}</span>
                       {/if}
@@ -308,11 +309,11 @@
               {:else}
                 <tr id="nb-row-{i}" class="shot" class:splay={r.kind === 'splay'} class:out={r.excluded} class:bad={r.warn !== ''} class:sel={(cave.pick.kind === 'leg' || cave.pick.kind === 'splay') && cave.pick.id === r.shot} title={r.warn} onclick={() => pick(r)} oncontextmenu={(e) => rowMenu(e, r)}>
                   <td class="st">{#if r.kind === 'splay'}<span class="splay-name">{r.label}</span>{/if}</td>
-                  <td><input class="num" value={r.distance === null ? '' : lengthText(r.distance, units)} aria-label="Tape" onchange={(e) => reading(r, 'distance', e.currentTarget.value)} onkeydown={(e) => enterReading(e, i)} /></td>
-                  <td><input class="num" value={angleText(r.az_fs)} aria-label="Compass foresight" onchange={(e) => reading(r, 'az_fs', e.currentTarget.value)} onkeydown={(e) => enterReading(e, i)} /></td>
-                  {#if backsights}<td><input class="num" value={angleText(r.az_bs)} aria-label="Compass backsight" onchange={(e) => reading(r, 'az_bs', e.currentTarget.value)} onkeydown={(e) => enterReading(e, i)} /></td>{/if}
-                  <td><input class="num" value={angleText(r.inc_fs)} aria-label="Clino foresight" onchange={(e) => reading(r, 'inc_fs', e.currentTarget.value)} onkeydown={(e) => enterReading(e, i)} /></td>
-                  {#if backsights}<td><input class="num" value={angleText(r.inc_bs)} aria-label="Clino backsight" onchange={(e) => reading(r, 'inc_bs', e.currentTarget.value)} onkeydown={(e) => enterReading(e, i)} /></td>{/if}
+                  <td><input class="num" use:numpad={{ enter: 'done' }} value={r.distance === null ? '' : lengthText(r.distance, units)} aria-label="Tape" onchange={(e) => reading(r, 'distance', e.currentTarget.value)} onkeydown={(e) => enterReading(e, i)} /></td>
+                  <td><input class="num" use:numpad={{ enter: 'done' }} value={angleText(r.az_fs)} aria-label="Compass foresight" onchange={(e) => reading(r, 'az_fs', e.currentTarget.value)} onkeydown={(e) => enterReading(e, i)} /></td>
+                  {#if backsights}<td><input class="num" use:numpad={{ enter: 'done' }} value={angleText(r.az_bs)} aria-label="Compass backsight" onchange={(e) => reading(r, 'az_bs', e.currentTarget.value)} onkeydown={(e) => enterReading(e, i)} /></td>{/if}
+                  <td><input class="num" use:numpad={{ signed: true, enter: 'done' }} value={angleText(r.inc_fs)} aria-label="Clino foresight" onchange={(e) => reading(r, 'inc_fs', e.currentTarget.value)} onkeydown={(e) => enterReading(e, i)} /></td>
+                  {#if backsights}<td><input class="num" use:numpad={{ signed: true, enter: 'done' }} value={angleText(r.inc_bs)} aria-label="Clino backsight" onchange={(e) => reading(r, 'inc_bs', e.currentTarget.value)} onkeydown={(e) => enterReading(e, i)} /></td>{/if}
                   <td class="num total">{r.total === null ? '' : formatLength(r.total, units, 1)}</td>
                   <td colspan="4"></td>
                   <td class="notes">{#if r.kind === 'splay' && r.note_source}<input value={r.note} maxlength="400" aria-label="Note on {r.label}" onchange={(e) => note(r, e.currentTarget.value)} onkeydown={enter} />{/if}</td>

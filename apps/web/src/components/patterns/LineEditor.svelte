@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { numpad } from '../../lib/numpad';
   // Edits one linetype: the lines, spaces, dots and motifs that repeat along a line. One repeat is shown as a strip of blocks
   // to click (and to drag longer or shorter); the part picked is set in the box under it; the preview shows the result on a
   // curve or a straight line at print size.
@@ -250,7 +251,7 @@
     {#if row > 0 && work.rows?.[row - 1]}
       <label class="field" title="How far this row runs from the drawn line: to the left of the way the line was drawn, or to the right">Offset
         <input type="range" min="-10" max="10" step="0.1" bind:value={work.rows[row - 1].offset_mm} disabled={readonly} />
-        <input type="number" step="0.1" bind:value={work.rows[row - 1].offset_mm} disabled={readonly} /> mm
+        <input type="number" step="0.1" use:numpad={{ signed: true }} bind:value={work.rows[row - 1].offset_mm} disabled={readonly} /> mm
       </label>
       <div class="row small">
         <span class="muted">More than 0 is to the left of the way the line was drawn, less than 0 to the right.</span>
@@ -317,7 +318,7 @@
       {#if part.t === 'dash' || part.t === 'gap'}
         <label class="field">Length on paper
           <input type="range" min="0.1" max="20" step="0.1" bind:value={part.mm} disabled={readonly} />
-          <input type="number" step="0.1" min="0.1" bind:value={part.mm} disabled={readonly} /> mm
+          <input type="number" step="0.1" min="0.1" use:numpad bind:value={part.mm} disabled={readonly} /> mm
         </label>
       {:else if part.t === 'text'}
         <label class="field">Words
@@ -325,19 +326,19 @@
         </label>
         <label class="field">Letter height
           <input type="range" min="0.5" max="10" step="0.1" bind:value={part.size_mm} disabled={readonly} />
-          <input type="number" step="0.1" min="0.5" bind:value={part.size_mm} disabled={readonly} /> mm
+          <input type="number" step="0.1" min="0.5" use:numpad bind:value={part.size_mm} disabled={readonly} /> mm
         </label>
         <label class="field">Rotate
           <input type="range" min="-180" max="180" step="5" bind:value={part.turn_deg} disabled={readonly} />
-          <input type="number" step="5" bind:value={part.turn_deg} disabled={readonly} /> °
+          <input type="number" step="5" use:numpad={{ signed: true }} bind:value={part.turn_deg} disabled={readonly} /> °
         </label>
         <label class="field" title="Moves the words forward (more) or back (less) along the line, without taking room">Nudge along
           <input type="range" min="-10" max="10" step="0.1" bind:value={part.along_mm} disabled={readonly} />
-          <input type="number" step="0.1" bind:value={part.along_mm} disabled={readonly} /> mm
+          <input type="number" step="0.1" use:numpad={{ signed: true }} bind:value={part.along_mm} disabled={readonly} /> mm
         </label>
         <label class="field" title="Moves the words off the line: more is to the left of the way the line was drawn">Nudge sideways
           <input type="range" min="-10" max="10" step="0.1" bind:value={part.across_mm} disabled={readonly} />
-          <input type="number" step="0.1" bind:value={part.across_mm} disabled={readonly} /> mm
+          <input type="number" step="0.1" use:numpad={{ signed: true }} bind:value={part.across_mm} disabled={readonly} /> mm
         </label>
       {:else if part.t === 'motif'}
         <label class="field">Motif
@@ -348,19 +349,19 @@
         </label>
         <label class="field">Size
           <input type="range" min="0.2" max="10" step="0.1" bind:value={part.size_mm} disabled={readonly} />
-          <input type="number" step="0.1" min="0.2" bind:value={part.size_mm} disabled={readonly} /> mm
+          <input type="number" step="0.1" min="0.2" use:numpad bind:value={part.size_mm} disabled={readonly} /> mm
         </label>
         <label class="field">Rotate
           <input type="range" min="-180" max="180" step="5" bind:value={part.turn_deg} disabled={readonly} />
-          <input type="number" step="5" bind:value={part.turn_deg} disabled={readonly} /> °
+          <input type="number" step="5" use:numpad={{ signed: true }} bind:value={part.turn_deg} disabled={readonly} /> °
         </label>
         <label class="field" title="Moves the motif forward (more) or back (less) along the line, without taking room">Nudge along
           <input type="range" min="-10" max="10" step="0.1" bind:value={part.along_mm} disabled={readonly} />
-          <input type="number" step="0.1" bind:value={part.along_mm} disabled={readonly} /> mm
+          <input type="number" step="0.1" use:numpad={{ signed: true }} bind:value={part.along_mm} disabled={readonly} /> mm
         </label>
         <label class="field" title="Moves the motif off the line: more is to the left of the way the line was drawn">Nudge sideways
           <input type="range" min="-10" max="10" step="0.1" bind:value={part.across_mm} disabled={readonly} />
-          <input type="number" step="0.1" bind:value={part.across_mm} disabled={readonly} /> mm
+          <input type="number" step="0.1" use:numpad={{ signed: true }} bind:value={part.across_mm} disabled={readonly} /> mm
         </label>
       {/if}
     </div>

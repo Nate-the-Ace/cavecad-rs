@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { numpad } from '../../lib/numpad';
   // Edits one fill: layers of hatch lines, dots and scattered motifs laid inside an outline. Each layer is a card with its own
   // small sample; the layer picked is set in the box under them; the preview shows all layers together inside a rounded area at
   // print size.
@@ -309,7 +310,7 @@
       {#if layer.t === 'hatch'}
         <label class="field">Angle
           <input type="range" min="-90" max="90" step="5" bind:value={layer.angle_deg} disabled={readonly} />
-          <input type="number" step="5" bind:value={layer.angle_deg} disabled={readonly} /> °
+          <input type="number" step="5" use:numpad={{ signed: true }} bind:value={layer.angle_deg} disabled={readonly} /> °
         </label>
         {#if !readonly}
           <div class="row quick">
@@ -320,33 +321,33 @@
         {/if}
         <label class="field">Line spacing
           <input type="range" min="0.3" max="12" step="0.1" bind:value={layer.spacing_mm} disabled={readonly} />
-          <input type="number" step="0.1" min="0.2" bind:value={layer.spacing_mm} disabled={readonly} /> mm
+          <input type="number" step="0.1" min="0.2" use:numpad bind:value={layer.spacing_mm} disabled={readonly} /> mm
         </label>
       {:else if layer.t === 'dots'}
         <label class="field">Dot spacing
           <input type="range" min="0.3" max="12" step="0.1" bind:value={layer.spacing_mm} disabled={readonly} />
-          <input type="number" step="0.1" min="0.2" bind:value={layer.spacing_mm} disabled={readonly} /> mm
+          <input type="number" step="0.1" min="0.2" use:numpad bind:value={layer.spacing_mm} disabled={readonly} /> mm
         </label>
         <label class="field">Dot size
           <input type="range" min="0.05" max="2" step="0.05" bind:value={layer.dot_mm} disabled={readonly} />
-          <input type="number" step="0.05" min="0.05" bind:value={layer.dot_mm} disabled={readonly} /> mm
+          <input type="number" step="0.05" min="0.05" use:numpad bind:value={layer.dot_mm} disabled={readonly} /> mm
         </label>
       {:else if layer.t === 'patlines'}
         <label class="field">Angle
           <input type="range" min="-180" max="180" step="5" bind:value={layer.angle_deg} disabled={readonly} />
-          <input type="number" step="1" bind:value={layer.angle_deg} disabled={readonly} /> °
+          <input type="number" step="1" use:numpad={{ signed: true }} bind:value={layer.angle_deg} disabled={readonly} /> °
         </label>
         <label class="field" title="Distance from one row to the next">Row spacing
           <input type="range" min="-20" max="20" step="0.1" bind:value={layer.spacing_mm} disabled={readonly} />
-          <input type="number" step="0.1" bind:value={layer.spacing_mm} disabled={readonly} /> mm
+          <input type="number" step="0.1" use:numpad={{ signed: true }} bind:value={layer.spacing_mm} disabled={readonly} /> mm
         </label>
         <label class="field" title="How far along each row starts from the one before (for staggered bricks and steps)">Row shift
           <input type="range" min="-20" max="20" step="0.1" bind:value={layer.shift_mm} disabled={readonly} />
-          <input type="number" step="0.1" bind:value={layer.shift_mm} disabled={readonly} /> mm
+          <input type="number" step="0.1" use:numpad={{ signed: true }} bind:value={layer.shift_mm} disabled={readonly} /> mm
         </label>
         <label class="field" title="A point the first row passes through">Start point
-          <input type="number" step="0.1" bind:value={layer.x_mm} disabled={readonly} aria-label="Start point across" />
-          <input type="number" step="0.1" bind:value={layer.y_mm} disabled={readonly} aria-label="Start point up" /> mm
+          <input type="number" step="0.1" use:numpad={{ signed: true }} bind:value={layer.x_mm} disabled={readonly} aria-label="Start point across" />
+          <input type="number" step="0.1" use:numpad={{ signed: true }} bind:value={layer.y_mm} disabled={readonly} aria-label="Start point up" /> mm
         </label>
         <label class="field" title="Lengths in mm, separated by commas: more than 0 is a dash, less than 0 a gap, 0 a dot. Leave empty for solid lines.">Dashes
           <input class="dashes" type="text" value={dashText(layer.dashes_mm)} onchange={(e) => setDashes(e.currentTarget.value)} disabled={readonly} placeholder="solid, or e.g. 3, -1.5, 0, -1.5" />
@@ -360,22 +361,22 @@
         </label>
         <label class="field">Size
           <input type="range" min="0.2" max="10" step="0.1" bind:value={layer.size_mm} disabled={readonly} />
-          <input type="number" step="0.1" min="0.2" bind:value={layer.size_mm} disabled={readonly} /> mm
+          <input type="number" step="0.1" min="0.2" use:numpad bind:value={layer.size_mm} disabled={readonly} /> mm
         </label>
         <label class="field">Spacing across
           <input type="range" min="0.5" max="20" step="0.5" bind:value={layer.across_mm} disabled={readonly} />
-          <input type="number" step="0.5" min="0.5" bind:value={layer.across_mm} disabled={readonly} /> mm
+          <input type="number" step="0.5" min="0.5" use:numpad bind:value={layer.across_mm} disabled={readonly} /> mm
         </label>
         <label class="field">Spacing down
           <input type="range" min="0.5" max="20" step="0.5" bind:value={layer.down_mm} disabled={readonly} />
-          <input type="number" step="0.5" min="0.5" bind:value={layer.down_mm} disabled={readonly} /> mm
+          <input type="number" step="0.5" min="0.5" use:numpad bind:value={layer.down_mm} disabled={readonly} /> mm
         </label>
         <label class="check"><input type="checkbox" bind:checked={layer.stagger} disabled={readonly} /> Shift every other row half a step (like bricks)</label>
         <label class="check"><input type="checkbox" bind:checked={layer.random_turn} disabled={readonly} /> Turn each one a random way</label>
         {#if !layer.random_turn}
           <label class="field">Rotate
             <input type="range" min="-180" max="180" step="5" bind:value={layer.turn_deg} disabled={readonly} />
-            <input type="number" step="5" bind:value={layer.turn_deg} disabled={readonly} /> °
+            <input type="number" step="5" use:numpad={{ signed: true }} bind:value={layer.turn_deg} disabled={readonly} /> °
           </label>
         {/if}
         <label class="field" title="How much the sizes differ from one to the next">Size variety

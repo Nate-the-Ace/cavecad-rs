@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { numpad } from '../lib/numpad';
   // A length entry field. Every tool uses this for anything a person types as a distance, so the
   // View tab's unit setting decides what the numbers mean. The value it holds is always metres.
   import { cave } from '../lib/cave.svelte';
@@ -40,7 +41,7 @@
 
 <span class="field" class:bad>
   {#if label}<label for={id}>{label}</label>{/if}
-  <input {id} inputmode="decimal" autocomplete="off" bind:value={text} oninput={() => (editing = true)} onblur={commit} onkeydown={(e) => e.key === 'Enter' && commit()} aria-invalid={bad} />
+  <input {id} use:numpad={{ signed: min === undefined || min < 0, enter: 'done' }} autocomplete="off" bind:value={text} oninput={() => (editing = true)} onblur={commit} onkeydown={(e) => e.key === 'Enter' && commit()} aria-invalid={bad} />
   <span class="unit">{unitName(cave.units)}</span>
   {#if bad}<span class="msg" role="alert">Not a length{cave.units === 'imperial' ? " (try 12.5 or 5'6\")" : ' (try 12.5 or 30 cm)'}</span>{/if}
 </span>
