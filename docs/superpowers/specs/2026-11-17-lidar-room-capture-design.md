@@ -193,11 +193,20 @@ device model, ARKit version), the mesh (positions, normals, triangle indices, fl
 (JPEG bytes + 4×4 camera pose + intrinsics each), the heading ray(s) in capture frame. Read and written by
 `cave-capture`, so the Swift app and CaveCAD agree by construction.
 
-**Same phone, CaveCAD installed:** both apps share an App Group container.
-- Capture reads the open cave from CaveCAD there, including stations surveyed earlier on the same trip that
-  have not reached the server. Works with no signal.
-- Capture writes finished shots and the room edit there; CaveCAD picks them up at once and sends them on with
-  its own sync.
+**Same phone, CaveCAD installed** (changed 2026-11-21: a Personal Team has no App Groups, so there is no
+shared container; plan `docs/superpowers/plans/2026-11-21-capture-cavecad-link.md`):
+- **Stations, CaveCAD → Capture, through the keychain.** Both apps list a shared keychain access group
+  `<TeamID>.app.cavecad.shared` (each app's own group listed first, so unscoped items stay private). CaveCAD
+  writes one generic-password item per cave (service `cavecad.stations`, account = server cave id) holding
+  `{v,caveId,name,updatedAt,stations[{id,label,x,y,z}]}`, the adjusted stations to the mm
+  (`crates/cave-capture/src/shared.rs`), 2 s after an edit. Capture merges it into the stations it kept, so
+  stations surveyed offline on the same trip can be stood over and waiting shots find them. Works with no
+  signal.
+- **Shots, Capture → CaveCAD, through Files.** Capture's Documents (`shots/<caveId>/<shotId>.cvcap`) is shown
+  in Files; CaveCAD links that folder once with the Files picker (a bookmark, access held for the app's life),
+  lists and places the shots exactly as Capture does (card chaining first, `cave_capture::chain::chains`) and
+  draws the rooms as a "LiDAR rooms" layer in the 3D view. Read-only: nothing is uploaded or written into the
+  cave until step 5's capture room record and upload exist.
 
 **Capture alone (CaveCAD not on the phone):** signs in with the same CaveCAD account (the server's existing
 sign-in and desktop-style bearer handoff), downloads the cave before the trip, queues shots and the room edit
@@ -216,7 +225,7 @@ stopped.
 | Piece | Where | Job |
 | --- | --- | --- |
 | `crates/cave-capture` | new crate | bundle format, seed, ICP, pose graph, quality, colour, slice, export |
-| CaveCAD Capture app | `apps/capture-ios` (new, SwiftUI) | ARKit session, live view, shot flow, App Group, upload queue |
+| CaveCAD Capture app | `apps/capture-ios` (new, SwiftUI) | ARKit session, live view, shot flow, keychain stations + Files folder, upload queue |
 | Rust bridge for the app | `apps/capture-ios/rust` | `cave-capture` + `cave-osmo` built as a static library with a C interface |
 | Gimbal | `tools/cave-osmo` (existing) | target-mode lists, home-to-home; new capture pattern |
 | Capture room record | `cave-doc` / notebook ops | the source record and its edits |
@@ -255,7 +264,7 @@ has one gimbal implementation shared with the Mac tools, not a third copy in Swi
    cards (compass as fallback), printable card sheet.
 3. **Gimbal-driven shot:** capture pattern, live holes view, Fill pass, tracking and light holds.
 4. **Multi-shot stitch on the phone:** `cave-capture` seed (cards first), ICP, pose graph, quality statuses.
-5. **Into CaveCAD:** App Group hand-off, server capture storage and upload, capture room record, Capture
+5. **Into CaveCAD:** keychain stations and Files shot link (built 2026-11-21, read-only), server capture storage and upload, capture room record, Capture
    rooms panel, 3D view layer, GLB/PLY export.
 6. **Walls and sections from the capture:** plan walls, profile walls and cross-sections sliced from the
    merged room, as capture layers in the Map, Profile and Cross Section views.
