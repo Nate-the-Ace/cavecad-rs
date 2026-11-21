@@ -9,8 +9,8 @@ set -euo pipefail
 UDID=${1:?usage: live-log.sh <device-udid> [all]}
 PROC='CaveCAD Capture(\([^)]*\))?\[[0-9]+\] <[A-Za-z]+>: '
 if [ "${2:-}" = all ]; then
-  idevicesyslog -u "$UDID" --no-colors | grep --line-buffered -E "$PROC"
+  idevicesyslog -n -u "$UDID" --no-colors | grep --line-buffered -E "$PROC"
 else
-  idevicesyslog -u "$UDID" --no-colors \
+  idevicesyslog -n -u "$UDID" --no-colors \
     | sed -l -n -E "s/^([A-Z][a-z]{2} +[0-9]+ [0-9:.]+) ${PROC}(\[[a-z]+\] .*)$/\1 \3/p"
 fi
