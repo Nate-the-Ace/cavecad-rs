@@ -2,6 +2,8 @@
   // What each X1 class draws (Feature, Ridge, Generic: the X1's M button while the laser is on). Folded away until opened.
   import { engine, loadEngine } from '../lib/engine';
   import { MARK_CLASSES, setMarkAction, x1Marks } from '../lib/x1-marks.svelte';
+  // hint: the one-line explainer under the summary (the phone's Settings keeps it; the dock's Survey panel leaves it to the Handbook)
+  let { hint = true }: { hint?: boolean } = $props();
 
   let symbols = $state<{ key: string; name: string; category: string }[]>([]);
   let lines = $state<{ key: string; label: string }[]>([]);
@@ -14,7 +16,7 @@
 
 <details class="marks">
   <summary>X1 marks: what Feature, Ridge and Generic draw</summary>
-  <p class="hint">Mark a shot on the X1 with <b>M</b> while the laser is on. The splay is coloured by its mark; here you choose what it also draws.</p>
+  {#if hint}<p class="hint">Mark a shot on the X1 with <b>M</b> while the laser is on. The splay is coloured by its mark; here you choose what it also draws.</p>{/if}
   {#each MARK_CLASSES as c (c.id)}
     <label class="row" title={c.hint}>
       <span class="name">{c.label}</span>

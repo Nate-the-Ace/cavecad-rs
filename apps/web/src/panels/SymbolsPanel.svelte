@@ -36,7 +36,6 @@
       <button role="radio" aria-checked={standard === 'nss'} class:on={standard === 'nss'} title="The NSS symbols used on most US cave maps" onclick={() => setStandard('nss')}>US (NSS)</button>
       <button role="radio" aria-checked={standard === 'uis'} class:on={standard === 'uis'} title="The UIS symbols used on cave maps in much of the rest of the world" onclick={() => setStandard('uis')}>International (UIS)</button>
     </div>
-    <span class="hint">{cave.tool.startsWith('sym-') ? 'Click to place, drag to aim and size. Esc to stop.' : 'Pick a symbol, then click in a view.'}</span>
   </div>
   <div class="scroll">
     {#each groups as g (g.name)}
@@ -65,7 +64,6 @@
   .panel { display: flex; flex-direction: column; height: 100%; background: var(--panel); color: var(--text); }
   .bar { padding: 8px 10px; display: flex; flex-direction: column; gap: 4px; border-bottom: 1px solid var(--line); }
   input { font: inherit; padding: 5px 8px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel-2); color: var(--text); }
-  .hint { font-size: 11px; color: var(--muted); }
   .standard { display: flex; gap: 4px; }
   .standard button { flex: 1; font: inherit; font-size: 11px; padding: 3px 6px; border: 1px solid var(--line); border-radius: var(--radius); background: none; color: var(--text); cursor: pointer; }
   .standard button.on { background: var(--accent-bg); border-color: var(--accent); }

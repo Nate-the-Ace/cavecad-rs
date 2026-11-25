@@ -278,7 +278,7 @@
     {:else if survey.status === 'lost' || survey.status === 'connecting'}
       <p class="banner" role="status">{survey.status === 'lost' ? 'Reconnecting…' : 'Connecting…'} <button class="stoplink" onclick={live.disconnect}><Unplug size={16} /> Disconnect</button></p>
     {:else if noBluetooth && !linked}
-      <p class="banner">{#if phone.on}No Bluetooth in this browser.{:else}This browser has no Web Bluetooth. On an iPad, open CaveCAD in the <b>Bluefy</b> browser to connect an instrument. The simulator works anywhere.{/if}</p>
+      <p class="banner">No Web Bluetooth in this browser (on an iPad: the <b>Bluefy</b> browser).</p>
     {/if}
 
     <section class="device" aria-label="Device control">
@@ -294,7 +294,6 @@
         <button class="qr" onclick={() => (quickRef = true)} title="The Cavway X1's controls and calibration, as on the card in its case"><BookOpen size={16} /> X1 quick reference</button>
         {#if live.aimsFirst() && !survey.calibration}<button class="qr" onclick={live.startCalibration} title="Follow the X1's calibration shots and say where to point next">Guided calibration</button>{/if}
       </div>
-      <p class="hint">{manual ? 'Manual: you sketch the detail. LRUD is four aimed shots, one to each wall: left, right, up, down. CaveCAD says which wall is next.' : 'Digital: the Cavway captures the detail. Sweep every station to 100% covered: a ring across the passage, rooms all the way round.'}</p>
       <label class="acc">Accuracy check
         <select value={survey.accuracy} onchange={(e) => live.setAccuracy(e.currentTarget.value as 'strict' | 'normal' | 'relaxed')} aria-label="How touchy to be about the instrument's accuracy complaints">
           <option value="strict">Strict: every X1 complaint</option>
@@ -302,7 +301,7 @@
           <option value="relaxed">Relaxed: twice Normal</option>
         </select>
       </label>
-      <X1Marks />
+      <X1Marks hint={false} />
       {#if sweepDue}<p class="due" role="status">Sweep {survey.standing} before moving on.</p>{/if}
       <div class="row">
         <button onclick={() => live.laser(true)} disabled={!survey.canLaser} title="Laser on, for aiming (the X1)"><Flashlight size={18} /> Laser on</button>
@@ -315,7 +314,7 @@
           <div class="sweepinfo">
             <p class="sweephead"><b>{KIND_NAME[survey.waitingForDevice]}</b> at {survey.standing}: ready</p>
             <p class="aim">Hold DIST+M on the X1 to start its scan.</p>
-            <p class="hint">{survey.waitingForDevice === 'room' ? 'Keep the laser about level and turn right round.' : 'Sweep a slow ring across the passage.'} End the scan on the X1 (CLR) when the check here says complete: CaveCAD finishes the sweep by itself.</p>
+            <p class="hint">End it on the X1 (CLR) once complete.</p>
           </div>
         </div>
         <div class="row"><button onclick={live.cancelDeviceSweep}><X size={18} /> Cancel</button></div>
@@ -350,11 +349,11 @@
           <button class="sweepbtn" onclick={() => live.startSweep('lrud')} disabled={!linked} title="A slow ring across the passage at this station: the cross-section and its left, right, up and down"><ScanLine size={20} /> {manual ? 'LRUD' : 'LRUD ring'}<small>{manual ? 'one shot to each wall' : 'dense ring across the passage'}</small></button>
           <button class="sweepbtn" onclick={() => live.startSweep('room')} disabled={!linked} title="The laser about level, turned right round: the outline of a room"><Radar size={20} /> {manual ? 'Room outline' : 'Room sweep'}<small>{manual ? 'rough, eight ways round' : 'level, all the way round'}</small></button>
         </div>
-        <p class="hint">Or hold DIST+M on the X1 for its own scan mode: CaveCAD checks it as
+        <p class="hint">X1 scan (DIST+M) checks as
           <select value={survey.sweepKind} onchange={(e) => live.setSweepKind(e.currentTarget.value as 'lrud' | 'room')} aria-label="Check the X1's own sweeps as">
             <option value="lrud">an LRUD ring</option>
             <option value="room">a room sweep</option>
-          </select>.
+          </select>
         </p>
         {#if lastSweep}
           <p class="hint" class:warnline={!lastSweep.check.complete}>Last sweep: {KIND_NAME[lastSweep.check.kind]} at {lastSweep.station}, {lastSweep.check.standard === 'digital' ? `${Math.floor(lastSweep.check.coverage)}% covered` : `${lastSweep.check.shots} shots`}, {lastSweep.check.complete ? 'complete' : `not complete (${lastSweep.check.todo[0] ?? ''})`}</p>
@@ -370,7 +369,7 @@
         <div class="big"><b>{angleText(+survey.last.azimuth.toFixed(1))}°</b><small>compass</small></div>
         <div class="big"><b>{angleText(+survey.last.inclination.toFixed(1))}°</b><small>clino</small></div>
       {:else}
-        {#if !phone.on}<p class="idle">{linked ? 'Waiting for a shot…' : 'Connect an instrument in the Survey tab, or try the simulator.'}</p>{/if}
+        {#if !phone.on}<p class="idle">{linked ? 'Waiting for a shot…' : 'No reading yet.'}</p>{/if}
       {/if}
     </section>
 
@@ -383,7 +382,7 @@
 
     {#if survey.stored.length > 0}
       <section class="hold" aria-label="Shots from the instrument's memory">
-        <p><b>{survey.stored.length} shot{survey.stored.length === 1 ? '' : 's'} from the instrument's memory</b>{survey.readingMemory ? ' (still arriving…)' : ''}: taken while it was not connected, maybe another day. They are not in the notebook.</p>
+        <p><b>{survey.stored.length} shot{survey.stored.length === 1 ? '' : 's'} from the instrument's memory</b>{survey.readingMemory ? ' (still arriving…)' : ''}: not in the notebook.</p>
         <ul class="stored">
           {#each survey.stored.slice(0, 6) as r}<li>{dist(r.distance)} · {r.azimuth.toFixed(1)}° · {r.inclination.toFixed(1)}°{r.leg ? ' · leg' : ''}{r.scan ? ' · scan' : ''}</li>{/each}
           {#if survey.stored.length > 6}<li class="hint">and {survey.stored.length - 6} more</li>{/if}
@@ -433,7 +432,7 @@
           {/each}
         </div>
       {:else}
-        <p class="idle">Appears once this station has a line in the notebook (take its shot first).</p>
+        <p class="idle">After this station's shot.</p>
       {/if}
     </section>
 
@@ -451,7 +450,6 @@
 
     <details class="capture" bind:open={showCapture}>
       <summary>Instrument log, and capture for an instrument that is not supported yet</summary>
-      <p class="hint">Capture connects to any Bluetooth device and logs every frame it sends. The browser can only reach services it is told about in advance: list the service UUIDs (from a Bluetooth scanner app such as nRF Connect), separated by spaces or commas.</p>
       <label class="chk"><input type="checkbox" bind:checked={survey.anyDevice} /> Show every Bluetooth device when connecting (if the instrument is not offered by default)</label>
       <textarea bind:value={survey.services} rows="2" placeholder="service uuids, e.g. 0000ffe0-0000-1000-8000-00805f9b34fb" aria-label="Service UUIDs to reach"></textarea>
       <div class="row">

@@ -15,7 +15,7 @@ The Symbols panel is a palette of cave-map symbols, shown as small pictures, tha
 1. Open the **Symbols** panel. It sits in the bottom strip beside the [Console](console).
 2. Choose a standard with the two buttons at the top: **US (NSS)** or **International (UIS)**. CaveCAD remembers your choice on this computer.
 3. Scroll through the groups, or type a name in **Search symbols**. A search looks through both standards.
-4. Click a symbol. It is highlighted, and the hint reads "Click to place, drag to aim and size. Esc to stop."
+4. Click a symbol. It is highlighted while it is armed.
 5. Click in the [Map](map), [Profile](profile) or [Cross Section](section) to place it.
 6. To aim and size a symbol, click where it goes and drag, then let go.
 7. Press Esc when you are done placing symbols.
@@ -29,7 +29,7 @@ The Symbols panel is a palette of cave-map symbols, shown as small pictures, tha
 
 | Message or symptom | What it means | Do this |
 | --- | --- | --- |
-| "Pick a symbol, then click in a view." | No symbol is armed yet. | Click a symbol tile first. |
+| Clicking in a view places nothing | No symbol is armed yet. | Click a symbol tile first, then click in a view. |
 | A message that no symbol matches your search | Nothing has that word in its name or category. | Try a shorter word, or clear the search. |
 | The palette is empty | The drawing engine is still loading. | Wait a moment. |
 | A symbol you expected is missing | Only one version of a shared symbol is shown. | Switch the standard, or search for it by name. |

@@ -8,9 +8,7 @@
 </script>
 
 <div class="opts">
-  {#if survey.groupsLegs}
-    <p class="note" title="Three or more consecutive close shots are a leg; any other shot is a splay. An X1 also flags legs itself, and can mark a leg Backsight with its M button; the other instruments cannot, so a leg that comes back along the one before is taken as its backsight.">3 close shots are a leg, 1 is a splay</p>
-  {:else}
+  {#if !survey.groupsLegs}
     <div class="seg" role="group" aria-label="What the next shot is">
       <button class:sel={survey.state.mode === 'leg'} aria-pressed={survey.state.mode === 'leg'} onclick={() => live.setMode('leg')}>Leg</button>
       <button class:sel={survey.state.mode === 'splay'} aria-pressed={survey.state.mode === 'splay'} onclick={() => live.setMode('splay')}>Splay</button>
@@ -37,7 +35,6 @@
 
 <style>
   .opts { display: flex; flex-direction: column; gap: 6px; justify-content: center; height: 100%; min-width: 190px; font-size: 12px; overflow: hidden; }
-  .note { margin: 0; height: 24px; line-height: 24px; color: var(--muted); white-space: nowrap; }
   .seg { display: inline-flex; height: 24px; }
   .seg button { min-width: 56px; padding: 0 10px; border: 1px solid var(--line); background: var(--panel-2); color: var(--text); cursor: pointer; font: inherit; }
   .seg button:first-child { border-radius: var(--radius) 0 0 var(--radius); }

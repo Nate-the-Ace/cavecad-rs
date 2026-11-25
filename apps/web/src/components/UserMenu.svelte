@@ -135,7 +135,6 @@
           </div>
           <label class="check"><input type="checkbox" checked={cave.compactRibbon} onchange={(e) => setCompactRibbon(e.currentTarget.checked)} /> Compact ribbon (every group folds into a dropdown)</label>
           <div class="row"><button class="btn" onclick={resetLayout}>Reset the panel layout</button></div>
-          <p class="hint">Theme and colours are on the View tab.</p>
         </div>
       {:else}
         <div class="pane">
