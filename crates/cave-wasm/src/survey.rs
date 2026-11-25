@@ -322,6 +322,17 @@ pub fn survey_frame(kind: &str, bytes: &[u8]) -> String {
     })
 }
 
+/// The memory reads still to send to an X1 for its feature list (answers can be lost on the way): JSON, an array of byte
+/// arrays, empty once the list is known or when no X1 is linked.
+#[wasm_bindgen]
+pub fn survey_list_missing() -> String {
+    let frames = LINK.with(|l| match l.borrow().as_ref() {
+        Some(Link::X1(x)) => x.list_missing(),
+        _ => Vec::new(),
+    });
+    serde_json::to_string(&frames).unwrap_or_else(|_| "[]".into())
+}
+
 /// The settling time of a BRIC shot has passed: write what has arrived of it.
 #[wasm_bindgen]
 pub fn survey_flush_link() -> String {

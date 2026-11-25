@@ -9,10 +9,13 @@ thread_local!(static FLASH: RefCell<Option<Flasher>> = const { RefCell::new(None
 
 fn step_json(step: Step) -> String {
     match step {
-        Step::Send { bytes, wait_ms } => serde_json::json!({"send": bytes, "wait_ms": wait_ms}).to_string(),
+        Step::Send { bytes, wait_ms } => {
+            serde_json::json!({"send": bytes, "wait_ms": wait_ms}).to_string()
+        }
         Step::Done => serde_json::json!({"done": true}).to_string(),
         Step::Failed(e) => {
-            serde_json::json!({"failed": e.to_string(), "app_untouched": e.app_untouched()}).to_string()
+            serde_json::json!({"failed": e.to_string(), "app_untouched": e.app_untouched()})
+                .to_string()
         }
     }
 }
@@ -50,7 +53,9 @@ pub fn x1fw_hello_answer(bytes: &[u8]) -> i32 {
 pub fn x1fw_begin(bytes: &[u8]) -> String {
     let img = match Image::parse(bytes) {
         Ok(i) => i,
-        Err(e) => return serde_json::json!({"failed": e.to_string(), "app_untouched": true}).to_string(),
+        Err(e) => {
+            return serde_json::json!({"failed": e.to_string(), "app_untouched": true}).to_string();
+        }
     };
     let mut f = Flasher::new(img);
     let step = f.begin();
@@ -61,10 +66,12 @@ pub fn x1fw_begin(bytes: &[u8]) -> String {
 /// Bytes from the X1: the next step, or `null` while an answer is still arriving.
 #[wasm_bindgen]
 pub fn x1fw_bytes(bytes: &[u8]) -> String {
-    FLASH.with(|c| match c.borrow_mut().as_mut().and_then(|f| f.on_bytes(bytes)) {
-        Some(s) => step_json(s),
-        None => "null".into(),
-    })
+    FLASH.with(
+        |c| match c.borrow_mut().as_mut().and_then(|f| f.on_bytes(bytes)) {
+            Some(s) => step_json(s),
+            None => "null".into(),
+        },
+    )
 }
 
 /// Nothing arrived in time: the next step.
@@ -72,7 +79,9 @@ pub fn x1fw_bytes(bytes: &[u8]) -> String {
 pub fn x1fw_timeout() -> String {
     FLASH.with(|c| match c.borrow_mut().as_mut() {
         Some(f) => step_json(f.on_timeout()),
-        None => serde_json::json!({"failed": "no flash under way", "app_untouched": true}).to_string(),
+        None => {
+            serde_json::json!({"failed": "no flash under way", "app_untouched": true}).to_string()
+        }
     })
 }
 

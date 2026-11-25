@@ -220,6 +220,8 @@ export interface LinkBridge {
   connect(kind: string): Step;
   frame(kind: string, bytes: Uint8Array): Step;
   flushLink(): Step;
+  /** Reads still to send to the X1 for its feature list (answers can be lost); empty once it is known. */
+  listMissing(): number[][];
 }
 
 /** What a transport tells the store. */

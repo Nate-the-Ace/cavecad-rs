@@ -291,6 +291,16 @@ export class WebBleInstrument implements Instrument {
    * 1.1.7-cc9 or later X1 answers; any other ignores a read of an address it does not know. */
   private askX1ForItsList() {
     for (const f of this.cat.x1.listRequest ?? []) this.write(Uint8Array.from(f));
+    // A Bluetooth notification can be lost (two of eight were, on 2026-11-25): ask again for any part that has not come.
+    let tries = 0;
+    const again = () => {
+      if (!this.writer || tries++ >= 8) return;
+      const missing = this.bridge.listMissing();
+      if (missing.length === 0) return;
+      for (const f of missing) this.write(Uint8Array.from(f));
+      setTimeout(again, 1500);
+    };
+    setTimeout(again, 2000);
   }
 
   /** Sets the X1's clock to this device's local time (the X1 keeps local wall-clock seconds, no time zone), so shot

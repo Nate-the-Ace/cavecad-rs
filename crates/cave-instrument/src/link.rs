@@ -137,6 +137,16 @@ impl X1Link {
         cavway_callouts::read_frames()
     }
 
+    /// The reads still to send for the feature list: the parts whose answers have not come (a Bluetooth notification can be
+    /// lost). Empty once the list is known.
+    pub fn list_missing(&self) -> Vec<Vec<u8>> {
+        if self.callouts.is_some() {
+            Vec::new()
+        } else {
+            self.list_reader.missing_reads()
+        }
+    }
+
     /// The feature list read from the X1, if it has answered.
     pub fn callouts(&self) -> Option<&[String]> {
         self.callouts.as_deref()
@@ -521,6 +531,23 @@ mod x1_callout_tests {
         let mut plain = encode_packet(&PacketSpec::default());
         plain[17] ^= 4;
         assert_eq!(reading(link.on_frame(&plain, "t")).callout, None);
+        // two of the eight answers lost on the way: the parts still missing are asked for again
+        let mut lost = X1Link::new("x1");
+        let all = answers(&["Pit", "Water crawl", "Bats"]);
+        for (i, a) in all.iter().enumerate() {
+            if i != 2 && i != 5 {
+                let _ = lost.on_frame(a, "t");
+            }
+        }
+        assert_eq!(lost.callouts(), None);
+        let again = lost.list_missing();
+        assert_eq!(again.len(), 2);
+        assert_eq!(&again[0][5..10], &[4, 0x3d, 0x78, 0xc4, 60]); // 0xC478, the third part
+        assert_eq!(&again[1][5..10], &[4, 0x3d, 0x2c, 0xc5, 60]); // 0xC52C, the sixth
+        let _ = lost.on_frame(&all[2], "t");
+        let _ = lost.on_frame(&all[5], "t");
+        assert_eq!(lost.callouts().map(<[String]>::len), Some(3));
+        assert!(lost.list_missing().is_empty());
         // asking again forgets the list (a reconnect to another X1)
         let _ = link.list_request();
         assert_eq!(link.callouts(), None);

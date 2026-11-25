@@ -277,6 +277,7 @@ const bridge: LinkBridge = {
   connect: (kind) => engine.surveyConnect(kind),
   frame: (kind, bytes) => engine.surveyFrame(kind, bytes),
   flushLink: () => engine.surveyFlushLink(),
+  listMissing: () => engine.surveyListMissing(),
 };
 
 const events: LinkEvents = {

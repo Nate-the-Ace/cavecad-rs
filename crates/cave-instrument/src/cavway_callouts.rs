@@ -233,6 +233,13 @@ pub fn read_frames() -> Vec<Vec<u8>> {
         .collect()
 }
 
+/// The read that asks for part `i` (0 to 7) of the list in use.
+fn read_frame(i: usize) -> Vec<u8> {
+    let at = i * READ_CHUNK;
+    let n = READ_CHUNK.min(SLOT_BYTES - at);
+    crate::cavway::query_frame(READ_ADDRESS + at as u16, n).expect("a read of at most 124 bytes")
+}
+
 /// Bytes in a stored list: the block and its CRC.
 const SLOT_BYTES: usize = BLOCK + 2;
 
@@ -256,6 +263,15 @@ impl ListReader {
     /// A fresh reader (forget a half-read list, e.g. on a reconnect).
     pub fn reset(&mut self) {
         *self = ListReader::default();
+    }
+
+    /// The reads for the parts that have not arrived (a Bluetooth notification can be lost): send them again. Empty once the
+    /// whole list is in.
+    pub fn missing_reads(&self) -> Vec<Vec<u8>> {
+        (0..self.seen.len())
+            .filter(|&i| !self.seen[i])
+            .map(read_frame)
+            .collect()
     }
 
     /// Takes one answer. `Some(names)` once every part has arrived and the list reads cleanly (the marker, a count of 32
