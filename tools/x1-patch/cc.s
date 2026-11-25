@@ -519,7 +519,7 @@ cc_build:
         ldr     r12, =CC_STATE
         str     lr, [r12, #0x10]
         str     r0, [r12, #0x14]
-        ldr     lr, =cc_build_done
+        ldr     lr, =cc_build_done + 1   @ + 1: the Thumb bit (build.py's linker drops it; an even return address faults)
         b.w     BUILD_REC
 
         .thumb_func

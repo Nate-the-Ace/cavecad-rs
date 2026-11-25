@@ -123,3 +123,8 @@ Found on the X1 with CaveCAD connected: a picked feature was in the STORED recor
 phone, because a normal shot sends from the record buffer (0x20000C44) before the store loop runs. `cc_build` (hooks at
 0x0800B62E, 0x0800B674, 0x0800B74E, the three `bl 0x0800802C` record-builder calls of the normal measure path) now adds the pick
 right after the record is built, once. The version marker byte is 10 (`cc 20 0a 20`); the About text stays `1.1.7-cc9`.
+
+**Pitfall (found by a crash on the X1, 2026-11-25):** a code address loaded from a literal (`ldr lr, =label`) must have the Thumb bit
+set. build.py's own linker takes symbol addresses without it (`st_value & ~1`), so write `=label + 1`. An even address returned
+to through `pop {pc}` or `bx` is an illegal state change on a Cortex-M and hard-faults. `test_picker.py` now fails if the
+record builder is handed an even return address (its stub used to force the bit on, which hid this).
