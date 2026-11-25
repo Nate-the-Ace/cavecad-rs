@@ -753,3 +753,11 @@ From walking a new cave from scans to export:
 - **A chain restarting at a station already above on the page is tagged "branch"**, not "start".
 - **Sheets follow the units' paper** (ANSI B for feet, ISO A3 for metres) until a paper is picked (`followUnits`, `choosePaper`). The Notebook flags a trip with **no date** (it sets declination, and Compass writes 1 1 1900 without one).
 - **Profile elevation labels** are not drawn under its toolbar.
+
+## 2026-11-25 — The phone layout: a top tab row, one screen per tab, and a cave first
+
+Replaces the phone layout's bottom row of six panel tabs and its top bar (`PhoneShell.svelte`; desktop and iPad unchanged). On a phone (`phone.on`) CaveCAD shows one row of pill tabs along the top, under the status bar: **Caves · Survey · Sketch · Notebook · Settings** (Caves far left, Settings far right as a gear). There is no other header: the Caves pill carries the open cave's name and the unsaved dot, the Survey pill a dot for the instrument, and Surface Data is a button in the Sketch bar. **Sketch** is the Map, Profile and Cross Section behind one segmented switch with one undo/redo pair for the view showing (the panels' own pairs are hidden there); **Notebook** is the Notebook and the Stations table behind another. Settings is a row of sections from a registry (`lib/settings-sections.ts` on `lib/plugin.ts`); Account is real, the rest are placeholders for now. Each screen is made the first time it is opened and kept, so the 3D Map keeps its camera.
+
+**Gates** (`lib/gates.ts`, tested by `npm run test:gates`): sign-in first (`AccountGate`), then a cave must be open. Until one is (on every launch, and after the open cave is removed from the shelf) only the Caves tab works: the others are dimmed, the Caves tab is the Cave Shelf drawn inline (`CaveShelf embedded`: no Close, Start empty, Escape-to-close or startup checkbox) under a "Pick or start a cave to continue" line with New cave. The shelf's "open at startup" setting does not apply on a phone. Opening a cave shows Survey.
+
+Phone screens fit one screen with no helper text (only labels, buttons and a line when something is wrong), tight spacing from the tokens in `apps/web/src/phone.css` (scoped under `.phone`), 44px for the primary targets and 16px inputs. The instrument simulator is a development tool and is not offered on a phone.
