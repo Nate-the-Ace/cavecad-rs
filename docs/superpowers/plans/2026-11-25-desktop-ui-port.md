@@ -1,6 +1,8 @@
 # Desktop and iPad UI Port Plan (audit + plan)
 
-> **For agentic workers:** REQUIRED SUB-SKILL: superpowers-extended-cc:subagent-driven-development. Steps use checkbox (`- [ ]`) syntax. One task = one commit. Do not start a task whose decision (D1-D7 below) Nathan has not answered; the tasks name the decision they wait on.
+> **For agentic workers:** REQUIRED SUB-SKILL: superpowers-extended-cc:subagent-driven-development. Steps use checkbox (`- [x]`) syntax. One task = one commit. Do not start a task whose decision (D1-D7 below) Nathan has not answered; the tasks name the decision they wait on.
+
+**Status (2026-11-25): done.** Nathan accepted every recommendation (D1 A, D2 B, D3 B, D4 A, D5 A, D6 A, D7 A). All seven tasks are committed on `phone-ux`; see the dated note in `docs/DESIGN.md` ("Desktop, web and iPad: the dock keeps the ribbon and panels"). Deviations: the View tab went from 10 to 8 groups (the audit's "20 / 18" counted each group's two `section` elements); Stations, Profile, Cross Section and Sheet kept their lines (status and values, not explainers); `SketchPane` is not mounted on the dock; the dock's Options also gained a Survey block for the live strip switch (D3's "on/off in Settings"). Not verified on a real iPad or in the desktop app window: the share sheet, the strip under touch, and the layouts there.
 
 **Goal:** Carry the phone redesign's calmer, tighter, less wordy interface into the web app, the Tauri desktop app and the iPad, **inside the existing ribbon + dockable panel interface**. Only what helps where screen space is plentiful comes over; the phone's tab model does not.
 
@@ -66,9 +68,9 @@ Before every commit: `cd apps/web && npx svelte-check && npm test` (runs every `
 
 **Files:** `apps/web/src/panels/SurveyPanel.svelte` (dock path only, i.e. `{#if !phone.on}` branches), `apps/web/src/components/SurveyOptions.svelte` (the `.note`), `apps/web/src/panels/SymbolsPanel.svelte` (the `.hint` line), `apps/web/src/components/UserMenu.svelte` ("Theme and colours are on the View tab."), the matching Handbook pages in `apps/web/src/handbook/pages/*.md` (Device Capture, Symbols; index in `handbook/index.json`).
 
-- [ ] List every `.hint/.note/.idle/.banner/.simnote` in those files with its line and text in the commit message body.
-- [ ] Move explainers into the Handbook page the panel's `?` opens (D5 option A); keep one-line status text (e.g. "Waiting for a shot…", "Simulating: …"), errors, and values.
-- [ ] The phone path (`phone.on`) is not touched.
+- [x] List every `.hint/.note/.idle/.banner/.simnote` in those files with its line and text in the commit message body.
+- [x] Move explainers into the Handbook page the panel's `?` opens (D5 option A); keep one-line status text (e.g. "Waiting for a shot…", "Simulating: …"), errors, and values.
+- [x] The phone path (`phone.on`) is not touched.
 
 **Acceptance:** at 1440x900 with an X1 not connected, the Survey panel shows no paragraph longer than one line; the Symbols panel has no hint line; the Handbook pages hold the moved text. **Verify:** `npm run test:handbook && npx svelte-check`; screenshots `desktop-1440x900-Survey` and `ipad-820x1180-panel-Symbols` against the baseline.
 
@@ -76,7 +78,7 @@ Before every commit: `cd apps/web && npx svelte-check && npm test` (runs every `
 
 **Files:** `apps/web/src/panels/ScansPanel.svelte` (6), `PatternsPanel.svelte` (5), `RoomsPanel.svelte` (4), `StationsPanel.svelte` (2), `NotebookPanel.svelte` (2, dock path), `ProfilePanel.svelte`, `SectionPanel.svelte`, `SketchPane.svelte`, `SheetPanel.svelte` (keep the "Plotted at" value), `components/CaveShelf.svelte` (4, window mode only), `components/SurfaceData.svelte` (2), `components/NewCave.svelte` (2), matching Handbook pages. Account screens (`AccountGate`, `AccountSection`, `AdminSection`, `DownloadsPanel`, `DrivesSection`) are out of scope: they explain sign-in and sharing, which is rare and consequential.
 
-- [ ] Same rule as Task 1: explainers to the Handbook; empty states become one short line (e.g. Scans: "No scans yet." with the Add scans… button beside it).
+- [x] Same rule as Task 1: explainers to the Handbook; empty states become one short line (e.g. Scans: "No scans yet." with the Add scans… button beside it).
 
 **Acceptance:** no dock panel shows a multi-line explainer with a cave open. **Verify:** `npm run test:handbook && npm run test:stations && npm run test:notebook && npx svelte-check`; screenshots of Scans, Stations, Notebook at 1440x900 and 820x1180.
 
@@ -84,9 +86,9 @@ Before every commit: `cd apps/web && npx svelte-check && npm test` (runs every `
 
 **Files:** `apps/web/src/lib/settings-sections.ts` (add `readonly layouts: readonly ('phone' | 'dock')[]` to `SettingsSection`, and `settingsSectionsFor(layout)`), `apps/web/src/lib/settings-default.ts` (flag every existing section `['phone']`; register dock sections), new `apps/web/src/components/DockSettingsDisplay.svelte` and `DockSettingsSymbols.svelte` (dock-sized, own scoped styles: 28-30 px rows, 13 px text; do not reuse `.phone .set` rules), `apps/web/src/components/UserMenu.svelte` (the Options tab lists `settingsSectionsFor('dock')` as headed blocks; Account, Feedback, Admin stay), `apps/web/tests/registry.check.ts` (layout filter), `apps/web/src/components/PhoneSettings.svelte` (use `settingsSectionsFor('phone')`).
 
-- [ ] Display: theme (dark/light/system) and accent, using the same functions as `ThemeGroup.svelte`; Compact ribbon; Reset the panel layout; Units as a mirror of the View tab's (same `setUnits`; the View tab keeps its Units group, units rule).
-- [ ] Symbols: NSS/UIS through `setSymbolStandard` (`lib/phone-prefs.svelte.ts`, which writes the same `STANDARD_KEY` the Symbols panel reads); the Symbols panel's own NSS/UIS row stays (it is where the choice is used) unless Nathan says otherwise.
-- [ ] Drawing defaults are NOT added (D4 A).
+- [x] Display: theme (dark/light/system) and accent, using the same functions as `ThemeGroup.svelte`; Compact ribbon; Reset the panel layout; Units as a mirror of the View tab's (same `setUnits`; the View tab keeps its Units group, units rule).
+- [x] Symbols: NSS/UIS through `setSymbolStandard` (`lib/phone-prefs.svelte.ts`, which writes the same `STANDARD_KEY` the Symbols panel reads); the Symbols panel's own NSS/UIS row stays (it is where the choice is used) unless Nathan says otherwise.
+- [x] Drawing defaults are NOT added (D4 A).
 
 **Acceptance:** phone Settings still shows the same eight sections in the same order; the user window's Options shows Display and Symbols; changing the theme there updates the View tab's Theme group and vice versa. **Verify:** `npm run test:registry && npm run test:symbolfavorites && npx svelte-check`; screenshots `desktop-1440x900-user-options`, `ipad-820x1180-user-options`, and phone 375x812 Settings.
 
@@ -94,8 +96,8 @@ Before every commit: `cd apps/web && npx svelte-check && npm test` (runs every `
 
 **Files:** `apps/web/src/components/Ribbon.svelte` (the `View` groups), `apps/web/src/components/ThemeGroup.svelte` (kept, used by the user window or removed if unused), Handbook page for the View tab.
 
-- [ ] Option B: remove the Theme group and the Ribbon settings group (Compact layout) from the View tab; both live in user window > Options > Display (Task 3). Units, Panels, Drawing scale, Map style, Rock halo, Map view, Layout and Saved layouts stay.
-- [ ] Ribbon height unchanged (`--ribbon-h` untouched).
+- [x] Option B: remove the Theme group and the Ribbon settings group (Compact layout) from the View tab; both live in user window > Options > Display (Task 3). Units, Panels, Drawing scale, Map style, Rock halo, Map view, Layout and Saved layouts stay.
+- [x] Ribbon height unchanged (`--ribbon-h` untouched).
 
 **Acceptance:** View tab 18 groups; at 820x1180 it folds fewer groups than the baseline 10; ribbon still 134 px on every tab. **Verify:** `npx svelte-check && npm run test:layoutslots && npm run test:docktidy`; View tab screenshots at the three sizes.
 
@@ -103,8 +105,8 @@ Before every commit: `cd apps/web && npx svelte-check && npm test` (runs every `
 
 **Files:** rename/generalise `apps/web/src/components/PhoneLiveStrip.svelte` into `LiveStrip.svelte` with a prop `onDetail: () => void` (phone passes `() => showSettings('connection')`, dock passes `() => showPanel('survey')`) and dock-sized styles behind a `dock` prop; `apps/web/src/components/PhoneSketch.svelte` (use the new name); `apps/web/src/panels/MapPanel.svelte` (mount it at the bottom of the canvas when `showInstruments && phonePrefs.liveStrip && !panelState.visible.survey`); `apps/web/src/lib/phone-livestrip.ts` (pure model unchanged, maybe a `visibleOnDock(...)` helper), `apps/web/tests/phonelivestrip.check.ts`.
 
-- [ ] Take shot uses the same `live.pressShot` as the Survey panel; Escape and Ctrl/Cmd+Z in the Map keep working (the strip does not take focus on its own).
-- [ ] The strip never covers the view cube, the scale bar or the map toolbar.
+- [x] Take shot uses the same `live.pressShot` as the Survey panel; Escape and Ctrl/Cmd+Z in the Map keep working (the strip does not take focus on its own).
+- [x] The strip never covers the view cube, the scale bar or the map toolbar.
 
 **Acceptance:** dev build, Survey panel closed: the strip shows on the Map; open the Survey panel: it hides. Production web build (instruments off): no strip. Checked on Pitfall and Plumbline Pit (a vertical leg shows clino, no invented bearing). **Verify:** `npm run test:phonelivestrip && npm run test:phonesurvey && npx svelte-check`; screenshots at 1180x820 with the Survey panel closed and open.
 
@@ -112,7 +114,7 @@ Before every commit: `cd apps/web && npx svelte-check && npm test` (runs every `
 
 **Files:** `apps/web/src/components/ProjectFiles.svelte` (export menu: DXF, survey data, project zip), `apps/web/src/panels/StationsPanel.svelte` (CSV download), `apps/web/src/lib/deliver-file.ts` (already: share sheet when `navigator.canShare({ files })`, else download).
 
-- [ ] First find where each export writes its browser download (not audited in detail: the export functions called from `ProjectFiles.svelte`, likely in `lib/files.ts`), then route those through `deliverFile`; the desktop app (`isDesktop()`) keeps its native save path unchanged.
+- [x] First find where each export writes its browser download (not audited in detail: the export functions called from `ProjectFiles.svelte`, likely in `lib/files.ts`), then route those through `deliverFile`; the desktop app (`isDesktop()`) keeps its native save path unchanged.
 
 **Acceptance:** desktop Chrome downloads as before; iPad Safari offers the share sheet. **Verify:** `npm run test:cavefile && npm run test:zip && npx svelte-check`; manual check on an iPad (note in the commit if not done).
 

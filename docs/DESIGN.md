@@ -766,3 +766,16 @@ Phone screens fit one screen with no helper text (only labels, buttons and a lin
 (identifier `app.cavecad.desktop`, as on iOS), replacing the old Kotlin prototype. Phones are portrait only, tablets
 turn; Back sends the app to the background rather than closing it. Build, install, Bluetooth (btleplug's Android
 backend) and what is verified: `docs/ANDROID-TAURI.md`.
+
+## 2026-11-25 — Desktop, web and iPad: the dock keeps the ribbon and panels; what came over from the phone
+
+Nathan: "I would like the webapp and desktop app to maintain the panel style interface where screenspace isn't as much of a concern." So the web app, the desktop app and the iPad keep the ribbon and the dockable panels; the phone's top tab row, gates, one-screen Survey, sketch-type dropdown, notebook backsight switch and offline icon stay phone-only. Plan and audit: `docs/superpowers/plans/2026-11-25-desktop-ui-port.md`. What came over, with Nathan's answers to the plan's decisions:
+
+- **No helper paragraphs in the dock panels (D5 A).** Explainers moved to the Handbook page behind each panel's `?` (survey, symbols, scans, patterns, rooms, notebook, and new Tasks pages `caves` and `options`); one-line status, errors and values stay; tooltips stay. Account screens keep their text. `NewCave` and `SurfaceData`, which the phone also opens, keep theirs on the phone.
+- **Settings gather in the user window (D1 A).** `SettingsSection` has `layouts` (`'phone' | 'dock'`) and `settingsSectionsFor(layout)`; the phone's eight sections are `['phone']`; the user window's Options tab lists the dock ones as headed blocks: Display (theme and colour, Lengths mirroring the View tab's Units, Compact ribbon, Reset the panel layout), Symbols (NSS/UIS, the same stored choice as the Symbols panel) and, while instruments are on, Survey (the live strip switch). Dock-sized components of their own (`DockSettings*.svelte`), not the phone's `.phone .set` rules.
+- **A lighter View tab (D2 B).** Theme and Ribbon settings (Compact layout) moved to Options > Display; Units and everything else stay (the units rule and the ribbon's one fixed height are unchanged). At 820x1180 the View tab folds 7 groups instead of 10.
+- **Drawing defaults stay in the contextual ribbon tab (D4 A)**, as the standing rule says; the phone keeps them in Settings > Sketch.
+- **Live shot strip on the Map (D3 B).** `LiveStrip.svelte` (was `PhoneLiveStrip`) with `onDetail` and a `dock` size; on the dock it shows over the Map only while instruments are on and the Survey panel is not visible (`liveStripOnDock`), above the scale bar and clear of the toolbar and view cube, and not on a Map under 250px tall. Same switch as the phone (`phonePrefs.liveStrip`).
+- **Backsight columns (D6 A):** the dock Notebook keeps its automatic per-trip columns; the phone's switch does not reach it.
+- **Simulator (D7 A):** unchanged in the Survey ribbon tab (`showInstruments`).
+- **Exports on an iPad.** Home > Export and the Stations CSV open the share sheet on iOS only (`deliverExport`, and `writeNew`'s last resort in `lib/files.ts`), where a download link does nothing in the app's WebView; everywhere else they save or download as before.
