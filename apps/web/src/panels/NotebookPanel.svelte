@@ -165,6 +165,19 @@
     changed();
   }
 
+  /** Deletes the trip on screen with everything it owns, after a confirm that says what goes. One undo step. */
+  function deleteTrip() {
+    const t = trips.find((x) => x.id === cave.trip);
+    if (!t || trips.length < 2) return;
+    const n = engine.notebookTripRemoval(t.id);
+    if (!n) return;
+    const nouns = `${n.shots} shot${n.shots === 1 ? '' : 's'}, ${n.stations} station${n.stations === 1 ? '' : 's'} and ${n.drawn} drawn item${n.drawn === 1 ? '' : 's'}`;
+    if (!window.confirm(`Delete “${t.name || 'Untitled trip'}”? This removes ${nouns}. Undo brings it back.`)) return;
+    const next = trips[t.index - 1]?.id ?? trips[t.index + 1]?.id ?? '';
+    sheet = null;
+    if (run(engine.notebookRemoveTrip(t.id))) cave.trip = next;
+  }
+
   function pick(row: NotebookRow) {
     if (row.kind === 'station' && row.station) setPick('station', row.station);
     else if ((row.kind === 'shot' || row.kind === 'splay') && row.shot) setPick(row.kind === 'splay' ? 'splay' : 'leg', row.shot);
@@ -273,6 +286,7 @@
       <option value={NEW_TRIP}>+ New trip</option>
     </select>
     <button class="icon" title="Start a new trip (a new page)" aria-label="New trip" onclick={newTrip}><Plus size={15} /></button>
+    <button class="icon" title={trips.length < 2 ? 'A cave needs at least one trip' : 'Delete this trip, its shots and what is drawn on them (Undo brings it back)'} aria-label="Delete trip" disabled={trips.length < 2 || !page} onclick={deleteTrip}><Trash2 size={15} /></button>
     {#if page}
       <button class="scan" onclick={() => showPanel('scans')} title="Show this trip's scanned pages beside the notes"><ScanLine size={14} /> Scans</button>
       {#key redraw}
@@ -447,6 +461,7 @@
             {/each}
           </div>
         {/if}
+        <button class="nxt" disabled={trips.length < 2} onclick={deleteTrip}>Delete trip</button>
         {#if message}<span class="msg" role="alert">{message}</span>{/if}
       {:else if sheetRow}
         {#key redraw}
@@ -509,6 +524,7 @@
   button.scan { display: inline-flex; align-items: center; gap: 4px; font: inherit; font-size: 12px; padding: 3px 8px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel-2); color: var(--text); cursor: pointer; }
   button.icon { background: none; border: none; color: var(--muted); cursor: pointer; padding: 2px; }
   button.icon:hover { color: var(--text); }
+  button.icon:disabled { opacity: 0.35; cursor: default; }
 
   /* Phone layout: only when PhoneNotebook passes `compact`. Fixed header and add bar, one scrolling list between. */
   .panel.compact { position: relative; overflow: hidden; font-size: 14px; }

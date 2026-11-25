@@ -779,3 +779,7 @@ Nathan: "I would like the webapp and desktop app to maintain the panel style int
 - **Backsight columns (D6 A):** the dock Notebook keeps its automatic per-trip columns; the phone's switch does not reach it.
 - **Simulator (D7 A):** unchanged in the Survey ribbon tab (`showInstruments`).
 - **Exports on an iPad.** Home > Export and the Stations CSV open the share sheet on iOS only (`deliverExport`, and `writeNew`'s last resort in `lib/files.ts`), where a download link does nothing in the app's WebView; everywhere else they save or download as before.
+
+## 2026-11-25 — Delete a trip (branch `feat/delete-trip`)
+
+Notebook: a trip can be deleted (trash button beside +, and "Delete trip" in the phone's More sheet). It takes everything it owns: its shots, the stations no other trip's shots use (with their notes and marks), section features/symbols/text of the trip, and map lines and profile sketches anchored on a removed station. Kept: stations another trip uses, scan image files, scan completion flags. A cave keeps at least one trip. If the first trip goes, its cave name and unit move to the new first trip (the shelf reads them there). One undo step (scope `notebook`). Merge outcome: a shot another person adds to a trip you deleted shows up as a dangling reference in Check. The confirm lists the counts. Plan: `docs/PLAN-delete-trip.md`.

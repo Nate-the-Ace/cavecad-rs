@@ -15,8 +15,9 @@ mod live;
 mod page;
 
 pub use edit::{
-    EditError, Reading, TripField, add_shot, new_cave, new_trip, remove_shot, rename_station,
-    set_notes, set_reading, set_trip_declination, set_trip_field, set_walls,
+    EditError, Reading, TripField, TripRemoval, add_shot, new_cave, new_trip, remove_shot,
+    remove_trip, rename_station, set_notes, set_reading, set_trip_declination, set_trip_field,
+    set_walls, trip_removal,
 };
 pub use live::{
     Measured, Side, add_measured_shot, set_readings, set_station_wall, set_station_walls,
