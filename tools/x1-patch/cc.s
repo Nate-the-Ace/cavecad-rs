@@ -510,8 +510,8 @@ cc_draw:
 @ ---------------------------------------------------------------- a pick rides the record as it is BUILT (build 10)
 @ A normal shot (DIST) builds its record into the buffer at 0x20000c44 and sends it to the phone from there, before the
 @ store loop runs: cc_store alone left the pick out of the live packet (only the stored copy had it). So the pick is also
-@ put into the record right after it is built. cc_build replaces "bl 0x0800802c" (the record builder) at 0x0800b62e,
-@ 0x0800b674 and 0x0800b74e: it remembers the record and the caller's return address, runs the builder with itself as the
+@ put into the record right after it is built. cc_build replaces "bl 0x0800802c" (the record builder) at 0x0800d352 and
+@ 0x0800d37e (the laser-on shot, the path a DIST press takes) and at 0x0800b62e, 0x0800b674 and 0x0800b74e: it remembers the record and the caller's return address, runs the builder with itself as the
 @ return address, then adds the pick (once) and goes back. RAM: CC_STATE +0x10 the return address, +0x14 the record.
         .global cc_build
         .thumb_func

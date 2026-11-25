@@ -39,6 +39,8 @@ HOOKS = [
     (0x0800B62E, "fcf7fdfc", ("bl", "cc_build")),       # bl 0x0800802c (record builder), first shot of a measure
     (0x0800B674, "fcf7dafc", ("bl", "cc_build")),       # the same builder, a later shot
     (0x0800B74E, "fcf76dfc", ("bl", "cc_build")),       # the same builder, a shot after a group check
+    (0x0800D352, "faf76bfe", ("bl", "cc_build")),       # the laser-on shot (DIST in mode 1): record built as type 1
+    (0x0800D37E, "faf755fe", ("bl", "cc_build")),       # the laser-on shot, the other branch: record built as type 0
     (0x0800C420, "fcf7b8f8", ("bl", "cc_addr")),        # bl 0x08008594 (memory address to pointer), in the 3d/3e handler
     (0x0800C448, "06f042ff", ("bl", "cc_write")),       # bl 0x080132d0 (the memory write) in the 3e handler
     (0x0800C450, "fcf7a0f8", ("bl", "cc_addr")),        # the same map, for the reply       # bl STORE_RECORD in the store-N-records loop a normal shot (DIST) uses        # bl DRAW_PREP (first call of the per-mode screen drawing)
