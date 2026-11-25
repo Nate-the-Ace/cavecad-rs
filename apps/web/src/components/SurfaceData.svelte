@@ -5,6 +5,7 @@
   // to the person and nowhere else: never logged.
   import { untrack } from 'svelte';
   import { openHandbook } from '../lib/handbook-open';
+  import { phone } from '../lib/phone.svelte';
   import { cave, changed } from '../lib/cave.svelte';
   import { engine, type GeoStatus } from '../lib/engine';
   import { fetchSurface, pickEntrance, surface } from '../lib/surface.svelte';
@@ -163,7 +164,7 @@
   <div class="veil" role="presentation" onclick={close}>
     <div class="box" role="dialog" aria-modal="true" aria-label="Surface Data" tabindex="-1" onclick={(e) => e.stopPropagation()} onkeydown={(e) => e.key === 'Escape' && !picker && close()}>
       <h2>Surface Data</h2>
-      <p class="hint">The aerial photo and the ground elevation above the cave, downloaded from USGS. They are kept with the cave and drawn under the map.</p>
+      {#if phone.on}<p class="hint">The aerial photo and the ground elevation above the cave, downloaded from USGS. They are kept with the cave and drawn under the map.</p>{/if}
       {#if problem}<p class="err" role="alert">{problem}</p>{/if}
       {#if status}
         <section class="where">

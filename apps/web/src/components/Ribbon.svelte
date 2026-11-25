@@ -29,9 +29,8 @@
   import { folder } from '../lib/cavefolder.svelte';
   import ProjectFiles from './ProjectFiles.svelte';
   import { shelf } from '../lib/shelf.svelte';
-  import { cave, clearPick, selectedIds, selectIds, setCompactRibbon, setPick, setUnits, option, setOption, setTool } from '../lib/cave.svelte';
+  import { cave, clearPick, selectedIds, selectIds, setPick, setUnits, option, setOption, setTool } from '../lib/cave.svelte';
   import DrawTools from './DrawTools.svelte';
-  import ThemeGroup from './ThemeGroup.svelte';
   import ContextOptions from './ContextOptions.svelte';
   import SelectionTools from './SelectionTools.svelte';
   import CopyIcon from './CopyIcon.svelte';
@@ -51,7 +50,7 @@
   import { fillLabel, isFillKind } from '../lib/fills';
   import { onMount, untrack } from 'svelte';
   import { PANELS, panelState, resetLayout, showPanel, surveyLayout, togglePanel, workLayout } from '../lib/workspace.svelte';
-  import { Check, Trash2, Library, FilePlus, FolderOpen, FolderTree, Save, Ruler, Footprints, Scissors, Map as MapIcon, Terminal, LayoutDashboard, Activity, Shapes, Table2, BookOpen, ScanLine, FileText, ChevronDown, PanelTop, Mountain, SlidersHorizontal, Crosshair, Tent, Lock, Cloud, PenTool, Brush, SprayCan, Layers } from '@lucide/svelte';
+  import { Check, Trash2, Library, FilePlus, FolderOpen, FolderTree, Save, Ruler, Footprints, Scissors, Map as MapIcon, Terminal, LayoutDashboard, Activity, Shapes, Table2, BookOpen, ScanLine, FileText, ChevronDown, Mountain, SlidersHorizontal, Crosshair, Tent, Lock, Cloud, PenTool, Brush, SprayCan, Layers } from '@lucide/svelte';
   import { entrancePick, surface } from '../lib/surface.svelte';
 
   /**
@@ -126,14 +125,12 @@
     View: [
       { name: 'Panels', items: [panelItem('map', MapIcon), panelItem('profile', Activity), panelItem('section', Scissors), panelItem('symbols', Shapes), panelItem('patterns', Shapes), panelItem('stations', Table2), panelItem('notebook', BookOpen), ...(showInstruments ? [panelItem('survey', Crosshair)] : []), panelItem('scans', ScanLine), panelItem('sheet', FileText), panelItem('console', Terminal), panelItem('rooms', Cloud)] },
       { name: 'Units', items: [{ label: 'Metric', icon: Ruler, run: () => setUnits('metric'), pressed: () => cave.units === 'metric' }, { label: 'Imperial', icon: Footprints, run: () => setUnits('imperial'), pressed: () => cave.units === 'imperial' }] },
-      { name: 'Theme', items: [], custom: ThemeGroup },
       { name: 'Drawing scale', items: [], custom: DrawingScale },
       { name: 'Map style', items: [{ label: 'Ink style', icon: PenTool, title: 'Ink style: every line drawn as if inked by hand (wobble, thick and thin, tapered ends). Changes only the picture, on screen and on printed sheets', run: () => setOption('handInk', !option('handInk', false)), pressed: () => option('handInk', false) }, { label: 'Depth shading', icon: Layers, title: 'Depth shading: the passage floor is washed darker the deeper it lies, from the survey itself, with a key in the corner. Seen on the Map from the top', run: () => setOption('depthShade', !option('depthShade', false)), pressed: () => option('depthShade', false) }] },
       { name: 'Rock halo', items: [{ label: 'Rock halo', icon: Mountain, run: () => setOption('halo', !option('halo', true)), pressed: () => option('halo', true) }, { label: 'Settings', icon: SlidersHorizontal, run: () => setPick('halo', 'halo'), pressed: () => cave.pick.kind === 'halo' }] },
       { name: 'Map view', items: [{ label: 'Lock view', icon: Lock, run: () => setOption('mapLock', !option('mapLock', false)), pressed: () => option('mapLock', false) }] },
       { name: 'Layout', items: [{ label: 'Reset', icon: LayoutDashboard, run: resetLayout }, ...(showInstruments ? [{ label: 'In-Cave Survey', icon: Tent, run: surveyLayout }] : []), { label: 'Scans', icon: ScanLine, run: workLayout }] },
       { name: 'Saved layouts', items: [], custom: LayoutGroup },
-      { name: 'Ribbon settings', items: [{ label: 'Compact layout', icon: PanelTop, run: () => setCompactRibbon(!cave.compactRibbon), pressed: () => cave.compactRibbon }] },
     ],
   };
   const tabs = $derived(given ?? own);

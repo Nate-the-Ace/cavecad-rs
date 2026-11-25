@@ -1,0 +1,47 @@
+/* The phone layout's spacing, in one place. Everything here is scoped under `.phone` (the PhoneShell root), so the
+   desktop and iPad dock never see it. Phone screens use these tokens instead of their own paddings and gaps:
+   outer padding --p-pad at most (0 around a canvas), gaps --p-gap, rows --p-row, and 44px (--p-hit) only for
+   the primary targets (tab pills, Take shot, undo/redo). Inputs are 16px so iOS does not zoom into them. */
+.phone {
+  --p-gap: 4px;
+  --p-pad: 6px;
+  --p-row: 40px;
+  --p-hit: 44px;
+  --p-radius: 8px;
+  --p-font: 14px;
+  --p-font-small: 13px;
+  --p-font-input: 16px;
+  font-size: var(--p-font);
+}
+
+.phone input:not([type='checkbox']):not([type='radio']):not([type='range']),
+.phone select,
+.phone textarea {
+  font-size: var(--p-font-input);
+}
+
+/* existing panels shown on the phone: tighter headings, no card shadows */
+.phone h2,
+.phone h3,
+.phone h4 {
+  margin-top: 0;
+  margin-bottom: var(--p-gap);
+}
+.phone section,
+.phone .card {
+  box-shadow: none;
+}
+
+/* Notebook and Stations: bars and empty states */
+.phone section[aria-label='Notebook'] .bar,
+.phone section[aria-label='Notebook'] .add { gap: var(--p-gap); padding: var(--p-gap) var(--p-pad); }
+.phone section[aria-label='Notebook'] .totals { padding: 2px var(--p-pad); }
+.phone section[aria-label='Notebook'] .closures { padding: var(--p-gap) var(--p-pad); gap: var(--p-gap); }
+.phone section[aria-label='Notebook'] .none { padding: var(--p-pad); }
+
+/* dialogs over the phone layout (New cave, Surface Data): tighter */
+.phone [role='dialog'] { box-shadow: none; }
+.phone [role='dialog'][aria-label='New cave'] { width: calc(100vw - 12px); padding: 10px var(--p-pad); gap: var(--p-pad); box-sizing: border-box; }
+.phone [role='dialog'][aria-label='New cave'] button { min-height: var(--p-row); }
+.phone [role='dialog'][aria-label='New cave'] .hint,
+.phone [role='dialog'][aria-label='New cave'] button.link { display: none; }

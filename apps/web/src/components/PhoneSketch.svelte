@@ -1,0 +1,87 @@
+<script lang="ts">
+  // The phone's Sketch tab: the app's own Map, Profile and Cross Section panels (the ones the desktop dock mounts)
+  // behind one segmented switch, under ONE bar: [Map|Profile|Section] [tools] [undo redo] (Surface Data is in Settings > Cave).
+  // The undo pair is the active view's own scope; the panels' own pairs are hidden (.canvas rule below) so the phone
+  // shows just one. Each view is made the first time it is picked and then kept (hidden), so the 3D Map keeps its camera.
+  // Under the bar: one 41px row with the drawing-type dropdown and Symbols button (PhoneToolStrip). Over the canvas:
+  // favorite chips down the left edge (PhoneChips), the symbol picker as a bottom sheet, and the armed tool's options
+  // as a slim strip over the canvas bottom, lifted above the live shot strip (LiveStrip: tape/compass/clino, dot, Take
+  // shot; 6px + 40px at the very bottom, an overlay; Settings > Sketch can turn it off, and the options strip drops to the bottom). `.tools` (bar) and `.overlay` stay free for later.
+  import type { Component } from 'svelte';
+  import PhoneToolStrip from './PhoneToolStrip.svelte';
+  import PhoneChips from './PhoneChips.svelte';
+  import PhoneSymbols from './PhoneSymbols.svelte';
+  import PhoneOptions from './PhoneOptions.svelte';
+  import LiveStrip from './LiveStrip.svelte';
+  import PanelUndo from './PanelUndo.svelte';
+  import MapPanel from '../panels/MapPanel.svelte';
+  import ProfilePanel from '../panels/ProfilePanel.svelte';
+  import SectionPanel from '../panels/SectionPanel.svelte';
+  import { phonePrefs } from '../lib/phone-prefs.svelte';
+  import type { Scope } from '../lib/engine';
+  import { phone, showPhoneTab, showSettings, type SketchView } from '../lib/phone.svelte';
+
+  const VIEWS: { id: SketchView & Scope; title: string; label: string; panel: Component }[] = [
+    { id: 'map', title: 'Map', label: 'on the map', panel: MapPanel },
+    { id: 'profile', title: 'Profile', label: 'in the profile', panel: ProfilePanel },
+    { id: 'section', title: 'Section', label: 'in this cross section', panel: SectionPanel },
+  ];
+  const current = $derived(VIEWS.find((v) => v.id === phone.sketch) ?? VIEWS[0]);
+
+  let picker = $state(false);
+  let made = $state<Record<string, boolean>>({});
+  $effect(() => {
+    if (!made[current.id]) made = { ...made, [current.id]: true };
+  });
+</script>
+
+<div class="sketch">
+  <div class="bar">
+    <div class="seg" role="tablist" aria-label="View">
+      {#each VIEWS as v (v.id)}
+        <button role="tab" aria-selected={current.id === v.id} class:on={current.id === v.id} onclick={() => showPhoneTab(v.id)}>{v.title}</button>
+      {/each}
+    </div>
+    <div class="tools"></div>
+    {#key current.id}<div class="undo"><PanelUndo scope={current.id} label={current.label} /></div>{/key}
+  </div>
+  <PhoneToolStrip onSymbols={() => (picker = true)} />
+  <div class="canvas" style:--p-live-inset={phonePrefs.liveStrip ? null : '0px'}>
+    {#each VIEWS as v (v.id)}
+      {#if made[v.id]}
+        {@const P = v.panel}
+        <div class="view" hidden={current.id !== v.id}><P /></div>
+      {/if}
+    {/each}
+    <div class="overlay"></div>
+    <PhoneChips />
+    <PhoneOptions />
+    {#if phonePrefs.liveStrip}<LiveStrip onDetail={() => showSettings('connection')} />{/if}
+    {#if picker}<PhoneSymbols onClose={() => (picker = false)} />{/if}
+  </div>
+</div>
+
+<style>
+  .sketch { display: flex; flex-direction: column; height: 100%; }
+  .bar { display: flex; align-items: center; gap: var(--p-gap); padding: 0 var(--p-gap); min-height: var(--p-hit); flex: none; background: var(--panel); border-bottom: 1px solid var(--line); }
+  .seg { display: flex; flex: none; border: 1px solid var(--line); border-radius: var(--p-radius); overflow: hidden; }
+  .seg button { min-height: 36px; padding: 0 9px; border: 0; background: var(--panel-2); color: var(--text); font: inherit; font-size: var(--p-font-small); cursor: pointer; touch-action: manipulation; }
+  .seg button + button { border-left: 1px solid var(--line); }
+  .seg button.on { background: var(--accent); color: #fff; font-weight: 600; }
+  .tools { flex: 1; min-width: 0; display: flex; align-items: center; gap: var(--p-gap); }
+  .undo :global(button) {
+    min-width: var(--p-hit); min-height: var(--p-hit); padding: 0; border: 0; border-radius: var(--p-radius); background: none; color: var(--text);
+    display: inline-flex; align-items: center; justify-content: center; cursor: pointer; touch-action: manipulation;
+  }
+  .undo { display: flex; flex: none; }
+  .undo :global(svg) { width: 20px; height: 20px; }
+  .undo :global(button:disabled) { opacity: 0.35; }
+  .canvas { flex: 1; min-height: 0; position: relative; --p-live-inset: 52px; }
+  .view { position: absolute; inset: 0; display: flex; flex-direction: column; overflow: hidden; }
+  .view[hidden] { display: none; }
+  .view > :global(*) { flex: 1; min-height: 0; }
+  /* kept free for a thin live-shot strip later; takes no touches until it has something in it */
+  .overlay { position: absolute; left: 0; right: 0; top: 0; pointer-events: none; }
+  /* the panels' own undo/redo duplicate the pair in the bar */
+  .canvas :global(button[aria-label^='Undo']), .canvas :global(button[aria-label^='Redo']) { display: none; }
+</style>

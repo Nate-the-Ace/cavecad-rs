@@ -163,8 +163,9 @@
         engineReady = true;
         syncDrawing();
         await loadShelf();
-        // A clean slate: the shelf opens first (an old live link opens it from the moved page instead).
-        if (!cave.hasCave && shelf.startup && !moved) shelf.open = true;
+        // A clean slate: the shelf opens first (an old live link opens it from the moved page instead). The phone
+        // layout does not ask: its Caves tab is the only thing it offers until a cave is open (lib/gates.ts).
+        if (!phone.on && !cave.hasCave && shelf.startup && !moved) shelf.open = true;
         const shot = shotPanel(); // Handbook screenshot capture (development builds only)
         if (shot) await runShot(shot);
       } catch (e) {
@@ -261,13 +262,13 @@
   });
 </script>
 
-<div class="shell" class:docked={!phone.on} inert={!open}>
+<div class="shell" class:docked={!phone.on} class:phone={phone.on} inert={!open}>
   <UpdateBar />
   {#if !phone.on}<Ribbon />{/if}
   <SnapMenu />
   <NewCave />
   <SurfaceData />
-  <CaveShelf />
+  {#if !phone.on}<CaveShelf />{/if}<!-- the phone shows it as its Caves tab -->
   <MovedPage bind:open={moved} />
   <ContextMenu />
   <SelectionCycle />

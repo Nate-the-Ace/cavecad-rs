@@ -13,7 +13,7 @@ The Patterns panel is where you look at, copy and make the linetypes, fills and 
 ## How to use it
 
 1. Open a cave. Without one you can look at the built-in patterns but not make your own.
-2. Pick a tab at the top: **Linetypes**, **Fills** or **Motifs**.
+2. Pick a tab at the top: **Linetypes** (a repeating pattern for a line: dashes, gaps, dots and motifs), **Fills** (a repeating pattern inside an area: hatch lines, dots and tiled motifs) or **Motifs** (a small drawing that repeats: a tick, a chevron, a little rock).
 3. Pick a pattern from the list on the left. Each linetype shows a small sample. **Yours** are at the top; under **Comes with CaveCAD** are starting points that match the map's own lines (Presumed wall, Dashed, Underlying passage, Joint, Ledge, Pit edge, Flowline) and a few more.
 4. For one that comes with CaveCAD, press **Make my own copy**. You get your own copy to change.
 5. To start from nothing, press **+ New** instead.
@@ -75,7 +75,8 @@ Select one line or area, then press **Edit pattern…** beside its linetype or f
 | **Save** is greyed out | Nothing has changed yet, or the pattern has a problem. A red line under the parts says what. | Fix the part it names, or change something. |
 | **+ Motif** or **+ Scattered motifs** is greyed out | The cave has no motifs yet. | Make one on the **Motifs** tab first. |
 | An imported .pat comes out tiny or huge | The file units or the real-size choice did not match the file. | Delete the imported fills and import again with the other units, or with Real-size patterns ticked. |
-| "Sign in to keep your patterns in your account" under My library | You are not signed in. | Sign in; patterns you save from then on are kept in your library. |
+| "Sign in to keep a library." under My library | You are not signed in, so patterns are not kept in your account for every cave. |
+| "Empty." under My library | You have not saved a pattern yet. Patterns you save are kept there too, for every cave. | Save one. | Sign in; patterns you save from then on are kept in your library. |
 | A motif shows "(missing)" | The line or fill uses a motif that no longer exists. | Pick another motif from that row's menu. |
 
 ## Related

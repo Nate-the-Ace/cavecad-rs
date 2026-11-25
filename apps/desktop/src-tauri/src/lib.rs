@@ -4,6 +4,8 @@
 //! manager on the real file.
 
 mod ble;
+#[cfg(target_os = "android")]
+mod ble_android;
 mod bridge;
 mod cavefolder;
 mod files;

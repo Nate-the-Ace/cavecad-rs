@@ -74,6 +74,9 @@ const cell = (v: unknown): string => {
   return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 };
 
+/** The checklist's file name, from the cave's file name ("Pitfall Cave.cavecad" -> "Pitfall Cave-stations.csv"). */
+export const checklistName = (fileName: string): string => fileName.replace(/\.[^.]+$/, '') + '-stations.csv';
+
 /**
  * The rows as CSV for a trip planner's checklist. Elevation only, never a position: a cave's
  * location does not leave the cave. The elevation is in the display unit.

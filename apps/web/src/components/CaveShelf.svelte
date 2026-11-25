@@ -5,6 +5,8 @@
   // cave, or bring one in from a file. Nothing here changes a cave except by opening it. Signed in, the caves kept on
   // the CaveCAD server that this browser does not have yet (made on another device) are listed too, under "On your
   // other devices"; opening one fetches it and keeps it here (server-caves.svelte.ts).
+  // `embedded` (the phone's Caves tab) draws the same shelf inline, filling its parent: no veil, no Close or Start
+  // empty, Escape only cancels a removal, and no startup checkbox (the phone always starts here until a cave is open).
   import { untrack } from 'svelte';
   import { Copy, Star } from '@lucide/svelte';
   import { cave } from '../lib/cave.svelte';
@@ -20,6 +22,10 @@
   import { formatLength } from '../lib/units';
   import { openContextMenu } from '../lib/context-menu.svelte';
 
+  let { embedded = false }: { embedded?: boolean } = $props();
+  /** Showing: open as the window, or drawn inline. */
+  const active = $derived(embedded || shelf.open);
+
   let search = $state('');
   /** The cave picked on the left: a record id, `sample:<id>`, or ''. */
   let picked = $state('');
@@ -28,7 +34,7 @@
   let from = $state('');
   let message = $state('');
   $effect(() => {
-    if (shelf.open) {
+    if (active) {
       void loadEngine().then(() => loadShelf()).then(() => refreshServerCaves());
       message = '';
     }
@@ -37,7 +43,7 @@
   // While open, the caves on the server are read again now and then: a key handed over by another device shows up,
   // and a cave someone asked to open opens by itself once its key is here (server-caves.svelte.ts).
   $effect(() => {
-    if (!shelf.open) return;
+    if (!active) return;
     void account.phase; // signing in (or out) while the shelf is open reads the list again
     void account.member?.id;
     untrack(() => void loadEngine().then(() => refreshServerCaves()));
@@ -68,7 +74,7 @@
 
   // Start on the cave in use, else the first one.
   $effect(() => {
-    if (!shelf.open) return;
+    if (!active) return;
     untrack(() => {
       if (!picked || (!record && !sample && !remote)) picked = shelf.records.find((r) => r.id === shelf.currentId)?.id ?? shelf.records[0]?.id ?? `sample:${DEMOS[0].id}`;
     });
@@ -249,16 +255,23 @@
   }
 
   function key(e: KeyboardEvent) {
-    if (e.key === 'Escape') removing ? (removing = null) : (shelf.open = false);
+    if (e.key === 'Escape') removing ? (removing = null) : embedded ? undefined : (shelf.open = false);
     else if (e.key === 'Enter' && !(e.target as HTMLElement).closest('input,button,textarea')) void open();
   }
 
   const close = () => (shelf.open = false);
 </script>
 
-{#if shelf.open}
+{#if embedded}
+  <!-- svelte-ignore a11y_no_noninteractive_element_interactions: Escape cancels a removal and Enter opens, as in the window -->
+  <div class="box embedded" role="region" aria-label="Caves" tabindex="-1" onkeydown={key}>{@render body()}</div>
+{:else if shelf.open}
   <div class="veil" role="presentation" onclick={close}>
-    <div class="box" role="dialog" aria-modal="true" aria-label="Caves" tabindex="-1" onclick={(e) => e.stopPropagation()} onkeydown={key}>
+    <div class="box" role="dialog" aria-modal="true" aria-label="Caves" tabindex="-1" onclick={(e) => e.stopPropagation()} onkeydown={key}>{@render body()}</div>
+  </div>
+{/if}
+
+{#snippet body()}
       {#if removing}
         {@const c = removing.server}
         {@const name = removingName || 'this cave'}
@@ -348,7 +361,7 @@
           {#if !remote.hasKey}
             <p class="wait">{comingOver(remote)}</p>
           {:else}
-            <p class="stored">Open it to bring it onto this computer. It stays in step with your other devices.</p>
+            <p class="stored">Open it to bring it here.</p>
           {/if}
         {:else if (record || sample || remote) && summary}
           <h2>{sample ? sample.title.replace(/ \(.*\)$/, '') : summary.name}</h2>
@@ -356,7 +369,7 @@
             {#if summary.empty}Nothing surveyed yet.{:else}{length(summary.length_m)} surveyed · {summary.stations} stations · {summary.trips.length} trip{summary.trips.length === 1 ? '' : 's'}{#if summary.depth_m !== null && summary.depth_m > 0}{' · '}{length(summary.depth_m)} deep{/if} · <span class="health" title={HEALTH_HINT}>{health(summary)}</span>{/if}
           </p>
           {#if remote}
-            <p class="stored">On the CaveCAD server, from one of your other devices · made {when(remote.createdAt)}. Open it to bring it onto this computer; it stays in step with your other devices.</p>
+            <p class="stored">On the CaveCAD server, from one of your other devices · made {when(remote.createdAt)}</p>
             {#if !remote.hasKey}<p class="wait">{comingOver(remote)}</p>{/if}
           {:else if record?.home && lost}
             <div class="lost" role="alert">
@@ -365,7 +378,7 @@
               <button onclick={() => keepHere(record!)}>Keep in this browser</button>
             </div>
           {:else if record?.home}<p class="stored" title={record.home.label}>In its folder, {record.home.label} · last saved {when(record.updated)}</p>
-          {:else if record}<p class="stored">Kept in this browser · last saved {when(record.updated)}</p>{:else}<p class="stored">A sample cave. Open it to look around. Your first change makes it your own copy, kept in this browser; the sample stays as it is.</p>{/if}
+          {:else if record}<p class="stored">Kept in this browser · last saved {when(record.updated)}</p>{:else}<p class="stored">A sample cave: your first change makes your own copy.</p>{/if}
           {#if record}
             <div class="actions">
               <button onclick={() => void setFavorite(record!.id, !record!.favorite)} title="Favourites stay at the top of the list"><Star size={13} fill={record.favorite ? 'currentColor' : 'none'} /> {record.favorite ? 'Favourite' : 'Add to favourites'}</button>
@@ -402,19 +415,16 @@
         {#if message}<p class="err" role="alert">{message}</p>{/if}
         <div class="spacer"></div>
         <div class="foot">
-          <label><input type="checkbox" checked={shelf.startup} onchange={(e) => setStartup(e.currentTarget.checked)} /> Open this window at startup</label>
+          {#if !embedded}<label><input type="checkbox" checked={shelf.startup} onchange={(e) => setStartup(e.currentTarget.checked)} /> Open this window at startup</label>{/if}
           {#if record}<button onclick={() => remove(record)} title="Take this cave off this computer, or delete it everywhere">Remove…</button>
           {:else if remote}<button onclick={() => remove(null, remote)} title={remote.role === 'owner' ? 'Delete this cave everywhere' : 'Leave this shared cave'}>{remote.role === 'owner' ? 'Delete…' : 'Leave…'}</button>{/if}
           <span class="grow"></span>
           <button onclick={newTrip} disabled={(!record && !sample && !remote) || !summary || !!serverCaves.opening} title="Open the cave and start a new trip on it">{from ? `New trip from ${from}` : 'New trip'}</button>
           <button class="go" onclick={open} disabled={(!record && !sample && !remote) || !!serverCaves.opening}>{remote && serverCaves.opening === remote.id ? 'Fetching…' : remote && serverCaves.waitingFor === remote.id ? 'Waiting…' : 'Open'}</button>
-          <button onclick={close}>{cave.hasCave ? 'Close' : 'Start empty'}</button>
+          {#if !embedded}<button onclick={close}>{cave.hasCave ? 'Close' : 'Start empty'}</button>{/if}
         </div>
       </div>
-    </div>
-  </div>
-
-{/if}
+{/snippet}
 
 <style>
   .veil { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.55); display: grid; place-items: center; z-index: 40; }
@@ -436,6 +446,19 @@
     .rail { width: auto; max-height: 42%; border-right: 0; border-bottom: 1px solid var(--line); }
     .detail { overflow: auto; padding: 12px; }
   }
+  /* the phone's Caves tab: inline, filling the tab, tight (phone.css tokens); only the lists scroll */
+  .box.embedded { width: 100%; height: 100%; border: 0; border-radius: 0; padding: 0; flex-direction: column; }
+  .embedded .rail { width: auto; flex: 0 1 auto; max-height: 45%; min-height: 0; gap: var(--p-gap); padding: var(--p-pad); border-right: 0; border-bottom: 1px solid var(--line); }
+  .embedded .cave { min-height: var(--p-hit); justify-content: center; padding: 2px var(--p-pad); }
+  .embedded .group { padding: var(--p-pad) var(--p-pad) 0; }
+  .embedded .detail { flex: 1; min-height: 0; overflow: hidden; padding: var(--p-pad); gap: var(--p-gap); }
+  .embedded h2 { font-size: 17px; }
+  .embedded .stored, .embedded .none { display: none; }
+  .embedded .table { min-height: 0; }
+  .embedded .foot { flex-wrap: wrap; gap: var(--p-gap); padding-top: 0; }
+  .embedded .row button, .embedded .foot button { min-height: var(--p-row); padding: 0 10px; }
+  .embedded .actions button { min-height: 36px; }
+  .embedded input[type='search'] { font-size: 16px; min-height: 36px; padding: 4px 8px; }
   h2 { margin: 0; font-size: 22px; }
   .stats { margin: 0; color: var(--text); font-size: 13px; }
   .health { text-decoration: underline dotted; cursor: help; }

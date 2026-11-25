@@ -1,4 +1,4 @@
-import { KINDS, checklistCsv, effectiveStatus, filterRows, kindCounts, type StationRow } from '../src/lib/station-table.ts';
+import { KINDS, checklistCsv, checklistName, effectiveStatus, filterRows, kindCounts, type StationRow } from '../src/lib/station-table.ts';
 
 let bad = 0;
 const ok = (c: boolean, m: string) => { if (!c) { bad++; console.log('FAIL', m); } };
@@ -26,6 +26,7 @@ const csv = checklistCsv(rows, 'metric').split('\n');
 ok(csv[0] === 'Station,Kinds,Trips,Elevation (m),Status,Note,Team notes,Assigned', 'header');
 ok(csv[2].startsWith('A5,Lead; Open end; Noted,1,-3.2,open,"LEAD W, tight",,Sam'), `a lead row: ${csv[2]}`);
 ok(csv[5].includes('"rig here, ""bolts"""'), 'quotes are doubled and commas protected');
+ok(checklistName('Pitfall Cave.cavecad') === 'Pitfall Cave-stations.csv' && checklistName('a.b.dxf') === 'a.b-stations.csv' && checklistName('plain') === 'plain-stations.csv', 'checklist file name');
 ok(checklistCsv(rows, 'imperial').split('\n')[0].includes('(ft)'), 'imperial says feet');
 ok(!/east|north|\bx\b|position/i.test(csv[0]), 'no position column');
 ok(KINDS.length === 7 && KINDS[0].key === 'lead', 'the kinds');

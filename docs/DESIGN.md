@@ -753,3 +753,29 @@ From walking a new cave from scans to export:
 - **A chain restarting at a station already above on the page is tagged "branch"**, not "start".
 - **Sheets follow the units' paper** (ANSI B for feet, ISO A3 for metres) until a paper is picked (`followUnits`, `choosePaper`). The Notebook flags a trip with **no date** (it sets declination, and Compass writes 1 1 1900 without one).
 - **Profile elevation labels** are not drawn under its toolbar.
+
+## 2026-11-25 — The phone layout: a top tab row, one screen per tab, and a cave first
+
+Replaces the phone layout's bottom row of six panel tabs and its top bar (`PhoneShell.svelte`; desktop and iPad unchanged). On a phone (`phone.on`) CaveCAD shows one row of pill tabs along the top, under the status bar: **Caves · Survey · Sketch · Notebook · Settings** (Caves far left, Settings far right as a gear). There is no other header: the Caves pill carries the open cave's name and the unsaved dot, the Survey pill a dot for the instrument, and Surface Data is a button in the Sketch bar. **Sketch** is the Map, Profile and Cross Section behind one segmented switch with one undo/redo pair for the view showing (the panels' own pairs are hidden there); **Notebook** is the Notebook and the Stations table behind another. Settings is a row of sections from a registry (`lib/settings-sections.ts` on `lib/plugin.ts`); Account is real, the rest are placeholders for now. Each screen is made the first time it is opened and kept, so the 3D Map keeps its camera.
+
+**Gates** (`lib/gates.ts`, tested by `npm run test:gates`): sign-in first (`AccountGate`), then a cave must be open. Until one is (on every launch, and after the open cave is removed from the shelf) only the Caves tab works: the others are dimmed, the Caves tab is the Cave Shelf drawn inline (`CaveShelf embedded`: no Close, Start empty, Escape-to-close or startup checkbox) under a "Pick or start a cave to continue" line with New cave. The shelf's "open at startup" setting does not apply on a phone. Opening a cave shows Survey.
+
+Phone screens fit one screen with no helper text (only labels, buttons and a line when something is wrong), tight spacing from the tokens in `apps/web/src/phone.css` (scoped under `.phone`), 44px for the primary targets and 16px inputs. The instrument simulator is a development tool and is not offered on a phone.
+
+**Android (2026-11-25):** the same phone layout runs on Android phones as a `tauri android` build of `apps/desktop`
+(identifier `app.cavecad.desktop`, as on iOS), replacing the old Kotlin prototype. Phones are portrait only, tablets
+turn; Back sends the app to the background rather than closing it. Build, install, Bluetooth (btleplug's Android
+backend) and what is verified: `docs/ANDROID-TAURI.md`.
+
+## 2026-11-25 — Desktop, web and iPad: the dock keeps the ribbon and panels; what came over from the phone
+
+Nathan: "I would like the webapp and desktop app to maintain the panel style interface where screenspace isn't as much of a concern." So the web app, the desktop app and the iPad keep the ribbon and the dockable panels; the phone's top tab row, gates, one-screen Survey, sketch-type dropdown, notebook backsight switch and offline icon stay phone-only. Plan and audit: `docs/superpowers/plans/2026-11-25-desktop-ui-port.md`. What came over, with Nathan's answers to the plan's decisions:
+
+- **No helper paragraphs in the dock panels (D5 A).** Explainers moved to the Handbook page behind each panel's `?` (survey, symbols, scans, patterns, rooms, notebook, and new Tasks pages `caves` and `options`); one-line status, errors and values stay; tooltips stay. Account screens keep their text. `NewCave` and `SurfaceData`, which the phone also opens, keep theirs on the phone.
+- **Settings gather in the user window (D1 A).** `SettingsSection` has `layouts` (`'phone' | 'dock'`) and `settingsSectionsFor(layout)`; the phone's eight sections are `['phone']`; the user window's Options tab lists the dock ones as headed blocks: Display (theme and colour, Lengths mirroring the View tab's Units, Compact ribbon, Reset the panel layout), Symbols (NSS/UIS, the same stored choice as the Symbols panel) and, while instruments are on, Survey (the live strip switch). Dock-sized components of their own (`DockSettings*.svelte`), not the phone's `.phone .set` rules.
+- **A lighter View tab (D2 B).** Theme and Ribbon settings (Compact layout) moved to Options > Display; Units and everything else stay (the units rule and the ribbon's one fixed height are unchanged). At 820x1180 the View tab folds 7 groups instead of 10.
+- **Drawing defaults stay in the contextual ribbon tab (D4 A)**, as the standing rule says; the phone keeps them in Settings > Sketch.
+- **Live shot strip on the Map (D3 B).** `LiveStrip.svelte` (was `PhoneLiveStrip`) with `onDetail` and a `dock` size; on the dock it shows over the Map only while instruments are on and the Survey panel is not visible (`liveStripOnDock`), above the scale bar and clear of the toolbar and view cube, and not on a Map under 250px tall. Same switch as the phone (`phonePrefs.liveStrip`).
+- **Backsight columns (D6 A):** the dock Notebook keeps its automatic per-trip columns; the phone's switch does not reach it.
+- **Simulator (D7 A):** unchanged in the Survey ribbon tab (`showInstruments`).
+- **Exports on an iPad.** Home > Export and the Stations CSV open the share sheet on iOS only (`deliverExport`, and `writeNew`'s last resort in `lib/files.ts`), where a download link does nothing in the app's WebView; everywhere else they save or download as before.

@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Made by tools/android-icons.sh: the logo's paper colour, behind the adaptive icon's foreground -->
+<resources>
+    <color name="ic_launcher_background">#f7f6f2</color>
+</resources>

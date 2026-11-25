@@ -7,6 +7,7 @@
   import { isDesktop } from '../../lib/desktop';
   import { startDesktopSignIn } from '../../lib/desktop-signin';
   import { flush } from '../../lib/shelf.svelte';
+  import { phone } from '../../lib/phone.svelte';
 
   // The name field starts as the account's name once it is known; after that it is the person's to change (even to empty).
   let name = $state('');
@@ -74,9 +75,10 @@
 {/snippet}
 
 {#if account.phase === 'offline'}
-  <div class="strip" role="status">Offline: working on what's on this device</div>
+  <!-- On a phone the notice is an icon in the tab row (PhoneShell): a floating pill would cover the dock. -->
+  {#if !phone.on}<div class="strip" role="status">Offline: working on what's on this device</div>{/if}
 {:else if account.phase === 'offline-expired'}
-  <div class="strip warn" role="status">You've been offline over 30 days. Connect once to keep editing.</div>
+  <div class="strip warn" class:phone={phone.on} role="status">You've been offline over 30 days. Connect once to keep editing.</div>
 {:else if account.phase !== 'ready'}
   <!-- Keys typed here stay here: the app's shortcuts listening on the window must not hear them. -->
   <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -140,4 +142,6 @@
   .bad { color: var(--danger); }
   .strip { position: fixed; left: 50%; bottom: 8px; transform: translateX(-50%); z-index: 70; padding: 4px 12px; border-radius: var(--radius); background: var(--panel); border: 1px solid var(--line); color: var(--muted); font-size: 12px; }
   .strip.warn { color: var(--danger); border-color: var(--danger); }
+  /* phone: the expiry notice sits just under the tab row, never over the bottom dock */
+  .strip.phone { top: calc(env(safe-area-inset-top) + 48px); bottom: auto; }
 </style>

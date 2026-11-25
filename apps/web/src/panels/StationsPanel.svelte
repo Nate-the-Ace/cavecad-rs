@@ -3,7 +3,7 @@
   // control, loop, noted, flagged), the notes written at it, and the team's own status, note and who
   // has it, typed straight into the row. The rows are worked out from the survey every time; only the
   // team's mark is stored (so everyone editing the cave shares it). Double-click a row to go there.
-  import { untrack } from 'svelte';
+  import { untrack, type Snippet } from 'svelte';
   import { Download } from '@lucide/svelte';
   import PanelUndo from '../components/PanelUndo.svelte';
   import { cave, changed, focusStation, setPick } from '../lib/cave.svelte';
@@ -11,8 +11,15 @@
   import { showPanel } from '../lib/workspace.svelte';
   import { openContextMenu } from '../lib/context-menu.svelte';
   import { stationItems } from '../lib/context-items';
-  import { KINDS, STATUSES, checklistCsv, effectiveStatus, filterRows, kindCounts, type StationRow } from '../lib/station-table';
+  import { deliverExport } from '../lib/deliver-file';
+  import { KINDS, STATUSES, checklistCsv, checklistName, effectiveStatus, filterRows, kindCounts, type StationRow } from '../lib/station-table';
   import { formatLength } from '../lib/units';
+
+  // `compact` is the phone layout (PhoneNotebook only): a fixed two-row header and one bounded list of two-line rows.
+  // `lead` is the phone's Notebook | Stations switch, at the left of the first header row. Desktop never passes either.
+  // The phone's CSV export is in Settings > Cave (all stations); the dock keeps its download of the rows shown (the share
+  // sheet on an iPad, where a download does nothing in the app).
+  let { compact = false, lead }: { compact?: boolean; lead?: Snippet } = $props();
 
   let rows = $state<StationRow[]>([]);
   let ready = $state(false);
@@ -34,6 +41,8 @@
   const shown = $derived(filterRows(rows, { kinds, text, status }));
   const counts = $derived(kindCounts(rows));
 
+  /** Phone: one kind at a time from a list (the desktop's chips can combine kinds). */
+  const kindPick = $derived(kinds.length === 1 ? kinds[0] : '');
   const toggle = (k: string) => (kinds = kinds.includes(k) ? kinds.filter((x) => x !== k) : [...kinds, k]);
 
   /** Saves one row's mark (only what changed is written). */
@@ -57,15 +66,7 @@
     showPanel('section');
   }
 
-  function download() {
-    const csv = checklistCsv(shown, cave.units);
-    const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = cave.fileName.replace(/\.[^.]+$/, '') + '-stations.csv';
-    a.click();
-    URL.revokeObjectURL(url);
-  }
+  const download = () => void deliverExport(checklistName(cave.fileName), checklistCsv(shown, cave.units), 'text/csv');
 
   function onKey(e: KeyboardEvent) {
     const t = e.target as HTMLElement;
@@ -78,7 +79,51 @@
 </script>
 
 <!-- svelte-ignore a11y_no_noninteractive_element_interactions: the panel takes Ctrl/Cmd+Z for its own undo -->
-<div class="panel" role="region" aria-label="Station table" tabindex="-1" onkeydown={onKey}>
+<div class="panel" class:compact role="region" aria-label="Station table" tabindex="-1" onkeydown={onKey}>
+  {#if compact}
+    <div class="chead">
+      <div class="r1">
+        {@render lead?.()}
+        <input type="search" placeholder="Search" bind:value={text} aria-label="Search stations and notes" />
+      </div>
+      <div class="r2">
+        <PanelUndo scope="stations" label="in the station table" />
+        <select value={kindPick} aria-label="Kind of station" onchange={(e) => (kinds = e.currentTarget.value ? [e.currentTarget.value] : [])}>
+          <option value="">All kinds</option>
+          {#each KINDS as k}<option value={k.key}>{k.label} ({counts[k.key] ?? 0})</option>{/each}
+        </select>
+        <select bind:value={status} aria-label="Status">
+          <option value="">Any status</option>
+          {#each STATUSES as s}<option value={s}>{s}</option>{/each}
+        </select>
+        <span class="count">{shown.length}/{rows.length}</span>
+      </div>
+      {#if message}<span class="msg" role="status">{message}</span>{/if}
+    </div>
+    <div class="clist">
+      {#each shown as r (r.id || r.station)}
+        <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions: the controls inside take the keys -->
+        <div class="srow" class:sel={cave.pick.kind === 'station' && cave.pick.id === r.id} onclick={() => pick(r)} ondblclick={() => go(r)}>
+          <div class="l1">
+            <b class="stn">{r.station}</b>
+            <span class="kinds">{#each r.kinds as k}<span class="badge {k}">{KINDS.find((x) => x.key === k)?.label ?? k}</span>{/each}</span>
+            <span class="num">{r.z === null ? '' : formatLength(r.z, cave.units, 1)}</span>
+          </div>
+          {#if r.note_text}<div class="nt">{r.note_text}</div>{/if}
+          <div class="l2">
+            <select value={r.status} aria-label="Status of {r.station}" onchange={(e) => mark(r, { status: e.currentTarget.value })}>
+              <option value="">{effectiveStatus(r) === 'open' && !r.status ? 'open' : '-'}</option>
+              {#each STATUSES as s}<option value={s}>{s}</option>{/each}
+            </select>
+            <input value={r.team} placeholder="Team note" aria-label="Team note for {r.station}" maxlength="200" onchange={(e) => mark(r, { team: e.currentTarget.value })} />
+            <input value={r.who} placeholder="Who" aria-label="Who has {r.station}" maxlength="200" onchange={(e) => mark(r, { who: e.currentTarget.value })} />
+          </div>
+        </div>
+      {:else}
+        <p class="none">{rows.length ? 'No station matches.' : 'Open a cave to see its stations.'}</p>
+      {/each}
+    </div>
+  {:else}
   <div class="bar">
     <PanelUndo scope="stations" label="in the station table" />
     <div class="chips" role="group" aria-label="Kinds of station">
@@ -128,6 +173,7 @@
       </tbody>
     </table>
   </div>
+  {/if}
 </div>
 
 <style>
@@ -161,4 +207,26 @@
   .badge.flagged { border-color: var(--danger); color: var(--danger); }
   .hint { margin-left: 4px; font-size: 11px; padding: 0 5px; border: 1px dashed var(--warn); border-radius: 4px; background: none; color: var(--warn); cursor: pointer; }
   .none { color: var(--muted); padding: 14px; }
+
+  /* Phone layout: only when PhoneNotebook passes `compact`. */
+  .panel.compact { overflow: hidden; font-size: 14px; }
+  .compact input, .compact select { font-size: 16px; height: 40px; box-sizing: border-box; padding: 0 6px; }
+  .compact button { touch-action: manipulation; }
+  .chead { display: flex; flex-direction: column; gap: 2px; padding: var(--p-gap, 4px) var(--p-pad, 6px); border-bottom: 1px solid var(--line); flex: none; }
+  .r1, .r2 { display: flex; align-items: center; gap: var(--p-gap, 4px); }
+  .r1 input { flex: 1; min-width: 0; width: auto; }
+  .r2 select { flex: 1; min-width: 0; }
+  .r2 :global(button) { flex: none; width: 40px; height: 40px; padding: 0; display: inline-flex; align-items: center; justify-content: center; border: 1px solid var(--line); border-radius: var(--p-radius, 8px); background: var(--panel-2); color: var(--text); }
+  .r2 :global(button:disabled) { opacity: 0.4; }
+  .compact .count { font-size: 13px; }
+  .clist { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; touch-action: pan-y; -webkit-overflow-scrolling: touch; }
+  .srow { padding: var(--p-gap, 4px) var(--p-pad, 6px); border-bottom: 1px solid var(--line); display: flex; flex-direction: column; gap: 2px; }
+  .srow.sel { background: var(--accent-bg); }
+  .l1 { display: flex; align-items: center; gap: var(--p-gap, 4px); min-height: 24px; }
+  .l1 .stn { flex: none; }
+  .l1 .kinds { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; }
+  .nt { color: var(--muted); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .l2 { display: grid; grid-template-columns: 84px minmax(0, 1fr) minmax(0, 0.7fr); gap: var(--p-gap, 4px); }
+  .l2 select, .l2 input { width: 100%; }
+  .compact .none { padding: var(--p-pad, 6px); }
 </style>

@@ -1,4 +1,4 @@
-import { tolerancePx, optionsFor, DRAW_OPTIONS, ERASER_OPTIONS } from '../src/lib/commands.ts';
+import { tolerancePx, optionsFor, optionsWithout, drawingDefaults, DRAWING_DEFAULT_IDS, DRAW_OPTIONS, ERASER_OPTIONS } from '../src/lib/commands.ts';
 let bad = 0;
 const ok = (c: boolean, m: string) => { if (!c) { bad++; console.log('FAIL', m); } };
 ok(tolerancePx(1) > tolerancePx(5) && tolerancePx(5) > tolerancePx(10), 'more detail means a tighter fit');
@@ -7,4 +7,10 @@ ok(tolerancePx(-5) === tolerancePx(1) && tolerancePx(99) === tolerancePx(10), 'o
 ok(optionsFor('wall').length === DRAW_OPTIONS.length && optionsFor('').length === 0, 'a running command has options, none running has none');
 ok(optionsFor('eraser') === ERASER_OPTIONS && ERASER_OPTIONS.some((o) => o.id === 'eraserSize' && o.kind === 'range' && o.default === 4 && o.show(4, 'metric') === '4 mm'), 'the Eraser has its size in millimetres');
 ok([...DRAW_OPTIONS, ...ERASER_OPTIONS].every((o) => o.id && o.label && o.hint), 'every option is described');
+ok(drawingDefaults().map((d) => d.id).join() === 'detail,finger,pressure' && drawingDefaults().every((d) => DRAW_OPTIONS.includes(d)), 'the drawing preferences are the ribbon\'s own defs');
+ok(optionsWithout('wall', DRAWING_DEFAULT_IDS).map((d) => d.id).join() === 'close', 'a line tool keeps only Close curve in the phone strip');
+ok(optionsWithout('fill-water', DRAWING_DEFAULT_IDS).length === 0, 'a fill has nothing per-use left');
+ok(optionsWithout('sym-pit', DRAWING_DEFAULT_IDS).map((d) => d.id).join() === 'symbolSize,label', 'a symbol keeps Size and Label');
+ok(optionsWithout('text', DRAWING_DEFAULT_IDS).map((d) => d.id).join() === 'label,symbolSize', 'text keeps its words and size');
+ok(optionsWithout('wall', []).length === DRAW_OPTIONS.length, 'nothing omitted is the full list');
 console.log(bad ? 'FAILED' : 'command option checks ok'); process.exit(bad ? 1 : 0);

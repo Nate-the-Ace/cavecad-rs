@@ -10,6 +10,16 @@
     "title": "Erasing"
   },
   {
+    "id": "caves",
+    "group": "Tasks",
+    "title": "Caves: opening, starting and surface data"
+  },
+  {
+    "id": "options",
+    "group": "Tasks",
+    "title": "Options and the View tab"
+  },
+  {
     "id": "map",
     "group": "Panels",
     "title": "Map",

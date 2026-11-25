@@ -3,15 +3,18 @@
   // way to report a problem or send an idea with the log and a screenshot attached.
   import { onMount } from 'svelte';
   import { Camera, Trash2, Copy, Download, Send, ImagePlus } from '@lucide/svelte';
-  import { cave, setCompactRibbon } from '../lib/cave.svelte';
   import { me, rename } from '../lib/me.svelte';
-  import { setUnits } from '../lib/cave.svelte';
-  import { resetLayout } from '../lib/workspace.svelte';
+  import { registerDefaultSettings } from '../lib/settings-default';
+  import { settingsSectionsFor } from '../lib/settings-sections';
   import { snapshotPage } from '../lib/snapshot';
   import { KIND_LABEL, buildReport, download, logText, send, type FeedbackKind } from '../lib/feedback';
   import { account, saveProfile } from '../lib/account.svelte';
   import AccountSection from './account/AccountSection.svelte';
   import AdminSection from './account/AdminSection.svelte';
+
+  // Options: the settings sections flagged for the dock (Display, Symbols), from the same registry as the phone's Settings tab
+  registerDefaultSettings();
+  const optionSections = settingsSectionsFor('dock');
 
   let open = $state(false);
   let tab = $state<'account' | 'options' | 'feedback' | 'admin'>('account');
@@ -126,16 +129,13 @@
       {:else if tab === 'admin' && isAdmin}
         <AdminSection />
       {:else if tab === 'options'}
-        <div class="pane">
-          <div class="row"><span class="lab">Lengths</span>
-            <div class="seg" role="group" aria-label="Units">
-              <button class:on={cave.units === 'metric'} onclick={() => setUnits('metric')}>Metric</button>
-              <button class:on={cave.units === 'imperial'} onclick={() => setUnits('imperial')}>Imperial</button>
-            </div>
-          </div>
-          <label class="check"><input type="checkbox" checked={cave.compactRibbon} onchange={(e) => setCompactRibbon(e.currentTarget.checked)} /> Compact ribbon (every group folds into a dropdown)</label>
-          <div class="row"><button class="btn" onclick={resetLayout}>Reset the panel layout</button></div>
-          <p class="hint">Theme and colours are on the View tab.</p>
+        <div class="pane opts">
+          {#each optionSections as s (s.id)}
+            <section class="optsec" aria-labelledby="opt-{s.id}">
+              <h3 id="opt-{s.id}">{s.label}</h3>
+              <s.component />
+            </section>
+          {/each}
         </div>
       {:else}
         <div class="pane">
@@ -196,7 +196,6 @@
   }
   .pane { display: flex; flex-direction: column; gap: 10px; padding: 12px 14px 14px; }
   .row { display: flex; align-items: center; gap: 8px; }
-  .lab { min-width: 60px; color: var(--muted); }
   .hint { margin: 0; color: var(--muted); font-size: 12px; }
   .status { font-size: 12px; color: var(--muted); }
   .check { display: flex; align-items: flex-start; gap: 8px; font-size: 12px; }
@@ -207,12 +206,9 @@
   .btn:disabled { opacity: 0.5; cursor: default; }
   .btn.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
   .btn.small { padding: 3px 8px; }
-  .seg { display: flex; }
-  .seg button { padding: 4px 12px; background: var(--panel-2); color: var(--text); border: 1px solid var(--line); cursor: pointer; font: inherit; font-size: 12px; }
-  .seg button:first-child { border-radius: var(--radius) 0 0 var(--radius); }
-  .seg button:last-child { border-radius: 0 var(--radius) var(--radius) 0; border-left: 0; }
-  .seg button.on { background: var(--accent-bg); outline: 1px solid var(--accent); position: relative; }
   .shot { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
   .shot img { max-width: 100%; max-height: 130px; border: 1px solid var(--line); border-radius: 6px; }
   .actions { flex-wrap: wrap; }
+  .opts { gap: 12px; }
+  .optsec h3 { margin: 0 0 4px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
 </style>

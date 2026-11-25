@@ -9,6 +9,8 @@ import { engine, loadEngine } from './engine';
 import { WebBleInstrument } from './instrument/webble';
 import { followLog, placeFeatures, resetMarks } from './x1-marks.svelte';
 import type { Catalog, Device, HeldView, Instrument, LinkBridge, LinkEvents, LinkStatus, LogEntry, Reading, SessionState, Snapshot, Step, StandingWalls, SurveyStandard, CalibrationView, SweepKind, SweepView } from './survey-types';
+import { readSurveyBacksights, SURVEY_BACKSIGHTS_KEY } from './notebook-display';
+import { parseShotType, parseSweepKind, SHOT_TYPE_KEY, SWEEP_KIND_KEY, type ShotType } from './phone-survey';
 
 export type { LogEntry } from './survey-types';
 /** `auto`: any supported instrument (Cavway X1, SAP5, SAP6, BRIC4, BRIC5), told apart by its name; `capture`: any device, frames logged; `simulator`: a pretend instrument. */
@@ -23,7 +25,7 @@ const SWEEP_EVERY_MS = 1500;
 /** The X1's own scan mode stops at 200 shots: CaveCAD's firing does too. */
 const SWEEP_MAX_SHOTS = 200;
 
-const EMPTY_STATE: SessionState = { mode: 'leg', backsights: false, from: '', to: '', awaiting: null, last: null };
+const EMPTY_STATE: SessionState = { mode: 'leg', backsights: readSurveyBacksights(), from: '', to: '', awaiting: null, last: null };
 
 const STANDARD_KEY = 'cavecad.surveyStandard';
 const ACCURACY_KEY = 'cavecad.accuracyCheck';
@@ -36,6 +38,22 @@ function loadAccuracy(): AccuracyCheck {
     return v === 'strict' || v === 'relaxed' ? v : 'normal';
   } catch {
     return 'normal';
+  }
+}
+
+function loadKept<T>(key: string, parse: (v: string | null) => T): T {
+  try {
+    return parse(localStorage.getItem(key));
+  } catch {
+    return parse(null);
+  }
+}
+
+function keep(key: string, value: string) {
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    /* kept for this visit only */
   }
 }
 
@@ -94,6 +112,10 @@ export const survey = $state({
   sweep: null as SweepView | null,
   lastSweep: null as SweepView | null,
   sweepKind: 'lrud' as SweepKind,
+  /** The phone's defaults (Settings > Survey), kept on this device: what the one Take shot button does with an X1, and
+   * what the one Sweep button starts (also what the X1's own scans are checked as). */
+  shotType: loadKept(SHOT_TYPE_KEY, parseShotType),
+  sweepDefault: loadKept(SWEEP_KIND_KEY, parseSweepKind),
   /** During a sweep started here, CaveCAD fires the laser itself (otherwise the surveyor uses the X1's scan mode or its button). */
   autoFire: true,
   /** CaveCAD is firing the laser for a sweep right now. */
@@ -268,6 +290,11 @@ export function syncToTrip() {
   if (cave.hasCave && !engine.notebookTrips().some((t) => t.id === cave.trip)) cave.trip = engine.notebookTrips()[0]?.id ?? '';
   if (!cave.trip) return;
   apply(engine.surveySyncTrip(cave.trip));
+  // the engine is fresh on every load: it follows the sweep kind kept on this device
+  if (survey.sweepKind !== survey.sweepDefault) apply(engine.surveySetSweepKind(survey.sweepDefault));
+  // likewise the backsight choice kept on this device
+  const keptBacksights = readSurveyBacksights();
+  if (survey.state.backsights !== keptBacksights) apply(engine.surveySetBacksights(keptBacksights));
 }
 
 /** The engine, as the Bluetooth transport sees it. */
@@ -457,7 +484,10 @@ export const simulating = () => simulator;
 // ---- what the surveyor does ----
 
 export const setMode = (mode: SessionState['mode']) => void apply(engine.surveySetMode(mode));
-export const setBacksights = (on: boolean) => void apply(engine.surveySetBacksights(on));
+export function setBacksights(on: boolean) {
+  keep(SURVEY_BACKSIGHTS_KEY, on ? '1' : '0');
+  void apply(engine.surveySetBacksights(on));
+}
 export const setAuto = (auto: boolean) => void apply(engine.surveySetAuto(auto));
 export const skipBacksight = () => void apply(engine.surveySkipBacksight());
 export const nextStation = () => void apply(engine.surveyNextStation());
@@ -536,6 +566,19 @@ export function finishSweep() {
 export function setSweepKind(kind: SweepKind) {
   survey.sweepKind = kind;
   apply(engine.surveySetSweepKind(kind));
+}
+
+/** The default shot an X1's one shot button takes (Settings > Survey), kept on this device. */
+export function setShotType(t: ShotType) {
+  survey.shotType = t;
+  keep(SHOT_TYPE_KEY, t);
+}
+
+/** The default sweep (the Sweep button, and how the X1's own scans are checked), kept on this device. */
+export function setSweepDefault(kind: SweepKind) {
+  survey.sweepDefault = kind;
+  keep(SWEEP_KIND_KEY, kind);
+  setSweepKind(kind);
 }
 
 /** Brings the Map to a station and cuts the Cross Section there (a sweep's ring shows in it as it fills). */
