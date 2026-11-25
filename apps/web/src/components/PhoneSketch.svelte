@@ -5,13 +5,15 @@
   // shows just one. Each view is made the first time it is picked and then kept (hidden), so the 3D Map keeps its camera.
   // Under the bar: one 41px row with the drawing-type dropdown and Symbols button (PhoneToolStrip). Over the canvas:
   // favorite chips down the left edge (PhoneChips), the symbol picker as a bottom sheet, and the armed tool's options
-  // as a slim strip over the canvas bottom. `.tools` (bar) and `.overlay` stay free for later.
+  // as a slim strip over the canvas bottom, lifted above the live shot strip (PhoneLiveStrip: tape/compass/clino, dot, Take
+  // shot; 6px + 40px at the very bottom, an overlay). `.tools` (bar) and `.overlay` stay free for later.
   import type { Component } from 'svelte';
   import { Mountain } from '@lucide/svelte';
   import PhoneToolStrip from './PhoneToolStrip.svelte';
   import PhoneChips from './PhoneChips.svelte';
   import PhoneSymbols from './PhoneSymbols.svelte';
   import PhoneOptions from './PhoneOptions.svelte';
+  import PhoneLiveStrip from './PhoneLiveStrip.svelte';
   import PanelUndo from './PanelUndo.svelte';
   import MapPanel from '../panels/MapPanel.svelte';
   import ProfilePanel from '../panels/ProfilePanel.svelte';
@@ -56,6 +58,7 @@
     <div class="overlay"></div>
     <PhoneChips />
     <PhoneOptions />
+    <PhoneLiveStrip />
     {#if picker}<PhoneSymbols onClose={() => (picker = false)} />{/if}
   </div>
 </div>
@@ -75,7 +78,7 @@
   .undo { display: flex; flex: none; }
   .undo :global(svg) { width: 20px; height: 20px; }
   .undo :global(button:disabled) { opacity: 0.35; }
-  .canvas { flex: 1; min-height: 0; position: relative; }
+  .canvas { flex: 1; min-height: 0; position: relative; --p-live-inset: 52px; }
   .view { position: absolute; inset: 0; display: flex; flex-direction: column; overflow: hidden; }
   .view[hidden] { display: none; }
   .view > :global(*) { flex: 1; min-height: 0; }
