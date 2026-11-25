@@ -1,6 +1,6 @@
 <script lang="ts">
   // The phone Survey screen's More sheet: what the desktop Capture panel offers beyond the shot (the trip the shots go
-  // to, the X1's laser, starting a sweep, a feature shot, stepping back a station) and the session's shots, the one
+  // to, the X1's laser, starting a sweep (the kind chosen in Settings > Survey), a feature shot, stepping back a station) and the session's shots, the one
   // list here that scrolls. A sheet from the bottom, closed by Done or a tap above it.
   import { untrack } from 'svelte';
   import { ChevronLeft, Flashlight, FlashlightOff, Radar, ScanLine, Star } from '@lucide/svelte';
@@ -50,8 +50,9 @@
     </div>
   {/if}
   <div class="row">
-    <button onclick={act(() => live.startSweep('lrud'))} disabled={!linked || busy}><ScanLine size={18} /> {sweepName('lrud', manual)}</button>
-    <button onclick={act(() => live.startSweep('room'))} disabled={!linked || busy}><Radar size={18} /> {sweepName('room', manual)}</button>
+    <button onclick={act(() => live.startSweep(survey.sweepDefault))} disabled={!linked || busy} aria-label="Sweep: {sweepName(survey.sweepDefault, manual)}">
+      {#if survey.sweepDefault === 'room'}<Radar size={18} />{:else}<ScanLine size={18} />{/if} Sweep · {sweepName(survey.sweepDefault, manual)}
+    </button>
   </div>
   {#if last}
     <p class="line" class:warn={!last.check.complete}>Last: {sweepName(last.check.kind, manual)} at {last.station}, {last.check.standard === 'digital' ? `${Math.floor(last.check.coverage)}%` : `${last.check.shots} shot${last.check.shots === 1 ? '' : 's'}`}{last.check.complete ? '' : ', not complete'}</p>

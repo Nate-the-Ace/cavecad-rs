@@ -63,3 +63,49 @@ export function problemLines(p: ProblemInput): ProblemLine[] {
   if (p.noBluetooth && !isLinked(p.status)) add('No Bluetooth in this browser.', 'caution');
   return out.slice(0, 2);
 }
+
+// ---- the one Take shot button and the one Sweep button (defaults chosen in Settings > Survey) ----
+
+/** An X1's default shot: one shot where you stand, or station to station (the leg, three close shots). */
+export type ShotType = 'single' | 'leg';
+export const SHOT_TYPE_KEY = 'cavecad.survey.shotType';
+export const SWEEP_KIND_KEY = 'cavecad.survey.sweepKind';
+
+/** The stored default shot type ('single' when nothing usable is stored). */
+export const parseShotType = (stored: string | null | undefined): ShotType => (stored === 'leg' ? 'leg' : 'single');
+
+/** The stored default sweep kind ('lrud' when nothing usable is stored). */
+export const parseSweepKind = (stored: string | null | undefined): SweepKind => (stored === 'room' ? 'room' : 'lrud');
+
+/** Shots are taken at one station only (LRUD mode, or a sweep under way), so there is no leg to shoot. */
+export const atStationOnly = (s: { awaiting: boolean; mode: string; sweeping: boolean }): boolean => !s.awaiting && (s.mode === 'lrud' || s.sweeping);
+
+export interface ShotPressInput {
+  preferred: ShotType;
+  /** The session waits for a backsight: only the leg press takes it. */
+  awaiting: boolean;
+  atOnly: boolean;
+  /** There is a To station to shoot the leg to. */
+  hasTo: boolean;
+}
+
+/**
+ * Which press sequence an X1's one shot button runs (`pressShot(kind)`): a backsight is always the leg; at one station
+ * only it is a single; otherwise the default, falling back to a single when there is no To station to shoot to.
+ */
+export function shotPress(i: ShotPressInput): ShotType {
+  if (i.awaiting) return 'leg';
+  if (i.atOnly) return 'single';
+  return i.preferred === 'leg' && i.hasTo ? 'leg' : 'single';
+}
+
+/** Whether that press can be made now (no shot while a leg's burst is firing). */
+export const shotEnabled = (press: ShotType, s: { canTakeShot: boolean; burst: number; awaiting: boolean; hasTo: boolean }): boolean =>
+  s.canTakeShot && s.burst === 0 && (press === 'single' ? !s.awaiting : s.awaiting || s.hasTo);
+
+/** The one shot button's words: Shoot once aimed, the leg's progress while it fires, otherwise where the shot goes. */
+export function shotLabel(press: ShotType, s: { aiming: '' | ShotType; burst: number; legShots: number; singleWhere: string; legWhere: string }): string {
+  if (s.burst > 0) return `Leg ${s.legShots - s.burst + 1} of ${s.legShots}…`;
+  if (s.aiming === press) return press === 'leg' ? 'Shoot leg' : 'Shoot';
+  return press === 'leg' ? s.legWhere : s.singleWhere;
+}

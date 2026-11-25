@@ -1,6 +1,7 @@
 // The phone Sketch screen's live shot strip, kept pure so it can be checked without a browser (tests/phonelivestrip.check.ts):
 // which view the strip shows, the connection dot, the Take shot button and the problem marker.
 import type { LinkStatus } from './survey-types.ts';
+import { shotEnabled, shotPress, type ShotType } from './phone-survey.ts';
 
 export type StripView = 'connect' | 'held' | 'collapsed' | 'numbers';
 export type DotState = 'green' | 'amber' | 'grey';
@@ -26,6 +27,10 @@ export interface StripInput {
   aiming: '' | ShotKind;
   message: string;
   warnings: number;
+  /** The default shot an X1 takes (Settings > Survey); single when not given. */
+  preferred?: ShotType;
+  /** Shots are taken at one station only (LRUD mode, a sweep): no leg to shoot. */
+  atOnly?: boolean;
 }
 
 export interface ShotButton {
@@ -62,8 +67,8 @@ export function stripModel(i: StripInput): StripModel {
   if (up && view !== 'held') {
     if (i.feature) shot = { kind: 'feature', press: null, enabled: i.canTakeShot, armed: false };
     else if (i.aimsFirst) {
-      const press = pressKind(i.awaiting);
-      const enabled = i.canTakeShot && i.burst === 0 && (press === 'single' ? !i.awaiting : i.awaiting || i.hasTo);
+      const press = shotPress({ preferred: i.preferred ?? 'single', awaiting: i.awaiting, atOnly: !!i.atOnly, hasTo: i.hasTo });
+      const enabled = shotEnabled(press, i);
       shot = { kind: 'shot', press, enabled, armed: i.aiming === press };
     } else shot = { kind: 'shot', press: null, enabled: i.canTakeShot, armed: !!i.aiming };
   }

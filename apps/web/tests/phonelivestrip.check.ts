@@ -9,6 +9,9 @@ function check(what: string, ok: boolean) {
 const base: StripInput = { status: 'connected', collapsed: false, held: 0, aimsFirst: false, feature: false, canTakeShot: true, awaiting: false, hasTo: true, burst: 0, aiming: '', message: '', warnings: 0 };
 const m = (o: Partial<StripInput>) => stripModel({ ...base, ...o });
 
+check('an X1 takes the default leg', m({ aimsFirst: true, preferred: 'leg' }).shot?.press === 'leg');
+check('an X1 with no default takes a single', m({ aimsFirst: true }).shot?.press === 'single');
+check('an X1 at one station only takes a single even with the leg default', m({ aimsFirst: true, preferred: 'leg', atOnly: true }).shot?.press === 'single');
 check('dots', dotState('connected') === 'green' && dotState('connecting') === 'amber' && dotState('lost') === 'amber' && dotState('idle') === 'grey' && dotState('error') === 'grey');
 check('connected shows numbers and a shot button', m({}).view === 'numbers' && m({}).shot?.enabled === true && !m({}).dotOpensSettings);
 check('idle collapses to dot + Connect', m({ status: 'idle' }).view === 'connect' && m({ status: 'idle' }).connectLabel === 'Connect' && m({ status: 'idle' }).shot === null && m({ status: 'idle' }).dotOpensSettings);

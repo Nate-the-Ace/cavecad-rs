@@ -16,6 +16,7 @@
 .phone .set .chk { display: flex; align-items: center; gap: 8px; min-height: var(--p-row); flex: none; cursor: pointer; }
 .phone .set .chk input { width: 22px; height: 22px; margin: 0; flex: none; }
 .phone .set .seg { display: flex; flex: none; min-width: 0; }
+.phone .set .row > .seg { flex: 1 1 0; }
 .phone .set .seg button { flex: 1 1 0; border-radius: 0; min-width: 0; }
 .phone .set .seg button + button { border-left: none; }
 .phone .set .seg button:first-child { border-radius: var(--p-radius) 0 0 var(--p-radius); }

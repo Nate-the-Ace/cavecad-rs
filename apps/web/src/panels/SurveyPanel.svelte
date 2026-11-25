@@ -16,7 +16,7 @@
   import { Bluetooth, Ellipsis, Undo2, Unplug } from '@lucide/svelte';
   import PhoneSurveyMore from '../components/PhoneSurveyMore.svelte';
   import { phone, showSettings } from '../lib/phone.svelte';
-  import { linkLabel, problemLines, sweepName } from '../lib/phone-survey';
+  import { linkLabel, problemLines, shotEnabled, shotLabel, shotPress, sweepName } from '../lib/phone-survey';
   import LengthField from '../components/LengthField.svelte';
   import PanelUndo from '../components/PanelUndo.svelte';
   import { cave, changed } from '../lib/cave.svelte';
@@ -135,6 +135,11 @@
     problemLines({ message: survey.message, detail: survey.detail, status: survey.status, warnings: survey.warnings, noBluetooth, sweepDue: sweepDue ? survey.standing : '' }),
   );
 
+  // an X1's one shot button (phone): which press it runs, from the default shot type and where the surveyor is
+  const phonePress = $derived(shotPress({ preferred: survey.shotType, awaiting: !!survey.state.awaiting, atOnly, hasTo: !!survey.state.to.trim() }));
+  const phoneShotOn = $derived(shotEnabled(phonePress, { canTakeShot: survey.canTakeShot, burst: survey.burst, awaiting: !!survey.state.awaiting, hasTo: !!survey.state.to.trim() }));
+  const phoneShotLabel = $derived(shotLabel(phonePress, { aiming: survey.aiming, burst: survey.burst, legShots: 3, singleWhere, legWhere }));
+
   let featurePicker = $state(false);
   const symbolName = (key: string) => symbolDef(key)?.name ?? key.replace(/^sym-/, '').replace(/-/g, ' ');
   const enter = (e: KeyboardEvent) => e.key === 'Enter' && (e.currentTarget as HTMLInputElement).blur();
@@ -233,14 +238,10 @@
         <button class="cancel" onclick={live.cancelFeature} aria-label="Cancel the feature shot"><X size={18} /></button>
       </div>
     {:else if live.aimsFirst()}
-      <div class="two">
-        <button class="shoot" class:armed={survey.aiming === 'single'} onclick={() => live.pressShot('single')} disabled={!survey.canTakeShot || survey.burst > 0 || !!survey.state.awaiting}>
-          <Crosshair size={18} /> <span class="where">{survey.aiming === 'single' ? 'Shoot' : singleWhere}</span>
-        </button>
-        <button class="shoot" class:armed={survey.aiming === 'leg'} onclick={() => live.pressShot('leg')} disabled={!survey.canTakeShot || survey.burst > 0 || (!survey.state.awaiting && (atOnly || !survey.state.to.trim()))}>
-          <Crosshair size={18} /> <span class="where">{survey.burst > 0 ? `Leg ${3 - survey.burst + 1} of 3…` : survey.aiming === 'leg' ? 'Shoot leg' : legWhere}</span>
-        </button>
-      </div>
+      <!-- an X1: ONE button, taking the default shot from Settings > Survey (first press aims, second shoots) -->
+      <button class="shoot" class:armed={survey.aiming === phonePress} onclick={() => live.pressShot(phonePress)} disabled={!phoneShotOn}>
+        <Crosshair size={20} /> <span class="where">{phoneShotLabel}</span>
+      </button>
     {:else}
       <button class="shoot" class:armed={!!survey.aiming} onclick={() => live.pressShot()} disabled={!survey.canTakeShot}><Crosshair size={20} /> <span class="where">{shotWhere}</span></button>
     {/if}

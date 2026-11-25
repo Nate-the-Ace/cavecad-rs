@@ -1,6 +1,6 @@
 <script lang="ts">
-  // Settings > Connection (phone): the instrument link, the X1's device control (standard, accuracy check, what its
-  // own scan is checked as), guided calibration and the X1 quick reference, and the instrument log (capture mode for
+  // Settings > Connection (phone): the instrument link, the X1's device control (standard, accuracy check; what its
+  // own scan is checked as is the Sweep default in Settings > Survey), guided calibration and the X1 quick reference, and the instrument log (capture mode for
   // an instrument that is not supported yet). The log is the one box that scrolls. No simulator on the phone.
   import { BookOpen, Bluetooth, Copy, Crosshair, Trash2, Unplug } from '@lucide/svelte';
   import CalibrationGuide from './CalibrationGuide.svelte';
@@ -8,7 +8,6 @@
   import * as live from '../lib/survey.svelte';
   import { survey, type AccuracyCheck } from '../lib/survey.svelte';
   import { isLinked, linkLabel, showsDetail } from '../lib/phone-survey';
-  import type { SweepKind } from '../lib/survey-types';
   import './settings.css';
 
   const linked = $derived(isLinked(survey.status));
@@ -43,12 +42,6 @@
       <option value="strict">Strict</option>
       <option value="normal">Normal</option>
       <option value="relaxed">Relaxed</option>
-    </select>
-  </label>
-  <label class="row"><span class="lab">X1 scan</span>
-    <select value={survey.sweepKind} onchange={(e) => live.setSweepKind(e.currentTarget.value as SweepKind)} aria-label="Check the X1's own scans as">
-      <option value="lrud">{manual ? 'LRUD' : 'LRUD ring'}</option>
-      <option value="room">{manual ? 'Room outline' : 'Room sweep'}</option>
     </select>
   </label>
   <div class="row">

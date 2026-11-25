@@ -12,7 +12,7 @@
   import * as live from '../lib/survey.svelte';
   import { survey } from '../lib/survey.svelte';
   import { showSettings } from '../lib/phone.svelte';
-  import { linkLabel } from '../lib/phone-survey';
+  import { atStationOnly, linkLabel } from '../lib/phone-survey';
   import { splitUnit, stripModel } from '../lib/phone-livestrip';
 
   const KEY = 'cavecad.phone.liveStrip';
@@ -57,6 +57,8 @@
       aiming: survey.aiming,
       message: survey.message,
       warnings: survey.warnings.length,
+      preferred: survey.shotType,
+      atOnly: atStationOnly({ awaiting: !!survey.state.awaiting, mode: survey.state.mode, sweeping: !!survey.sweep || !!survey.waitingForDevice }),
     }),
   );
   const last = $derived(survey.last);
