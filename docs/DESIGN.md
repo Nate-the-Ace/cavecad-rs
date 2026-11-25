@@ -761,3 +761,8 @@ Replaces the phone layout's bottom row of six panel tabs and its top bar (`Phone
 **Gates** (`lib/gates.ts`, tested by `npm run test:gates`): sign-in first (`AccountGate`), then a cave must be open. Until one is (on every launch, and after the open cave is removed from the shelf) only the Caves tab works: the others are dimmed, the Caves tab is the Cave Shelf drawn inline (`CaveShelf embedded`: no Close, Start empty, Escape-to-close or startup checkbox) under a "Pick or start a cave to continue" line with New cave. The shelf's "open at startup" setting does not apply on a phone. Opening a cave shows Survey.
 
 Phone screens fit one screen with no helper text (only labels, buttons and a line when something is wrong), tight spacing from the tokens in `apps/web/src/phone.css` (scoped under `.phone`), 44px for the primary targets and 16px inputs. The instrument simulator is a development tool and is not offered on a phone.
+
+**Android (2026-11-25):** the same phone layout runs on Android phones as a `tauri android` build of `apps/desktop`
+(identifier `app.cavecad.desktop`, as on iOS), replacing the old Kotlin prototype. Phones are portrait only, tablets
+turn; Back sends the app to the background rather than closing it. Build, install, Bluetooth (btleplug's Android
+backend) and what is verified: `docs/ANDROID-TAURI.md`.
