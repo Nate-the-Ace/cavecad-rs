@@ -69,3 +69,19 @@ x1flash scan stop
 
 Flash the public 1.1.7 (X1 Flasher ▸ Cavway Release ▸ 1.1.7). The bootloader is untouched, so this always works
 (boot mode: hold both arrows, press DIST).
+
+## cc6: the feature picker (2026-11-25)
+
+`1.1.7-cc6` adds an on-device feature list. With the laser on, hold `<` for 2 s: a "Feature" list opens (16 items, five
+rows at a time; the order is `CALLOUTS` in `cave-instrument/src/cavway.rs`). `<` `>` scroll, `M` picks (beep), `CLR`
+cancels. The next shot carries the pick in packet bytes 54-55: byte 54 = 1-based item, byte 55 = `0xCA`
+(`Packet::callout`; `scan_count` ignores those bytes). A pick is used once.
+
+| Where | Stock | cc6 |
+|---|---|---|
+| 0x0800CFE0 | `push {r4,lr} / sub sp,#0x28` (UI state machine entry) | `b.w cc_ui`: mode `0x40` (the picker) and the `<` long-press opener; any other mode runs the stock code |
+| 0x080072BA | `bl 0x08006530` (first call of the per-mode screen function) | `bl cc_draw`: the same call, then draws the list in mode `0x40` |
+| 0x0800791A | `bl STORE_RECORD` in the store-N-records loop a **normal shot** uses (record buffer 0x20000C44) | `bl cc_store` (cc3's scan hook at 0x080132C4 only saw scan shots; cc5 missed this, found on the X1 2026-11-25) |
+
+State: CC_STATE +5 cursor, +6 the pick. Tested on the real X1 (2026-11-25): stored record bytes 54-55 = `04 ca` after
+picking Stream. Offline: `firmware-lab/tools/test_picker.py` in cavway-x1-emulator (CPU emulator).

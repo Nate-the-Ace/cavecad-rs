@@ -9,6 +9,10 @@
 //!   x1flash off   [--port P]            power the X1 off (also leaves boot mode)
 //!   x1flash scan start|stop|status      CaveCAD firmware (-cc) scan control
 //!   x1flash clock [--port P]            set the X1's clock to this Mac's local time
+//!   x1flash ble-scan                    X1s in range over Bluetooth
+//!
+//! Add `--ble` (and optionally `--name 0312`) to info, flash, off, clock or scan to use Bluetooth instead of the cable.
+//! macOS needs a Bluetooth-permitted app for that: run it through `tools/cave-x1/run-mac.sh x1flash --ble …`.
 //!
 //! `--json` prints one JSON object per line instead of text (the Mac app reads these).
 
@@ -119,6 +123,33 @@ impl Wire for Serial {
     fn discard(&mut self) {
         // SAFETY: flushes our own descriptor's input.
         unsafe { libc::tcflush(self.fd, libc::TCIFLUSH) };
+    }
+}
+
+impl Wire for Box<dyn Wire> {
+    fn send(&mut self, bytes: &[u8]) -> Result<(), String> {
+        (**self).send(bytes)
+    }
+    fn recv(&mut self, ms: u32) -> Vec<u8> {
+        (**self).recv(ms)
+    }
+    fn discard(&mut self) {
+        (**self).discard()
+    }
+}
+
+/// The X1 over Bluetooth (its UART service), 20 bytes a write.
+struct Ble(cave_x1::rawlink::RawLink);
+
+impl Wire for Ble {
+    fn send(&mut self, bytes: &[u8]) -> Result<(), String> {
+        self.0.send(bytes)
+    }
+    fn recv(&mut self, ms: u32) -> Vec<u8> {
+        self.0.recv(ms)
+    }
+    fn discard(&mut self) {
+        self.0.discard()
     }
 }
 
@@ -326,6 +357,23 @@ fn open_port(out: &Out, chosen: Option<&str>) -> (String, Serial) {
     }
 }
 
+/// The cable (`--port`) or, with `--ble`, Bluetooth. Returns a label for messages and the wire.
+fn open_link(out: &Out, chosen: Option<&str>, ble: Option<Option<&str>>) -> (String, Box<dyn Wire>) {
+    match ble {
+        None => {
+            let (p, w) = open_port(out, chosen);
+            (p, Box::new(w))
+        }
+        Some(name) => {
+            out.emit("phase", &[("phase", s("scanning"))], "Looking for the X1 over Bluetooth (15 s)…");
+            match cave_x1::rawlink::RawLink::connect(Duration::from_secs(15), name) {
+                Ok(l) => (format!("Bluetooth {}", l.name()), Box::new(Ble(l))),
+                Err(e) => out.error(&e),
+            }
+        }
+    }
+}
+
 fn image_fields(img: &Image, path: &str) -> Vec<(&'static str, String)> {
     vec![
         ("path", s(path)),
@@ -353,7 +401,7 @@ fn load_image(out: &Out, path: &str) -> Image {
     Image::parse(&bytes).unwrap_or_else(|e| out.error(&format!("{path}: {e}")))
 }
 
-fn run_flash(out: &Out, w: &mut dyn Wire, img: Image) -> bool {
+fn run_flash(out: &Out, w: &mut dyn Wire, img: Image, extra_ms: u32) -> bool {
     let debug = std::env::var_os("X1FLASH_DEBUG").is_some();
     let t0 = Instant::now();
     let total = img.packets();
@@ -375,7 +423,7 @@ fn run_flash(out: &Out, w: &mut dyn Wire, img: Image) -> bool {
                     Ok(v) if f.phase() == fl::Phase::Sending => v.parse().unwrap_or(wait_ms),
                     _ => wait_ms,
                 };
-                let end = Instant::now() + Duration::from_millis(u64::from(wait_ms));
+                let end = Instant::now() + Duration::from_millis(u64::from(wait_ms + extra_ms));
                 let mut next = None;
                 let sent_at = Instant::now();
                 let mut seen: Vec<u8> = Vec::new();
@@ -461,10 +509,16 @@ fn main() {
         .position(|a| a == "--port")
         .and_then(|i| args.get(i + 1))
         .map(String::as_str);
+    let name_arg = args
+        .iter()
+        .position(|a| a == "--name")
+        .and_then(|i| args.get(i + 1))
+        .map(String::as_str);
+    let ble: Option<Option<&str>> = args.iter().any(|a| a == "--ble").then_some(name_arg);
     let plain: Vec<&str> = args
         .iter()
         .enumerate()
-        .filter(|(i, a)| !a.starts_with("--") && (*i == 0 || args[i - 1] != "--port"))
+        .filter(|(i, a)| !a.starts_with("--") && (*i == 0 || (args[i - 1] != "--port" && args[i - 1] != "--name")))
         .map(|(_, a)| a.as_str())
         .collect();
     let out = Out { json };
@@ -485,8 +539,16 @@ fn main() {
                 },
             );
         }
+        ["ble-scan"] => {
+            let names = cave_x1::rawlink::scan(Duration::from_secs(8)).unwrap_or_else(|e| out.error(&e));
+            out.emit(
+                "ble",
+                &[("devices", format!("[{}]", names.iter().map(|x| s(x)).collect::<Vec<_>>().join(",")))],
+                &if names.is_empty() { "no X1 seen over Bluetooth".to_string() } else { names.join("\n") },
+            );
+        }
         ["info"] => {
-            let (path, mut w) = open_port(&out, port);
+            let (path, mut w) = open_link(&out, port, ble);
             let m = probe(&mut w).unwrap_or_else(|e| out.error(&e));
             report_mode(&out, &path, &m);
         }
@@ -525,10 +587,10 @@ fn main() {
                     &[("phase", s("simulating"))],
                     "SIMULATION: nothing is sent to a device.",
                 );
-                let ok = run_flash(&out, &mut w, img);
+                let ok = run_flash(&out, &mut w, img, 0);
                 std::process::exit(if ok { 0 } else { 1 });
             }
-            let (path, mut w) = open_port(&out, port);
+            let (path, mut w) = open_link(&out, port, ble);
             let m = probe(&mut w).unwrap_or_else(|e| out.error(&e));
             report_mode(&out, &path, &m);
             match m {
@@ -542,7 +604,7 @@ fn main() {
             if !yes {
                 out.error("this replaces the X1's firmware and erases its stored shots; add --yes to go ahead");
             }
-            let ok = run_flash(&out, &mut w, img);
+            let ok = run_flash(&out, &mut w, img, if ble.is_some() { 1500 } else { 0 });
             std::process::exit(if ok { 0 } else { 1 });
         }
         ["scan", what] => {
@@ -552,7 +614,7 @@ fn main() {
                 "status" => cavway::CMD_SCAN_STATUS,
                 _ => out.error("scan start, scan stop or scan status"),
             };
-            let (_, mut w) = open_port(&out, port);
+            let (_, mut w) = open_link(&out, port, ble);
             let find = |b: &[u8]| {
                 b.windows(3)
                     .position(|w| w == [0x3d, cmd, 0xcc])
@@ -596,7 +658,7 @@ fn main() {
             );
         }
         ["clock"] => {
-            let (path, mut w) = open_port(&out, port);
+            let (path, mut w) = open_link(&out, port, ble);
             let now = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map_or(0, |d| d.as_secs() as i64);
@@ -629,15 +691,15 @@ fn main() {
             );
         }
         ["off"] => {
-            let (path, mut w) = open_port(&out, port);
+            let (path, mut w) = open_link(&out, port, ble);
             w.send(&cavway::command(fl::cmd::POWER_OFF))
                 .unwrap_or_else(|e| out.error(&e));
             out.emit("off", &[("port", s(&path))], "Power off sent.");
         }
         _ => {
             eprintln!(
-                "x1flash: flash the Cavway X1 over USB\n\n  x1flash ports\n  x1flash info [--port P]\n  x1flash inspect FILE.bin\n  \
-                 x1flash flash FILE.bin --yes [--port P]\n  x1flash flash FILE.bin --simulate\n  x1flash off [--port P]\n  x1flash clock [--port P]\n  x1flash scan start|stop|status [--port P]\n\n  --json  one JSON object per line"
+                "x1flash: flash the Cavway X1 over USB or Bluetooth (--ble)\n\n  x1flash ports\n  x1flash info [--port P]\n  x1flash inspect FILE.bin\n  \
+                 x1flash flash FILE.bin --yes [--port P]\n  x1flash flash FILE.bin --simulate\n  x1flash off [--port P]\n  x1flash ble-scan\n  --ble [--name 0312]  use Bluetooth instead of the cable\n  x1flash clock [--port P]\n  x1flash scan start|stop|status [--port P]\n\n  --json  one JSON object per line"
             );
             std::process::exit(2);
         }

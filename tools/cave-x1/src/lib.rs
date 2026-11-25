@@ -14,6 +14,8 @@
 //! # Ok(()) }
 //! ```
 
+pub mod rawlink;
+
 use btleplug::api::{
     Central, CentralEvent, Characteristic, Manager as _, Peripheral as _, ScanFilter, WriteType,
 };

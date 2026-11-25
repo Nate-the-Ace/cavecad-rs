@@ -26,6 +26,7 @@
         @   SET_DEFAULTS_2 0x0800c520  second half of the factory-defaults routine (no arguments)
         @   SAVE_SETTINGS 0x0800c88c   writes the 24-byte settings block to the EEPROM (no arguments)
         .extern DISP_MEASURE, DISP_EXIT, BEEP, LASER_CONT, STORE_RECORD, SET_DEFAULTS_2, SAVE_SETTINGS
+        .extern UI_CONT, UI_EXIT, DRAW_PREP, SET_FONT, DRAW_STR
 
         .set USB_OK,        0x20000024      @ u32: stock sets it from the charger pin (1 = charging)
         .set USB_REPLY,     0x20001624      @ USB reply buffer: [0] == 0x3D while a reply waits
@@ -45,7 +46,16 @@
         .set CC_STATE,      0x2000bf00      @ +0 magic 0xA5, +1 last end reason, +2 remote stop pending,
                                             @ +3 Scan Options before a remote scan, +4 1 = restore them at the end
         .set CC_MAGIC,      0xa5
-        .set CC_VERSION,    4
+        @ cc5 feature picker: CC_STATE +5 = list cursor, +6 = callout chosen for the next shot (1-based, 0 none)
+        .set MODE_PICK,     0x40            @ a UI mode of our own: no stock code or table uses it
+        .set NCALL,         16
+        .set KEY_M,         0x2000129a      @ key structs: byte +1 is the event (1 press, 2 long press)
+        .set KEY_LT,        0x200012a4
+        .set KEY_GT,        0x200012ae
+        .set KEY_CLR,       0x200012b8
+        .set FONT_TITLE,    0x080193a7      @ the arguments stock menus give SET_FONT (0x0800cf88)
+        .set FONT_ROW,      0x0801874a
+        .set CC_VERSION,    6
         .set CC_SETTINGS_MARK, 0xc4         @ settings byte 0x17 (unused by stock): CaveCAD defaults applied once
         .set OPT_SCAN,      0x16            @ settings: Scan Options byte
         @ remote scans: steadiness level 2 (10000, the most lenient), time limit index 3 (10 min), allowed
@@ -197,6 +207,8 @@ cc_state_init:
         strb    r3, [r2, #1]
         strb    r3, [r2, #2]
         strb    r3, [r2, #4]
+        strb    r3, [r2, #5]
+        strb    r3, [r2, #6]
 10:     bx      lr
 
 @ ---------------------------------------------------------------- scan end hook
@@ -247,19 +259,33 @@ cc_scan_end:
         bx      lr
 
 @ ---------------------------------------------------------------- shot counter in packets
-@ Replaces "bl STORE_RECORD" at 0x080132c4 with "bl cc_store". r0 = the built 64-byte record.
+@ Replaces "bl STORE_RECORD" at 0x080132c4 (scan shots) and at 0x0800791a (normal shots, from the record buffer at
+@ 0x20000c44) with "bl cc_store". r0 = the built 64-byte record.
         .global cc_store
         .thumb_func
 cc_store:
         ldr     r1, =MODE
         ldrb    r1, [r1]
         cmp     r1, #2
-        bne     7f
+        bne     6f
         ldr     r1, =SCAN_COUNT
         ldr     r1, [r1]
         strb    r1, [r0, #54]
         lsrs    r1, r1, #8
         strb    r1, [r0, #55]
+        b.w     STORE_RECORD
+        @ cc5: a callout picked on the X1 rides on the next shot: byte 54 = its number (1 to 16), byte 55 = 0xCA
+6:      ldr     r2, =CC_STATE
+        ldrb    r3, [r2]
+        cmp     r3, #CC_MAGIC
+        bne     7f
+        ldrb    r3, [r2, #6]
+        cbz     r3, 7f
+        strb    r3, [r0, #54]
+        movs    r3, #0xca
+        strb    r3, [r0, #55]
+        movs    r3, #0
+        strb    r3, [r2, #6]
 7:      b.w     STORE_RECORD
 
 @ ---------------------------------------------------------------- USB answers without charging
@@ -324,4 +350,145 @@ cc_settings_boot:
         ldrb    r0, [r0]
         pop     {r4, pc}
 
+
+@ ---------------------------------------------------------------- feature picker (cc5)
+@ Hold `<` for 2 s with the laser on (mode 1) to open a list of cave features; `<` `>` scroll, M picks, CLR cancels.
+@ The next shot carries the pick (cc_store). Two hooks: cc_ui (the UI state machine's entry) and cc_draw (the screen
+@ drawing function's first call). Mode 0x40 is ours alone.
+@
+@ cc_ui replaces "push {r4,lr} / sub sp,#0x28" at 0x0800cfe0 (b.w here). It does those two instructions itself, so
+@ a frame exists for either exit: back into the stock handler at 0x0800cfe4, or the common exit at 0x0800e7c8.
+        .global cc_ui
+        .thumb_func
+cc_ui:
+        push    {r4, lr}
+        sub     sp, #0x28
+        ldr     r2, =MODE
+        ldrb    r1, [r2]
+        cmp     r1, #MODE_PICK
+        beq     20f
+        cmp     r1, #1
+        bne     29f
+        ldr     r3, =KEY_LT
+        ldrb    r3, [r3, #1]
+        cmp     r3, #2                  @ long press of `<`
+        bne     29f
+        bl      cc_state_init
+        ldr     r3, =CC_STATE
+        movs    r0, #0
+        strb    r0, [r3, #5]            @ cursor at the top
+        movs    r0, #MODE_PICK
+        ldr     r2, =MODE
+        strb    r0, [r2]
+        b.w     UI_EXIT
+29:     b.w     UI_CONT
+20:     ldr     r4, =CC_STATE
+        ldrb    r0, [r4, #5]            @ cursor
+        ldr     r3, =KEY_LT
+        ldrb    r3, [r3, #1]
+        cmp     r3, #1
+        bne     21f
+        cbz     r0, 21f
+        subs    r0, #1
+21:     ldr     r3, =KEY_GT
+        ldrb    r3, [r3, #1]
+        cmp     r3, #1
+        bne     22f
+        cmp     r0, #NCALL - 1
+        bhs     22f
+        adds    r0, #1
+22:     strb    r0, [r4, #5]
+        ldr     r3, =KEY_M
+        ldrb    r3, [r3, #1]
+        cmp     r3, #1
+        bne     23f
+        adds    r0, #1
+        strb    r0, [r4, #6]            @ the pick, 1-based
+        movs    r0, #9
+        bl      BEEP
+        b       24f
+23:     ldr     r3, =KEY_CLR
+        ldrb    r3, [r3, #1]
+        cmp     r3, #1
+        bne     25f
+24:     ldr     r2, =MODE
+        movs    r3, #1
+        strb    r3, [r2]                @ back to the measure screen
+25:     b.w     UI_EXIT
+
+@ cc_draw replaces "bl DRAW_PREP" at 0x080072ba (the first call of the per-mode screen function): does that call,
+@ then, in mode 0x40, draws the list. Stock draws nothing for an unknown mode, so nothing else is on the screen.
+        .global cc_draw
+        .thumb_func
+cc_draw:
+        push    {r4, r5, r6, lr}
+        bl      DRAW_PREP
+        ldr     r0, =MODE
+        ldrb    r0, [r0]
+        cmp     r0, #MODE_PICK
+        bne     39f
+        ldr     r0, =FONT_TITLE
+        bl      SET_FONT
+        adr     r2, s_title
+        movs    r1, #0x0e
+        movs    r0, #0
+        bl      DRAW_STR
+        ldr     r0, =FONT_ROW
+        bl      SET_FONT
+        ldr     r4, =CC_STATE
+        ldrb    r4, [r4, #5]            @ r4 = cursor
+        subs    r5, r4, #2              @ r5 = first row shown, keeping the cursor in the middle
+        bpl     30f
+        movs    r5, #0
+30:     cmp     r5, #NCALL - 5
+        ble     31f
+        movs    r5, #NCALL - 5
+31:     movs    r6, #0                  @ row 0 to 4
+32:     adds    r0, r5, r6              @ index
+        lsls    r1, r0, #2
+        adr     r2, callout_table
+        ldr     r2, [r2, r1]
+        lsls    r1, r6, #4
+        adds    r1, #0x1e               @ y
+        push    {r0, r1}
+        movs    r0, #0x14
+        bl      DRAW_STR
+        pop     {r0, r1}
+        cmp     r0, r4
+        bne     33f
+        adr     r2, s_arrow
+        movs    r0, #5
+        bl      DRAW_STR
+33:     adds    r6, #1
+        cmp     r6, #5
+        blt     32b
+        adr     r2, s_help
+        movs    r1, #0x71
+        movs    r0, #0
+        bl      DRAW_STR
+39:     pop     {r4, r5, r6, pc}
+
+        .balign 4
+callout_table:
+        .word   c0, c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11, c12, c13, c14, c15
+s_title:  .asciz "Feature"
+s_arrow:  .asciz ">"
+s_help:   .asciz "M:Pick CLR:Back"
+c0:  .asciz "Lead"
+c1:  .asciz "Squeeze"
+c2:  .asciz "Drip"
+c3:  .asciz "Stream"
+c4:  .asciz "Pool"
+c5:  .asciz "Sump"
+c6:  .asciz "Drop"
+c7:  .asciz "Climb"
+c8:  .asciz "Crawl"
+c9:  .asciz "Breakdown"
+c10: .asciz "Flowstone"
+c11: .asciz "Column"
+c12: .asciz "Straw"
+c13: .asciz "Bats"
+c14: .asciz "Bones"
+c15: .asciz "Hazard"
+        .balign 4
         .ltorg

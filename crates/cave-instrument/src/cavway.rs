@@ -205,7 +205,39 @@ pub struct Packet {
     /// This shot's number within its scan (1 = first), sent by CaveCAD firmware (`-cc`) in bytes 54 and 55.
     /// `None` from stock firmware (which leaves 0xFFFF there) and for shots outside a scan.
     pub scan_count: Option<u16>,
+    /// The feature the surveyor picked on the X1 before this shot (CaveCAD firmware `-cc5` and later: hold `<` with the
+    /// laser on): a 1-based position in [`CALLOUTS`], sent in byte 54 with 0xCA in byte 55. `None` if none was picked.
+    pub callout: Option<u8>,
 }
+
+/// The features the X1's picker offers, in its order (firmware `cc.s`, `callout_table`). A packet's
+/// [`Packet::callout`] is a 1-based position in this list.
+pub const CALLOUTS: [&str; 16] = [
+    "Lead",
+    "Squeeze",
+    "Drip",
+    "Stream",
+    "Pool",
+    "Sump",
+    "Drop",
+    "Climb",
+    "Crawl",
+    "Breakdown",
+    "Flowstone",
+    "Column",
+    "Straw",
+    "Bats",
+    "Bones",
+    "Hazard",
+];
+
+/// The name of a picked feature, from [`Packet::callout`].
+pub fn callout_name(n: u8) -> Option<&'static str> {
+    CALLOUTS.get(usize::from(n).checked_sub(1)?).copied()
+}
+
+/// Byte 55 of a packet whose bytes 54 and 55 are a picked feature, not a scan count.
+const CALLOUT_MARK: u8 = 0xca;
 
 const ANGLE: f64 = 360.0 / 65535.0;
 
@@ -396,7 +428,10 @@ pub fn decode_packet(b: &[u8]) -> Option<Packet> {
         quality: (b.len() >= 58).then(|| u32::from(u16_at(b, 56))),
         scan_count: (b.len() >= 56)
             .then(|| u16_at(b, 54))
-            .filter(|&n| n != 0 && n != 0xffff),
+            .filter(|&n| n != 0 && n != 0xffff && b[55] != CALLOUT_MARK),
+        callout: (b.len() >= 56 && b[55] == CALLOUT_MARK)
+            .then(|| b[54])
+            .filter(|&n| callout_name(n).is_some()),
     })
 }
 
@@ -644,5 +679,25 @@ mod cc_tests {
         assert_eq!(decode_packet(&p).unwrap().scan_count, None); // stock firmware
         p[54..56].copy_from_slice(&[0x2a, 0x00]);
         assert_eq!(decode_packet(&p).unwrap().scan_count, Some(42));
+    }
+
+    #[test]
+    fn a_feature_picked_on_the_x1_is_read_from_bytes_54_and_55() {
+        let mut p = encode_packet(&PacketSpec::default());
+        assert_eq!(decode_packet(&p).unwrap().callout, None); // nothing set
+        p[54..56].copy_from_slice(&[0xff, 0xff]);
+        assert_eq!(decode_packet(&p).unwrap().callout, None); // stock firmware
+        p[54..56].copy_from_slice(&[4, 0xca]); // what the real X1 sent on 2026-11-25: Stream
+        let d = decode_packet(&p).unwrap();
+        assert_eq!(d.callout, Some(4));
+        assert_eq!(callout_name(4), Some("Stream"));
+        assert_eq!(d.scan_count, None); // not mistaken for a scan counter (0xCA04)
+        p[54..56].copy_from_slice(&[17, 0xca]); // past the list
+        assert_eq!(decode_packet(&p).unwrap().callout, None);
+        p[54..56].copy_from_slice(&[0, 0xca]);
+        assert_eq!(decode_packet(&p).unwrap().callout, None);
+        assert_eq!(callout_name(0), None);
+        assert_eq!(callout_name(16), Some("Hazard"));
+        assert_eq!(callout_name(17), None);
     }
 }
