@@ -121,6 +121,98 @@ pub fn check(names: &[String]) -> Result<(), CalloutError> {
     Ok(())
 }
 
+/// Where a computer writes a list into a running X1 (`1.1.7-cc8` and later), with the stock memory-write: the RAM buffer
+/// for the list at 0xC000 to 0xC1FF, then a write of `C0` to the commit address, then a read of the result there. The
+/// firmware checks the list's CRC and programs it into the next free slot of a spare flash sector: no reflash, and the
+/// stored shots stay. See `tools/x1-patch/cc.s` (`cc_commit`).
+pub const BUFFER_ADDRESS: u16 = 0xC000;
+/// The address a `C0` is written to, to commit; and where the result (4 bytes) is read from.
+pub const COMMIT_ADDRESS: u16 = 0xC200;
+/// The first cc build that takes a pushed list.
+pub const PUSH_MIN_CC_VERSION: u8 = 8;
+/// Bytes per write. The stock write handler takes up to 124, but how long a frame the X1's receiver accepts is unknown,
+/// so these are small (a frame is 5 + 1 + 4 + 32 + 2 bytes, sent in 20-byte pieces over Bluetooth).
+const CHUNK: usize = 32;
+
+/// The 426 bytes a list is stored as: the block (`CCAL`, count, names) and its CRC-16/Modbus, little-endian.
+pub fn slot_bytes(names: &[String]) -> Result<Vec<u8>, CalloutError> {
+    check(names)?;
+    let mut b = vec![0u8; BLOCK];
+    b[..4].copy_from_slice(MAGIC);
+    b[4] = names.len() as u8;
+    for (i, n) in names.iter().enumerate() {
+        let s = HEAD + i * SLOT;
+        b[s..s + n.len()].copy_from_slice(n.as_bytes());
+    }
+    let crc = crate::cavway_flash::crc16_modbus(&b);
+    b.extend_from_slice(&crc.to_le_bytes());
+    Ok(b)
+}
+
+/// The frames that push a list to a running X1, in order: the list in 32-byte writes, then the commit. Send each and wait
+/// for its answer; then read [`COMMIT_ADDRESS`] (4 bytes) and decode it with [`PushStatus::parse`].
+pub fn push_frames(names: &[String]) -> Result<Vec<Vec<u8>>, CalloutError> {
+    let slot = slot_bytes(names)?;
+    let mut frames: Vec<Vec<u8>> = slot
+        .chunks(CHUNK)
+        .enumerate()
+        .map(|(i, part)| write_frame(BUFFER_ADDRESS + (i * CHUNK) as u16, part))
+        .collect();
+    frames.push(write_frame(COMMIT_ADDRESS, &[0xC0, 0, 0, 0]));
+    Ok(frames)
+}
+
+/// A memory write (`3e`, address, count, bytes). The firmware's handler needs at least 4 bytes in the frame body.
+fn write_frame(address: u16, data: &[u8]) -> Vec<u8> {
+    let mut p = vec![
+        0x3e,
+        (address & 0xff) as u8,
+        (address >> 8) as u8,
+        data.len() as u8,
+    ];
+    p.extend_from_slice(data);
+    crate::cavway::frame(&p)
+}
+
+/// What the X1 says after a commit (4 bytes read from [`COMMIT_ADDRESS`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PushStatus {
+    /// 0 stored; 2 not a valid list; 3 no room left; 4 the slot was not erased; 5 the flash write failed; 0xFF not finished.
+    pub result: u8,
+    /// The slot it went to (0 to 254).
+    pub slot: u8,
+    /// Names in the list now in use.
+    pub count: u8,
+    /// The cc firmware build.
+    pub cc_version: u8,
+}
+
+impl PushStatus {
+    /// Reads the 4 status bytes.
+    pub fn parse(b: &[u8]) -> Option<PushStatus> {
+        (b.len() >= 4).then(|| PushStatus {
+            result: b[0],
+            slot: b[1],
+            count: b[2],
+            cc_version: b[3],
+        })
+    }
+
+    /// A sentence for the outcome.
+    pub fn message(&self) -> String {
+        match self.result {
+            0 => format!("stored in slot {} ({} names)", self.slot, self.count),
+            2 => "the X1 did not accept the list (it failed its own check; try again)".into(),
+            3 => "the X1's list storage is full (255 updates); reflash the firmware to clear it"
+                .into(),
+            4 => "the next storage slot was not empty; reflash the firmware to clear it".into(),
+            5 => "the X1 could not write its flash; nothing was changed".into(),
+            0xff => "the X1 did not finish (is it running firmware 1.1.7-cc8 or later?)".into(),
+            n => format!("unexpected result {n}"),
+        }
+    }
+}
+
 /// A copy of `image` with its feature list replaced by `names` (checked first). Nothing else changes.
 pub fn set_callouts(image: &[u8], names: &[String]) -> Result<Vec<u8>, CalloutError> {
     check(names)?;
@@ -216,6 +308,65 @@ mod tests {
         assert!(matches!(callouts(&two), Err(CalloutError::Damaged(_))));
         let cut = image(&["a"])[..310].to_vec();
         assert!(matches!(callouts(&cut), Err(CalloutError::Damaged(_))));
+    }
+
+    #[test]
+    fn a_list_is_pushed_as_writes_then_a_commit() {
+        let names = s(&["Pit", "Water crawl", "Bats"]);
+        let slot = slot_bytes(&names).unwrap();
+        assert_eq!(slot.len(), 426);
+        assert_eq!(&slot[..5], b"CCAL\x03");
+        let crc = u16::from_le_bytes([slot[424], slot[425]]);
+        assert_eq!(crc, crate::cavway_flash::crc16_modbus(&slot[..424]));
+        let frames = push_frames(&names).unwrap();
+        assert_eq!(frames.len(), 15); // 14 writes (13 x 32 + 10) and the commit
+        // the first write: data:, length 36, 3e, 00 c0, 32, the first 32 bytes, CR LF
+        assert_eq!(&frames[0][..5], b"data:");
+        assert_eq!(&frames[0][5..10], &[36, 0x3e, 0x00, 0xc0, 32]);
+        assert_eq!(&frames[0][10..42], &slot[..32]);
+        assert_eq!(&frames[13][5..10], &[4 + 10, 0x3e, 0xa0, 0xc1, 10]); // 0xC1A0, the last 10 bytes
+        assert_eq!(
+            frames[14],
+            crate::cavway::frame(&[0x3e, 0x00, 0xc2, 4, 0xc0, 0, 0, 0])
+        );
+        assert!(
+            frames
+                .iter()
+                .all(|f| f.len() <= 5 + 1 + 4 + 32 + 2 && f[5] >= 8)
+        );
+        assert!(push_frames(&s(&["Drip", "drip"])).is_err());
+    }
+
+    #[test]
+    fn the_status_is_decoded() {
+        assert_eq!(
+            PushStatus::parse(&[0, 3, 7, 8]),
+            Some(PushStatus {
+                result: 0,
+                slot: 3,
+                count: 7,
+                cc_version: 8
+            })
+        );
+        assert_eq!(PushStatus::parse(&[0, 3]), None);
+        assert!(
+            PushStatus::parse(&[0, 3, 7, 8])
+                .unwrap()
+                .message()
+                .contains("slot 3")
+        );
+        assert!(
+            PushStatus::parse(&[3, 0, 0, 8])
+                .unwrap()
+                .message()
+                .contains("full")
+        );
+        assert!(
+            PushStatus::parse(&[0xff, 0, 0, 0])
+                .unwrap()
+                .message()
+                .contains("cc8")
+        );
     }
 
     #[test]

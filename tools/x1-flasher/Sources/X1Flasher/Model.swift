@@ -53,6 +53,27 @@ final class Model: ObservableObject {
     }
     /// The feature list inside the chosen firmware file (nil: the file has none).
     @Published var fileCallouts: [String]?
+    /// Progress of "Update list on X1" (no reflash).
+    enum PushState: Equatable {
+        case idle
+        case running(done: Int, total: Int)
+        case ok(String)
+        case failed(String)
+    }
+    @Published var push: PushState = .idle
+
+    /// The cc build number in a version like "1.1.7-cc8" (nil for stock or unknown).
+    static func ccBuild(_ version: String?) -> Int? {
+        guard let v = version, let r = v.range(of: "-cc") else { return nil }
+        return Int(v[r.upperBound...].prefix { $0.isNumber })
+    }
+
+    /// Whether the X1 in front of us runs a build that takes a list without a reflash (1.1.7-cc8 or later).
+    var canPush: Bool {
+        guard let d = device, d.mode == .app, let b = Self.ccBuild(d.version) else { return false }
+        return b >= 8
+    }
+
     /// Set once a list has been built from the Feature callouts page, so the Flash page can say so.
     @Published var builtFromList = false
 
@@ -63,8 +84,9 @@ final class Model: ObservableObject {
 
     /// Cavway's published releases, where they were downloaded (newest first).
     static let library: [(String, String)] = [
+        ("1.1.7-cc8m", "~/Documents/github/cavway-x1-emulator/firmware-lab/out/CVWY_X1_1.1.7-cc8m.bin"),
+        ("1.1.7-cc8", "~/Documents/github/cavecad-rs-ble/tools/x1-patch/build/CVWY_X1_1.1.7-cc8.bin"),
         ("1.1.7-cc7m", "~/Documents/github/cavway-x1-emulator/firmware-lab/out/CVWY_X1_1.1.7-cc7m.bin"),
-        ("1.1.7-cc7", "~/Documents/github/cavecad-rs-ble/tools/x1-patch/build/CVWY_X1_1.1.7-cc7.bin"),
         ("1.1.7-cc4", "~/Documents/github/cavecad-rs-ble/tools/x1-patch/build/CVWY_X1_1.1.7-cc4.bin"),
         ("1.1.7", "~/Documents/github/cavway-firmware/CVWY_X1_1.1.7.bin"),
         ("1.1.6", "~/Documents/github/cavway-firmware/CVWY_X1_1.1.6.bin"),
@@ -286,6 +308,34 @@ final class Model: ObservableObject {
         builtFromList = true
         note("Built \((out as NSString).lastPathComponent) with \(names.count) feature names")
         return nil
+    }
+
+    /// Writes `names` into the running X1's own storage (cc8 and later): no flash, shots kept.
+    func pushList(names: [String]) {
+        guard canPush, !isFlashing, case .idle = push else { return }
+        guard let port else { return }
+        push = .running(done: 0, total: 15)
+        note("Sending \(names.count) feature names to the X1")
+        Task {
+            var outcome: PushState = .failed("x1flash stopped without saying why")
+            let link = useBluetooth ? ["--ble"] : ["--port", port]
+            _ = await run(["callouts", "push", "--names", names.joined(separator: "\n")] + link) { ev in
+                switch ev["event"] as? String {
+                case "progress": self.push = .running(done: ev["done"] as? Int ?? 0, total: ev["total"] as? Int ?? 15)
+                case "pushed":
+                    let msg = ev["message"] as? String ?? ""
+                    outcome = (ev["ok"] as? Bool ?? false) ? .ok(msg) : .failed(msg)
+                case "error": outcome = .failed(ev["message"] as? String ?? "failed")
+                default: break
+                }
+            }
+            push = outcome
+            switch outcome {
+            case .ok(let m): note("List on the X1: \(m)"); UserDefaults.standard.set(names, forKey: "calloutList")
+            case .failed(let m): note("List not sent: \(m)")
+            default: break
+            }
+        }
     }
 
     /// Sets the X1's clock to this Mac's local time.

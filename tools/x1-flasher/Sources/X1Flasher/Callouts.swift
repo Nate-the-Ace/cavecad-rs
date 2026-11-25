@@ -38,9 +38,9 @@ struct CalloutsCard: View {
     // A firmware file without a list: offer the ones that have it.
     var noList: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Label(model.firmware == nil ? "Choose a firmware file that has a feature list." : "This firmware has no feature list (it needs 1.1.7-cc7 or later).",
+            Label(model.firmware == nil ? "Choose a firmware file that has a feature list." : "This firmware has no feature list (it needs 1.1.7-cc7 or later; 1.1.7-cc8 or later can also take a list without a reflash).",
                   systemImage: "info.circle").font(.callout)
-            let withList = Model.library.filter { $0.0.contains("cc7") || $0.0.contains("cc8") || $0.0.contains("cc9") }
+            let withList = Model.library.filter { (Model.ccBuild($0.0) ?? 0) >= 7 }
             if withList.isEmpty {
                 Text("None found. Build one with tools/x1-patch/build.py, or choose a .bin on the Flash page.").font(.callout).foregroundStyle(.secondary)
             }
@@ -88,6 +88,7 @@ struct CalloutsCard: View {
             if let fw = model.firmware, model.builtFromList {
                 Label("Ready: \(fw.name). Flash it from here, or from the Flash page.", systemImage: "checkmark.circle").font(.callout).foregroundStyle(.green)
             }
+            pushRow
             HStack {
                 Button {
                     build(thenFlash: true)
@@ -105,6 +106,40 @@ struct CalloutsCard: View {
                  : "Put the X1 in boot mode first (hold < and >, press DIST). The buttons above stay off until it's there.")
                 .font(.caption).foregroundStyle(.secondary)
         }
+    }
+
+    /// "Update List on X1": straight into the running X1, no reflash.
+    var pushRow: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Button {
+                    model.push = .idle
+                    model.pushList(names: rows.map { $0.name.trimmingCharacters(in: .whitespaces) })
+                } label: {
+                    Label("Update List on X1", systemImage: "arrow.up.circle.fill").frame(minWidth: 150)
+                }
+                .buttonStyle(.borderedProminent).controlSize(.large)
+                .disabled(!listOK || !model.canPush || model.isFlashing || isPushing)
+                .help("Writes the list into the X1 while it runs: no reflash, and the stored shots stay")
+                switch model.push {
+                case .running(let d, let t):
+                    ProgressView(value: Double(d), total: Double(max(t, 1))).frame(width: 120)
+                case .ok(let m): Label(m, systemImage: "checkmark.circle.fill").foregroundStyle(.green).font(.callout)
+                case .failed(let m): Label(m, systemImage: "xmark.octagon.fill").foregroundStyle(.red).font(.callout)
+                case .idle: EmptyView()
+                }
+            }
+            Text(pushHint).font(.caption).foregroundStyle(.secondary)
+        }
+    }
+
+    var isPushing: Bool { if case .running = model.push { return true } else { return false } }
+
+    var pushHint: String {
+        guard let d = model.device else { return "Start the X1 normally (not boot mode) and check it above, to update its list without flashing." }
+        if d.mode != .app { return "The X1 is in boot mode: start it normally to update the list without flashing." }
+        if !model.canPush { return "This X1 runs \(d.version ?? "?"). Flash 1.1.7-cc8m once; after that the list can be updated here with no flash." }
+        return "Updating the list keeps the stored shots. A full flash may put the list back to the one built into the file (not yet confirmed on a real X1)."
     }
 
     var buttonTitle: String { model.device?.mode == .boot ? "Build and Flash…" : "Build, then Flash…" }

@@ -27,6 +27,7 @@
         @   SAVE_SETTINGS 0x0800c88c   writes the 24-byte settings block to the EEPROM (no arguments)
         .extern DISP_MEASURE, DISP_EXIT, BEEP, LASER_CONT, STORE_RECORD, SET_DEFAULTS_2, SAVE_SETTINGS
         .extern UI_CONT, UI_EXIT, DRAW_PREP, SET_FONT, DRAW_STR
+        .extern STOCK_VALIDATE, STOCK_WRITE, FLASH_WRITE_HALF
 
         .set USB_OK,        0x20000024      @ u32: stock sets it from the charger pin (1 = charging)
         .set USB_REPLY,     0x20001624      @ USB reply buffer: [0] == 0x3D while a reply waits
@@ -50,13 +51,27 @@
         .set MODE_PICK,     0x40            @ a UI mode of our own: no stock code or table uses it
         .set NAME_BYTES,    13              @ one list entry: up to 12 characters and a 0
         .set MAX_NAMES,     32
+        @ cc8 list in flash: x1flash `callouts push` writes a list into the X1 without a reflash. A computer writes it with the
+        @ stock memory-write (3e) at 0xC000..0xC1FF (a RAM buffer), then writes C0 to 0xC200 to commit it, and reads
+        @ 0xC200 for the result [result, slot, count, cc version]: 0 ok, 2 not a valid list, 3 no room, 4 slot not erased, 5 write failed.
+        @ Each commit goes into the next empty 512-byte slot of the (otherwise unused) flash sector 5, never erasing anything;
+        @ the newest valid slot is the list the picker shows, else the one built in below.
+        .set LIST_ADDR,     0xc000
+        .set LIST_SPAN,     0x210
+        .set CC_LISTBUF,    0x2000c000      @ RAM above everything stock uses and cc's state
+        .set CC_STATUS,     0x2000c200
+        .set FLASH_LIST,    0x08020000
+        .set FLASH_LIST_END, 0x0803fe00     @ 255 slots; the app's marker word at 0x0803ff00 is never touched
+        .set SLOT,          512
+        .set BLOCK_LEN,     424             @ "CCAL", count, names
+        .set SLOT_LEN,      426             @ and a CRC-16/Modbus of those bytes
         .set KEY_M,         0x2000129a      @ key structs: byte +1 is the event (1 press, 2 long press)
         .set KEY_LT,        0x200012a4
         .set KEY_GT,        0x200012ae
         .set KEY_CLR,       0x200012b8
         .set FONT_TITLE,    0x080193a7      @ the arguments stock menus give SET_FONT (0x0800cf88)
         .set FONT_ROW,      0x0801874a
-        .set CC_VERSION,    7
+        .set CC_VERSION,    8
         .set CC_SETTINGS_MARK, 0xc4         @ settings byte 0x17 (unused by stock): CaveCAD defaults applied once
         .set OPT_SCAN,      0x16            @ settings: Scan Options byte
         @ remote scans: steadiness level 2 (10000, the most lenient), time limit index 3 (10 min), allowed
@@ -210,6 +225,7 @@ cc_state_init:
         strb    r3, [r2, #4]
         strb    r3, [r2, #5]
         strb    r3, [r2, #6]
+        str     r3, [r2, #8]            @ cached pointer to the list in use (0: look it up)
 10:     bx      lr
 
 @ ---------------------------------------------------------------- scan end hook
@@ -375,8 +391,8 @@ cc_ui:
         ldrb    r3, [r3, #1]
         cmp     r3, #2                  @ long press of `<`
         bne     29f
-        adr     r3, callout_block
-        ldrb    r3, [r3, #4]            @ an empty list: nothing to open
+        bl      cc_list
+        ldrb    r3, [r0, #4]            @ an empty list: nothing to open
         cmp     r3, #0
         beq     29f
         bl      cc_state_init
@@ -400,8 +416,10 @@ cc_ui:
         ldrb    r3, [r3, #1]
         cmp     r3, #1
         bne     22f
-        adr     r1, callout_block
-        ldrb    r1, [r1, #4]            @ count
+        push    {r0}
+        bl      cc_list
+        ldrb    r1, [r0, #4]            @ count
+        pop     {r0}
         subs    r1, #1                  @ last index
         cmp     r0, r1
         bhs     22f
@@ -444,7 +462,8 @@ cc_draw:
         bl      DRAW_STR
         ldr     r0, =FONT_ROW
         bl      SET_FONT
-        adr     r7, callout_block       @ r7 = the list
+        bl      cc_list
+        mov     r7, r0                  @ r7 = the list
         ldr     r4, =CC_STATE
         ldrb    r4, [r4, #5]            @ r4 = cursor
         ldrb    r3, [r7, #4]            @ r3 = count
@@ -485,6 +504,210 @@ cc_draw:
         movs    r0, #0
         bl      DRAW_STR
 39:     pop     {r4, r5, r6, r7, pc}
+
+
+@ ---------------------------------------------------------------- the list: where it lives, how it is written (cc8)
+@ cc_list: r0 = the list in use: the newest valid slot in flash, else callout_block. Cached in CC_STATE +8.
+        .global cc_list
+        .thumb_func
+cc_list:
+        push    {r4, lr}
+        bl      cc_state_init
+        ldr     r4, =CC_STATE
+        ldr     r0, [r4, #8]
+        cbnz    r0, 81f
+        bl      cc_scan
+        cbnz    r0, 80f
+        adr     r0, callout_block
+80:     str     r0, [r4, #8]
+81:     pop     {r4, pc}
+
+@ cc_scan: r0 = the newest valid slot (0 if none), r1 = the first empty slot (FLASH_LIST_END if the sector is full).
+        .thumb_func
+cc_scan:
+        push    {r4, r5, r6, lr}
+        ldr     r4, =FLASH_LIST
+        ldr     r5, =FLASH_LIST_END
+        mov     r6, r4
+82:     cmp     r6, r5
+        bhs     83f
+        ldr     r0, [r6]
+        adds    r0, #1                  @ 0xffffffff: erased, nothing was ever written here
+        beq     83f
+        add     r6, r6, #SLOT
+        b       82b
+83:     mov     r5, r6                  @ r5 = first empty
+84:     cmp     r6, r4                  @ walk back to the newest slot that checks out
+        bls     86f
+        sub     r6, r6, #SLOT
+        mov     r0, r6
+        bl      cc_valid
+        cmp     r0, #0
+        beq     84b
+        mov     r0, r6
+        mov     r1, r5
+        pop     {r4, r5, r6, pc}
+86:     movs    r0, #0
+        mov     r1, r5
+        pop     {r4, r5, r6, pc}
+
+@ cc_valid: r0 = a block; r0 = 1 if it is "CCAL", a count of 32 or less, and its CRC checks, else 0.
+        .thumb_func
+cc_valid:
+        push    {r4, lr}
+        mov     r4, r0
+        ldr     r1, [r4]
+        movw    r2, #0x4343             @ "CCAL", built from two halves so the bytes C C A L appear only in the data block
+        movt    r2, #0x4c41
+        cmp     r1, r2
+        bne     87f
+        ldrb    r1, [r4, #4]
+        cmp     r1, #32
+        bhi     87f
+        mov     r0, r4
+        movw    r1, #BLOCK_LEN
+        bl      cc_crc16
+        ldrh    r1, [r4, #BLOCK_LEN]
+        cmp     r0, r1
+        bne     87f
+        movs    r0, #1
+        pop     {r4, pc}
+87:     movs    r0, #0
+        pop     {r4, pc}
+
+@ cc_crc16: CRC-16/Modbus of r1 bytes at r0 (the one the bootloader's packets use), in r0.
+        .thumb_func
+cc_crc16:
+        movw    r2, #0xffff
+        movw    r12, #0xa001
+88:     cbz     r1, 91f
+        ldrb    r3, [r0], #1
+        eors    r2, r2, r3
+        movs    r3, #8
+89:     lsrs    r2, r2, #1
+        bcc     90f
+        eor.w   r2, r2, r12
+90:     subs    r3, #1
+        bne     89b
+        subs    r1, #1
+        b       88b
+91:     mov     r0, r2
+        bx      lr
+
+@ cc_addr replaces "bl 0x08008594" (the memory-address-to-pointer map) at 0x0800c420 and 0x0800c450, inside the
+@ 3d/3e handler: addresses 0xC000..0xC20F are ours (the buffer, then the result block); the rest is stock.
+        .global cc_addr
+        .thumb_func
+cc_addr:
+        movw    r2, #LIST_ADDR
+        subs    r2, r0, r2
+        cmp     r2, #LIST_SPAN
+        bhs     95f
+        adds    r3, r2, r1
+        cmp     r3, #LIST_SPAN
+        bhi     94f                     @ runs past the end: 0 = refused
+        ldr     r0, =CC_LISTBUF
+        adds    r0, r0, r2              @ the buffer and the result block are one run of RAM
+        bx      lr
+94:     movs    r0, #0
+        bx      lr
+95:     b.w     STOCK_VALIDATE
+
+@ cc_write replaces "bl 0x080132d0" (the memory write) at 0x0800c448. r0 = address, r1 = data, r2 = count.
+@ Bytes for 0xC000..0xC1FF fill the buffer; a write whose first byte is 0xC0 to 0xC200 commits it.
+        .global cc_write
+        .thumb_func
+cc_write:
+        movw    r3, #LIST_ADDR
+        subs    r3, r0, r3
+        cmp     r3, #LIST_SPAN
+        bhs     99f
+        push    {r4, lr}
+        cmp     r3, #0x200
+        bhs     97f
+        adds    r0, r3, r2
+        cmp     r0, #0x200
+        bhi     98f                     @ past the buffer: ignored
+        ldr     r0, =CC_LISTBUF
+        adds    r0, r0, r3
+96:     cbz     r2, 98f
+        ldrb    r4, [r1], #1
+        strb    r4, [r0], #1
+        subs    r2, #1
+        b       96b
+97:     ldrb    r4, [r1]
+        cmp     r4, #0xc0
+        bne     98f
+        bl      cc_commit
+98:     pop     {r4, pc}
+99:     b.w     STOCK_WRITE
+
+@ cc_commit: checks the buffer and programs it into the next empty slot. The result goes to CC_STATUS.
+        .thumb_func
+cc_commit:
+        push    {r4, r5, r6, lr}
+        ldr     r4, =CC_STATUS
+        movs    r0, #0xff
+        strb    r0, [r4]                @ 0xff: not finished
+        ldr     r5, =CC_LISTBUF
+        mov     r0, r5
+        bl      cc_valid
+        cbnz    r0, 100f
+        movs    r0, #2
+        b       109f
+100:    bl      cc_scan
+        mov     r6, r1                  @ the slot to use
+        ldr     r0, =FLASH_LIST_END
+        cmp     r6, r0
+        blo     101f
+        movs    r0, #3
+        b       109f
+101:    mov     r1, r6                  @ the whole slot must read erased (all 0xff)
+        movs    r2, #SLOT / 4
+102:    ldr     r0, [r1], #4
+        adds    r0, #1
+        bne     103f
+        subs    r2, #1
+        bne     102b
+        b       104f
+103:    movs    r0, #4
+        b       109f
+104:    mov     r0, r6
+        movw    r1, #SLOT_LEN
+        mov     r2, r5
+        bl      FLASH_WRITE_HALF
+        cmp     r0, #1
+        beq     105f
+        movs    r0, #5
+        b       109f
+105:    mov     r1, r6                  @ read it back
+        mov     r2, r5
+        movw    r3, #SLOT_LEN
+106:    ldrb    r0, [r1], #1
+        ldrb    r12, [r2], #1
+        cmp     r0, r12
+        bne     107f
+        subs    r3, #1
+        bne     106b
+        b       108f
+107:    movs    r0, #5
+        b       109f
+108:    ldr     r1, =CC_STATE
+        movs    r0, #0
+        str     r0, [r1, #8]            @ the picker looks the list up again
+        ldr     r0, =FLASH_LIST
+        subs    r0, r6, r0
+        lsrs    r0, r0, #9
+        strb    r0, [r4, #1]            @ the slot used
+        ldrb    r0, [r5, #4]
+        strb    r0, [r4, #2]            @ names in it
+        movs    r0, #0
+109:    strb    r0, [r4]
+        movs    r0, #CC_VERSION
+        strb    r0, [r4, #3]
+        pop     {r4, r5, r6, pc}
+
+        .ltorg
 
 s_title:  .asciz "Feature"
 s_arrow:  .asciz ">"

@@ -85,3 +85,27 @@ cancels. The next shot carries the pick in packet bytes 54-55: byte 54 = 1-based
 
 State: CC_STATE +5 cursor, +6 the pick. Tested on the real X1 (2026-11-25): stored record bytes 54-55 = `04 ca` after
 picking Stream. Offline: `firmware-lab/tools/test_picker.py` in cavway-x1-emulator (CPU emulator).
+
+## cc7 and cc8: the list as data, and updating it without a reflash (2026-11-25)
+
+**cc7** makes the feature list data (`callout_block` in cc.s: `CCAL`, count, 32 x 13-byte names), so `x1flash callouts set`
+can rewrite it in a .bin.
+
+**cc8** lets a computer change the list on a running X1 (`x1flash callouts push`, or the X1 Flasher "Update List on X1"
+button): no flash of the firmware, stored shots kept.
+
+| Where | What |
+|---|---|
+| 0x0800C420, 0x0800C450 | `bl 0x08008594` (memory address to pointer) in the 3d/3e handler becomes `bl cc_addr`: 0xC000-0xC20F is ours |
+| 0x0800C448 | `bl 0x080132D0` (memory write) becomes `bl cc_write` |
+
+- A computer writes the list (426 bytes: block + CRC-16/Modbus) with the stock `3e` into a RAM buffer at 0xC000-0xC1FF
+  (32 bytes a write), then writes `C0 00 00 00` to 0xC200. The firmware checks the CRC and programs the list into the next
+  empty 512-byte slot of flash sector 5 (0x08020000-0x0803FDFF, 255 slots), using the stock flash writer 0x08007DE0.
+  Nothing is erased; the app's marker word at 0x0803FF00 is never touched.
+- Read 0xC200 (4 bytes) for the result `[result, slot, count, cc version]`: 0 stored, 2 not a valid list, 3 no room,
+  4 slot not erased, 5 flash write failed.
+- The picker uses the newest valid slot, else the built-in block. A full flash resets to the built-in list if the
+  bootloader erases sector 5 (not known; see FIRMWARE.md).
+- Tested only in the CPU emulator so far (`firmware-lab/tools/test_picker.py` in cavway-x1-emulator: the real dispatcher fed
+  the frames x1flash sends). Not run on an X1 yet.

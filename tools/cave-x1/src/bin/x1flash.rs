@@ -11,6 +11,7 @@
 //!   x1flash clock [--port P]            set the X1's clock to this Mac's local time
 //!   x1flash callouts show FILE.bin      the feature list inside a -cc7 (or later) file
 //!   x1flash callouts set FILE.bin --out NEW.bin --names "A\nB\nC"   a copy with that list (one name per line)
+//!   x1flash callouts push --names "A\nB" [--ble|--port P]   put that list on a RUNNING X1 (1.1.7-cc8 or later): no reflash, shots kept
 //!   x1flash ble-scan                    X1s in range over Bluetooth
 //!
 //! Add `--ble` (and optionally `--name 0312`) to info, flash, off, clock or scan to use Bluetooth instead of the cable.
@@ -571,6 +572,58 @@ fn main() {
             let mut fields = image_fields(&img, dst);
             fields.push(("count", names.len().to_string()));
             out.emit("image", &fields, &format!("wrote {dst}: {} names, {} packets", names.len(), img.packets()));
+        }
+        ["callouts", "push"] => {
+            let Some(list) = names_arg else {
+                out.error("callouts push --names \"A\\nB\\nC\" (one name per line), with the X1 running, on the cable or --ble")
+            };
+            let names: Vec<String> = list.lines().map(|l| l.trim().to_string()).filter(|l| !l.is_empty()).collect();
+            let frames = co::push_frames(&names).unwrap_or_else(|e| out.error(&e.to_string()));
+            let (path, mut w) = open_link(&out, port, ble);
+            // it must be running a build that takes a list
+            let v = read_mem(&mut w, 0xe000, 8).unwrap_or_else(|e| out.error(&e));
+            match v.as_deref() {
+                None => out.error("the X1 did not answer: is it on and running (not in boot mode)?"),
+                Some(b) if b.len() >= 8 && b[4] == 0xcc && b[6] >= co::PUSH_MIN_CC_VERSION => {}
+                Some(_) => out.error(&format!(
+                    "this X1's firmware cannot take a list without a reflash: flash 1.1.7-cc{} or later first",
+                    co::PUSH_MIN_CC_VERSION
+                )),
+            }
+            let total = frames.len();
+            for (i, f) in frames.iter().enumerate() {
+                let head = [0x3d, f[7], f[8], f[9]]; // the echo of a write starts 3d, address, count
+                let mut got = false;
+                for _try in 0..3 {
+                    let buf = ask(&mut w, f, 1500, |b| b.windows(4).any(|x| x == head)).unwrap_or_else(|e| out.error(&e));
+                    if buf.windows(4).any(|x| x == head) {
+                        got = true;
+                        break;
+                    }
+                }
+                if !got {
+                    out.error(&format!("the X1 stopped answering at part {} of {total}; nothing was stored", i + 1));
+                }
+                out.emit("progress", &[("done", (i + 1).to_string()), ("total", total.to_string())], "");
+            }
+            let st = read_mem(&mut w, co::COMMIT_ADDRESS, 4)
+                .unwrap_or_else(|e| out.error(&e))
+                .and_then(|b| co::PushStatus::parse(&b))
+                .unwrap_or_else(|| out.error("the X1 did not report a result"));
+            let ok = st.result == 0;
+            out.emit(
+                "pushed",
+                &[
+                    ("ok", ok.to_string()),
+                    ("result", st.result.to_string()),
+                    ("slot", st.slot.to_string()),
+                    ("count", st.count.to_string()),
+                    ("message", s(&st.message())),
+                    ("port", s(&path)),
+                ],
+                &format!("{path}: {}", st.message()),
+            );
+            std::process::exit(if ok { 0 } else { 1 });
         }
         ["ble-scan"] => {
             let names = cave_x1::rawlink::scan(Duration::from_secs(8)).unwrap_or_else(|e| out.error(&e));
