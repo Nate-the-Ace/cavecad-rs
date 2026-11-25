@@ -116,3 +116,10 @@ Reads of 0xC400..0xC5A9 (426 bytes) return the list in use: the newest valid fla
 (`cc_addr`, through `cc_list`). CaveCAD asks for it on every connect (`cavway_callouts::read_frames`, sent from webble.ts
 `askX1ForItsList`), reads it with `ListReader`, and `X1Link` then names a picked feature from it (`Reading::callout`,
 `Feature N` until the list is known). The session writes that name as the shot's note.
+
+### cc9 build 10: the pick reaches the live packet (2026-11-25)
+
+Found on the X1 with CaveCAD connected: a picked feature was in the STORED record (`cc_store`) but not in the packet sent to the
+phone, because a normal shot sends from the record buffer (0x20000C44) before the store loop runs. `cc_build` (hooks at
+0x0800B62E, 0x0800B674, 0x0800B74E, the three `bl 0x0800802C` record-builder calls of the normal measure path) now adds the pick
+right after the record is built, once. The version marker byte is 10 (`cc 20 0a 20`); the About text stays `1.1.7-cc9`.

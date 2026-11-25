@@ -23,6 +23,7 @@ HEADER = 256
 PATCH_BASE = 0x0801D200  # free flash; the stock image ends at 0x0801D138
 APP_LIMIT = 0x0803FF00   # the app's own marker word lives here
 NAME = "1.1.7-cc9"
+BUILD_NUM = 10           # the build number in the version block and status (the About text has no room for "cc10")
 
 # (address, original bytes, what goes there)
 HOOKS = [
@@ -35,6 +36,9 @@ HOOKS = [
     (0x0800CFE0, "10b58ab0", ("b.w", "cc_ui")),         # push {r4,lr} / sub sp,#0x28 (UI state machine entry; cc_ui redoes them)
     (0x080072BA, "fff739f9", ("bl", "cc_draw")),
     (0x0800791A, "0bf095fd", ("bl", "cc_store")),
+    (0x0800B62E, "fcf7fdfc", ("bl", "cc_build")),       # bl 0x0800802c (record builder), first shot of a measure
+    (0x0800B674, "fcf7dafc", ("bl", "cc_build")),       # the same builder, a later shot
+    (0x0800B74E, "fcf76dfc", ("bl", "cc_build")),       # the same builder, a shot after a group check
     (0x0800C420, "fcf7b8f8", ("bl", "cc_addr")),        # bl 0x08008594 (memory address to pointer), in the 3d/3e handler
     (0x0800C448, "06f042ff", ("bl", "cc_write")),       # bl 0x080132d0 (the memory write) in the 3e handler
     (0x0800C450, "fcf7a0f8", ("bl", "cc_addr")),        # the same map, for the reply       # bl STORE_RECORD in the store-N-records loop a normal shot (DIST) uses        # bl DRAW_PREP (first call of the per-mode screen drawing)
@@ -43,7 +47,7 @@ STOCK = {"DISP_MEASURE": 0x0800C3E2, "DISP_EXIT": 0x0800C49A, "BEEP": 0x0800CA40
          "STORE_RECORD": 0x08013448, "SET_DEFAULTS_2": 0x0800C520,
          "SAVE_SETTINGS": 0x0800C88C, "UI_CONT": 0x0800CFE4, "UI_EXIT": 0x0800E7C8, "DRAW_PREP": 0x08006530,
          "SET_FONT": 0x0800CF88, "DRAW_STR": 0x080078F0, "STOCK_VALIDATE": 0x08008594, "STOCK_WRITE": 0x080132D0,
-         "FLASH_WRITE_HALF": 0x08007DE0}
+         "FLASH_WRITE_HALF": 0x08007DE0, "BUILD_REC": 0x0800802C}
 VERSION_TEXT = 0x08017B84  # "1.1.7" + 5 NULs, copied to the Information page (10 bytes free before the next table)
 
 
@@ -147,7 +151,7 @@ def main():
     assert payload[o: o + 10] == b"1.1.7" + b"\0" * 5
     payload[o: o + 10] = NAME.encode() + b"\0"
     assert payload[4:8] == b"\0" * 4
-    payload[4:8] = bytes([0xCC, 0x20, int(NAME.rsplit("cc", 1)[1]), 0x20])
+    payload[4:8] = bytes([0xCC, 0x20, BUILD_NUM, 0x20])
 
     # the patch code, after a gap of erased flash
     payload += b"\xff" * (PATCH_BASE - end) + code
@@ -157,7 +161,7 @@ def main():
     out = os.path.join(HERE, "build", f"CVWY_X1_{NAME}.bin")
     open(out, "wb").write(bytes(header) + bytes(payload))
     print(f"{out}\n  patch code {PATCH_BASE:#x}..{PATCH_BASE + len(code):#x} ({len(code)} bytes)")
-    for n in ("cc_dispatch", "cc_scan_end", "cc_store", "cc_usb_gate", "cc_defaults", "cc_settings_boot", "cc_ui", "cc_draw", "cc_addr", "cc_write", "cc_list"):
+    for n in ("cc_dispatch", "cc_scan_end", "cc_store", "cc_usb_gate", "cc_defaults", "cc_settings_boot", "cc_ui", "cc_draw", "cc_addr", "cc_write", "cc_list", "cc_build"):
         print(f"  {n:12s} {sym[n]:#x}")
     print(f"  sha256 {hashlib.sha256(open(out, 'rb').read()).hexdigest()}")
 

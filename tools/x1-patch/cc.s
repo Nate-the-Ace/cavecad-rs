@@ -27,7 +27,7 @@
         @   SAVE_SETTINGS 0x0800c88c   writes the 24-byte settings block to the EEPROM (no arguments)
         .extern DISP_MEASURE, DISP_EXIT, BEEP, LASER_CONT, STORE_RECORD, SET_DEFAULTS_2, SAVE_SETTINGS
         .extern UI_CONT, UI_EXIT, DRAW_PREP, SET_FONT, DRAW_STR
-        .extern STOCK_VALIDATE, STOCK_WRITE, FLASH_WRITE_HALF
+        .extern STOCK_VALIDATE, STOCK_WRITE, FLASH_WRITE_HALF, BUILD_REC
 
         .set USB_OK,        0x20000024      @ u32: stock sets it from the charger pin (1 = charging)
         .set USB_REPLY,     0x20001624      @ USB reply buffer: [0] == 0x3D while a reply waits
@@ -72,7 +72,7 @@
         .set KEY_CLR,       0x200012b8
         .set FONT_TITLE,    0x080193a7      @ the arguments stock menus give SET_FONT (0x0800cf88)
         .set FONT_ROW,      0x0801874a
-        .set CC_VERSION,    9
+        .set CC_VERSION,    10
         .set CC_SETTINGS_MARK, 0xc4         @ settings byte 0x17 (unused by stock): CaveCAD defaults applied once
         .set OPT_SCAN,      0x16            @ settings: Scan Options byte
         @ remote scans: steadiness level 2 (10000, the most lenient), time limit index 3 (10 min), allowed
@@ -506,6 +506,38 @@ cc_draw:
         bl      DRAW_STR
 39:     pop     {r4, r5, r6, r7, pc}
 
+
+@ ---------------------------------------------------------------- a pick rides the record as it is BUILT (build 10)
+@ A normal shot (DIST) builds its record into the buffer at 0x20000c44 and sends it to the phone from there, before the
+@ store loop runs: cc_store alone left the pick out of the live packet (only the stored copy had it). So the pick is also
+@ put into the record right after it is built. cc_build replaces "bl 0x0800802c" (the record builder) at 0x0800b62e,
+@ 0x0800b674 and 0x0800b74e: it remembers the record and the caller's return address, runs the builder with itself as the
+@ return address, then adds the pick (once) and goes back. RAM: CC_STATE +0x10 the return address, +0x14 the record.
+        .global cc_build
+        .thumb_func
+cc_build:
+        ldr     r12, =CC_STATE
+        str     lr, [r12, #0x10]
+        str     r0, [r12, #0x14]
+        ldr     lr, =cc_build_done
+        b.w     BUILD_REC
+
+        .thumb_func
+cc_build_done:
+        ldr     r12, =CC_STATE
+        ldrb    r1, [r12]
+        cmp     r1, #CC_MAGIC
+        bne     79f
+        ldrb    r1, [r12, #6]
+        cbz     r1, 79f
+        ldr     r2, [r12, #0x14]
+        strb    r1, [r2, #54]
+        movs    r1, #0xca
+        strb    r1, [r2, #55]
+        movs    r1, #0
+        strb    r1, [r12, #6]           @ a pick is used once
+79:     ldr     lr, [r12, #0x10]
+        bx      lr
 
 @ ---------------------------------------------------------------- the list: where it lives, how it is written (cc8)
 @ cc_list: r0 = the list in use: the newest valid slot in flash, else callout_block. Cached in CC_STATE +8.
