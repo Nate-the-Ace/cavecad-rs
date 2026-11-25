@@ -12,6 +12,7 @@
   import PhoneChips from './PhoneChips.svelte';
   import PhoneSymbols from './PhoneSymbols.svelte';
   import PhoneOptions from './PhoneOptions.svelte';
+  import PhoneObjectSettings from './PhoneObjectSettings.svelte';
   import LiveStrip from './LiveStrip.svelte';
   import PanelUndo from './PanelUndo.svelte';
   import MapPanel from '../panels/MapPanel.svelte';
@@ -56,6 +57,7 @@
     <div class="overlay"></div>
     <PhoneChips />
     <PhoneOptions />
+    <PhoneObjectSettings />
     {#if phonePrefs.liveStrip}<LiveStrip onDetail={() => showSettings('connection')} />{/if}
     {#if picker}<PhoneSymbols onClose={() => (picker = false)} />{/if}
   </div>

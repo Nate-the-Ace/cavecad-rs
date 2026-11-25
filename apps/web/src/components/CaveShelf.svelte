@@ -8,7 +8,7 @@
   // `embedded` (the phone's Caves tab) draws the same shelf inline, filling its parent: no veil, no Close or Start
   // empty, Escape only cancels a removal, and no startup checkbox (the phone always starts here until a cave is open).
   import { untrack } from 'svelte';
-  import { Copy, Star } from '@lucide/svelte';
+  import { Copy, EllipsisVertical, Star, X } from '@lucide/svelte';
   import { cave } from '../lib/cave.svelte';
   import { DEMOS } from '../lib/demos';
   import { engine, loadEngine, type CaveSummary } from '../lib/engine';
@@ -29,6 +29,13 @@
   let search = $state('');
   /** The cave picked on the left: a record id, `sample:<id>`, or ''. */
   let picked = $state('');
+  /** The phone: the window with a cave's details (opened from the three dots beside its name). */
+  let info = $state(false);
+  /** A tap on a cave in the list: on the phone it opens the cave (its details are behind the three dots), in the window it picks it. */
+  function pick(id: string) {
+    picked = id;
+    if (embedded) void open();
+  }
   let summary = $state<CaveSummary | null>(null);
   /** The open end the next trip would start from. */
   let from = $state('');
@@ -110,6 +117,7 @@
   const HEALTH_HINT = 'Where the survey comes back round to a station it already reached, the two ways never meet exactly. This is how far off the worst loop is, as a share of its length: under about 1% is good; much more usually means a misread or mistyped shot.';
 
   async function run(job: Promise<string | null>) {
+    info = false;
     const problem = await job;
     message = problem ?? '';
   }
@@ -150,7 +158,7 @@
   }
 
   /** Fetches a cave from the server; one with no key here yet waits, and opens by itself when the key arrives. */
-  const openRemote = async (id: string) => (message = await openServerCave(id));
+  const openRemote = async (id: string) => ((info = false), (message = await openServerCave(id)));
 
   const open = () => (record ? run(openKept(record.id)) : sample ? run(openSample(sample.id)) : remote ? openRemote(remote.id) : undefined);
   const newTrip = () => (record ? run(newTripOn(record.id, from)) : sample ? run(newTripOnSample(sample.id, from)) : remote ? newTripOnRemote(remote.id) : undefined);
@@ -201,6 +209,7 @@
   const typedOk = $derived(typed.trim().toLowerCase() === (removingName || 'delete').trim().toLowerCase());
 
   function remove(rec: ShelfRecord | null, server: OtherCave | null = onServer(rec)) {
+    info = false;
     typed = '';
     removeProblem = '';
     removing = { rec, server, step: 'choose' };
@@ -255,7 +264,7 @@
   }
 
   function key(e: KeyboardEvent) {
-    if (e.key === 'Escape') removing ? (removing = null) : embedded ? undefined : (shelf.open = false);
+    if (e.key === 'Escape') removing ? (removing = null) : info ? (info = false) : embedded ? undefined : (shelf.open = false);
     else if (e.key === 'Enter' && !(e.target as HTMLElement).closest('input,button,textarea')) void open();
   }
 
@@ -287,8 +296,8 @@
             {/if}
             {#if c?.role === 'owner'}
               <div class="choice">
-                <button class="danger" disabled={c.id === engine.roomId()} onclick={() => ((removing!.step = 'delete'), (typed = ''))}>Delete everywhere…</button>
-                <p>{c.id === engine.roomId() ? 'It is open now: open another cave first, then delete this one.' : 'Deletes it for good, from the server, all your devices and anyone you shared it with.'}</p>
+                <button class="danger" onclick={() => ((removing!.step = 'delete'), (typed = ''))}>Delete everywhere…</button>
+                <p>{c.id === engine.roomId() ? 'It is open now: it is closed first, then deleted for good from the server, all your devices and anyone you shared it with.' : 'Deletes it for good, from the server, all your devices and anyone you shared it with.'}</p>
               </div>
             {:else if c}
               <div class="choice">
@@ -315,45 +324,75 @@
         <input type="search" placeholder="Search caves" bind:value={search} aria-label="Search caves" />
         <div class="list" role="listbox" aria-label="Caves">
           {#each shown as r (r.id)}
-            <button class="cave" class:sel={picked === r.id} role="option" aria-selected={picked === r.id} onclick={() => (picked = r.id)} ondblclick={open} oncontextmenu={(e) => rightClick(e, r.id)}>
+            <div class="caverow" role="none">
+              <button class="cave" class:sel={picked === r.id} role="option" aria-selected={picked === r.id} onclick={() => pick(r.id)} ondblclick={open} oncontextmenu={(e) => rightClick(e, r.id)}>
               <span class="name">{#if r.favorite}<Star size={12} fill="currentColor" />{/if} {r.name}</span>
               <span class="sub">{r.summary ? (r.summary.empty ? 'nothing surveyed yet' : `${r.summary.trips.length} trip${r.summary.trips.length === 1 ? '' : 's'} · ${length(r.summary.length_m)}`) : '…'}{r.id === shelf.currentId ? ' · open now' : ''}{sharedOf(r.id) ? ` · ${whose(sharedOf(r.id)!)}` : ''}</span>
-            </button>
+              </button>
+              {@render more(r.id, r.name)}
+            </div>
           {:else}
             <p class="none">{shelf.records.length ? 'No cave matches.' : 'No caves yet. Start one, or bring one in from a file.'}</p>
           {/each}
           {#if remoteShared.length}
             <div class="group" title="Caves of other members that you are a guest of">Shared with you</div>
             {#each remoteShared as c (c.id)}
-              <button class="cave" class:sel={picked === `server:${c.id}`} role="option" aria-selected={picked === `server:${c.id}`} onclick={() => (picked = `server:${c.id}`)} ondblclick={open}>
+              <div class="caverow" role="none">
+                <button class="cave" class:sel={picked === `server:${c.id}`} role="option" aria-selected={picked === `server:${c.id}`} onclick={() => pick(`server:${c.id}`)} ondblclick={open}>
                 <span class="name">{c.name ?? 'A shared cave'}</span>
                 <span class="sub">{serverCaves.opening === c.id ? 'fetching…' : whose(c)}</span>
-              </button>
+                </button>
+                {@render more(`server:${c.id}`, c.name ?? 'A shared cave')}
+              </div>
             {/each}
           {/if}
           {#if remoteMine.length}
             <div class="group" title="Caves you keep on the CaveCAD server that this computer does not have yet">On your other devices</div>
             {#each remoteMine as c (c.id)}
-              <button class="cave" class:sel={picked === `server:${c.id}`} role="option" aria-selected={picked === `server:${c.id}`} onclick={() => (picked = `server:${c.id}`)} ondblclick={open}>
+              <div class="caverow" role="none">
+                <button class="cave" class:sel={picked === `server:${c.id}`} role="option" aria-selected={picked === `server:${c.id}`} onclick={() => pick(`server:${c.id}`)} ondblclick={open}>
                 <span class="name">{c.name ?? 'A cave from another device'}</span>
                 <span class="sub">{serverCaves.opening === c.id ? 'fetching…' : !c.hasKey ? 'still coming over' : c.summary && !c.summary.empty ? `${c.summary.trips.length} trip${c.summary.trips.length === 1 ? '' : 's'} · ${length(c.summary.length_m)}` : 'on the server'}</span>
-              </button>
+                </button>
+                {@render more(`server:${c.id}`, c.name ?? 'A cave from another device')}
+              </div>
             {/each}
           {/if}
           <div class="group">Samples</div>
           {#each DEMOS as d}
-            <button class="cave" class:sel={picked === `sample:${d.id}`} onclick={() => (picked = `sample:${d.id}`)} ondblclick={open}>
+            <div class="caverow" role="none">
+              <button class="cave" class:sel={picked === `sample:${d.id}`} onclick={() => pick(`sample:${d.id}`)} ondblclick={open}>
               <span class="name">{d.title.replace(/ \(.*\)$/, '')}</span>
               <span class="sub">sample cave</span>
-            </button>
+              </button>
+              {@render more(`sample:${d.id}`, d.title.replace(/ \(.*\)$/, ''))}
+            </div>
           {/each}
         </div>
         <div class="row">
           <button onclick={() => { shelf.open = false; cave.newDialog = true; }}>New cave…</button>
-          <button onclick={importFile} title="A cave saved as a DXF by CaveCAD, a survey from Compass, Walls, Survex, Therion or a CSV file, or a TopoDroid survey ZIP (shots and sketches)">Import file…</button>
+          {#if !embedded}<button onclick={importFile} title="A cave saved as a DXF by CaveCAD, a survey from Compass, Walls, Survex, Therion or a CSV file, or a TopoDroid survey ZIP (shots and sketches)">Import file…</button>{/if}
         </div>
       </div>
 
+      {#if !embedded}
+        {@render detail()}
+      {:else if info}
+        <div class="info-veil" role="presentation" onclick={() => (info = false)}></div>
+        <div class="info" role="dialog" aria-modal="true" aria-label="About this cave">
+          <button class="info-close" aria-label="Close" title="Close" onclick={() => (info = false)}><X size={18} /></button>
+          {@render detail()}
+        </div>
+      {/if}
+{/snippet}
+
+{#snippet more(id: string, label: string)}
+  {#if embedded}
+    <button class="more" aria-label="About {label}" title="About this cave" onclick={() => ((picked = id), (info = true))}><EllipsisVertical size={18} /></button>
+  {/if}
+{/snippet}
+
+{#snippet detail()}
       <div class="detail">
         {#if remote && !summary}
           <h2>{remote.name ?? 'A cave from another device'}</h2>
@@ -448,12 +487,17 @@
   }
   /* the phone's Caves tab: inline, filling the tab, tight (phone.css tokens); only the lists scroll */
   .box.embedded { width: 100%; height: 100%; border: 0; border-radius: 0; padding: 0; flex-direction: column; }
-  .embedded .rail { width: auto; flex: 0 1 auto; max-height: 45%; min-height: 0; gap: var(--p-gap); padding: var(--p-pad); border-right: 0; border-bottom: 1px solid var(--line); }
-  .embedded .cave { min-height: var(--p-hit); justify-content: center; padding: 2px var(--p-pad); }
+  .embedded .rail { width: auto; flex: 1 1 auto; max-height: none; min-height: 0; gap: var(--p-gap); padding: var(--p-pad); border-right: 0; border-bottom: 0; }
+  .embedded .cave { min-height: var(--p-hit); justify-content: center; padding: 2px var(--p-pad); flex: 1; min-width: 0; }
+  /* each cave in the list: its name, and on the phone the three dots that open its details */
+  .caverow { display: contents; }
+  .embedded .caverow { display: flex; align-items: center; gap: 2px; }
+  .more { flex: none; width: var(--p-hit, 44px); min-height: var(--p-hit, 44px); padding: 0; display: inline-flex; align-items: center; justify-content: center; border: none; background: none; color: var(--muted); border-radius: 6px; }
+  .more:hover { background: var(--panel-2); color: var(--text); }
   .embedded .group { padding: var(--p-pad) var(--p-pad) 0; }
-  .embedded .detail { flex: 1; min-height: 0; overflow: hidden; padding: var(--p-pad); gap: var(--p-gap); }
+  .embedded .detail { flex: 1; min-height: 0; overflow: auto; padding: var(--p-pad); gap: var(--p-gap); }
   .embedded h2 { font-size: 17px; }
-  .embedded .stored, .embedded .none { display: none; }
+  .embedded .rail .none { display: none; }
   .embedded .table { min-height: 0; }
   .embedded .foot { flex-wrap: wrap; gap: var(--p-gap); padding-top: 0; }
   .embedded .row button, .embedded .foot button { min-height: var(--p-row); padding: 0 10px; }
@@ -491,8 +535,13 @@
   button:disabled { opacity: 0.5; cursor: default; }
   button.go { background: var(--accent); border-color: var(--accent); color: #fff; }
   .box { position: relative; }
-  .remove-veil { position: absolute; inset: 0; background: rgba(0, 0, 0, 0.45); z-index: 2; }
-  .remove { position: absolute; z-index: 3; left: 50%; top: 50%; transform: translate(-50%, -50%); width: min(440px, 90%); background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px; display: flex; flex-direction: column; gap: 10px; box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4); }
+  .remove-veil { position: absolute; inset: 0; background: rgba(0, 0, 0, 0.45); z-index: 4; }
+  /* the phone's window of a cave's details */
+  .info-veil { position: absolute; inset: 0; background: rgba(0, 0, 0, 0.5); z-index: 2; }
+  .info { position: absolute; z-index: 3; inset: 8px; display: flex; flex-direction: column; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4); overflow: hidden; }
+  .info-close { position: absolute; top: 4px; right: 4px; z-index: 1; width: 40px; min-height: 40px; padding: 0; display: inline-flex; align-items: center; justify-content: center; border: none; background: none; color: var(--muted); }
+  .info :global(h2) { padding-right: 36px; }
+  .remove { position: absolute; z-index: 5; left: 50%; top: 50%; transform: translate(-50%, -50%); width: min(440px, 90%); background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px; display: flex; flex-direction: column; gap: 10px; box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4); }
   .remove h3 { margin: 0; font-size: 15px; }
   .remove p { margin: 0; font-size: 12px; color: var(--muted); }
   .choice { display: flex; flex-direction: column; gap: 4px; align-items: flex-start; }

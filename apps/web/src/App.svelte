@@ -20,6 +20,7 @@
   import { cave, setUnits, unsaved } from './lib/cave.svelte';
   import { guardUnload } from './lib/files';
   import { installDiagnostics } from './lib/diagnostics';
+  import { listenForHardwareKeys } from './lib/hardware-keys.svelte';
   import CaveShelf from './components/CaveShelf.svelte';
   import PhoneShell from './components/PhoneShell.svelte';
   import { phone } from './lib/phone.svelte';
@@ -149,6 +150,7 @@
     window.addEventListener('cut', onCut);
     window.addEventListener('paste', onPaste);
     installDiagnostics();
+    const stopHwKeys = listenForHardwareKeys(); // the phone's action keys (PTT, SOS, Yellow, Camera, Focus) run the survey
     listenForLinks((url) => {
       void handleAuthLink(url).then((signIn) => { if (!signIn && isOldJoinUrl(url)) moved = true; });
     }); // in the desktop app, a link that opened it
@@ -176,6 +178,7 @@
     return () => {
       stopRooms();
       stopSync();
+      stopHwKeys();
       unguard();
       document.removeEventListener('visibilitychange', keepNow);
       window.removeEventListener('pagehide', keepNow);

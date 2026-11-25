@@ -18,6 +18,7 @@
   import { openContextMenu } from '../lib/context-menu.svelte';
   import { lineCandidate, lineItems, stationItems, viewItems } from '../lib/context-items';
   import { closeCycle, offerStack, type Candidate } from '../lib/cycle.svelte';
+  import { phone } from '../lib/phone.svelte';
   import { snap, clearPick, cycle, escapePick, pickBuiltUp, toggleSnap } from '../lib/snap.svelte';
   import SnapButton from './SnapButton.svelte';
   import { cave, changed, filter, haloFade, haloReach, option, setOption, selectedIds, selectIds, toggleSelected, setPick, setShowSections, setShown, wireFilter, toolStyle } from '../lib/cave.svelte';
@@ -523,6 +524,12 @@
     v.onLineMenu = (x, y, id, similar, editWords) => {
       if (!selectedIds().includes(id)) selectIds([id]);
       openContextMenu(x, y, lineItems('map', () => similar, editWords));
+    };
+    v.onHold = (kind, id) => {
+      if (kind === 'line') {
+        if (!selectedIds().includes(id)) (setPick('', ''), selectIds([id]));
+      } else setPick('station', id);
+      phone.objectSettings = true; // the phone has no right click: a long press shows the object's settings again
     };
     v.onStationMenu = (x, y, id, label) => openContextMenu(x, y, stationItems(id, label));
     v.onViewMenu = (x, y) => openContextMenu(x, y, viewItems('map', () => v.fit()));

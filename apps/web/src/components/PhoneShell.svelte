@@ -6,7 +6,7 @@
   // Each screen is made the first time it is opened and then kept (hidden, not destroyed), so switching back finds it
   // as it was, the Map's 3D view included. The ribbon is not shown: what the survey needs from it is in the Survey tab.
   import { untrack } from 'svelte';
-  import { CloudOff, Plus, Settings as SettingsIcon } from '@lucide/svelte';
+  import { CloudOff, Settings as SettingsIcon } from '@lucide/svelte';
   import '../phone.css';
   import CaveShelf from './CaveShelf.svelte';
   import PhoneSketch from './PhoneSketch.svelte';
@@ -116,7 +116,6 @@
         {#if gate?.reason === 'cave'}
           <div class="gate" role="status">
             <span>{gate.message}</span>
-            <button onclick={() => (cave.newDialog = true)}><Plus size={16} /> New cave</button>
           </div>
         {/if}
         <div class="shelf"><CaveShelf embedded /></div>
@@ -157,6 +156,5 @@
   .pane.caves { display: flex; flex-direction: column; }
   .gate { display: flex; align-items: center; gap: var(--p-gap); padding: var(--p-gap) var(--p-pad); background: var(--accent-bg); border-bottom: 1px solid var(--accent); font-weight: 600; font-size: var(--p-font-small); }
   .gate span { flex: 1; min-width: 0; }
-  .gate button { display: inline-flex; align-items: center; gap: 4px; min-height: var(--p-row); padding: 0 10px; border: 0; border-radius: var(--p-radius); background: var(--accent); color: #fff; font: inherit; font-weight: 600; cursor: pointer; }
   .shelf { flex: 1; min-height: 0; display: flex; }
 </style>

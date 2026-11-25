@@ -34,6 +34,33 @@ function landed(name: string, home: Home | null = null) {
   shelf.open = false;
 }
 
+/**
+ * Puts the open cave away: nothing is on screen, nothing can write it back to the shelf, and its room (the live link
+ * to the server) closes, as when the app starts with no cave. What was unsaved is kept on the shelf first, so a delete
+ * that then fails loses nothing. The engine is given a blank scratch cave so the closed one is not left in memory;
+ * it is never stored (autosave needs a cave on screen) and is not counted as unsaved.
+ */
+export async function closeOpenCave() {
+  await flush();
+  engine.newCave('Untitled', 'First trip', 'm');
+  markSaved();
+  forgetFile();
+  setHome(null);
+  shelf.sample = '';
+  shelf.currentId = '';
+  closeContextMenu();
+  cave.hasCave = false;
+  cave.fileName = '';
+  cave.name = '';
+  cave.trip = '';
+  cave.run = '';
+  cave.station = '';
+  cave.selected = '';
+  filter.hiddenTrips = [];
+  cave.opened += 1; // the views re-read; the room closes
+  changed();
+}
+
 /** Opens a cave kept on the shelf. Returns a sentence when it could not. */
 export async function openKept(id: string): Promise<string | null> {
   await flush(); // what is open is kept before it is replaced

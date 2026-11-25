@@ -50,6 +50,21 @@
             <!-- DEEP LINK PLUGIN. AUTO-GENERATED. DO NOT REMOVE. -->
         </activity>
 
+        <receiver
+            android:name=".HardwareKeyReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.sonim.intent.action.PTT_KEY_DOWN" />
+                <action android:name="com.sonim.intent.action.PTT_KEY_UP" />
+                <action android:name="com.sonim.intent.action.SOS_KEY_DOWN" />
+                <action android:name="com.sonim.intent.action.SOS_KEY_UP" />
+                <action android:name="com.sonim.intent.action.YELLOW_KEY_DOWN" />
+                <action android:name="com.sonim.intent.action.YELLOW_KEY_UP" />
+                <action android:name="com.zello.ptt.down" />
+                <action android:name="com.zello.ptt.up" />
+            </intent-filter>
+        </receiver>
+
         <provider
           android:name="androidx.core.content.FileProvider"
           android:authorities="${applicationId}.fileprovider"

@@ -131,6 +131,8 @@ export class CaveView {
   onLineMenu: (x: number, y: number, id: string, similar: string[], editWords: (() => void) | null) => void = () => {};
   /** A right click on a station (nothing drawn under the pointer). */
   onStationMenu: (x: number, y: number, id: string, label: string) => void = () => {};
+  /** A finger held still on a line or a station (phone): which one. The phone shows its settings again. */
+  onHold: (kind: 'line' | 'station', id: string) => void = () => {};
   /** A right click on empty space. */
   onViewMenu: (x: number, y: number) => void = () => {};
   /** Called when a right click (not a right drag, which pans) asks to end the running command. */
@@ -329,6 +331,37 @@ export class CaveView {
         this.requestRender();
       }
     });
+    // A finger held still (about half a second) on a line or a station: its settings show again (the phone has no right click).
+    let hold: { id: number; x: number; y: number; timer: ReturnType<typeof setTimeout> } | null = null;
+    const endHold = () => {
+      if (hold) clearTimeout(hold.timer);
+      hold = null;
+    };
+    canvas.addEventListener('pointerdown', (e) => {
+      endHold();
+      if (e.pointerType !== 'touch' || this.guard.ignored(e) || this.fingers.size !== 1) return;
+      if (this.drawTool || this.eraserArmed || this.copyOn || this.pasteOn) return;
+      const at = { x: e.clientX, y: e.clientY };
+      hold = {
+        id: e.pointerId,
+        ...at,
+        timer: setTimeout(() => {
+          hold = null;
+          const rect = canvas.getBoundingClientRect();
+          const k = this.lineAt(at.x - rect.left, at.y - rect.top);
+          if (k) this.onHold('line', k.id);
+          else {
+            const st = this.pickStation(at.x, at.y);
+            if (st) this.onHold('station', st.id);
+          }
+        }, 500),
+      };
+    });
+    canvas.addEventListener('pointermove', (e) => {
+      if (hold && e.pointerId === hold.id && Math.hypot(e.clientX - hold.x, e.clientY - hold.y) > 8) endHold();
+    });
+    canvas.addEventListener('pointerup', endHold);
+    canvas.addEventListener('pointercancel', endHold);
     // A right click ends the running command; a right drag still pans.
     canvas.addEventListener('pointerdown', (e) => {
       if (e.button === 2) this.rightDown = { x: e.clientX, y: e.clientY };
