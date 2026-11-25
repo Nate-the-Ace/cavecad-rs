@@ -77,6 +77,23 @@ an adaptive icon, paper colour behind grid and logo, plus legacy and round icons
 - Manifest: `BLUETOOTH`, `BLUETOOTH_ADMIN`, `ACCESS_FINE_LOCATION` (up to API 30), `BLUETOOTH_SCAN`
   (`neverForLocation`) and `BLUETOOTH_CONNECT`.
 
+## Sonim XP8 hardware keys
+
+On a Sonim XP8 the PTT, SOS (red) and Yellow keys run the in-cave survey. The phone sends each key's broadcast
+(`com.sonim.intent.action.PTT_KEY_DOWN/UP`, `SOS_KEY_DOWN/UP`, `YELLOW_KEY_DOWN/UP`) only to the app chosen under
+**Settings > Programmable Keys** (Select PTT / YELLOW / ALARM Key app): set all three to CaveCAD.
+
+- `SonimKeyReceiver.kt` (declared in the manifest) takes the broadcasts; `MainActivity` passes them to the page as a
+  `cave-hwkey` event while it is showing. The receiver has to be in the manifest: with only a receiver registered at
+  run time the phone logged "PTT received" and sent nothing to CaveCAD (Torch, the default PTT app, declares one).
+- The page maps them in `apps/web/src/lib/hardware-keys.ts` (tests: `npm run test:hwkeys`), wired by
+  `hardware-keys-wire.ts`, and only while an instrument or the simulator is connected: PTT is a trigger (down switches
+  the laser on to aim, a release under 1 s fires, a hold of 1 s or more cancels), Yellow accepts the shot and moves to
+  the next station, SOS undoes the last shot.
+- Camera and Focus never reach the app: the camera key arrives as Yellow, and Focus does not fire on this phone.
+- Verified 2026-11-25 on the XP8 (Android 10) with a Cavway X1: PTT aims and fires, Yellow advances stations. SOS
+  reaches the page; its undo was not checked with a shot to undo.
+
 ## Android 10 test phone notes
 
 - Location must be **on** for any Bluetooth scan on Android 10 and 11 (the app says so if it is off).

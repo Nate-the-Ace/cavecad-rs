@@ -10,6 +10,7 @@ import android.location.LocationManager
 import android.os.Build
 import android.os.Bundle
 import android.util.Log
+import android.webkit.WebView
 import androidx.activity.SystemBarStyle
 import androidx.activity.enableEdgeToEdge
 import androidx.core.content.ContextCompat
@@ -17,6 +18,32 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
 class MainActivity : TauriActivity() {
+  private var page: WebView? = null
+
+  // Sonim's PTT, SOS and Yellow keys (SonimKeyReceiver) go to the page as `cave-hwkey` events while this screen is
+  // showing (apps/web/src/lib/hardware-keys.ts maps them to survey actions). The phone sends each key's broadcast only to
+  // the app chosen under Settings > Programmable Keys.
+  private fun sendKey(key: String, phase: String) {
+    // key and phase are fixed words from SonimKeyReceiver, never broadcast data, so they are safe to put in script
+    page?.post {
+      page?.evaluateJavascript("window.dispatchEvent(new CustomEvent('cave-hwkey',{detail:{key:'$key',phase:'$phase'}}))", null)
+    }
+  }
+
+  override fun onWebViewCreate(webView: WebView) {
+    page = webView
+  }
+
+  override fun onResume() {
+    super.onResume()
+    SonimKeyReceiver.sink = { key, phase -> sendKey(key, phase) }
+  }
+
+  override fun onPause() {
+    SonimKeyReceiver.sink = null
+    super.onPause()
+  }
+
   override fun onCreate(savedInstanceState: Bundle?) {
     // The page draws under the status and navigation bars and keeps clear of them with env(safe-area-inset-*).
     // Light bar icons: the app's default look is dark (a light theme gets light icons too; see docs/ANDROID-TAURI.md).
