@@ -13,9 +13,10 @@
   import QuickRef from '../components/QuickRef.svelte';
   import CalibrationGuide from '../components/CalibrationGuide.svelte';
   import { BookOpen, Star } from '@lucide/svelte';
-  import SurveyOptions from '../components/SurveyOptions.svelte';
-  import { Bluetooth, Unplug } from '@lucide/svelte';
-  import { phone } from '../lib/phone.svelte';
+  import { Bluetooth, Ellipsis, Undo2, Unplug } from '@lucide/svelte';
+  import PhoneSurveyMore from '../components/PhoneSurveyMore.svelte';
+  import { phone, showSettings } from '../lib/phone.svelte';
+  import { linkLabel, problemLines, sweepName } from '../lib/phone-survey';
   import LengthField from '../components/LengthField.svelte';
   import PanelUndo from '../components/PanelUndo.svelte';
   import { cave, changed } from '../lib/cave.svelte';
@@ -127,11 +128,134 @@
     }
   }
 
+  // ---- the phone's one-screen Survey (phone.on): a status pill, the reading, the stations, at most two problem lines ----
+  let more = $state(false);
+  const pill = $derived(linkLabel(survey.status, survey.device));
+  const problems = $derived(
+    problemLines({ message: survey.message, detail: survey.detail, status: survey.status, warnings: survey.warnings, noBluetooth, sweepDue: sweepDue ? survey.standing : '' }),
+  );
+
   let featurePicker = $state(false);
   const symbolName = (key: string) => symbolDef(key)?.name ?? key.replace(/^sym-/, '').replace(/-/g, ' ');
   const enter = (e: KeyboardEvent) => e.key === 'Enter' && (e.currentTarget as HTMLInputElement).blur();
 </script>
 
+{#if phone.on}
+<!-- The phone: one screen, no scrolling. The bar (undo, the link, Connect, More), the reading, the stations and the
+     passage, a line only when something is wrong, what waits for an answer, and the shot dock. The rest of the desktop
+     panel is in the More sheet (PhoneSurveyMore) and Settings > Connection and Survey. -->
+<!-- svelte-ignore a11y_no_noninteractive_element_interactions: the panel takes Space, Enter, Escape and Ctrl/Cmd+Z for the survey -->
+<div class="panel ps" role="region" aria-label="Survey" tabindex="-1" onkeydown={onKey}>
+  <div class="ptop">
+    <span class="undo"><PanelUndo scope="notebook" label="in the notebook" /></span>
+    <button class="pill" class:on={survey.status === 'connected'} class:warn={survey.status === 'lost' || survey.status === 'error'} onclick={() => showSettings('connection')} aria-label="{pill}: connection settings">{pill}</button>
+    {#if linked}
+      <button class="main" onclick={live.disconnect}><Unplug size={18} /> Disconnect</button>
+    {:else}
+      <button class="main go" onclick={() => void live.connect('auto')}><Bluetooth size={18} /> Connect</button>
+    {/if}
+    <button class="more" aria-label="More survey controls" aria-expanded={more} onclick={() => (more = true)}><Ellipsis size={20} /></button>
+  </div>
+
+  <div class="pbody">
+    <div class="nums" aria-label="Latest reading">
+      <div class="num"><b>{survey.last ? dist(survey.last.distance) : '–'}</b><small>tape</small></div>
+      <div class="num"><b>{survey.last ? `${angleText(+survey.last.azimuth.toFixed(1))}°` : '–'}</b><small>compass</small></div>
+      <div class="num"><b>{survey.last ? `${angleText(+survey.last.inclination.toFixed(1))}°` : '–'}</b><small>clino</small></div>
+    </div>
+
+    <div class="pnames">
+      <label class="nm"><span>{atOnly ? 'At' : 'From'}</span><input class="name" value={survey.state.from} oninput={(e) => live.setNames(e.currentTarget.value, survey.state.to)} maxlength="40" aria-label="Station you are at" onkeydown={enter} disabled={survey.state.awaiting !== null} autocapitalize="characters" autocomplete="off" spellcheck="false" /></label>
+      {#if !atOnly}
+        <label class="nm"><span>To</span><input class="name" value={survey.state.to} oninput={(e) => live.setNames(survey.state.from, e.currentTarget.value)} maxlength="40" aria-label="Station the next shot goes to" onkeydown={enter} disabled={survey.state.mode === 'splay' || survey.state.awaiting !== null} autocapitalize="characters" autocomplete="off" spellcheck="false" /></label>
+      {/if}
+    </div>
+
+    <div class="plrud" role="group" aria-label="Passage at {wallStation ?? 'this station'}">
+      {#each SIDES as s (s)}
+        <span class="lr"><b>{SIDE_LETTER[s]}</b>{#if wallStation}<LengthField id="psurvey-{s}" bind:value={wallInput[s]} min={0} />{:else}<input class="none" disabled aria-label="{SIDE_LETTER[s]}: after this station's shot" />{/if}</span>
+      {/each}
+    </div>
+
+    {#if problems.length > 0}
+      <div class="msgs">
+        {#each problems as l, i (i)}<p class={l.kind} role={l.kind === 'problem' ? 'alert' : 'status'}>{l.text}</p>{/each}
+      </div>
+    {/if}
+
+    <div class="spacer"></div>
+
+    {#if survey.groupsLegs && survey.waiting > 0}
+      <div class="card line"><span>{survey.waiting} close shot{survey.waiting === 1 ? '' : 's'}</span><button onclick={live.settleNow}>Splays now</button></div>
+    {/if}
+    {#if survey.stored.length > 0}
+      <div class="card" aria-label="Shots from the instrument's memory">
+        <p><b>{survey.stored.length} stored shot{survey.stored.length === 1 ? '' : 's'}</b>{survey.readingMemory ? ' (arriving…)' : ''}</p>
+        <div class="two">
+          <button class="go" onclick={live.addStored}><Check size={18} /> Add at {survey.standing || survey.state.from}</button>
+          <button class="no" onclick={live.discardStored}><X size={18} /> Discard</button>
+        </div>
+      </div>
+    {/if}
+    {#if survey.waitingForDevice && !sweep}
+      <div class="card line" role="status"><span><b>{sweepName(survey.waitingForDevice, manual)}</b> at {survey.standing}: scan on the X1</span><button onclick={live.cancelDeviceSweep}><X size={18} /> Cancel</button></div>
+    {:else if sweep}
+      <div class="card sweepcard" class:done={sweep.check.complete} role="status" aria-live="polite">
+        <SweepDial check={sweep.check} size={44} />
+        <div class="sw">
+          <p><b>{sweepName(sweep.check.kind, manual)}</b> at {sweep.station} · {manual ? `${sweep.check.shots} shot${sweep.check.shots === 1 ? '' : 's'}` : `${Math.floor(sweep.check.coverage)}%`}</p>
+          <p class="todo" class:ok={sweep.check.complete}>{sweep.check.complete ? 'Complete' : manual && sweep.check.aim ? `Aim at ${sweep.check.aim.wall}` : (sweep.check.todo[0] ?? '')}</p>
+        </div>
+        {#if sweep.armed && survey.canTakeShot && !manual}
+          <button onclick={live.toggleFiring} aria-label={survey.firing ? 'Pause firing' : 'Fire on its own'}>{#if survey.firing}<Pause size={18} />{:else}<Play size={18} />{/if}</button>
+        {/if}
+        <button class="go" onclick={live.finishSweep}><Check size={18} /> Finish</button>
+      </div>
+    {/if}
+    {#if held}
+      <div class="card" aria-label="Reading waiting">
+        {#if !held.reject}
+          <p>Write as <b>{held.text}</b>?{#if survey.held.length > 1} <span class="dim">+{survey.held.length - 1}</span>{/if}</p>
+          {#if held.warnings[0]}<p class="caution">{held.warnings[0]}</p>{/if}
+        {:else}<p class="problem">{held.reject}</p>{/if}
+        <div class="two">
+          <button class="go" onclick={live.accept} disabled={held.reject !== null}><Check size={18} /> Accept</button>
+          <button class="no" onclick={live.discard}><X size={18} /> Discard</button>
+        </div>
+      </div>
+    {/if}
+  </div>
+
+  <footer class="pdock" aria-label="Actions">
+    {#if survey.feature}
+      <div class="two">
+        <button class="shoot feat" onclick={live.shootFeature} disabled={!survey.canTakeShot}><Star size={18} /> <span class="where">{survey.feature.label || symbolName(survey.feature.symbol)}</span></button>
+        <button class="cancel" onclick={live.cancelFeature} aria-label="Cancel the feature shot"><X size={18} /></button>
+      </div>
+    {:else if live.aimsFirst()}
+      <div class="two">
+        <button class="shoot" class:armed={survey.aiming === 'single'} onclick={() => live.pressShot('single')} disabled={!survey.canTakeShot || survey.burst > 0 || !!survey.state.awaiting}>
+          <Crosshair size={18} /> <span class="where">{survey.aiming === 'single' ? 'Shoot' : singleWhere}</span>
+        </button>
+        <button class="shoot" class:armed={survey.aiming === 'leg'} onclick={() => live.pressShot('leg')} disabled={!survey.canTakeShot || survey.burst > 0 || (!survey.state.awaiting && (atOnly || !survey.state.to.trim()))}>
+          <Crosshair size={18} /> <span class="where">{survey.burst > 0 ? `Leg ${3 - survey.burst + 1} of 3…` : survey.aiming === 'leg' ? 'Shoot leg' : legWhere}</span>
+        </button>
+      </div>
+    {:else}
+      <button class="shoot" class:armed={!!survey.aiming} onclick={() => live.pressShot()} disabled={!survey.canTakeShot}><Crosshair size={20} /> <span class="where">{shotWhere}</span></button>
+    {/if}
+    <div class="two">
+      <button onclick={() => live.undoLast()} disabled={survey.log.length === 0}><Undo2 size={18} /> Undo last shot</button>
+      {#if survey.state.awaiting}
+        <button onclick={live.skipBacksight}><SkipForward size={18} /> No backsight</button>
+      {:else}
+        <button onclick={live.nextStation} disabled={survey.state.mode === 'splay'}>Next station <ChevronRight size={18} /></button>
+      {/if}
+    </div>
+  </footer>
+</div>
+{#if more}<PhoneSurveyMore onclose={() => (more = false)} onfeature={() => (featurePicker = true)} />{/if}
+{:else}
 <!-- svelte-ignore a11y_no_noninteractive_element_interactions: the panel takes Space, Enter, Escape and Ctrl/Cmd+Z for the survey -->
 <div class="panel" role="region" aria-label="Survey" tabindex="-1" onkeydown={onKey}>
   <div class="bar">
@@ -154,21 +278,6 @@
       <p class="banner" role="status">{survey.status === 'lost' ? 'Reconnecting…' : 'Connecting…'} <button class="stoplink" onclick={live.disconnect}><Unplug size={16} /> Disconnect</button></p>
     {:else if noBluetooth && !linked}
       <p class="banner">{#if phone.on}No Bluetooth in this browser.{:else}This browser has no Web Bluetooth. On an iPad, open CaveCAD in the <b>Bluefy</b> browser to connect an instrument. The simulator works anywhere.{/if}</p>
-    {/if}
-
-    {#if phone.on}
-      <!-- the phone has no ribbon: connecting and the shot settings are here -->
-      <section class="link" aria-label="Instrument">
-        <div class="row">
-          {#if linked}
-            <button onclick={live.disconnect}><Unplug size={18} /> Disconnect</button>
-          {:else}
-            <button class="go" onclick={() => void live.connect('auto')}><Bluetooth size={18} /> Connect</button>
-            <!-- no simulator on the phone: it is a development tool (the desktop keeps it) -->
-          {/if}
-        </div>
-        <div class="opts"><SurveyOptions /></div>
-      </section>
     {/if}
 
     <section class="device" aria-label="Device control">
@@ -405,6 +514,7 @@
     </div>
   </footer>
 </div>
+{/if}
 {#if quickRef}<QuickRef page="cavway-x1" onclose={() => (quickRef = false)} />{/if}
 {#if featurePicker}<FeatureShotPicker onclose={() => (featurePicker = false)} onpick={(sym, label) => { featurePicker = false; live.armFeature(sym, label); }} />{/if}
 
@@ -470,7 +580,6 @@
   .log .entry span { color: var(--muted); font-variant-numeric: tabular-nums; }
   .log .entry.flag b { color: var(--warn); }
   .link { display: flex; flex-direction: column; gap: 8px; }
-  .link .opts { height: 64px; }
   .devhead { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
   .devhead h4 { margin: 0; }
   .tools { display: flex; flex-wrap: wrap; gap: 8px; }
@@ -498,5 +607,55 @@
   .warnline { color: var(--warn); }
   .capture summary { cursor: pointer; color: var(--muted); font-size: 13px; padding: 6px 0; }
   .capture textarea { width: 100%; box-sizing: border-box; font: inherit; font-size: 12px; padding: 6px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel-2); color: var(--text); margin: 6px 0; }
+  /* ---- the phone (phone.on): one screen, the --p-* tokens from phone.css ---- */
+  .ps button { min-height: var(--p-row); padding: 0 8px; gap: 4px; border-radius: var(--p-radius); white-space: nowrap; overflow: hidden; }
+  .ptop { display: flex; align-items: center; gap: var(--p-gap); padding: 0 var(--p-pad); min-height: var(--p-hit); flex: none; border-bottom: 1px solid var(--line); }
+  .ptop .undo { display: inline-flex; flex: none; }
+  .ptop .undo :global(button) { min-height: var(--p-hit); min-width: var(--p-hit); padding: 0; display: inline-flex; align-items: center; justify-content: center; border: 0; background: none; color: var(--text); }
+  .ptop .undo :global(button:disabled) { opacity: 0.35; }
+  .ps .pill { flex: 1 1 0; min-width: 0; display: block; text-overflow: ellipsis; border-radius: 999px; background: none; color: var(--muted); font-size: var(--p-font-small); }
+  .ps .pill.on { border-color: var(--accent); color: var(--text); }
+  .ps .pill.warn { border-color: var(--warn); color: var(--warn); }
+  .ps .main { flex: none; }
+  .ps .more { flex: none; min-width: var(--p-hit); min-height: var(--p-hit); padding: 0; border: 0; background: none; }
+  .pbody { flex: 1; min-height: 0; overflow: hidden; display: flex; flex-direction: column; gap: var(--p-gap); padding: var(--p-pad); }
+  .nums { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--p-gap); flex: none; }
+  .num { min-width: 0; text-align: center; padding: 2px; border: 1px solid var(--line); border-radius: var(--p-radius); background: var(--panel-2); }
+  .num b { display: block; font-size: 24px; line-height: 1.2; font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .num small { display: block; color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; }
+  .pnames { display: flex; gap: var(--p-gap); flex: none; }
+  .nm { flex: 1 1 0; min-width: 0; display: flex; align-items: center; gap: var(--p-gap); color: var(--muted); font-size: var(--p-font-small); }
+  .ps input.name { flex: 1 1 0; width: auto; min-width: 0; min-height: var(--p-row); box-sizing: border-box; padding: 0 8px; font-size: 18px; border-radius: var(--p-radius); }
+  .plrud { display: grid; grid-template-columns: repeat(4, 1fr); gap: var(--p-gap); flex: none; }
+  .plrud .lr { min-width: 0; gap: 3px; }
+  .plrud .lr b { flex: none; width: 10px; font-size: var(--p-font-small); color: var(--muted); }
+  .plrud .lr :global(.field) { flex: 1 1 0; min-width: 0; }
+  .plrud .lr :global(.unit), .plrud .lr :global(.msg) { display: none; }
+  .plrud .lr :global(input), .plrud input.none { width: 100%; min-width: 0; min-height: var(--p-row); box-sizing: border-box; padding: 0 4px; font-size: var(--p-font-input); border: 1px solid var(--line); border-radius: var(--p-radius); background: var(--panel-2); color: var(--text); text-align: right; }
+  .plrud input.none { flex: 1 1 0; opacity: 0.4; }
+  .msgs { flex: none; display: flex; flex-direction: column; }
+  .msgs p { margin: 0; font-size: var(--p-font-small); line-height: 1.3; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .msgs .problem { color: var(--danger); }
+  .spacer { flex: 1 1 0; min-height: 0; }
+  .card { flex: none; display: flex; flex-direction: column; gap: var(--p-gap); padding: var(--p-gap) var(--p-pad); border: 1px solid var(--accent); border-radius: var(--p-radius); }
+  .card p { margin: 0; font-size: var(--p-font-small); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .card.line { flex-direction: row; align-items: center; justify-content: space-between; }
+  .card.line span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--p-font-small); }
+  .card.line button { flex: none; }
+  .sweepcard { flex-direction: row; align-items: center; border-color: var(--warn); }
+  .sweepcard.done { border-color: var(--accent); }
+  .sweepcard .sw { flex: 1; min-width: 0; }
+  .sweepcard .todo { color: var(--warn); font-weight: 600; }
+  .sweepcard .todo.ok { color: var(--accent); }
+  .sweepcard button { flex: none; }
+  .dim { color: var(--muted); }
+  .two { display: flex; gap: var(--p-gap); }
+  .two > button { flex: 1 1 0; min-width: 0; }
+  .two > button.cancel { flex: 0 0 var(--p-hit); }
+  .pdock { flex: none; display: flex; flex-direction: column; gap: var(--p-gap); padding: var(--p-pad); border-top: 1px solid var(--line); background: var(--panel); }
+  .ps button.shoot { min-height: var(--p-hit); font-size: 16px; padding: 0 6px; }
+  .ps .shoot .where { display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ps .shoot.feat { border-color: var(--warn); }
+  .ps .cancel { min-height: var(--p-hit); }
   .capture pre { max-height: 200px; overflow: auto; font-size: 11px; background: var(--panel-2); padding: 6px; border-radius: var(--radius); margin: 8px 0 0; white-space: pre-wrap; word-break: break-all; }
 </style>

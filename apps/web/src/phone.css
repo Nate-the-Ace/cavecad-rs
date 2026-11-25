@@ -32,23 +32,6 @@
   box-shadow: none;
 }
 
-/* Survey (main's SurveyPanel on the phone, until its own single-screen step): tighter rows and dock */
-.phone section[aria-label='Survey'] .bar { gap: var(--p-gap); padding: 0 var(--p-pad); }
-.phone section[aria-label='Survey'] .scroll { padding: var(--p-pad); gap: var(--p-pad); }
-.phone section[aria-label='Survey'] .dock { padding: var(--p-pad); gap: var(--p-gap); }
-.phone section[aria-label='Survey'] .slots,
-.phone section[aria-label='Survey'] .row,
-.phone section[aria-label='Survey'] .shots,
-.phone section[aria-label='Survey'] .device,
-.phone section[aria-label='Survey'] .link { gap: var(--p-gap); }
-.phone section[aria-label='Survey'] button { min-height: var(--p-row); padding: 4px 10px; }
-.phone section[aria-label='Survey'] button.shoot { min-height: var(--p-hit); }
-.phone section[aria-label='Survey'] .bar button { min-height: var(--p-hit); min-width: var(--p-hit); padding: 0; border: 0; background: none; }
-.phone section[aria-label='Survey'] .big { padding: 4px; }
-.phone section[aria-label='Survey'] .reading { min-height: 0; gap: var(--p-gap); }
-.phone section[aria-label='Survey'] .chk { min-height: var(--p-row); }
-.phone section[aria-label='Survey'] .link .opts { height: auto; }
-
 /* Notebook and Stations: bars and empty states */
 .phone section[aria-label='Notebook'] .bar,
 .phone section[aria-label='Notebook'] .add { gap: var(--p-gap); padding: var(--p-gap) var(--p-pad); }
