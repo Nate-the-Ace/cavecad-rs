@@ -6,6 +6,7 @@
   import type { CalibrationView } from '../lib/survey-types';
   import * as live from '../lib/survey.svelte';
   import { survey } from '../lib/survey.svelte';
+  import { phone } from '../lib/phone.svelte';
 
   let { guide }: { guide: CalibrationView } = $props();
 
@@ -57,7 +58,7 @@
     {/each}
   </ul>
   <div class="row">
-    {#if survey.kind === 'simulator'}<button onclick={live.simCalibrationShot}>Simulated shot</button>{/if}
+    {#if survey.kind === 'simulator' && !phone.on}<button onclick={live.simCalibrationShot}>Simulated shot</button>{/if}
     <button onclick={live.resetCalibrationGroup} title="Press this when you reset the group on the X1 (its > button)"><RotateCcw size={16} /> Group reset on X1</button>
     <button onclick={live.stopCalibration}><X size={16} /> Close guide</button>
   </div>

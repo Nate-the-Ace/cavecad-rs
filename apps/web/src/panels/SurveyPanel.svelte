@@ -14,7 +14,7 @@
   import CalibrationGuide from '../components/CalibrationGuide.svelte';
   import { BookOpen, Star } from '@lucide/svelte';
   import SurveyOptions from '../components/SurveyOptions.svelte';
-  import { Bluetooth, FlaskConical, Unplug } from '@lucide/svelte';
+  import { Bluetooth, Unplug } from '@lucide/svelte';
   import { phone } from '../lib/phone.svelte';
   import LengthField from '../components/LengthField.svelte';
   import PanelUndo from '../components/PanelUndo.svelte';
@@ -153,7 +153,7 @@
     {:else if survey.status === 'lost' || survey.status === 'connecting'}
       <p class="banner" role="status">{survey.status === 'lost' ? 'Reconnecting…' : 'Connecting…'} <button class="stoplink" onclick={live.disconnect}><Unplug size={16} /> Disconnect</button></p>
     {:else if noBluetooth && !linked}
-      <p class="banner">This browser has no Web Bluetooth. On an iPad, open CaveCAD in the <b>Bluefy</b> browser to connect an instrument. The simulator works anywhere.</p>
+      <p class="banner">{#if phone.on}No Bluetooth in this browser.{:else}This browser has no Web Bluetooth. On an iPad, open CaveCAD in the <b>Bluefy</b> browser to connect an instrument. The simulator works anywhere.{/if}</p>
     {/if}
 
     {#if phone.on}
@@ -164,7 +164,7 @@
             <button onclick={live.disconnect}><Unplug size={18} /> Disconnect</button>
           {:else}
             <button class="go" onclick={() => void live.connect('auto')}><Bluetooth size={18} /> Connect</button>
-            <button onclick={() => void live.connect('simulator')}><FlaskConical size={18} /> Simulator</button>
+            <!-- no simulator on the phone: it is a development tool (the desktop keeps it) -->
           {/if}
         </div>
         <div class="opts"><SurveyOptions /></div>
@@ -252,7 +252,7 @@
       {/if}
     </section>
 
-    {#if survey.simNote}<p class="simnote" role="status">Simulating: {survey.simNote}</p>{/if}
+    {#if survey.simNote && !phone.on}<p class="simnote" role="status">Simulating: {survey.simNote}</p>{/if}
 
     <section class="reading" aria-label="Latest reading">
       {#if survey.last}
@@ -260,7 +260,7 @@
         <div class="big"><b>{angleText(+survey.last.azimuth.toFixed(1))}°</b><small>compass</small></div>
         <div class="big"><b>{angleText(+survey.last.inclination.toFixed(1))}°</b><small>clino</small></div>
       {:else}
-        <p class="idle">{linked ? 'Waiting for a shot…' : phone.on ? 'Connect an instrument above, or try the simulator.' : 'Connect an instrument in the Survey tab, or try the simulator.'}</p>
+        {#if !phone.on}<p class="idle">{linked ? 'Waiting for a shot…' : 'Connect an instrument in the Survey tab, or try the simulator.'}</p>{/if}
       {/if}
     </section>
 
