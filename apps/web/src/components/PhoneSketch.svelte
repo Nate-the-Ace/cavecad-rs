@@ -3,10 +3,15 @@
   // behind one segmented switch, under ONE bar: [Map|Profile|Section] [tools] [Surface Data] [undo redo].
   // The undo pair is the active view's own scope; the panels' own pairs are hidden (.canvas rule below) so the phone
   // shows just one. Each view is made the first time it is picked and then kept (hidden), so the 3D Map keeps its camera.
-  // `.tools` is the slot for the drawing-type dropdown and Symbols button (they share the bar's line); `.overlay` is a
-  // thin region over the top of the canvas kept free for a live-shot strip. Neither holds anything yet.
+  // Under the bar: one 41px row with the drawing-type dropdown and Symbols button (PhoneToolStrip). Over the canvas:
+  // favorite chips down the left edge (PhoneChips), the symbol picker as a bottom sheet, and the armed tool's options
+  // as a slim strip over the canvas bottom. `.tools` (bar) and `.overlay` stay free for later.
   import type { Component } from 'svelte';
   import { Mountain } from '@lucide/svelte';
+  import PhoneToolStrip from './PhoneToolStrip.svelte';
+  import PhoneChips from './PhoneChips.svelte';
+  import PhoneSymbols from './PhoneSymbols.svelte';
+  import PhoneOptions from './PhoneOptions.svelte';
   import PanelUndo from './PanelUndo.svelte';
   import MapPanel from '../panels/MapPanel.svelte';
   import ProfilePanel from '../panels/ProfilePanel.svelte';
@@ -22,6 +27,7 @@
   ];
   const current = $derived(VIEWS.find((v) => v.id === phone.sketch) ?? VIEWS[0]);
 
+  let picker = $state(false);
   let made = $state<Record<string, boolean>>({});
   $effect(() => {
     if (!made[current.id]) made = { ...made, [current.id]: true };
@@ -39,6 +45,7 @@
     <button class="icon" onclick={() => (surface.dialog = true)} aria-label="Surface Data" title="Surface Data"><Mountain size={18} /></button>
     {#key current.id}<div class="undo"><PanelUndo scope={current.id} label={current.label} /></div>{/key}
   </div>
+  <PhoneToolStrip onSymbols={() => (picker = true)} />
   <div class="canvas">
     {#each VIEWS as v (v.id)}
       {#if made[v.id]}
@@ -47,6 +54,9 @@
       {/if}
     {/each}
     <div class="overlay"></div>
+    <PhoneChips />
+    <PhoneOptions />
+    {#if picker}<PhoneSymbols onClose={() => (picker = false)} />{/if}
   </div>
 </div>
 
