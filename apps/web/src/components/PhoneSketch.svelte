@@ -1,6 +1,6 @@
 <script lang="ts">
   // The phone's Sketch tab: the app's own Map, Profile and Cross Section panels (the ones the desktop dock mounts)
-  // behind one segmented switch, under ONE bar: [Map|Profile|Section] [tools] [Surface Data] [undo redo].
+  // behind one segmented switch, under ONE bar: [Map|Profile|Section] [tools] [undo redo] (Surface Data is in Settings > Cave).
   // The undo pair is the active view's own scope; the panels' own pairs are hidden (.canvas rule below) so the phone
   // shows just one. Each view is made the first time it is picked and then kept (hidden), so the 3D Map keeps its camera.
   // Under the bar: one 41px row with the drawing-type dropdown and Symbols button (PhoneToolStrip). Over the canvas:
@@ -8,7 +8,6 @@
   // as a slim strip over the canvas bottom, lifted above the live shot strip (PhoneLiveStrip: tape/compass/clino, dot, Take
   // shot; 6px + 40px at the very bottom, an overlay; Settings > Sketch can turn it off, and the options strip drops to the bottom). `.tools` (bar) and `.overlay` stay free for later.
   import type { Component } from 'svelte';
-  import { Mountain } from '@lucide/svelte';
   import PhoneToolStrip from './PhoneToolStrip.svelte';
   import PhoneChips from './PhoneChips.svelte';
   import PhoneSymbols from './PhoneSymbols.svelte';
@@ -18,7 +17,6 @@
   import MapPanel from '../panels/MapPanel.svelte';
   import ProfilePanel from '../panels/ProfilePanel.svelte';
   import SectionPanel from '../panels/SectionPanel.svelte';
-  import { surface } from '../lib/surface.svelte';
   import { phonePrefs } from '../lib/phone-prefs.svelte';
   import type { Scope } from '../lib/engine';
   import { phone, showPhoneTab, type SketchView } from '../lib/phone.svelte';
@@ -45,7 +43,6 @@
       {/each}
     </div>
     <div class="tools"></div>
-    <button class="icon" onclick={() => (surface.dialog = true)} aria-label="Surface Data" title="Surface Data"><Mountain size={18} /></button>
     {#key current.id}<div class="undo"><PanelUndo scope={current.id} label={current.label} /></div>{/key}
   </div>
   <PhoneToolStrip onSymbols={() => (picker = true)} />
@@ -72,7 +69,7 @@
   .seg button + button { border-left: 1px solid var(--line); }
   .seg button.on { background: var(--accent); color: #fff; font-weight: 600; }
   .tools { flex: 1; min-width: 0; display: flex; align-items: center; gap: var(--p-gap); }
-  .icon, .undo :global(button) {
+  .undo :global(button) {
     min-width: var(--p-hit); min-height: var(--p-hit); padding: 0; border: 0; border-radius: var(--p-radius); background: none; color: var(--text);
     display: inline-flex; align-items: center; justify-content: center; cursor: pointer; touch-action: manipulation;
   }

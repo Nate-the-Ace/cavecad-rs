@@ -11,11 +11,13 @@
   import { showPanel } from '../lib/workspace.svelte';
   import { openContextMenu } from '../lib/context-menu.svelte';
   import { stationItems } from '../lib/context-items';
-  import { KINDS, STATUSES, checklistCsv, effectiveStatus, filterRows, kindCounts, type StationRow } from '../lib/station-table';
+  import { downloadFile } from '../lib/deliver-file';
+  import { KINDS, STATUSES, checklistCsv, checklistName, effectiveStatus, filterRows, kindCounts, type StationRow } from '../lib/station-table';
   import { formatLength } from '../lib/units';
 
   // `compact` is the phone layout (PhoneNotebook only): a fixed two-row header and one bounded list of two-line rows.
   // `lead` is the phone's Notebook | Stations switch, at the left of the first header row. Desktop never passes either.
+  // The phone's CSV export is in Settings > Cave (all stations); the desktop keeps its download of the rows shown.
   let { compact = false, lead }: { compact?: boolean; lead?: Snippet } = $props();
 
   let rows = $state<StationRow[]>([]);
@@ -63,15 +65,7 @@
     showPanel('section');
   }
 
-  function download() {
-    const csv = checklistCsv(shown, cave.units);
-    const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = cave.fileName.replace(/\.[^.]+$/, '') + '-stations.csv';
-    a.click();
-    URL.revokeObjectURL(url);
-  }
+  const download = () => downloadFile(checklistName(cave.fileName), checklistCsv(shown, cave.units), 'text/csv');
 
   function onKey(e: KeyboardEvent) {
     const t = e.target as HTMLElement;
@@ -90,7 +84,6 @@
       <div class="r1">
         {@render lead?.()}
         <input type="search" placeholder="Search" bind:value={text} aria-label="Search stations and notes" />
-        <button class="sq" title="Download the stations shown as a checklist (CSV)" aria-label="Download checklist" onclick={download} disabled={shown.length === 0}><Download size={18} /></button>
       </div>
       <div class="r2">
         <PanelUndo scope="stations" label="in the station table" />
@@ -222,8 +215,8 @@
   .r1, .r2 { display: flex; align-items: center; gap: var(--p-gap, 4px); }
   .r1 input { flex: 1; min-width: 0; width: auto; }
   .r2 select { flex: 1; min-width: 0; }
-  .r2 :global(button), .sq { flex: none; width: 40px; height: 40px; padding: 0; display: inline-flex; align-items: center; justify-content: center; border: 1px solid var(--line); border-radius: var(--p-radius, 8px); background: var(--panel-2); color: var(--text); }
-  .r2 :global(button:disabled), .sq:disabled { opacity: 0.4; }
+  .r2 :global(button) { flex: none; width: 40px; height: 40px; padding: 0; display: inline-flex; align-items: center; justify-content: center; border: 1px solid var(--line); border-radius: var(--p-radius, 8px); background: var(--panel-2); color: var(--text); }
+  .r2 :global(button:disabled) { opacity: 0.4; }
   .compact .count { font-size: 13px; }
   .clist { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; touch-action: pan-y; -webkit-overflow-scrolling: touch; }
   .srow { padding: var(--p-gap, 4px) var(--p-pad, 6px); border-bottom: 1px solid var(--line); display: flex; flex-direction: column; gap: 2px; }
