@@ -15,6 +15,7 @@
   import NotebookSheet from '../components/NotebookSheet.svelte';
   import { cave, changed, setPick } from '../lib/cave.svelte';
   import { engine, loadEngine } from '../lib/engine';
+  import { notebookDisplay } from '../lib/notebook-display.svelte';
   import { SIDES, SIDE_LETTER, angleText, lrudText, parseAngle, parseLrud, suggestNext, withSide, type NotebookPage, type NotebookRow, type Side, type TripChoice } from '../lib/notebook';
   import { formatLength, lengthText, parseLength, unitName } from '../lib/units';
 
@@ -381,8 +382,8 @@
       </div>
     {/if}
   {:else if page}
-    <div class="clist">
-      <div class="colhead"><span>Tape</span><span>Az fs</span><span>Az bs</span><span>Inc fs</span><span>Inc bs</span><span></span></div>
+    <div class="clist" class:nobs={!notebookDisplay.backsights}>
+      <div class="colhead"><span>Tape</span><span>Az fs</span>{#if notebookDisplay.backsights}<span>Az bs</span>{/if}<span>Inc fs</span>{#if notebookDisplay.backsights}<span>Inc bs</span>{/if}<span></span></div>
       {#key redraw}
         {#each page.rows as r, i (i)}
           {#if r.kind === 'gap'}
@@ -410,9 +411,9 @@
               {/if}
               <input class="num" inputmode="decimal" value={r.distance === null ? '' : lengthText(r.distance, units)} aria-label="Tape" onchange={(e) => reading(r, 'distance', e.currentTarget.value)} onkeydown={(e) => enterReading(e, i)} />
               <input class="num" inputmode="decimal" value={angleText(r.az_fs)} aria-label="Compass foresight" onchange={(e) => reading(r, 'az_fs', e.currentTarget.value)} onkeydown={(e) => enterReading(e, i)} />
-              <input class="num" inputmode="decimal" value={angleText(r.az_bs)} aria-label="Compass backsight" onchange={(e) => reading(r, 'az_bs', e.currentTarget.value)} onkeydown={(e) => enterReading(e, i)} />
+              {#if notebookDisplay.backsights}<input class="num" inputmode="decimal" value={angleText(r.az_bs)} aria-label="Compass backsight" onchange={(e) => reading(r, 'az_bs', e.currentTarget.value)} onkeydown={(e) => enterReading(e, i)} />{/if}
               <input class="num" inputmode="text" value={angleText(r.inc_fs)} aria-label="Clino foresight" onchange={(e) => reading(r, 'inc_fs', e.currentTarget.value)} onkeydown={(e) => enterReading(e, i)} />
-              <input class="num" inputmode="text" value={angleText(r.inc_bs)} aria-label="Clino backsight" onchange={(e) => reading(r, 'inc_bs', e.currentTarget.value)} onkeydown={(e) => enterReading(e, i)} />
+              {#if notebookDisplay.backsights}<input class="num" inputmode="text" value={angleText(r.inc_bs)} aria-label="Clino backsight" onchange={(e) => reading(r, 'inc_bs', e.currentTarget.value)} onkeydown={(e) => enterReading(e, i)} />{/if}
               <button class="del" tabindex="-1" aria-label="Delete shot" onclick={(e) => { e.stopPropagation(); if (r.shot) run(engine.notebookRemoveShot(r.shot)); }}><Trash2 size={16} /></button>
             </div>
           {/if}
@@ -527,6 +528,7 @@
   .r2 .msg { color: var(--danger); }
   .clist { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; touch-action: pan-y; -webkit-overflow-scrolling: touch; padding: 0 var(--p-pad, 6px); }
   .colhead, .cshot { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)) 40px; gap: 3px; align-items: center; }
+  .nobs .colhead, .nobs .cshot { grid-template-columns: repeat(3, minmax(0, 1fr)) 40px; }
   .colhead { position: sticky; top: 0; z-index: 2; background: var(--panel); padding: 3px 0; font-size: 11px; font-weight: 600; color: var(--muted); text-align: center; border-bottom: 1px solid var(--line); }
   .cst { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)) 40px; gap: 3px; align-items: center; margin-top: var(--p-gap, 4px); padding: 2px 0; background: var(--panel-2); border-top: 1px solid var(--line); }
   .cst .stn { width: 100%; padding: 0 4px; font-weight: 600; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; background: none; border: 0; color: var(--text); font: inherit; font-weight: 600; }

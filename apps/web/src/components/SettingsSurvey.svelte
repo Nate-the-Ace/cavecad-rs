@@ -6,6 +6,8 @@
   import * as live from '../lib/survey.svelte';
   import { survey } from '../lib/survey.svelte';
   import { cave, setUnits } from '../lib/cave.svelte';
+  import { setBacksightsShown } from '../lib/notebook-display.svelte';
+  import { surveyBacksightsChange } from '../lib/notebook-display.ts';
   import './settings.css';
 
   const MODES = [['leg', 'Leg'], ['splay', 'Splay'], ['lrud', 'LRUD']] as const;
@@ -24,7 +26,7 @@
       </div>
     {/if}
   </div>
-  <label class="chk"><input type="checkbox" checked={survey.state.backsights} onchange={(e) => live.setBacksights(e.currentTarget.checked)} /> Backsights</label>
+  <label class="chk"><input type="checkbox" checked={survey.state.backsights} onchange={(e) => { const c = surveyBacksightsChange(e.currentTarget.checked); live.setBacksights(c.collect); setBacksightsShown(c.show); }} /> Backsights</label>
   <label class="chk"><input type="checkbox" checked={survey.auto} onchange={(e) => live.setAuto(e.currentTarget.checked)} /> Write at once</label>
   <div class="row">
     <span class="lab">Units</span>

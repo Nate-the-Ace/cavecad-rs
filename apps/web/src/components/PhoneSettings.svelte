@@ -27,7 +27,7 @@
   .settings { display: flex; flex-direction: column; height: 100%; }
   .bar { display: flex; gap: 2px; padding: var(--p-gap); flex: none; overflow-x: auto; scrollbar-width: none; background: var(--panel); border-bottom: 1px solid var(--line); }
   .bar::-webkit-scrollbar { display: none; }
-  .bar button { flex: none; min-height: var(--p-row); padding: 0 10px; border: 0; border-radius: var(--p-radius); background: var(--panel-2); color: var(--text); font: inherit; font-size: var(--p-font-small); cursor: pointer; touch-action: manipulation; }
+  .bar button { flex: 1 1 auto; min-height: var(--p-row); padding: 0 3px; border: 0; border-radius: var(--p-radius); background: var(--panel-2); color: var(--text); font: inherit; font-size: var(--p-font-small); cursor: pointer; touch-action: manipulation; }
   .bar button.on { background: var(--accent); color: #fff; font-weight: 600; }
   .body { flex: 1; min-height: 0; overflow: hidden; }
 </style>
