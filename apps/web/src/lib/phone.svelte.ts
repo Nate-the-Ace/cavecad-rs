@@ -44,13 +44,15 @@ function loadTab(): PhoneTab {
   }
 }
 
-export const phone = $state<{ on: boolean; tab: PhoneTab; sketch: SketchView; notebook: NotebookView; settings: string }>({
+export const phone = $state<{ on: boolean; tab: PhoneTab; sketch: SketchView; notebook: NotebookView; settings: string; objectSettings: boolean }>({
   on: media?.matches ?? false,
   tab: loadTab(),
   sketch: 'map',
   notebook: 'notebook',
   /** The Settings tab's section showing ('' for its first). */
   settings: '',
+  /** The picked or selected object's settings strip is showing (Done puts it away; a long press on the object brings it back). */
+  objectSettings: true,
 });
 
 media?.addEventListener('change', (e) => (phone.on = e.matches));
