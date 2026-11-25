@@ -13,7 +13,7 @@ import { deleteServerCave, handOverKeys, leaveServerCave, listMyCavesAndDeleted,
 import { serverAccess } from './room.svelte';
 import { forgetCave, shelf, shelfRoomIds } from './shelf.svelte';
 import { engine } from './engine';
-import { openFromServer, openKept } from './caves';
+import { closeOpenCave, openFromServer, openKept } from './caves';
 import type { CaveSummary } from './engine';
 
 export type OtherCave = {
@@ -122,12 +122,13 @@ export async function openServerCave(id: string): Promise<string> {
 
 /**
  * Deletes one of the member's own caves for good: from the server, and so from every device and everyone it was
- * shared with, then from this shelf. Refused for the cave open now. A sentence when it could not, or ''.
+ * shared with, then from this shelf. The cave open now is closed first (so its live link cannot put it back); if
+ * the server is out of reach it stays closed, and kept on the shelf, for another try. A sentence when it could not, or ''.
  */
 export async function deleteEverywhere(id: string): Promise<string> {
-  if (engine.roomId() === id) return 'Open another cave first: the cave on screen cannot be deleted.';
   const access = await serverAccess();
   if (!access) return "Can't reach the CaveCAD server. Check you are online and signed in, then try again.";
+  if (engine.roomId() === id) await closeOpenCave();
   try {
     await deleteServerCave(access, id);
   } catch {
@@ -139,17 +140,18 @@ export async function deleteEverywhere(id: string): Promise<string> {
   return '';
 }
 
-/** Takes the member off a cave someone shared with them, and off this shelf. A sentence when it could not, or ''. */
+/** Takes the member off a cave someone shared with them, and off this shelf (an open one is closed first). A sentence when it could not, or ''. */
 export async function leaveShared(id: string): Promise<string> {
   const access = await serverAccess();
   if (!access) return "Can't reach the CaveCAD server. Check you are online and signed in, then try again.";
+  if (engine.roomId() === id) await closeOpenCave();
   try {
     await leaveServerCave(access, id);
   } catch {
     return 'Could not leave the cave. Try again in a moment.';
   }
   const kept = shelf.records.find((r) => r.roomId === id);
-  if (kept && engine.roomId() !== id) await forgetCave(kept.id);
+  if (kept) await forgetCave(kept.id);
   await refreshServerCaves();
   return '';
 }
