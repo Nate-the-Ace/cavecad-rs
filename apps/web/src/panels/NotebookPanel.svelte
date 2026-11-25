@@ -6,21 +6,30 @@
   // Compass cells hold what the compass read (magnetic); the trip's declination turns them into the true
   // bearings the survey keeps. The page is worked out from the survey every time and every cell is a real,
   // undoable edit of it (this panel has its own Undo and Redo).
-  import { tick, untrack } from 'svelte';
+  import { tick, untrack, type Snippet } from 'svelte';
   import { Plus, ScanLine, Trash2 } from '@lucide/svelte';
   import { showPanel } from '../lib/workspace.svelte';
   import { openContextMenu } from '../lib/context-menu.svelte';
   import { stationItems } from '../lib/context-items';
   import PanelUndo from '../components/PanelUndo.svelte';
+  import NotebookSheet from '../components/NotebookSheet.svelte';
   import { cave, changed, setPick } from '../lib/cave.svelte';
   import { engine, loadEngine } from '../lib/engine';
   import { SIDES, SIDE_LETTER, angleText, lrudText, parseAngle, parseLrud, suggestNext, withSide, type NotebookPage, type NotebookRow, type Side, type TripChoice } from '../lib/notebook';
   import { formatLength, lengthText, parseLength, unitName } from '../lib/units';
 
+  // `compact` is the phone layout (PhoneNotebook only): the same page, edits and logic, drawn on one screen as a
+  // fixed two-row header, one bounded scrolling list and a fixed add bar. `lead` is the phone's Notebook | Stations
+  // switch, drawn at the left of the first header row. Desktop and iPad never pass either.
+  let { compact = false, lead }: { compact?: boolean; lead?: Snippet } = $props();
+  /** The phone's sheet: the rarely used trip fields ('more'), or the note (and name) of the row at that index. */
+  let sheet = $state<{ kind: 'more' } | { kind: 'row'; i: number } | null>(null);
+
   let ready = $state(false);
   let trips = $state<TripChoice[]>([]);
   let page = $state<NotebookPage | null>(null);
   let message = $state('');
+  const sheetRow = $derived(sheet?.kind === 'row' ? (page?.rows[sheet.i] ?? null) : null);
   let from = $state('');
   let to = $state('');
   /** Bumped to redraw cells after a refused edit, so a rejected entry does not stay on screen. */
@@ -41,8 +50,9 @@
       if (focusNewShot) {
         focusNewShot = false;
         void tick().then(() => {
-          const tapes = document.querySelectorAll<HTMLInputElement>('.panel[aria-label="Survey notebook"] tr.shot input[aria-label=Tape]');
+          const tapes = document.querySelectorAll<HTMLInputElement>('.panel[aria-label="Survey notebook"] :is(tr.shot, .cshot) input[aria-label=Tape]');
           tapes[tapes.length - 1]?.focus();
+          if (compact) tapes[tapes.length - 1]?.scrollIntoView({ block: 'nearest' });
         });
       }
     });
@@ -231,11 +241,19 @@
     }
   }
 
+  const tripLabel = (t: TripChoice) => `${t.index + 1}. ${t.name || 'Untitled trip'}${t.date ? ` (${t.date})` : ''}`;
+  /** Phone: a closure's button closes the sheet it is in and brings its row into the list. */
+  function showClosure(row: number) {
+    sheet = null;
+    void tick().then(() => closureRow(row));
+  }
+
   const closureRow = (i: number) => document.getElementById(`nb-row-${i}`)?.scrollIntoView({ block: 'center' });
 </script>
 
 <!-- svelte-ignore a11y_no_noninteractive_element_interactions: the panel takes Ctrl/Cmd+Z for its own undo -->
-<div class="panel" role="region" aria-label="Survey notebook" tabindex="-1" onkeydown={onKey}>
+<div class="panel" class:compact role="region" aria-label="Survey notebook" tabindex="-1" onkeydown={onKey}>
+  {#if !compact}
   <div class="bar">
     <PanelUndo scope="notebook" label="in the notebook" />
     <select
@@ -267,8 +285,28 @@
     {/if}
     {#if message}<span class="msg" role="alert">{message}</span>{/if}
   </div>
+  {:else}
+    <div class="chead">
+      <div class="r1">
+        {@render lead?.()}
+        <select value={cave.trip} aria-label="Trip" onchange={(e) => (cave.trip = e.currentTarget.value)}>
+          {#each trips as t}<option value={t.id}>{tripLabel(t)}</option>{/each}
+        </select>
+        <button class="sq" title="Start a new trip (a new page)" aria-label="New trip" onclick={newTrip}><Plus size={18} /></button>
+        <button class="moreb" aria-haspopup="dialog" disabled={!page} onclick={() => (sheet = { kind: 'more' })}>More{#if page && !page.date}<span class="dot" aria-label="no date"></span>{/if}</button>
+      </div>
+      <div class="r2">
+        <PanelUndo scope="notebook" label="in the notebook" />
+        {#if message}
+          <span class="msg" role="alert">{message}</span>
+        {:else if page}
+          <span class="sum" role="status"><b>{formatLength(page.totals.length, units, 1)}</b> · {page.totals.shots} shots · {page.totals.splays} splays{#if page.totals.warnings}<span class="warn"> · {page.totals.warnings} to check</span>{/if}</span>
+        {/if}
+      </div>
+    </div>
+  {/if}
 
-  {#if page}
+  {#if page && !compact}
     <div class="totals" role="status">
       <b>{formatLength(page.totals.length, units, 1)}</b> surveyed · {page.totals.shots} shots · {page.totals.splays} splays · {page.totals.stations} stations
       {#if page.totals.warnings}<span class="warn">· {page.totals.warnings} to check</span>{/if}
@@ -342,6 +380,89 @@
         {/each}
       </div>
     {/if}
+  {:else if page}
+    <div class="clist">
+      <div class="colhead"><span>Tape</span><span>Az fs</span><span>Az bs</span><span>Inc fs</span><span>Inc bs</span><span></span></div>
+      {#key redraw}
+        {#each page.rows as r, i (i)}
+          {#if r.kind === 'gap'}
+            <div id="nb-row-{i}" class="cgap"></div>
+          {:else if r.kind === 'station'}
+            <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions: the cells inside take the keys -->
+            <div id="nb-row-{i}" class="cst" class:sel={cave.pick.kind === 'station' && cave.pick.id === r.station} onclick={() => pick(r)}>
+              <button class="stn" aria-label="Station {r.label}: name and note" onclick={() => (sheet = { kind: 'row', i })}>{r.label}{#if r.note}<span class="dot" aria-hidden="true"></span>{/if}</button>
+              {#each SIDES as s}
+                {#if r.lrud && r.lrud_editable}
+                  <label class="c"><i>{SIDE_LETTER[s]}</i><input class="num" inputmode="text" value={lrudText(r.lrud[s], r.lrud[`${s}_open`], units)} aria-label="{s} of {r.label}" onchange={(e) => side(r, s, e.currentTarget.value)} onkeydown={enter} /></label>
+                {:else if r.lrud}
+                  <span class="c ro"><i>{SIDE_LETTER[s]}</i>{lrudText(r.lrud[s], r.lrud[`${s}_open`], units)}</span>
+                {:else}
+                  <span></span>
+                {/if}
+              {/each}
+              <span></span>
+            </div>
+          {:else}
+            <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions: the cells inside take the keys -->
+            <div id="nb-row-{i}" class="cshot" class:splay={r.kind === 'splay'} class:out={r.excluded} class:bad={r.warn !== ''} class:sel={(cave.pick.kind === 'leg' || cave.pick.kind === 'splay') && cave.pick.id === r.shot} title={r.warn} onclick={() => pick(r)}>
+              {#if r.kind === 'splay'}
+                <button class="cl" aria-label="Splay {r.label}: note" disabled={!r.note_source} onclick={() => (sheet = { kind: 'row', i })}>{r.label}{#if r.note}<span class="dot" aria-hidden="true"></span>{/if}</button>
+              {/if}
+              <input class="num" inputmode="decimal" value={r.distance === null ? '' : lengthText(r.distance, units)} aria-label="Tape" onchange={(e) => reading(r, 'distance', e.currentTarget.value)} onkeydown={(e) => enterReading(e, i)} />
+              <input class="num" inputmode="decimal" value={angleText(r.az_fs)} aria-label="Compass foresight" onchange={(e) => reading(r, 'az_fs', e.currentTarget.value)} onkeydown={(e) => enterReading(e, i)} />
+              <input class="num" inputmode="decimal" value={angleText(r.az_bs)} aria-label="Compass backsight" onchange={(e) => reading(r, 'az_bs', e.currentTarget.value)} onkeydown={(e) => enterReading(e, i)} />
+              <input class="num" inputmode="text" value={angleText(r.inc_fs)} aria-label="Clino foresight" onchange={(e) => reading(r, 'inc_fs', e.currentTarget.value)} onkeydown={(e) => enterReading(e, i)} />
+              <input class="num" inputmode="text" value={angleText(r.inc_bs)} aria-label="Clino backsight" onchange={(e) => reading(r, 'inc_bs', e.currentTarget.value)} onkeydown={(e) => enterReading(e, i)} />
+              <button class="del" tabindex="-1" aria-label="Delete shot" onclick={(e) => { e.stopPropagation(); if (r.shot) run(engine.notebookRemoveShot(r.shot)); }}><Trash2 size={16} /></button>
+            </div>
+          {/if}
+        {:else}
+          <p class="none">No shots yet. Type From and To below, then Add.</p>
+        {/each}
+      {/key}
+    </div>
+    <div class="cadd">
+      <label class="c"><i>From</i><input class="stin" bind:value={from} maxlength="40" aria-label="Shot starts at" autocapitalize="characters" autocomplete="off" /></label>
+      <label class="c"><i>To</i><input class="stin" bind:value={to} oninput={() => (toTyped = true)} maxlength="40" aria-label="Shot ends at" autocapitalize="characters" autocomplete="off" onkeydown={(e) => e.key === 'Enter' && add(false)} /></label>
+      <button class="go" onclick={() => add(false)} disabled={!from.trim() || !to.trim()}>Add</button>
+      <button onclick={() => add(true)} disabled={!from.trim()} aria-label="Add splay">Splay</button>
+    </div>
+    <NotebookSheet open={sheet !== null} title={sheet?.kind === 'more' ? 'This trip' : sheetRow ? `${sheetRow.kind === 'splay' ? 'Splay' : 'Station'} ${sheetRow.label}` : ''} onclose={() => (sheet = null)}>
+      {#if sheet?.kind === 'more'}
+        {#key redraw}
+          <label class="fld">Name <input value={page.name} maxlength="200" onchange={(e) => field('name', e.currentTarget.value)} onkeydown={enter} /></label>
+          <div class="two">
+            <label class="fld">Date <input placeholder="YYYY-MM-DD" value={page.date} onchange={(e) => field('date', e.currentTarget.value)} onkeydown={enter} /></label>
+            <label class="fld">Declination ° <input inputmode="text" value={page.declination ?? ''} onchange={(e) => declination(e.currentTarget.value)} onkeydown={enter} /></label>
+          </div>
+          <label class="fld">Team <input value={page.team} maxlength="200" onchange={(e) => field('team', e.currentTarget.value)} onkeydown={enter} /></label>
+          <label class="fld">Instruments <input value={page.instruments} maxlength="200" onchange={(e) => field('instruments', e.currentTarget.value)} onkeydown={enter} /></label>
+        {/key}
+        {#if page.closures.length}
+          <div class="closures" aria-label="Loop closures">
+            {#each page.closures as c}
+              <button class="closure" onclick={() => showClosure(c.row)}>
+                {c.kind === 'loop' ? 'Loop' : 'Tie'} {c.path[0]}–{c.path[c.path.length - 1]}: {formatLength(c.horizontal, units, 2)} off{c.percent === null ? '' : `, ${c.percent.toFixed(1)}%`}
+              </button>
+            {/each}
+          </div>
+        {/if}
+        {#if message}<span class="msg" role="alert">{message}</span>{/if}
+      {:else if sheetRow}
+        {#key redraw}
+          {#if sheetRow.kind === 'station' && sheetRow.station}
+            <label class="fld">Name <input value={sheetRow.label} maxlength="40" aria-label="Station name" onchange={(e) => rename(sheetRow, e.currentTarget.value)} onkeydown={enter} /></label>
+          {/if}
+          {#if sheetRow.note_source}
+            <label class="fld">Note <input value={sheetRow.note} maxlength="400" aria-label="Note at {sheetRow.label}" onchange={(e) => note(sheetRow, e.currentTarget.value)} onkeydown={enter} /></label>
+          {/if}
+        {/key}
+        {#if sheetRow.kind === 'station'}
+          <button class="nxt" onclick={() => { from = sheetRow.label; sheet = null; }}>Next shot from {sheetRow.label}</button>
+        {/if}
+        {#if message}<span class="msg" role="alert">{message}</span>{/if}
+      {/if}
+    </NotebookSheet>
   {:else}
     <p class="none">Open a cave to see its notebook.</p>
   {/if}
@@ -388,4 +509,50 @@
   button.scan { display: inline-flex; align-items: center; gap: 4px; font: inherit; font-size: 12px; padding: 3px 8px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel-2); color: var(--text); cursor: pointer; }
   button.icon { background: none; border: none; color: var(--muted); cursor: pointer; padding: 2px; }
   button.icon:hover { color: var(--text); }
+
+  /* Phone layout: only when PhoneNotebook passes `compact`. Fixed header and add bar, one scrolling list between. */
+  .panel.compact { position: relative; overflow: hidden; font-size: 14px; }
+  .compact input, .compact select { font-size: 16px; height: 40px; box-sizing: border-box; padding: 0 6px; }
+  .compact button { min-height: 40px; touch-action: manipulation; }
+  .chead { display: flex; flex-direction: column; gap: 2px; padding: var(--p-gap, 4px) var(--p-pad, 6px); border-bottom: 1px solid var(--line); flex: none; }
+  .r1, .r2 { display: flex; align-items: center; gap: var(--p-gap, 4px); }
+  .r1 select { flex: 1; min-width: 0; }
+  .sq, .r2 :global(button) { flex: none; width: 40px; height: 40px; padding: 0; display: inline-flex; align-items: center; justify-content: center; border: 1px solid var(--line); border-radius: var(--p-radius, 8px); background: var(--panel-2); color: var(--text); }
+  .r2 :global(button:disabled), .compact button:disabled { opacity: 0.4; }
+  button.moreb, .cadd button, button.nxt { flex: none; position: relative; padding: 0 12px; border: 1px solid var(--line); border-radius: var(--p-radius, 8px); background: var(--panel-2); color: var(--text); font: inherit; }
+  .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--warn); margin-left: 4px; vertical-align: middle; }
+  .sum, .r2 .msg { flex: 1; min-width: 0; font-size: 13px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .sum b { color: var(--text); }
+  .sum .warn { color: var(--warn); }
+  .r2 .msg { color: var(--danger); }
+  .clist { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; touch-action: pan-y; -webkit-overflow-scrolling: touch; padding: 0 var(--p-pad, 6px); }
+  .colhead, .cshot { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)) 40px; gap: 3px; align-items: center; }
+  .colhead { position: sticky; top: 0; z-index: 2; background: var(--panel); padding: 3px 0; font-size: 11px; font-weight: 600; color: var(--muted); text-align: center; border-bottom: 1px solid var(--line); }
+  .cst { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)) 40px; gap: 3px; align-items: center; margin-top: var(--p-gap, 4px); padding: 2px 0; background: var(--panel-2); border-top: 1px solid var(--line); }
+  .cst .stn { width: 100%; padding: 0 4px; font-weight: 600; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; background: none; border: 0; color: var(--text); font: inherit; font-weight: 600; }
+  .c { position: relative; display: block; min-width: 0; }
+  .c i { position: absolute; left: 4px; top: 50%; transform: translateY(-50%); font-style: normal; font-size: 11px; color: var(--muted); pointer-events: none; }
+  .c input { width: 100%; }
+  .cst .c input.num { padding-left: 14px; padding-right: 3px; }
+  .cshot input.num { width: 100%; text-align: center; padding: 0 2px; }
+  .cst input.num { text-align: right; }
+  .compact .ro.c { text-align: right; font-size: 14px; line-height: 40px; padding-right: 3px; }
+  .cshot { padding: 1px 0; }
+  .cshot .cl { grid-column: 1 / -1; min-height: 24px; justify-self: start; border: 0; background: none; color: var(--muted); font: inherit; font-size: 12px; padding: 0 4px; border-left: 2px solid var(--line); }
+  .compact .cshot .cl { min-height: 24px; }
+  .cshot .del { width: 40px; padding: 0; display: inline-grid; place-items: center; border: 0; background: none; color: var(--muted); }
+  .cgap { height: 10px; background: repeating-linear-gradient(135deg, transparent 0 4px, var(--line) 4px 5px); margin: 2px 0; }
+  .cshot.sel, .cst.sel { outline: 1px solid var(--accent); outline-offset: -1px; }
+  .cshot.out { text-decoration: line-through; opacity: 0.6; }
+  .cshot.bad input { border-color: var(--warn); }
+  .cadd { display: grid; grid-template-columns: 1fr 1fr auto auto; align-items: center; gap: var(--p-gap, 4px); padding: var(--p-gap, 4px) var(--p-pad, 6px); border-top: 1px solid var(--line); background: var(--panel); flex: none; }
+  .cadd .c i { top: 9px; transform: none; font-size: 10px; }
+  .cadd .c input { padding-top: 10px; }
+  .cadd button.go { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+  .compact .closures { max-height: none; padding: 0; border: 0; }
+  .compact .closure { min-height: 40px; }
+  .fld { display: flex; flex-direction: column; gap: 2px; font-size: 12px; color: var(--muted); min-width: 0; }
+  .fld input { width: 100%; }
+  .two { display: grid; grid-template-columns: 1fr 1fr; gap: var(--p-gap, 4px); }
+  .compact .none { padding: var(--p-pad, 6px); }
 </style>
