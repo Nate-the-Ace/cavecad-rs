@@ -46,7 +46,7 @@ Editors can change the cave. Watchers can only look. Someone taken off keeps the
 | --- | --- | --- |
 | "Open a cave to see its rooms." | No cave is open. | Open a cave. |
 | "Sign in (top right) to share this cave." | You are not signed in. | Sign in, then come back. |
-| "This cave isn't kept on the server, so it can't be shared. Samples never are: make a new cave, or open one of your own." | The cave only lives on this computer. | Make a new cave, or open one of your own. |
+| "This cave isn't on the server, so it can't be shared." | The cave only lives on this computer. Samples are never on the server. | Make a new cave, or open one of your own. |
 | "Pick a member from the list, or type someone's email to invite them." | What you typed matched nobody. | Choose a name from the list, or type a full email address. |
 | "Sign in to change rooms." | Your sign-in has lapsed. | Sign in again. |
 | "Offline: your edits will join when you reconnect" | You have no connection. | Carry on. Your edits join when you are back online. |

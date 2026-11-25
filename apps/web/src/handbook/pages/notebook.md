@@ -26,6 +26,10 @@ The Notebook lays one survey trip out like a field-book page, so you can type sh
 
 Tick **Backsights** to show the backsight columns. A trip that already has backsights shows them anyway.
 
+### Units
+
+A trip keeps the unit its notes were written in. When that differs from the units you read in (set in the View tab), the totals line says so, for example "Written in feet", and the cells are shown converted. Compass cells are magnetic: they hold what was read, before declination.
+
 ### Declination
 
 1. Type the trip's declination in **Decl.**, in degrees, east positive.
@@ -36,6 +40,7 @@ Tick **Backsights** to show the backsight columns. A trip that already has backs
 - Click **Add splay** for a reading to a wall with no station at the far end.
 - Type an existing station in **To** and the shot joins it, which makes a loop.
 - Type a different station in **From** to start a branch.
+- So a station that already exists joins it (a loop); a different **From** starts a branch.
 - A hatched gap between rows is a chain breaking.
 
 ### Delete or find a shot

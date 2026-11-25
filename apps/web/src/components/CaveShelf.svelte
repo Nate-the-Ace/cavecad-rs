@@ -361,7 +361,7 @@
           {#if !remote.hasKey}
             <p class="wait">{comingOver(remote)}</p>
           {:else}
-            <p class="stored">Open it to bring it onto this computer. It stays in step with your other devices.</p>
+            <p class="stored">Open it to bring it here.</p>
           {/if}
         {:else if (record || sample || remote) && summary}
           <h2>{sample ? sample.title.replace(/ \(.*\)$/, '') : summary.name}</h2>
@@ -369,7 +369,7 @@
             {#if summary.empty}Nothing surveyed yet.{:else}{length(summary.length_m)} surveyed · {summary.stations} stations · {summary.trips.length} trip{summary.trips.length === 1 ? '' : 's'}{#if summary.depth_m !== null && summary.depth_m > 0}{' · '}{length(summary.depth_m)} deep{/if} · <span class="health" title={HEALTH_HINT}>{health(summary)}</span>{/if}
           </p>
           {#if remote}
-            <p class="stored">On the CaveCAD server, from one of your other devices · made {when(remote.createdAt)}. Open it to bring it onto this computer; it stays in step with your other devices.</p>
+            <p class="stored">On the CaveCAD server, from one of your other devices · made {when(remote.createdAt)}</p>
             {#if !remote.hasKey}<p class="wait">{comingOver(remote)}</p>{/if}
           {:else if record?.home && lost}
             <div class="lost" role="alert">
@@ -378,7 +378,7 @@
               <button onclick={() => keepHere(record!)}>Keep in this browser</button>
             </div>
           {:else if record?.home}<p class="stored" title={record.home.label}>In its folder, {record.home.label} · last saved {when(record.updated)}</p>
-          {:else if record}<p class="stored">Kept in this browser · last saved {when(record.updated)}</p>{:else}<p class="stored">A sample cave. Open it to look around. Your first change makes it your own copy, kept in this browser; the sample stays as it is.</p>{/if}
+          {:else if record}<p class="stored">Kept in this browser · last saved {when(record.updated)}</p>{:else}<p class="stored">A sample cave: your first change makes your own copy.</p>{/if}
           {#if record}
             <div class="actions">
               <button onclick={() => void setFavorite(record!.id, !record!.favorite)} title="Favourites stay at the top of the list"><Star size={13} fill={record.favorite ? 'currentColor' : 'none'} /> {record.favorite ? 'Favourite' : 'Add to favourites'}</button>

@@ -27,6 +27,17 @@ The Scans panel holds your scanned notebook pages and sketches, and lets you lin
 2. Open the **Place in** list and choose **Map**, **Profile** or **Cross Section**. Each has its own placement.
 3. Click **Align under map** and match spots as above. In a Cross Section you can tick **Set scale from a wall** to use a measured wall.
 
+### Matching, step by step
+
+- Click a spot on the scan that you can find in the view you are placing it in: a station mark on the Map, or a station or any place on it in a Profile or Cross Section.
+- Two matches place and scale the scan; more fit it better. One match places it at the average scale of your other scans, north up.
+- With **Set scale from a wall** (Cross Section), click the station on the scan, then the cave wall straight out from it (left, right, up or down: the line snaps to the nearest). The passage's measurement there sets the scale.
+- A trimmed scan keeps only what is inside its outline: the rest is dimmed in the panel and left out of the Map. **Use the whole scan** takes the trim away.
+
+### Where the scans live on this computer
+
+When a scan page is opened from its real place, CaveCAD asks once for the full path of the scans folder, so every page can be shown where it really is. Paste the folder's path (on a Mac: in Finder, right-click the folder, hold Option, and choose "Copy … as Pathname"; in Windows: hold Shift, right-click the folder, and choose "Copy as path"). After that, the panel shows the page's real location to copy; paste it in Finder with Shift+Cmd+G, or in the Explorer address bar.
+
 ### Fit style
 
 With three or more matches, the **Fit** list appears. **Rigid** keeps the scan's shape, **Stretch** takes out scanner stretch, and **Rubber sheet** bends the scan so every match lands on its station.
@@ -46,7 +57,7 @@ With three or more matches, the **Fit** list appears. **Rigid** keeps the scan's
 | "This cave is not syncing, so scans cannot be added to it now." | The connection to the server is down. | Check your connection and try again. |
 | "No scans (pictures or PDFs) were found there." | The folder you picked has no usable pictures or PDFs. | Pick a different folder. |
 | "That outline is too small or not a shape." | The trim outline has too few corners or is too small. | Trace a larger outline of at least three corners. |
-| "The survey has changed under this page since it was matched..." | Stations have moved since you lined the scan up. | Click **Check the matches**, or **It still lines up** if it is fine. |
+| "The survey moved under this page (up to …) since it was matched." | Its stations have moved against each other by up to that much since you lined the scan up, so the scan may no longer line up with what was drawn over it. | Click **Check the matches**, or **It still lines up** if it is fine. |
 | A message that there is no measurement at this station | The wall you picked has no measured distance. | Enter it in the [Notebook](notebook), or pick another wall. |
 | "No scan matches." | Your search hides every page. | Clear **Find a scan**. |
 

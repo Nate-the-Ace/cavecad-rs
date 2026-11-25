@@ -9,6 +9,7 @@
   import { shelf } from '../lib/shelf.svelte';
   import { canMakeFolders, choosePlace, folderNameOf, look, make, startPlace, type Place } from '../lib/cavefolder.svelte';
   import { openHandbook } from '../lib/handbook-open';
+  import { phone } from '../lib/phone.svelte';
   import { isDesktop } from '../lib/desktop';
   import { isCaveFolder } from '../lib/folder-handle';
 
@@ -146,7 +147,7 @@
           {#if browser}<span class="small">The browser can't use Documents itself: choose a folder inside it, such as Documents/Caves, or make one there with New Folder. A folder you make with the cave's name is used as the cave's folder.</span>{/if}
         </div>
       {:else}
-        <p class="hint">This cave is kept in this browser. Home → Project gives you a folder of it; Chrome, Edge and the desktop app can make the folder for you.</p>
+        {#if phone.on}<p class="hint">This cave is kept in this browser. Home → Project gives you a folder of it; Chrome, Edge and the desktop app can make the folder for you.</p>{:else}<p class="hint">Kept in this browser.</p>{/if}
       {/if}
       {#if found?.kind === 'noPlace'}
         <div class="found" role="alert">
@@ -164,7 +165,7 @@
           <div class="row"><button onclick={choose}>Choose another place</button><button class="go" onclick={() => create(true)} disabled={busy}>Use it</button></div>
         </div>
       {/if}
-      <p class="hint">You will get your scans on the left and the notebook beside them. Pick the first page and type its shots as you read them.</p>
+      {#if phone.on}<p class="hint">You will get your scans on the left and the notebook beside them. Pick the first page and type its shots as you read them.</p>{/if}
       {#if message}<p class="err" role="alert">{message}</p>{/if}
       <div class="row">
         <button class="link" onclick={() => { close(); openHandbook('bringing-survey-data-in'); }}>Learn more</button>

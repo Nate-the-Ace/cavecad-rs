@@ -312,7 +312,7 @@
       <b>{formatLength(page.totals.length, units, 1)}</b> surveyed · {page.totals.shots} shots · {page.totals.splays} splays · {page.totals.stations} stations
       {#if page.totals.warnings}<span class="warn">· {page.totals.warnings} to check</span>{/if}
       {#if !page.date}<span class="warn" title="The trip's date sets its magnetic declination and goes into Compass, Walls and Survex exports (without one, Compass gets 1 1 1900). Type it in Date above.">· no date</span>{/if}
-      <span class="note">Notes written in {page.unit === 'ft' ? 'feet' : 'metres'}; shown in {unitName(units) === 'ft' ? 'feet' : 'metres'}. Compass cells are magnetic.</span>
+      {#if page.unit !== unitName(units)}<span class="note">Written in {page.unit === 'ft' ? 'feet' : 'metres'}</span>{/if}
     </div>
     <div class="scroll">
       <table>
@@ -370,7 +370,6 @@
       <label>To <input class="st-in" bind:value={to} oninput={() => (toTyped = true)} maxlength="40" aria-label="Shot ends at" onkeydown={(e) => e.key === 'Enter' && add(false)} /></label>
       <button onclick={() => add(false)} disabled={!from.trim() || !to.trim()}>Add shot</button>
       <button onclick={() => add(true)} disabled={!from.trim()} title="A reading to a wall: no station at the far end">Add splay</button>
-      <span class="note">A station that already exists joins it (a loop); a different "From" starts a branch.</span>
     </div>
     {#if page.closures.length}
       <div class="closures" aria-label="Loop closures">

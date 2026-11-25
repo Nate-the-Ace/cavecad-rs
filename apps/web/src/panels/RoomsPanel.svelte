@@ -93,7 +93,7 @@
   {:else if !signedIn}
     <p class="note">Sign in (top right) to share this cave.</p>
   {:else if !caveId && !room.status}
-    <p class="note">This cave isn't kept on the server, so it can't be shared. Samples never are: make a new cave, or open one of your own.</p>
+    <p class="note">This cave isn't on the server, so it can't be shared.</p>
   {:else if !caveRooms.loaded}
     <p class="note">{caveRooms.problem || 'Reading…'}</p>
   {:else}

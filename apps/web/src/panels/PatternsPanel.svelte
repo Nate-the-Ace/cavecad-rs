@@ -41,11 +41,6 @@
   const names = $derived(items.map((i) => i.name));
 
   const TITLES: Record<PatternKind, string> = { line: 'Linetypes', fill: 'Fills', motif: 'Motifs' };
-  const HELP: Record<PatternKind, string> = {
-    line: 'A repeating pattern for a line: dashes, gaps, dots and motifs.',
-    fill: 'A repeating pattern inside an area: hatch lines, dots and tiled motifs.',
-    motif: 'A small drawing that repeats: a tick, a chevron, a little rock.',
-  };
 
   function blank(): LineDef | FillDef | Motif {
     const name = copyName(kind === 'line' ? 'New linetype' : kind === 'fill' ? 'New fill' : 'New motif', names).replace(' copy', '');
@@ -289,9 +284,8 @@
       <button role="tab" aria-selected={kind === k} class:on={kind === k} onclick={() => setKind(k as PatternKind)}>{TITLES[k as PatternKind]}</button>
     {/each}
   </div>
-  <p class="help">{HELP[kind]}</p>
   {#if !cave.hasCave}
-    <p class="help">Open a cave to make patterns of your own. The ones that come with CaveCAD can be looked at.</p>
+    <p class="help">Open a cave to make your own.</p>
   {/if}
   <div class="body">
     <div class="list" bind:this={listEl}>
@@ -321,9 +315,9 @@
       {/if}
       <div class="group">My library</div>
       {#if !signedIn}
-        <p class="note">Sign in to keep your patterns in your account, for every cave.</p>
+        <p class="note">Sign in to keep a library.</p>
       {:else if !libraryOnly.length}
-        <p class="note">{library.loaded ? 'Patterns you save are kept here too, for every cave.' : 'Reading your library…'}</p>
+        <p class="note">{library.loaded ? 'Empty.' : 'Reading your library…'}</p>
       {:else}
         {#each libraryOnly as li (li.name)}{@render entry({ ...(li.def as object), name: li.name } as LineDef | FillDef | Motif, 'library', `${li.name}: in your library`)}{/each}
       {/if}

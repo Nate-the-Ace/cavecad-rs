@@ -10,6 +10,11 @@
     "title": "Erasing"
   },
   {
+    "id": "caves",
+    "group": "Tasks",
+    "title": "Caves: opening, starting and surface data"
+  },
+  {
     "id": "map",
     "group": "Panels",
     "title": "Map",

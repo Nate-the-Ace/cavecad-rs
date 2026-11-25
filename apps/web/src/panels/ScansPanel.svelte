@@ -539,7 +539,7 @@
   {#if asking}
     <div class="alignbar" role="group" aria-label="Where the scans folder is">
       <span class="hint">
-        Where is “{scans.folder}” on this computer? Paste its full path once and every page can be shown in its real place. {copyPathHint(os)}
+        Full path of “{scans.folder}” on this computer: {copyPathHint(os)}
       </span>
       <input class="rootbox" bind:value={rootText} placeholder={os === 'windows' ? 'C:\\Users\\you\\Documents\\scans' : '/Users/you/Documents/scans'} aria-label="Full path of the scans folder" onkeydown={(e) => e.key === 'Enter' && saveRoot()} />
       <button onclick={saveRoot}>Save and {revealLabel(os).toLowerCase()}</button>
@@ -548,27 +548,27 @@
   {/if}
   {#if revealed}
     <div class="alignbar" role="status">
-      <span class="hint"><b>{revealed.copied ? 'Copied the real location:' : 'Real location (copy it):'}</b> <code>{revealed.full}</code><br />{revealHint(os)}</span>
+      <span class="hint"><b>{revealed.copied ? 'Copied the real location:' : 'Real location (copy it):'}</b> <code>{revealed.full}</code> {revealHint(os)}</span>
       <button onclick={() => { asking = { path: '' }; rootText = realRoot(scans.folder); revealed = null; }} title="The folder moved, or the path was wrong">Change folder location</button>
       <button onclick={() => (revealed = null)}>Dismiss</button>
     </div>
   {/if}
   {#if trimming.on && linkedHere}
     <div class="alignbar" role="group" aria-label="Trim to an outline">
-      <span class="hint">Drag a loop round the part to keep, or click its corners one by one, then close the outline.</span>
+      <span class="hint">Drag a loop round the part to keep, or click its corners.</span>
       <button onclick={closeOutline} disabled={trimming.draft.length < 3} title="Close the outline and trim (Enter)">Close outline</button>
       <button onclick={() => (trimming.draft = trimming.draft.slice(0, -1))} disabled={!trimming.draft.length} title="Take back the last corner (Backspace)">Undo corner</button>
       <button onclick={stopTrim} title="Stop without changing anything (Esc)">Cancel</button>
     </div>
   {:else if savedTrim && linkedHere}
     <div class="alignbar" role="status">
-      <span class="hint">Trimmed to an outline: what is outside it is dimmed here and left out of the Map.</span>
+      <span class="hint">Trimmed to an outline.</span>
       <button onclick={clearTrim}>Use the whole scan</button>
     </div>
   {/if}
   {#if linkedHere && drifted(scans.selected)}
     <div class="alignbar drift" role="alert">
-      <span class="hint">The survey has changed under this page since it was matched: its stations have moved up to {formatLength(drifts[scans.selected], cave.units, 1)} against each other, so the scan may no longer line up with what was drawn over it.</span>
+      <span class="hint">The survey moved under this page (up to {formatLength(drifts[scans.selected], cave.units, 1)}) since it was matched.</span>
       <button onclick={() => { align.on = true; stopTrim(); }} title="Turn on matching to move or add matches">Check the matches</button>
       <button onclick={keepMatches} title="The matches are still right: stop flagging this page until the survey changes again">It still lines up</button>
     </div>
@@ -577,7 +577,7 @@
     <div class="alignbar" role="group" aria-label="Align under the map">
       <span class="hint">
         {#if wallScale}
-          {#if align.pending}Now click the cave wall straight out from the station (left, right, up or down: the line snaps to the nearest). The passage's measurement there sets the scale. <button onclick={() => (align.pending = null)}>Cancel</button>
+          {#if align.pending}Now click the cave wall straight out from the station. <button onclick={() => (align.pending = null)}>Cancel</button>
           {:else}Click the station's spot on the scan, then a point on the cave wall straight out from it.{/if}
         {:else if align.pending}
           {align.kind === 'map' ? `Now click that spot's station on the Map, or choose it:` : `Now click the same place in the ${align.kind === 'profile' ? 'Profile' : 'Cross Section'}, or choose its station:`}
@@ -587,7 +587,7 @@
           </select>
           <button onclick={() => (align.pending = null)}>Cancel</button>
         {:else}
-          Click a spot on the scan that you can find in the {align.kind === 'map' ? 'Map (a station mark)' : align.kind === 'profile' ? 'Profile (a station, or any place on it)' : 'Cross Section (the station, or any place on it)'}. {#if !al || al.anchors.length < 2}Two matches place and scale the scan; more fit it better. One match places it at the average scale of your other scans, north up.{/if}
+          Click a spot on the scan that you can find in the {align.kind === 'map' ? 'Map (a station mark)' : align.kind === 'profile' ? 'Profile (a station, or any place on it)' : 'Cross Section (the station, or any place on it)'}.
         {/if}
       </span>
       {#if align.kind === 'section'}
@@ -644,7 +644,7 @@
             </button>
           {/if}
         {:else}
-          <p class="none">{scans.paths.length ? 'No scan matches.' : room.role === 'watcher' ? 'This cave has no scans yet.' : 'Add your scan pages with Add scans…, or drop them (or a folder of them) here. They are kept with the cave, so your other devices and anyone you share it with see them too.'}</p>
+          <p class="none">{scans.paths.length ? 'No scan matches.' : 'No scans yet.'}{#if !scans.paths.length && room.role !== 'watcher'} <button class="add" onclick={open}>Add scans…</button>{/if}</p>
         {/each}
       </div>
     </div>
@@ -705,5 +705,6 @@
   .rootbox { flex: 1; min-width: 240px; font-family: var(--mono, monospace); }
   code { font-family: var(--mono, monospace); user-select: all; word-break: break-all; }
   .none { color: var(--muted); font-size: 12px; padding: 8px 4px; }
+  .none .add { border: none; background: none; color: var(--accent); padding: 0 2px; font: inherit; cursor: pointer; text-decoration: underline; }
   .empty { flex: 1; display: grid; place-items: center; color: var(--muted); }
 </style>
