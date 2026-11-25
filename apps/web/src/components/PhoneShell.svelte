@@ -6,7 +6,7 @@
   // Each screen is made the first time it is opened and then kept (hidden, not destroyed), so switching back finds it
   // as it was, the Map's 3D view included. The ribbon is not shown: what the survey needs from it is in the Survey tab.
   import { untrack } from 'svelte';
-  import { Plus, Settings as SettingsIcon } from '@lucide/svelte';
+  import { CloudOff, Plus, Settings as SettingsIcon } from '@lucide/svelte';
   import '../phone.css';
   import CaveShelf from './CaveShelf.svelte';
   import PhoneSketch from './PhoneSketch.svelte';
@@ -105,6 +105,9 @@
         </span>
       </button>
     {/each}
+    {#if account.phase === 'offline' || account.phase === 'offline-expired'}
+      <span class="offline" class:expired={account.phase === 'offline-expired'} role="status" aria-label={account.phase === 'offline' ? "Offline: working on what's on this device" : 'Offline over 30 days'} title="Offline"><CloudOff size={18} /></span>
+    {/if}
   </div>
 
   <main class="panes">
@@ -146,6 +149,8 @@
   .unsaved { width: 7px; height: 7px; border-radius: 50%; background: var(--warn); flex: none; }
   .link { width: 7px; height: 7px; border-radius: 50%; border: 1.5px solid currentColor; opacity: 0.5; flex: none; box-sizing: border-box; }
   .link.on { background: var(--ok, #2fb36d); border-color: var(--ok, #2fb36d); opacity: 1; }
+  .offline { flex: none; display: inline-flex; align-items: center; justify-content: center; min-width: var(--p-hit); min-height: var(--p-hit); color: var(--muted); }
+  .offline.expired { color: var(--danger); }
   .panes { flex: 1; min-height: 0; position: relative; }
   .pane { position: absolute; inset: 0; overflow: hidden; }
   .pane[hidden] { display: none; }
