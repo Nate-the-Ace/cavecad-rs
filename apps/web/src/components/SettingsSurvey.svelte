@@ -4,6 +4,7 @@
   // station), which sweep the Sweep button starts, backsights, write at once or on Accept, the units, and what the
   // X1's marks draw (folded away).
   import X1Marks from './X1Marks.svelte';
+  import HardwareKeysSettings from './HardwareKeysSettings.svelte';
   import * as live from '../lib/survey.svelte';
   import { survey } from '../lib/survey.svelte';
   import { cave, setUnits } from '../lib/cave.svelte';
@@ -59,6 +60,7 @@
     </div>
   </div>
   <div class="marks"><X1Marks /></div>
+  <HardwareKeysSettings />
 </div>
 
 <style>

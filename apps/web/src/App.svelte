@@ -20,7 +20,7 @@
   import { cave, setUnits, unsaved } from './lib/cave.svelte';
   import { guardUnload } from './lib/files';
   import { installDiagnostics } from './lib/diagnostics';
-  import { listenForHardwareKeys } from './lib/hardware-keys-wire';
+  import { listenForHardwareKeys } from './lib/hardware-keys.svelte';
   import CaveShelf from './components/CaveShelf.svelte';
   import PhoneShell from './components/PhoneShell.svelte';
   import { phone } from './lib/phone.svelte';

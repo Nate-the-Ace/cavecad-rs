@@ -77,22 +77,52 @@ an adaptive icon, paper colour behind grid and logo, plus legacy and round icons
 - Manifest: `BLUETOOTH`, `BLUETOOTH_ADMIN`, `ACCESS_FINE_LOCATION` (up to API 30), `BLUETOOTH_SCAN`
   (`neverForLocation`) and `BLUETOOTH_CONNECT`.
 
-## Sonim XP8 hardware keys
+## Hardware keys (rugged phones)
 
-On a Sonim XP8 the PTT, SOS (red) and Yellow keys run the in-cave survey. The phone sends each key's broadcast
-(`com.sonim.intent.action.PTT_KEY_DOWN/UP`, `SOS_KEY_DOWN/UP`, `YELLOW_KEY_DOWN/UP`) only to the app chosen under
-**Settings > Programmable Keys** (Select PTT / YELLOW / ALARM Key app): set all three to CaveCAD.
+Rugged phones have action keys (PTT, SOS, programmable and camera keys). On a phone that has them, the Android app lets
+them run the in-cave survey, while an instrument or the simulator is connected. Which phones: see "What is built in";
+any other phone can be taught in the app (Settings > Survey > Hardware keys), or built in with a few lines.
 
-- `SonimKeyReceiver.kt` (declared in the manifest) takes the broadcasts; `MainActivity` passes them to the page as a
-  `cave-hwkey` event while it is showing. The receiver has to be in the manifest: with only a receiver registered at
-  run time the phone logged "PTT received" and sent nothing to CaveCAD (Torch, the default PTT app, declares one).
-- The page maps them in `apps/web/src/lib/hardware-keys.ts` (tests: `npm run test:hwkeys`), wired by
-  `hardware-keys-wire.ts`, and only while an instrument or the simulator is connected: PTT is a trigger (down switches
-  the laser on to aim, a release under 1 s fires, a hold of 1 s or more cancels), Yellow accepts the shot and moves to
-  the next station, SOS undoes the last shot.
-- Camera and Focus never reach the app: the camera key arrives as Yellow, and Focus does not fire on this phone.
-- Verified 2026-11-25 on the XP8 (Android 10) with a Cavway X1: PTT aims and fires, Yellow advances stations. SOS
-  reaches the page; its undo was not checked with a shot to undo.
+**Keys and actions.** The page knows seven vendor-neutral keys: PTT, SOS, Programmable 1 to 3 (Sonim's Yellow key is
+Programmable 1), Camera, Camera half-press. Each is set to one action: Trigger (hold to aim the laser, release to fire,
+hold for 1 s or more to cancel), Take a shot, Laser while held, Laser on/off, Accept and next station, Undo last shot,
+Next station, Previous station, or Nothing. Defaults: PTT trigger, SOS undo, Programmable 1 accept and next, Camera
+take a shot, Camera half-press laser while held. They are kept on the device (`lib/hardware-keys.ts`, state in
+`lib/hardware-keys.svelte.ts`, tests `npm run test:hwkeys`).
+
+**How a phone reports a key.** Two ways, and the app handles both (`HardwareKeys.kt`):
+
+- a **broadcast** (Sonim, and the Zello convention): `HardwareKeyReceiver`, declared in the manifest, takes the ones it
+  knows. Sonim sends them only to the app chosen under Settings > Programmable Keys (set PTT, Yellow and Alarm to
+  CaveCAD) and sends PTT only to an app that *declares* a receiver; with only a receiver registered at run time the
+  phone logged "PTT received" and sent nothing (its Torch app, the default PTT app, declares one);
+- a **key event** with a key code (camera keys, most programmable keys): `MainActivity.dispatchKeyEvent` takes the ones it
+  knows, only while the survey is live, so a camera key opens the camera the rest of the time.
+
+**What is built in.**
+
+| Phone | Keys | Status |
+| --- | --- | --- |
+| Sonim XP8 | PTT, SOS, Yellow as `com.sonim.intent.action.PTT_KEY_DOWN/UP`, `SOS_KEY_DOWN/UP`, `YELLOW_KEY_DOWN/UP`; its camera key arrives as Yellow, so the camera key event is ignored on Sonim | verified 2026-11-25 on an XP8 (Android 10) with a Cavway X1: PTT aims and fires, Yellow advances stations; SOS reaches the page, its undo not checked with a shot to undo |
+| Phones that follow Zello's hardware PTT convention | `com.zello.ptt.down` / `com.zello.ptt.up` as PTT | from Zello's documentation; not tried on a phone |
+| Phones that report a camera key or F1 to F3 | key codes Camera, Focus, F1, F2, F3 as Camera, Camera half-press, Programmable 1 to 3 | not tried on a phone |
+
+**Adding a phone (no rebuild).** Settings > Survey > Hardware keys, on the phone:
+
+1. **Learn a key**, then press the key. If the app reports a key code, pick which key name it is and **Use it**. Learn
+   mode takes every key except Back, Home, Recents, Power and the volume keys; leaving the screen ends it.
+2. If pressing does nothing in learn mode, the key sends a broadcast. Find its name with the phone on USB while pressing
+   it: `adb shell getevent -lt` (does the hardware key fire?) and `adb logcat -v time | grep -iE "ptt|sos|key|broadcast"`
+   (Sonim's log lines name the broadcast and the package it goes to). Then **Add a key by hand**: the name, press or
+   release, and which key name it is (add both press and release for a trigger). The app listens for these only while its
+   screen shows.
+3. If the phone logs the key but nothing arrives, it probably sends only to an app it chose (a vendor setting, as Sonim's
+   Programmable Keys) or only to an app that declares a receiver. Choose CaveCAD in that setting; if it still does not
+   arrive, use the next paragraph.
+
+**Adding a phone for everyone.** Add its broadcast actions to `HardwareKeys.KNOWN_ACTIONS` (and the manifest's
+`HardwareKeyReceiver` filter, which must name them: a broadcast to a phone-chosen app needs a declared receiver), or its key
+codes to `KNOWN_KEYCODES`, and say what was tried in the table above. Never list an action as supported until a phone has sent it.
 
 ## Android 10 test phone notes
 
