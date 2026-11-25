@@ -109,3 +109,10 @@ button): no flash of the firmware, stored shots kept.
   bootloader erases sector 5 (not known; see FIRMWARE.md).
 - Tested only in the CPU emulator so far (`firmware-lab/tools/test_picker.py` in cavway-x1-emulator: the real dispatcher fed
   the frames x1flash sends). Not run on an X1 yet.
+
+## cc9: the X1 can show the list it is using (2026-11-25)
+
+Reads of 0xC400..0xC5A9 (426 bytes) return the list in use: the newest valid flash slot, else the built-in block
+(`cc_addr`, through `cc_list`). CaveCAD asks for it on every connect (`cavway_callouts::read_frames`, sent from webble.ts
+`askX1ForItsList`), reads it with `ListReader`, and `X1Link` then names a picked feature from it (`Reading::callout`,
+`Feature N` until the list is known). The session writes that name as the shot's note.

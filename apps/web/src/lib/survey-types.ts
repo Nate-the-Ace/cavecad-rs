@@ -205,6 +205,8 @@ export interface Catalog {
     service: string; write: string; notify: string; takeShot: number[]; laserOn: number[]; laserOff: number[];
     /** Sets the X1's clock: prefix, 4 bytes of local wall-clock seconds (little-endian), suffix. */
     setClock: { prefix: number[]; suffix: number[] };
+    /** Memory reads that ask a 1.1.7-cc9 or later X1 for its feature list (the answers name a picked feature). */
+    listRequest?: number[][];
   };
   sap5: { service: string; write: string; notify: string };
   sap6: { service: string; name: string; command: string; leg: string; takeShot: number[] };

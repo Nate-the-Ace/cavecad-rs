@@ -213,6 +213,98 @@ impl PushStatus {
     }
 }
 
+/// Where a running X1 (`1.1.7-cc9` and later) shows the list it is using, read-only: 426 bytes from here, the block
+/// (`CCAL`, count, names) and, for a list pushed to flash, its CRC.
+pub const READ_ADDRESS: u16 = 0xC400;
+/// The first cc build that can be asked for its list.
+pub const READ_MIN_CC_VERSION: u8 = 9;
+/// Bytes asked for at a time: a reply is a notification, which the X1 sends like a 64-byte shot packet.
+const READ_CHUNK: usize = 60;
+
+/// The memory reads that ask a running X1 for the list it is using, in order. Feed every answer to a [`ListReader`].
+pub fn read_frames() -> Vec<Vec<u8>> {
+    (0..SLOT_BYTES.div_ceil(READ_CHUNK))
+        .map(|i| {
+            let at = i * READ_CHUNK;
+            let n = READ_CHUNK.min(SLOT_BYTES - at);
+            crate::cavway::query_frame(READ_ADDRESS + at as u16, n)
+                .expect("a read of at most 124 bytes")
+        })
+        .collect()
+}
+
+/// Bytes in a stored list: the block and its CRC.
+const SLOT_BYTES: usize = BLOCK + 2;
+
+/// Puts the answers to [`read_frames`] together and reads the list out of them.
+#[derive(Clone, Debug)]
+pub struct ListReader {
+    bytes: Vec<u8>,
+    seen: Vec<bool>,
+}
+
+impl Default for ListReader {
+    fn default() -> Self {
+        ListReader {
+            bytes: vec![0; SLOT_BYTES],
+            seen: vec![false; SLOT_BYTES.div_ceil(READ_CHUNK)],
+        }
+    }
+}
+
+impl ListReader {
+    /// A fresh reader (forget a half-read list, e.g. on a reconnect).
+    pub fn reset(&mut self) {
+        *self = ListReader::default();
+    }
+
+    /// Takes one answer. `Some(names)` once every part has arrived and the list reads cleanly (the marker, a count of 32
+    /// or less, printable names); `None` for a part that is not ours or while parts are missing.
+    pub fn feed(&mut self, reply: &crate::cavway::Reply) -> Option<Vec<String>> {
+        if reply.command != 0x3d {
+            return None;
+        }
+        let at = usize::from(reply.address.checked_sub(READ_ADDRESS)?);
+        if at >= SLOT_BYTES || at % READ_CHUNK != 0 {
+            return None;
+        }
+        let n = READ_CHUNK.min(SLOT_BYTES - at);
+        if reply.data.len() != n {
+            return None;
+        }
+        self.bytes[at..at + n].copy_from_slice(&reply.data);
+        self.seen[at / READ_CHUNK] = true;
+        if self.seen.iter().all(|&x| x) {
+            let names = parse_block(&self.bytes);
+            if names.is_none() {
+                self.reset(); // read it all again next time
+            }
+            return names;
+        }
+        None
+    }
+}
+
+/// The names in a list block read from an X1 (the CRC is not checked: the built-in list has none).
+fn parse_block(b: &[u8]) -> Option<Vec<String>> {
+    if b.len() < BLOCK || &b[..4] != MAGIC {
+        return None;
+    }
+    let n = usize::from(b[4]);
+    if n > MAX_NAMES {
+        return None;
+    }
+    (0..n)
+        .map(|i| {
+            let slot = &b[HEAD + i * SLOT..HEAD + (i + 1) * SLOT];
+            let end = slot.iter().position(|&x| x == 0)?;
+            let name = &slot[..end];
+            (!name.is_empty() && name.iter().all(|&x| (0x20..0x7f).contains(&x)))
+                .then(|| String::from_utf8_lossy(name).into_owned())
+        })
+        .collect()
+}
+
 /// A copy of `image` with its feature list replaced by `names` (checked first). Nothing else changes.
 pub fn set_callouts(image: &[u8], names: &[String]) -> Result<Vec<u8>, CalloutError> {
     check(names)?;
@@ -335,6 +427,70 @@ mod tests {
                 .all(|f| f.len() <= 5 + 1 + 4 + 32 + 2 && f[5] >= 8)
         );
         assert!(push_frames(&s(&["Drip", "drip"])).is_err());
+    }
+
+    #[test]
+    fn the_list_in_use_is_read_back_in_parts() {
+        let names = s(&["Pit", "Water crawl", "Bats"]);
+        let slot = slot_bytes(&names).unwrap();
+        let frames = read_frames();
+        assert_eq!(frames.len(), 8);
+        assert_eq!(&frames[0][5..10], &[4, 0x3d, 0x00, 0xc4, 60]);
+        assert_eq!(&frames[7][5..10], &[4, 0x3d, 0xa4, 0xc5, 6]); // 0xC5A4: the last 6 bytes
+        // the X1 answers each: 3d, address, count, bytes
+        let mut r = ListReader::default();
+        let mut got = None;
+        for i in (0..8).rev() {
+            let at = i * 60;
+            let n = 60.min(426 - at);
+            let mut a = vec![
+                0x3d,
+                ((0xc400 + at) & 0xff) as u8,
+                ((0xc400 + at) >> 8) as u8,
+                n as u8,
+            ];
+            a.extend_from_slice(&slot[at..at + n]);
+            got = r.feed(&crate::cavway::parse_reply(&a).unwrap());
+            if i > 0 {
+                assert_eq!(got, None);
+            }
+        }
+        assert_eq!(got, Some(names));
+    }
+
+    #[test]
+    fn the_reader_ignores_other_answers_and_bad_lists() {
+        let mut r = ListReader::default();
+        let other = crate::cavway::Reply {
+            command: 0x3d,
+            address: 0x9000,
+            data: vec![0; 60],
+        };
+        assert_eq!(r.feed(&other), None);
+        let odd = crate::cavway::Reply {
+            command: 0x3d,
+            address: 0xc401,
+            data: vec![0; 60],
+        };
+        assert_eq!(r.feed(&odd), None);
+        let write_echo = crate::cavway::Reply {
+            command: 0x3e,
+            address: 0xc400,
+            data: vec![0; 60],
+        };
+        assert_eq!(r.feed(&write_echo), None);
+        // garbage that fills every part is refused, and the reader starts over
+        for i in 0..8 {
+            let at = i * 60;
+            let n = 60.min(426 - at);
+            let rep = crate::cavway::Reply {
+                command: 0x3d,
+                address: 0xc400 + at as u16,
+                data: vec![0xff; n],
+            };
+            assert_eq!(r.feed(&rep), None);
+        }
+        assert!(r.seen.iter().all(|&x| !x));
     }
 
     #[test]

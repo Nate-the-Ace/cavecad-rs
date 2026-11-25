@@ -654,7 +654,7 @@ pub fn instrument_catalog() -> String {
     let catalog = serde_json::json!({
         "devices": devices(),
         "names": NAMES.iter().map(|n| serde_json::json!({"prefix": n.prefix, "kind": n.kind, "label": n.label})).collect::<Vec<_>>(),
-        "x1": {"service": cavway::SERVICE, "write": cavway::WRITE, "notify": cavway::NOTIFY, "takeShot": cavway::command(cavway::CMD_TRIGGER), "laserOn": cavway::command(cavway::CMD_LASER_ON), "laserOff": cavway::command(cavway::CMD_LASER_OFF), "setClock": {"prefix": cavway::clock_frame(0)[..10].to_vec(), "suffix": [0x0d, 0x0a]}},
+        "x1": {"service": cavway::SERVICE, "write": cavway::WRITE, "notify": cavway::NOTIFY, "takeShot": cavway::command(cavway::CMD_TRIGGER), "laserOn": cavway::command(cavway::CMD_LASER_ON), "laserOff": cavway::command(cavway::CMD_LASER_OFF), "setClock": {"prefix": cavway::clock_frame(0)[..10].to_vec(), "suffix": [0x0d, 0x0a]}, "listRequest": cave_instrument::cavway_callouts::read_frames()},
         "sap5": {"service": sap5::SERVICE, "write": sap5::WRITE, "notify": sap5::NOTIFY},
         "sap6": {"service": caveble::SERVICE, "name": caveble::NAME_CHARACTERISTIC, "command": caveble::COMMAND_CHARACTERISTIC, "leg": caveble::LEG_CHARACTERISTIC, "takeShot": [caveble::CMD_TAKE_SHOT]},
         "bric": {

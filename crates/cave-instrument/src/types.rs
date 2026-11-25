@@ -58,6 +58,10 @@ pub struct Reading {
     /// Laser signal quality, raw.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub quality: Option<u32>,
+    /// The feature the surveyor picked on the X1 (hold `<` with the laser on) before this shot: its name from the X1's own list
+    /// (`Feature 4` if the list is not known yet). Becomes the shot's note.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub callout: Option<String>,
     /// Taken in the instrument's scan mode (a sweep): always a splay, never part of a leg.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scan: Option<bool>,

@@ -641,6 +641,14 @@ impl Session {
                 value: cave_doc::Value::Text(class.into()),
             });
         }
+        // the feature the surveyor picked on the instrument (its `<` long press while the laser is on) is the shot's note
+        if let Some(name) = &r.callout {
+            actions.push(Action::Set {
+                id: shot,
+                field: cave_doc::Field::ShotNote,
+                value: cave_doc::Value::Text(name.clone()),
+            });
+        }
         self.commit_actions(host, actions)?;
         if !splay {
             self.passage = Some((

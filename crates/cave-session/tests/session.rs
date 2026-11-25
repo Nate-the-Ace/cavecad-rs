@@ -1029,7 +1029,12 @@ fn shots_from_the_instruments_memory_wait_for_the_surveyor() {
     s.open_memory();
     // what the X1 had stored arrives as it connects: nothing is written at the station the surveyor stands at
     let before = book.rows().len();
-    for x in [r(3.0, 10.0, 1.0), r(3.0, 10.2, 1.1), r(3.0, 10.1, 0.9), r(2.0, 200.0, 5.0)] {
+    for x in [
+        r(3.0, 10.0, 1.0),
+        r(3.0, 10.2, 1.1),
+        r(3.0, 10.1, 0.9),
+        r(2.0, 200.0, 5.0),
+    ] {
         s.reading(&mut book, x);
     }
     assert_eq!(book.rows().len(), before, "nothing written");
@@ -1066,4 +1071,24 @@ fn discarded_memory_shots_write_nothing() {
     s.memory_done();
     assert!(s.snapshot(&book).stored.is_empty());
     assert_eq!(book.rows().len(), before);
+}
+
+#[test]
+fn a_feature_picked_on_the_x1_becomes_the_shots_note() {
+    let mut book = Book::new();
+    let mut s = session(&book, true, false);
+    s.connected(false);
+    let picked = Reading {
+        callout: Some("Water crawl".into()),
+        ..r(4.0, 10.0, 0.0)
+    };
+    assert!(s.commit(&mut book, &Incoming::Single(picked)));
+    assert_eq!(book.edits(), 1, "still one undoable edit per shot");
+    assert!(book.rows().iter().any(|row| row.note == "Water crawl"));
+    // a shot with no pick writes no note
+    let mut book2 = Book::new();
+    let mut s2 = session(&book2, true, false);
+    s2.connected(false);
+    assert!(s2.commit(&mut book2, &Incoming::Single(r(4.0, 10.0, 0.0))));
+    assert!(book2.rows().iter().all(|row| row.note.is_empty()));
 }

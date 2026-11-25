@@ -6,7 +6,7 @@
 
 use crate::bric::{self, ErrorPair, Meta, Primary};
 use crate::caveble::{self, LegFilter};
-use crate::{Mark, Reading, cavway, hex, sap5, tidy};
+use crate::{Mark, Reading, cavway, cavway_callouts, hex, sap5, tidy};
 use serde::Serialize;
 
 /// Something a link did with a frame.
@@ -111,6 +111,9 @@ pub struct X1Link {
     recent: Vec<String>,
     source: String,
     tolerance: cavway::Tolerance,
+    /// The X1's feature list, once it has been read (`1.1.7-cc9` and later answer for it).
+    callouts: Option<Vec<String>>,
+    list_reader: cavway_callouts::ListReader,
 }
 
 impl X1Link {
@@ -120,7 +123,32 @@ impl X1Link {
             recent: Vec::new(),
             source: source.into(),
             tolerance: cavway::Tolerance::default(),
+            callouts: None,
+            list_reader: cavway_callouts::ListReader::default(),
         }
+    }
+
+    /// The memory reads that ask the X1 for its feature list. Write them to the X1 after connecting; the answers come back
+    /// through [`X1Link::on_frame`], which then names a picked feature. An X1 that cannot answer (stock firmware, or a
+    /// `-cc` build before 9) just never does.
+    pub fn list_request(&mut self) -> Vec<Vec<u8>> {
+        self.callouts = None;
+        self.list_reader.reset();
+        cavway_callouts::read_frames()
+    }
+
+    /// The feature list read from the X1, if it has answered.
+    pub fn callouts(&self) -> Option<&[String]> {
+        self.callouts.as_deref()
+    }
+
+    /// The name of a picked feature: from the X1's own list, or `Feature N` while that is not known.
+    fn callout_name(&self, n: u8) -> String {
+        self.callouts
+            .as_ref()
+            .and_then(|l| l.get(usize::from(n).checked_sub(1)?))
+            .cloned()
+            .unwrap_or_else(|| format!("Feature {n}"))
     }
 
     /// How touchy to be about the X1's accuracy complaints (see [`cavway::Tolerance`]).
@@ -132,6 +160,16 @@ impl X1Link {
     pub fn on_frame(&mut self, bytes: &[u8], from: &str) -> Vec<LinkOut> {
         let key = hex(bytes);
         let mut out = vec![frame(key.clone(), from)];
+        if let Some(reply) = cavway::parse_reply(bytes).filter(|_| bytes[0] == 0x3d) {
+            if let Some(names) = self.list_reader.feed(&reply) {
+                out.push(frame(
+                    format!("(the X1's feature list: {})", names.join(", ")),
+                    from,
+                ));
+                self.callouts = Some(names);
+            }
+            return out;
+        }
         let Some(p) = cavway::decode_packet(bytes) else {
             out.push(frame(
                 if bytes.len() < cavway::SHORT_PACKET_BYTES {
@@ -169,6 +207,7 @@ impl X1Link {
                 roll: Some(tidy(p.roll, 3)),
                 leg: Some(p.leg && !p.scan),
                 mark: Some(p.mark),
+                callout: p.callout.map(|n| self.callout_name(n)),
                 scan: p.scan.then_some(true),
                 sweep_start: (p.scan && p.sweep_start).then_some(true),
                 error: cavway::describe_errors(&cavway::beyond(&p.errors, self.tolerance)),
@@ -404,5 +443,86 @@ impl BricLink {
         self.last_primary = None;
         self.last_index = None;
         out
+    }
+}
+
+#[cfg(test)]
+mod x1_callout_tests {
+    use super::*;
+    use crate::cavway::{PacketSpec, encode_packet};
+
+    /// A shot packet with a feature picked on the X1: bytes 54 and 55 are the pick and 0xCA.
+    fn shot_with_pick(n: u8) -> Vec<u8> {
+        let mut p = encode_packet(&PacketSpec::default());
+        p[54] = n;
+        p[55] = 0xca;
+        p
+    }
+
+    fn reading(out: Vec<LinkOut>) -> Reading {
+        out.into_iter()
+            .find_map(|o| match o {
+                LinkOut::Reading { reading } => Some(reading),
+                _ => None,
+            })
+            .expect("a reading")
+    }
+
+    /// The X1's answers to the list request, for the list `names`.
+    fn answers(names: &[&str]) -> Vec<Vec<u8>> {
+        let slot =
+            cavway_callouts::slot_bytes(&names.iter().map(|n| n.to_string()).collect::<Vec<_>>())
+                .unwrap();
+        (0..8)
+            .map(|i| {
+                let at = i * 60;
+                let n = 60.min(426 - at);
+                let a = 0xc400 + at;
+                let mut v = vec![0x3d, (a & 0xff) as u8, (a >> 8) as u8, n as u8];
+                v.extend_from_slice(&slot[at..at + n]);
+                v
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_pick_is_named_from_the_list_read_from_the_x1() {
+        let mut link = X1Link::new("x1");
+        // before the list is known, a pick is honest about it
+        assert_eq!(
+            reading(link.on_frame(&shot_with_pick(2), "t"))
+                .callout
+                .as_deref(),
+            Some("Feature 2")
+        );
+        let asks = link.list_request();
+        assert_eq!(asks.len(), 8);
+        for a in answers(&["Pit", "Water crawl", "Bats"]) {
+            let out = link.on_frame(&a, "t");
+            assert!(
+                out.iter()
+                    .all(|o| !matches!(o, LinkOut::Reading { .. } | LinkOut::Send { .. }))
+            );
+        }
+        assert_eq!(link.callouts().map(<[String]>::len), Some(3));
+        let mut p = shot_with_pick(2);
+        p[17] ^= 1; // a different timestamp: not a repeat of the first shot
+        assert_eq!(
+            reading(link.on_frame(&p, "t")).callout.as_deref(),
+            Some("Water crawl")
+        );
+        let mut q = shot_with_pick(9); // past the end of this list
+        q[17] ^= 2;
+        assert_eq!(
+            reading(link.on_frame(&q, "t")).callout.as_deref(),
+            Some("Feature 9")
+        );
+        // a shot with no pick has none
+        let mut plain = encode_packet(&PacketSpec::default());
+        plain[17] ^= 4;
+        assert_eq!(reading(link.on_frame(&plain, "t")).callout, None);
+        // asking again forgets the list (a reconnect to another X1)
+        let _ = link.list_request();
+        assert_eq!(link.callouts(), None);
     }
 }

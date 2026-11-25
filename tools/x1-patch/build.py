@@ -22,7 +22,7 @@ APP = 0x08004000
 HEADER = 256
 PATCH_BASE = 0x0801D200  # free flash; the stock image ends at 0x0801D138
 APP_LIMIT = 0x0803FF00   # the app's own marker word lives here
-NAME = "1.1.7-cc8"
+NAME = "1.1.7-cc9"
 
 # (address, original bytes, what goes there)
 HOOKS = [

@@ -58,6 +58,7 @@
         @ the newest valid slot is the list the picker shows, else the one built in below.
         .set LIST_ADDR,     0xc000
         .set LIST_SPAN,     0x210
+        .set LIST_READ,     0xc400          @ cc9: reads here show the list IN USE (flash slot or built in), 426 bytes
         .set CC_LISTBUF,    0x2000c000      @ RAM above everything stock uses and cc's state
         .set CC_STATUS,     0x2000c200
         .set FLASH_LIST,    0x08020000
@@ -71,7 +72,7 @@
         .set KEY_CLR,       0x200012b8
         .set FONT_TITLE,    0x080193a7      @ the arguments stock menus give SET_FONT (0x0800cf88)
         .set FONT_ROW,      0x0801874a
-        .set CC_VERSION,    8
+        .set CC_VERSION,    9
         .set CC_SETTINGS_MARK, 0xc4         @ settings byte 0x17 (unused by stock): CaveCAD defaults applied once
         .set OPT_SCAN,      0x16            @ settings: Scan Options byte
         @ remote scans: steadiness level 2 (10000, the most lenient), time limit index 3 (10 min), allowed
@@ -595,14 +596,15 @@ cc_crc16:
         bx      lr
 
 @ cc_addr replaces "bl 0x08008594" (the memory-address-to-pointer map) at 0x0800c420 and 0x0800c450, inside the
-@ 3d/3e handler: addresses 0xC000..0xC20F are ours (the buffer, then the result block); the rest is stock.
+@ 3d/3e handler: addresses 0xC000..0xC20F are ours (the buffer, then the result block) and 0xC400..0xC5A9 shows the
+@ list in use (read only); the rest is stock.
         .global cc_addr
         .thumb_func
 cc_addr:
         movw    r2, #LIST_ADDR
         subs    r2, r0, r2
         cmp     r2, #LIST_SPAN
-        bhs     95f
+        bhs     92f
         adds    r3, r2, r1
         cmp     r3, #LIST_SPAN
         bhi     94f                     @ runs past the end: 0 = refused
@@ -610,6 +612,18 @@ cc_addr:
         adds    r0, r0, r2              @ the buffer and the result block are one run of RAM
         bx      lr
 94:     movs    r0, #0
+        bx      lr
+92:     movw    r2, #LIST_READ          @ cc9: the list in use, read-only
+        subs    r2, r0, r2
+        cmp     r2, #SLOT_LEN
+        bhs     95f
+        adds    r3, r2, r1
+        cmp     r3, #SLOT_LEN
+        bhi     94b
+        push    {r2, lr}
+        bl      cc_list
+        pop     {r2, lr}
+        adds    r0, r0, r2
         bx      lr
 95:     b.w     STOCK_VALIDATE
 
