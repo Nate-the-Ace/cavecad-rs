@@ -497,6 +497,8 @@ dependencies = [
  "btleplug",
  "cave-folder",
  "futures",
+ "jni 0.19.0",
+ "jni-utils",
  "objc2 0.6.5",
  "serde",
  "serde_json",

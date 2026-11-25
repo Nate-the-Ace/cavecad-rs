@@ -19,6 +19,20 @@ use std::time::Duration;
 use tauri::{AppHandle, Manager as _, State};
 use tokio::sync::OnceCell;
 
+#[cfg(target_os = "android")]
+use crate::ble_android::{on_jvm, ready};
+
+/// Elsewhere Bluetooth needs no Java VM and no permission step before a scan (macOS and iOS ask by themselves).
+#[cfg(not(target_os = "android"))]
+fn on_jvm<F>(f: F) -> F {
+    f
+}
+
+#[cfg(not(target_os = "android"))]
+async fn ready() -> Result<(), String> {
+    Ok(())
+}
+
 /// The Bluetooth adapter (found once) and the devices seen, by id.
 #[derive(Default)]
 pub struct Ble {
@@ -112,7 +126,7 @@ async fn adapter<'a>(app: &AppHandle, ble: &'a Ble) -> Result<&'a Adapter, Strin
                 .await
                 .map_err(|e| format!("Bluetooth is not available: {e}"))?;
             let app = app.clone();
-            tauri::async_runtime::spawn(async move {
+            tauri::async_runtime::spawn(on_jvm(async move {
                 while let Some(event) = events.next().await {
                     match &event {
                         CentralEvent::DeviceConnected(id) => trace(&app, format!("event connected id={id}")),
@@ -126,7 +140,7 @@ async fn adapter<'a>(app: &AppHandle, ble: &'a Ble) -> Result<&'a Adapter, Strin
                         tell(&app, serde_json::json!({ "t": "gone", "id": id }));
                     }
                 }
-            });
+            }));
             Ok::<Adapter, String>(adapter)
         })
         .await
@@ -170,102 +184,115 @@ fn props(f: CharPropFlags) -> Vec<&'static str> {
 /// Looks for devices for `ms` milliseconds (at most 15 s) and lists what was found, strongest signal first.
 #[tauri::command]
 pub async fn ble_scan(app: AppHandle, ble: State<'_, Ble>, ms: u64) -> Result<Vec<Found>, String> {
-    let a = adapter(&app, &ble).await?;
-    a.start_scan(ScanFilter::default())
-        .await
-        .map_err(|e| format!("Could not look for devices: {e}"))?;
-    tokio::time::sleep(Duration::from_millis(ms.clamp(500, 15_000))).await;
-    let _ = a.stop_scan().await;
-    let mut out = Vec::new();
-    for p in a.peripherals().await.map_err(|e| e.to_string())? {
-        let Ok(Some(props)) = p.properties().await else { continue };
-        let id = p.id().to_string();
-        out.push(Found {
-            id: id.clone(),
-            name: props.local_name.clone(),
-            services: props.services.iter().map(|u| u.to_string()).collect(),
-            rssi: props.rssi,
-        });
-        ble.seen.lock().unwrap().insert(id, p);
-    }
-    out.sort_by_key(|f| std::cmp::Reverse(f.rssi.unwrap_or(i16::MIN)));
-    Ok(out)
+    on_jvm(async move {
+        ready().await?;
+        let a = adapter(&app, &ble).await?;
+        a.start_scan(ScanFilter::default())
+            .await
+            .map_err(|e| format!("Could not look for devices: {e}"))?;
+        tokio::time::sleep(Duration::from_millis(ms.clamp(500, 15_000))).await;
+        let _ = a.stop_scan().await;
+        let mut out = Vec::new();
+        for p in a.peripherals().await.map_err(|e| e.to_string())? {
+            let Ok(Some(props)) = p.properties().await else { continue };
+            let id = p.id().to_string();
+            out.push(Found {
+                id: id.clone(),
+                name: props.local_name.clone(),
+                services: props.services.iter().map(|u| u.to_string()).collect(),
+                rssi: props.rssi,
+            });
+            ble.seen.lock().unwrap().insert(id, p);
+        }
+        out.sort_by_key(|f| std::cmp::Reverse(f.rssi.unwrap_or(i16::MIN)));
+        Ok(out)
+    })
+    .await
 }
 
 /// Connects to a device found by a scan and lists its services; from now on its notifications reach the page.
 #[tauri::command]
 pub async fn ble_connect(app: AppHandle, ble: State<'_, Ble>, id: String) -> Result<Vec<Service>, String> {
-    adapter(&app, &ble).await?;
-    let p = device(&ble, &id).inspect_err(|e| trace(&app, format!("connect id={id}: {e}")))?;
-    let fail = |e: String| {
-        trace(&app, format!("connect id={id}: {e}"));
-        e
-    };
-    // After a drop, close what the last connection left behind before a fresh connect (as TopoDroid does: closeGatt,
-    // then connectGatt). No "is it connected?" question first: on iOS that call once never answered, and the page's
-    // reconnecting stopped with it. Every step has a time limit, so a stuck call can only cost one try.
-    let dropped = ble.dropped.lock().unwrap().remove(&id);
-    if dropped {
-        trace(&app, format!("connect id={id}: closing the old connection first"));
-        let _ = tokio::time::timeout(Duration::from_secs(3), p.disconnect()).await;
-    }
-    trace(&app, format!("connect id={id}: connecting"));
-    let wait = Duration::from_secs(10);
-    tokio::time::timeout(wait, p.connect())
-        .await
-        .map_err(|_| fail("The instrument did not answer. Is it on and close by?".into()))?
-        .map_err(|e| fail(format!("Could not connect: {e}")))?;
-    trace(&app, format!("connect id={id}: connected, listing services"));
-    tokio::time::timeout(wait, p.discover_services())
-        .await
-        .map_err(|_| fail("The instrument did not list its services in time.".into()))?
-        .map_err(|e| fail(format!("Could not read the instrument's services: {e}")))?;
-    if ble.listening.lock().unwrap().insert(id.clone()) {
-        let mut stream = p
-            .notifications()
+    on_jvm(async move {
+        adapter(&app, &ble).await?;
+        let p = device(&ble, &id).inspect_err(|e| trace(&app, format!("connect id={id}: {e}")))?;
+        let fail = |e: String| {
+            trace(&app, format!("connect id={id}: {e}"));
+            e
+        };
+        // After a drop, close what the last connection left behind before a fresh connect (as TopoDroid does: closeGatt,
+        // then connectGatt). No "is it connected?" question first: on iOS that call once never answered, and the page's
+        // reconnecting stopped with it. Every step has a time limit, so a stuck call can only cost one try.
+        let dropped = ble.dropped.lock().unwrap().remove(&id);
+        if dropped {
+            trace(&app, format!("connect id={id}: closing the old connection first"));
+            let _ = tokio::time::timeout(Duration::from_secs(3), p.disconnect()).await;
+        }
+        trace(&app, format!("connect id={id}: connecting"));
+        let wait = Duration::from_secs(10);
+        tokio::time::timeout(wait, p.connect())
             .await
-            .map_err(|e| format!("Could not listen to the instrument: {e}"))?;
-        let app = app.clone();
-        let id = id.clone();
-        tauri::async_runtime::spawn(async move {
-            while let Some(n) = stream.next().await {
-                tell(
-                    &app,
-                    serde_json::json!({ "t": "notify", "id": id, "char": n.uuid.to_string(), "bytes": n.value }),
-                );
-            }
-        });
-    }
-    trace(&app, format!("connect id={id}: ready"));
-    Ok(p.services()
-        .into_iter()
-        .map(|s| Service {
-            uuid: s.uuid.to_string(),
-            chars: s
-                .characteristics
-                .iter()
-                .map(|c| Char { uuid: c.uuid.to_string(), props: props(c.properties) })
-                .collect(),
-        })
-        .collect())
+            .map_err(|_| fail("The instrument did not answer. Is it on and close by?".into()))?
+            .map_err(|e| fail(format!("Could not connect: {e}")))?;
+        trace(&app, format!("connect id={id}: connected, listing services"));
+        tokio::time::timeout(wait, p.discover_services())
+            .await
+            .map_err(|_| fail("The instrument did not list its services in time.".into()))?
+            .map_err(|e| fail(format!("Could not read the instrument's services: {e}")))?;
+        if ble.listening.lock().unwrap().insert(id.clone()) {
+            let mut stream = p
+                .notifications()
+                .await
+                .map_err(|e| format!("Could not listen to the instrument: {e}"))?;
+            let app = app.clone();
+            let id = id.clone();
+            tauri::async_runtime::spawn(async move {
+                while let Some(n) = stream.next().await {
+                    tell(
+                        &app,
+                        serde_json::json!({ "t": "notify", "id": id, "char": n.uuid.to_string(), "bytes": n.value }),
+                    );
+                }
+            });
+        }
+        trace(&app, format!("connect id={id}: ready"));
+        Ok(p.services()
+            .into_iter()
+            .map(|s| Service {
+                uuid: s.uuid.to_string(),
+                chars: s
+                    .characteristics
+                    .iter()
+                    .map(|c| Char { uuid: c.uuid.to_string(), props: props(c.properties) })
+                    .collect(),
+            })
+            .collect())
+    })
+    .await
 }
 
 /// Disconnects a device (nothing to do if it already went).
 #[tauri::command]
 pub async fn ble_disconnect(ble: State<'_, Ble>, id: String) -> Result<(), String> {
-    if let Ok(p) = device(&ble, &id) {
-        let _ = p.disconnect().await;
-    }
-    ble.listening.lock().unwrap().remove(&id);
-    Ok(())
+    on_jvm(async move {
+        if let Ok(p) = device(&ble, &id) {
+            let _ = p.disconnect().await;
+        }
+        ble.listening.lock().unwrap().remove(&id);
+        Ok(())
+    })
+    .await
 }
 
 /// Reads a characteristic's value.
 #[tauri::command]
 pub async fn ble_read(ble: State<'_, Ble>, id: String, service: String, uuid: String) -> Result<Vec<u8>, String> {
-    let p = device(&ble, &id)?;
-    let c = characteristic(&p, &service, &uuid)?;
-    p.read(&c).await.map_err(|e| format!("Could not read: {e}"))
+    on_jvm(async move {
+        let p = device(&ble, &id)?;
+        let c = characteristic(&p, &service, &uuid)?;
+        p.read(&c).await.map_err(|e| format!("Could not read: {e}"))
+    })
+    .await
 }
 
 /// Writes to a characteristic, with or without a response.
@@ -278,16 +305,22 @@ pub async fn ble_write(
     bytes: Vec<u8>,
     with_response: bool,
 ) -> Result<(), String> {
-    let p = device(&ble, &id)?;
-    let c = characteristic(&p, &service, &uuid)?;
-    let kind = if with_response { WriteType::WithResponse } else { WriteType::WithoutResponse };
-    p.write(&c, &bytes, kind).await.map_err(|e| format!("Could not write: {e}"))
+    on_jvm(async move {
+        let p = device(&ble, &id)?;
+        let c = characteristic(&p, &service, &uuid)?;
+        let kind = if with_response { WriteType::WithResponse } else { WriteType::WithoutResponse };
+        p.write(&c, &bytes, kind).await.map_err(|e| format!("Could not write: {e}"))
+    })
+    .await
 }
 
 /// Turns on notifications (or indications) from a characteristic.
 #[tauri::command]
 pub async fn ble_subscribe(ble: State<'_, Ble>, id: String, service: String, uuid: String) -> Result<(), String> {
-    let p = device(&ble, &id)?;
-    let c = characteristic(&p, &service, &uuid)?;
-    p.subscribe(&c).await.map_err(|e| format!("Could not listen: {e}"))
+    on_jvm(async move {
+        let p = device(&ble, &id)?;
+        let c = characteristic(&p, &service, &uuid)?;
+        p.subscribe(&c).await.map_err(|e| format!("Could not listen: {e}"))
+    })
+    .await
 }

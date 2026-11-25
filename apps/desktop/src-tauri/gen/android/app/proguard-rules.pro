@@ -19,3 +19,7 @@
 # If you keep the line number information, uncomment this to
 # hide the original source file name.
 #-renamesourcefileattribute SourceFile
+# Bluetooth (btleplug): these classes are only reached from Rust through JNI, so shrinking must keep them whole.
+-keep class com.nonpolynomial.** { *; }
+-keep class io.github.gedgygedgy.** { *; }
+-keepclassmembers class app.cavecad.desktop.MainActivity { public static *** bluetoothProblem(); }

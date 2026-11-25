@@ -57,6 +57,8 @@ android {
     buildFeatures {
         buildConfig = true
     }
+    // Bluetooth: btleplug's and jni-utils' Java halves (see src/vendor/README.md)
+    sourceSets["main"].java.srcDir("src/vendor/java")
 }
 
 kotlin {
