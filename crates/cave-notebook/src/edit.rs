@@ -366,6 +366,134 @@ pub fn new_trip(
     Ok((id, actions))
 }
 
+/// What deleting a trip would remove, for the confirm dialog.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TripRemoval {
+    /// Shots on the trip.
+    pub shots: usize,
+    /// Stations no other trip's shots use.
+    pub stations: usize,
+    /// Drawn things (section features, map lines, profile sketches, symbols, text) that go with it.
+    pub drawn: usize,
+}
+
+struct Removal {
+    drawn: Vec<(Id, Kind)>,
+    shots: Vec<Id>,
+    stations: Vec<Id>,
+    carry: Vec<Action>,
+}
+
+fn plan_removal(doc: &Document, trip: Id) -> Result<Removal, EditError> {
+    doc.entity(trip)
+        .filter(|e| e.kind() == Kind::Trip)
+        .ok_or(EditError::NoSuchTrip)?;
+    let order = crate::page::trips(doc);
+    if order.len() < 2 {
+        return Err(EditError::Invalid("a cave needs at least one trip"));
+    }
+    let ends = |e: &cave_doc::Entity| [e.reference(Field::ShotFrom), e.reference(Field::ShotTo)];
+    let mut shots = Vec::new();
+    let mut used = std::collections::BTreeSet::new();
+    let mut candidates = std::collections::BTreeSet::new();
+    for id in doc.ids_of(Kind::Shot) {
+        let Some(e) = doc.entity(id) else { continue };
+        let set = if e.reference(Field::ShotTrip) == Some(trip) {
+            shots.push(id);
+            &mut candidates
+        } else {
+            &mut used
+        };
+        set.extend(ends(e).into_iter().flatten());
+    }
+    let stations: Vec<Id> = candidates.difference(&used).copied().collect();
+    let gone = |id: Option<Id>| id.is_some_and(|i| stations.contains(&i));
+    let mut drawn = Vec::new();
+    for id in doc.ids_of(Kind::Feature) {
+        let Some(e) = doc.entity(id) else { continue };
+        let anchored = match e.get(Field::FeatureAnchored) {
+            Value::Anchored(Some(a)) => a.stations().into_iter().any(|s| gone(Some(s))),
+            _ => false,
+        };
+        if e.reference(Field::FeatureTrip) == Some(trip)
+            || gone(e.reference(Field::FeatureStation))
+            || anchored
+        {
+            drawn.push((id, Kind::Feature));
+        }
+    }
+    for (kind, field) in [
+        (Kind::Symbol, Field::SymbolTrip),
+        (Kind::Text, Field::TextTrip),
+    ] {
+        for id in doc.ids_of(kind) {
+            if doc
+                .entity(id)
+                .is_some_and(|e| e.reference(field) == Some(trip))
+            {
+                drawn.push((id, kind));
+            }
+        }
+    }
+    // The cave's name and unit are read from the first trip; hand them on if it goes.
+    let mut carry = Vec::new();
+    if order[0].id == trip {
+        let next = order[1].id;
+        let (from, to) = (doc.entity(trip), doc.entity(next));
+        for field in [Field::TripCaveName, Field::TripDistanceUnit] {
+            let value = from.map(|e| e.text(field)).unwrap_or_default();
+            if !value.is_empty() && to.is_some_and(|e| e.text(field).is_empty()) {
+                carry.push(Action::Set {
+                    id: next,
+                    field,
+                    value: Value::Text(value),
+                });
+            }
+        }
+    }
+    Ok(Removal {
+        drawn,
+        shots,
+        stations,
+        carry,
+    })
+}
+
+/// Counts what [`remove_trip`] would take. Changes nothing.
+pub fn trip_removal(doc: &Document, trip: Id) -> Result<TripRemoval, EditError> {
+    let r = plan_removal(doc, trip)?;
+    Ok(TripRemoval {
+        shots: r.shots.len(),
+        stations: r.stations.len(),
+        drawn: r.drawn.len(),
+    })
+}
+
+/// Removes a trip with its shots, the stations only it uses (with their notes and marks), and
+/// everything drawn on them. A cave keeps at least one trip. One list, so one undo step.
+pub fn remove_trip(doc: &Document, trip: Id) -> Result<Vec<Action>, EditError> {
+    let r = plan_removal(doc, trip)?;
+    let mut actions = r.carry;
+    actions.extend(
+        r.drawn
+            .into_iter()
+            .map(|(id, kind)| Action::Remove { id, kind }),
+    );
+    actions.extend(r.shots.into_iter().map(|id| Action::Remove {
+        id,
+        kind: Kind::Shot,
+    }));
+    actions.extend(r.stations.into_iter().map(|id| Action::Remove {
+        id,
+        kind: Kind::Station,
+    }));
+    actions.push(Action::Remove {
+        id: trip,
+        kind: Kind::Trip,
+    });
+    Ok(actions)
+}
+
 /// A brand new cave: a document with one empty trip (named `trip`), in `unit` (`ft` or `m`) and with
 /// the cave's `name` kept on that first trip. Everything else is built up from here, shot by shot.
 pub fn new_cave(

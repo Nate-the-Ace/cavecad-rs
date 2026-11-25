@@ -303,3 +303,112 @@ fn plumbline_pit_never_gains_a_bearing_it_was_not_given() {
         }
     }
 }
+
+fn dangling(doc: &Document) -> usize {
+    cave_doc::validate(doc)
+        .iter()
+        .filter(|i| matches!(i, cave_doc::Issue::DanglingReference { .. }))
+        .count()
+}
+
+fn count_all(doc: &Document) -> usize {
+    [
+        Kind::Trip,
+        Kind::Shot,
+        Kind::Station,
+        Kind::Feature,
+        Kind::Symbol,
+        Kind::Text,
+    ]
+    .into_iter()
+    .map(|k| doc.ids_of(k).len())
+    .sum()
+}
+
+#[test]
+fn deleting_a_trip_leaves_nothing_dangling_and_undo_brings_it_back() {
+    for name in ["PitfallCave", "PlumblinePit"] {
+        let mut doc = load(name);
+        let before = (count_all(&doc), dangling(&doc));
+        let all = trips(&doc);
+        if all.len() < 2 {
+            continue;
+        }
+        let victim = all[all.len() - 1].id;
+        let counts = cave_notebook::trip_removal(&doc, victim).unwrap();
+        let (shots, stations) = (
+            doc.ids_of(Kind::Shot).len(),
+            doc.ids_of(Kind::Station).len(),
+        );
+        let mut h = History::new();
+        let actions = cave_notebook::remove_trip(&doc, victim).unwrap();
+        apply(&mut doc, &mut h, actions);
+        assert!(doc.entity(victim).is_none(), "{name}");
+        assert_eq!(doc.ids_of(Kind::Shot).len(), shots - counts.shots, "{name}");
+        assert_eq!(
+            doc.ids_of(Kind::Station).len(),
+            stations - counts.stations,
+            "{name}"
+        );
+        assert_eq!(
+            dangling(&doc),
+            before.1,
+            "{name}: no new dangling reference"
+        );
+        h.undo(&mut doc).unwrap();
+        assert_eq!((count_all(&doc), dangling(&doc)), before, "{name}: undo");
+    }
+}
+
+#[test]
+fn a_station_shared_with_another_trip_survives() {
+    let mut doc = load("PitfallCave");
+    let mut h = History::new();
+    let mut ids = SeqIds::new(0xfee);
+    let first = trips(&doc)[0].id;
+    let (t2, a) = new_trip(&doc, &mut ids, "TWO").unwrap();
+    apply(&mut doc, &mut h, a);
+    let (_, a) = add_shot(&doc, &mut ids, t2, "A1", "ZZ9", false).unwrap();
+    apply(&mut doc, &mut h, a);
+    let a1 = doc
+        .ids_of(Kind::Station)
+        .into_iter()
+        .find(|s| doc.entity(*s).unwrap().text(Field::StationLabel) == "A1")
+        .unwrap();
+    let zz9 = doc
+        .ids_of(Kind::Station)
+        .into_iter()
+        .find(|s| doc.entity(*s).unwrap().text(Field::StationLabel) == "ZZ9")
+        .unwrap();
+    let a = cave_notebook::remove_trip(&doc, t2).unwrap();
+    apply(&mut doc, &mut h, a);
+    assert!(doc.entity(a1).is_some(), "shared station stays");
+    assert!(doc.entity(zz9).is_none(), "its own station goes");
+    let _ = first;
+}
+
+#[test]
+fn the_last_trip_cannot_be_deleted() {
+    let doc = cave_notebook::new_cave(ActorId(1), &mut SeqIds::new(1), "Test", "T1", "ft").unwrap();
+    let only = trips(&doc)[0].id;
+    assert!(cave_notebook::remove_trip(&doc, only).is_err());
+    assert!(cave_notebook::trip_removal(&doc, only).is_err());
+}
+
+#[test]
+fn deleting_the_first_trip_hands_the_cave_name_and_unit_on() {
+    let mut doc = load("PitfallCave");
+    let mut h = History::new();
+    let all = trips(&doc);
+    let (first, second) = (all[0].id, all[1].id);
+    let name = doc.entity(first).unwrap().text(Field::TripCaveName);
+    let unit = doc.entity(first).unwrap().text(Field::TripDistanceUnit);
+    let a = cave_notebook::remove_trip(&doc, first).unwrap();
+    apply(&mut doc, &mut h, a);
+    let e = doc.entity(second).unwrap();
+    assert_eq!(trips(&doc)[0].id, second);
+    assert_eq!(e.text(Field::TripDistanceUnit), unit);
+    if !name.is_empty() {
+        assert_eq!(e.text(Field::TripCaveName), name);
+    }
+}
