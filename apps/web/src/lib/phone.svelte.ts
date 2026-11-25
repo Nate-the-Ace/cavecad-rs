@@ -44,11 +44,13 @@ function loadTab(): PhoneTab {
   }
 }
 
-export const phone = $state<{ on: boolean; tab: PhoneTab; sketch: SketchView; notebook: NotebookView }>({
+export const phone = $state<{ on: boolean; tab: PhoneTab; sketch: SketchView; notebook: NotebookView; settings: string }>({
   on: media?.matches ?? false,
   tab: loadTab(),
   sketch: 'map',
   notebook: 'notebook',
+  /** The Settings tab's section showing ('' for its first). */
+  settings: '',
 });
 
 media?.addEventListener('change', (e) => (phone.on = e.matches));
@@ -69,4 +71,10 @@ export function showPhoneTab(id: string): boolean {
     /* the tab is just not remembered */
   }
   return true;
+}
+
+/** Shows the Settings tab at one of its sections (lib/settings-sections.ts), e.g. 'connection'. */
+export function showSettings(section: string): void {
+  phone.settings = section;
+  showPhoneTab('settings');
 }

@@ -1,0 +1,26 @@
+/* Shared rows for the phone Settings sections (Connection, Survey, Display, About). Global on purpose (the sections
+   are separate components) but scoped under `.phone .set`, so nothing outside the phone layout sees it. Spacing is
+   the phone tokens from phone.css: 6px outer padding, 4px gaps, 40px rows, 16px inputs. */
+.phone .set { display: flex; flex-direction: column; gap: var(--p-gap); height: 100%; min-height: 0; padding: var(--p-pad); box-sizing: border-box; color: var(--text); }
+.phone .set .row { display: flex; gap: var(--p-gap); align-items: center; flex: none; min-width: 0; }
+.phone .set .row > * { flex: 1 1 0; min-width: 0; }
+.phone .set .row > .lab { flex: 0 0 82px; color: var(--muted); font-size: var(--p-font-small); }
+.phone .set button,
+.phone .set select { font: inherit; font-size: var(--p-font); min-height: var(--p-row); padding: 0 8px; border: 1px solid var(--line); border-radius: var(--p-radius); background: var(--panel-2); color: var(--text); cursor: pointer; touch-action: manipulation; box-sizing: border-box; }
+.phone .set select { font-size: var(--p-font-input); }
+.phone .set button { display: inline-flex; align-items: center; justify-content: center; gap: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.phone .set button:disabled { opacity: 0.45; cursor: default; }
+.phone .set button.on { background: var(--accent); border-color: var(--accent); color: var(--on-accent, #fff); font-weight: 600; }
+.phone .set input[type='text'],
+.phone .set textarea { font: inherit; font-size: var(--p-font-input); min-height: var(--p-row); box-sizing: border-box; padding: 4px 8px; border: 1px solid var(--line); border-radius: var(--p-radius); background: var(--panel-2); color: var(--text); width: 100%; -webkit-user-select: text; user-select: text; }
+.phone .set .chk { display: flex; align-items: center; gap: 8px; min-height: var(--p-row); flex: none; cursor: pointer; }
+.phone .set .chk input { width: 22px; height: 22px; margin: 0; flex: none; }
+.phone .set .seg { display: flex; flex: none; min-width: 0; }
+.phone .set .seg button { flex: 1 1 0; border-radius: 0; min-width: 0; }
+.phone .set .seg button + button { border-left: none; }
+.phone .set .seg button:first-child { border-radius: var(--p-radius) 0 0 var(--p-radius); }
+.phone .set .seg button:last-child { border-radius: 0 var(--p-radius) var(--p-radius) 0; }
+.phone .set .line { margin: 0; font-size: var(--p-font-small); color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: none; }
+.phone .set .line.warn { color: var(--warn); }
+.phone .set details { flex: none; border: 1px solid var(--line); border-radius: var(--p-radius); }
+.phone .set summary { min-height: var(--p-row); display: flex; align-items: center; padding: 0 8px; cursor: pointer; font-size: var(--p-font); }
