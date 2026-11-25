@@ -4,11 +4,11 @@
   // sections do not fit one row at 375pt with readable labels, so the switcher becomes two rows of 40px buttons
   // (every section stays in sight; nothing hides off the edge as it would in a scrolling row).
   import { registerDefaultSettings } from '../lib/settings-default';
-  import { settingsSections } from '../lib/settings-sections';
+  import { settingsSectionsFor } from '../lib/settings-sections';
   import { phone } from '../lib/phone.svelte';
 
   registerDefaultSettings();
-  const sections = settingsSections();
+  const sections = settingsSectionsFor('phone');
   // which one shows is kept in `phone.settings`, so other screens can open a section (the Survey pill opens Connection)
   const current = $derived(sections.some((s) => s.id === phone.settings) ? phone.settings : (sections[0]?.id ?? ''));
   const shown = $derived(sections.find((s) => s.id === current));

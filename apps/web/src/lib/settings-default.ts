@@ -1,5 +1,6 @@
-// The phone Settings sections the app ships with: Connection, Survey, Notebook, Sketch, Cave, Display, Account and About. A module adds its
-// own through SETTINGS_SECTIONS (lib/settings-sections.ts); the tab never names a section itself.
+// The settings sections the app ships with. Phone (the Settings tab): Connection, Survey, Notebook, Sketch, Cave, Display, Account and
+// About. Dock (the user window's Options tab on desktop, web and iPad): Display and Symbols, dock-sized components of their own. A module
+// adds its own through SETTINGS_SECTIONS (lib/settings-sections.ts); neither place names a section itself.
 import { SETTINGS_SECTIONS } from './settings-sections.ts';
 import SettingsConnection from '../components/SettingsConnection.svelte';
 import SettingsSurvey from '../components/SettingsSurvey.svelte';
@@ -9,18 +10,22 @@ import SettingsCave from '../components/SettingsCave.svelte';
 import SettingsDisplay from '../components/SettingsDisplay.svelte';
 import SettingsAccount from '../components/SettingsAccount.svelte';
 import SettingsAbout from '../components/SettingsAbout.svelte';
+import DockSettingsDisplay from '../components/DockSettingsDisplay.svelte';
+import DockSettingsSymbols from '../components/DockSettingsSymbols.svelte';
 
 let done = false;
 /** Registers the built-in sections once. */
 export function registerDefaultSettings(): void {
   if (done) return;
   done = true;
-  SETTINGS_SECTIONS.register({ id: 'connection', apiVersion: 1, label: 'Connection', order: 10, component: SettingsConnection });
-  SETTINGS_SECTIONS.register({ id: 'survey', apiVersion: 1, label: 'Survey', order: 20, component: SettingsSurvey });
-  SETTINGS_SECTIONS.register({ id: 'notebook', apiVersion: 1, label: 'Notebook', order: 30, component: SettingsNotebook });
-  SETTINGS_SECTIONS.register({ id: 'sketch', apiVersion: 1, label: 'Sketch', order: 35, component: SettingsSketch });
-  SETTINGS_SECTIONS.register({ id: 'cave', apiVersion: 1, label: 'Cave', order: 38, component: SettingsCave });
-  SETTINGS_SECTIONS.register({ id: 'display', apiVersion: 1, label: 'Display', order: 40, component: SettingsDisplay });
-  SETTINGS_SECTIONS.register({ id: 'account', apiVersion: 1, label: 'Account', order: 50, component: SettingsAccount });
-  SETTINGS_SECTIONS.register({ id: 'about', apiVersion: 1, label: 'About', order: 60, component: SettingsAbout });
+  SETTINGS_SECTIONS.register({ id: 'connection', apiVersion: 1, label: 'Connection', order: 10, component: SettingsConnection, layouts: ['phone'] });
+  SETTINGS_SECTIONS.register({ id: 'survey', apiVersion: 1, label: 'Survey', order: 20, component: SettingsSurvey, layouts: ['phone'] });
+  SETTINGS_SECTIONS.register({ id: 'notebook', apiVersion: 1, label: 'Notebook', order: 30, component: SettingsNotebook, layouts: ['phone'] });
+  SETTINGS_SECTIONS.register({ id: 'sketch', apiVersion: 1, label: 'Sketch', order: 35, component: SettingsSketch, layouts: ['phone'] });
+  SETTINGS_SECTIONS.register({ id: 'cave', apiVersion: 1, label: 'Cave', order: 38, component: SettingsCave, layouts: ['phone'] });
+  SETTINGS_SECTIONS.register({ id: 'display', apiVersion: 1, label: 'Display', order: 40, component: SettingsDisplay, layouts: ['phone'] });
+  SETTINGS_SECTIONS.register({ id: 'account', apiVersion: 1, label: 'Account', order: 50, component: SettingsAccount, layouts: ['phone'] });
+  SETTINGS_SECTIONS.register({ id: 'dock-display', apiVersion: 1, label: 'Display', order: 40, component: DockSettingsDisplay, layouts: ['dock'] });
+  SETTINGS_SECTIONS.register({ id: 'dock-symbols', apiVersion: 1, label: 'Symbols', order: 45, component: DockSettingsSymbols, layouts: ['dock'] });
+  SETTINGS_SECTIONS.register({ id: 'about', apiVersion: 1, label: 'About', order: 60, component: SettingsAbout, layouts: ['phone'] });
 }

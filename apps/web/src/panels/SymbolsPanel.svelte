@@ -5,7 +5,8 @@
   import { cave, setTool } from '../lib/cave.svelte';
   import { engine, loadEngine } from '../lib/engine';
   import type { SymbolDef } from '../lib/symbols';
-  import { paletteGroups, readStandard, STANDARD_KEY, symbolTitle, thumb, visibleSymbols, type Standard } from '../lib/symbol-palette';
+  import { paletteGroups, symbolTitle, thumb, visibleSymbols } from '../lib/symbol-palette';
+  import { phonePrefs, setSymbolStandard as setStandard } from '../lib/phone-prefs.svelte';
   import { isFavorite, sectionCollapsed, symbolFavorites, toggleFavorite, toggleSection } from '../lib/symbol-favorites.svelte';
   import { ChevronRight, Star } from '@lucide/svelte';
 
@@ -15,15 +16,8 @@
     loadEngine().then(() => (all = engine.symbols()));
   });
 
-  let standard = $state<Standard>(readStandard());
-  function setStandard(s: Standard) {
-    standard = s;
-    try {
-      localStorage.setItem(STANDARD_KEY, s);
-    } catch {
-      /* remembered for this visit only */
-    }
-  }
+  // the stored standard, shared with the user window's Options > Symbols and the phone's picker (one $state, one key)
+  const standard = $derived(phonePrefs.standard);
   const shown = $derived(visibleSymbols(all, query, standard));
   // Favorites first (the user's stars, kept on this device), then the categories; each section folds.
   const groups = $derived(paletteGroups(shown, '', symbolFavorites.keys));
