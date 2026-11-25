@@ -2457,6 +2457,34 @@ pub fn notebook_new_trip(name: &str) -> String {
     }
 }
 
+/// Deletes a trip with its shots, the stations only it uses and everything drawn on them: one undo
+/// step. Returns `ok` or `error: ...` (the last trip cannot go).
+#[wasm_bindgen]
+pub fn notebook_remove_trip(trip: &str) -> String {
+    match parse_id(trip) {
+        Some(id) => scoped_edit("notebook", |doc| cave_notebook::remove_trip(doc, id)),
+        None => "error: not a trip id".into(),
+    }
+}
+
+/// What deleting a trip would take, as JSON `{shots, stations, drawn}`, or `error: ...`.
+#[wasm_bindgen]
+pub fn notebook_trip_removal(trip: &str) -> String {
+    let Some(id) = parse_id(trip) else {
+        return "error: not a trip id".into();
+    };
+    DOC.with(|d| match d.borrow().as_ref() {
+        Some(doc) => match cave_notebook::trip_removal(doc, id) {
+            Ok(r) => format!(
+                "{{\"shots\":{},\"stations\":{},\"drawn\":{}}}",
+                r.shots, r.stations, r.drawn
+            ),
+            Err(e) => format!("error: {e:?}"),
+        },
+        None => "error: no cave is open".into(),
+    })
+}
+
 // ---- Scans -----------------------------------------------------------------------------------
 
 /// Every scan linked to a trip, as JSON `[{trip, path}]`.
