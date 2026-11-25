@@ -1,5 +1,5 @@
 // The phone live shot strip's decisions (lib/phone-livestrip.ts). Run: npm run test:phonelivestrip
-import { dotState, pressKind, splitUnit, stripModel, type StripInput } from '../src/lib/phone-livestrip.ts';
+import { dotState, liveStripOnDock, pressKind, splitUnit, stripModel, type StripInput } from '../src/lib/phone-livestrip.ts';
 
 let failures = 0;
 function check(what: string, ok: boolean) {
@@ -28,6 +28,13 @@ check('X1 armed when its kind is aiming', m({ aimsFirst: true, aiming: 'single' 
 check('problem marker', m({}).problem === '' && m({ message: 'x' }).problem === 'problem' && m({ warnings: 1 }).problem === 'caution' && m({ message: 'x', warnings: 1 }).problem === 'problem' && m({ message: '  ' }).problem === '');
 check('splitUnit', splitUnit('12.4 m').value === '12.4' && splitUnit('12.4 m').unit === 'm' && splitUnit('7').unit === '');
 
+// the dock's Map panel (D3 B): instruments on, switched on, Survey panel not visible, not the phone
+const dockOn = { phone: false, instruments: true, enabled: true, surveyVisible: false };
+check('dock: shows with instruments on and the Survey panel hidden', liveStripOnDock(dockOn));
+check('dock: hides while the Survey panel is visible', !liveStripOnDock({ ...dockOn, surveyVisible: true }));
+check('dock: never in a build without instruments', !liveStripOnDock({ ...dockOn, instruments: false }));
+check('dock: the switch turns it off', !liveStripOnDock({ ...dockOn, enabled: false }));
+check('dock: not on the phone (it has its own over Sketch)', !liveStripOnDock({ ...dockOn, phone: true }));
 if (failures) {
   console.log(`\n${failures} failed`);
   process.exit(1);

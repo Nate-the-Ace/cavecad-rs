@@ -1,6 +1,7 @@
 // Per-device phone preferences set in Settings > Sketch: the symbol standard the phone picker shows (the same stored
 // key the desktop Symbols panel reads) and whether the Sketch screen shows the live shot strip at all. The strip's
-// own fold state is separate (PhoneLiveStrip keeps it).
+// own fold state is separate (LiveStrip keeps it). The dock's Map panel shows the same strip under the same switch
+// (user window > Options > Survey there).
 import { readStandard, STANDARD_KEY, type Standard } from './symbol-palette';
 
 export const LIVE_STRIP_KEY = 'cavecad.phone.liveStripEnabled';

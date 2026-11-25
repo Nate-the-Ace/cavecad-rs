@@ -39,6 +39,10 @@ The map, profile and cross section redraw as shots are written.
 2. Press **No backsight** if you are waiting for a backsight you will not take.
 3. See **This session** for every shot taken so far.
 
+### The live shot strip on the Map
+
+While this panel is closed or tabbed away, a slim strip at the bottom of the [Map](map) shows the latest tape, compass and clino, the connection dot and a **Take shot** button. With an X1 the first press turns the laser on to aim, the second shoots. When a reading waits (Write at once off) the strip offers **Accept** and **Discard**. Click the numbers to fold it to a dot; click the dot, while no instrument is connected, to open this panel. Your initial (top right) > Options > Survey turns the strip off. It hides when the Map is too short to hold it.
+
 ### Shot settings in the Survey tab
 
 - With an instrument that does not flag legs itself, **3 close shots are a leg, 1 is a splay**: three or more consecutive close shots make a leg, any other shot is a splay. An X1 also flags legs itself and can mark a leg Backsight with its **M** button; the other instruments cannot, so a leg that comes back along the one before is taken as its backsight.

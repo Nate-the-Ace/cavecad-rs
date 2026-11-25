@@ -1,5 +1,6 @@
 // The settings sections the app ships with. Phone (the Settings tab): Connection, Survey, Notebook, Sketch, Cave, Display, Account and
-// About. Dock (the user window's Options tab on desktop, web and iPad): Display and Symbols, dock-sized components of their own. A module
+// About. Dock (the user window's Options tab on desktop, web and iPad): Display, Symbols and, while instruments are on, Survey
+// (the Map's live shot strip): dock-sized components of their own. A module
 // adds its own through SETTINGS_SECTIONS (lib/settings-sections.ts); neither place names a section itself.
 import { SETTINGS_SECTIONS } from './settings-sections.ts';
 import SettingsConnection from '../components/SettingsConnection.svelte';
@@ -12,6 +13,8 @@ import SettingsAccount from '../components/SettingsAccount.svelte';
 import SettingsAbout from '../components/SettingsAbout.svelte';
 import DockSettingsDisplay from '../components/DockSettingsDisplay.svelte';
 import DockSettingsSymbols from '../components/DockSettingsSymbols.svelte';
+import DockSettingsSurvey from '../components/DockSettingsSurvey.svelte';
+import { showInstruments } from './features';
 
 let done = false;
 /** Registers the built-in sections once. */
@@ -27,5 +30,6 @@ export function registerDefaultSettings(): void {
   SETTINGS_SECTIONS.register({ id: 'account', apiVersion: 1, label: 'Account', order: 50, component: SettingsAccount, layouts: ['phone'] });
   SETTINGS_SECTIONS.register({ id: 'dock-display', apiVersion: 1, label: 'Display', order: 40, component: DockSettingsDisplay, layouts: ['dock'] });
   SETTINGS_SECTIONS.register({ id: 'dock-symbols', apiVersion: 1, label: 'Symbols', order: 45, component: DockSettingsSymbols, layouts: ['dock'] });
+  if (showInstruments) SETTINGS_SECTIONS.register({ id: 'dock-survey', apiVersion: 1, label: 'Survey', order: 47, component: DockSettingsSurvey, layouts: ['dock'] });
   SETTINGS_SECTIONS.register({ id: 'about', apiVersion: 1, label: 'About', order: 60, component: SettingsAbout, layouts: ['phone'] });
 }

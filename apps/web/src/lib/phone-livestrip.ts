@@ -82,6 +82,12 @@ export function stripModel(i: StripInput): StripModel {
   };
 }
 
+/** Whether the dock's Map panel shows the strip (D3 B): only in the dock layout, while instruments are on (showInstruments),
+ * the strip is switched on, and the Survey panel is not visible (it would say the same thing twice). */
+export function liveStripOnDock(o: { phone: boolean; instruments: boolean; enabled: boolean; surveyVisible: boolean }): boolean {
+  return !o.phone && o.instruments && o.enabled && !o.surveyVisible;
+}
+
 /** A length as its number and its unit, so the unit can be set small ("12.4 m"). */
 export function splitUnit(text: string): { value: string; unit: string } {
   const at = text.lastIndexOf(' ');
