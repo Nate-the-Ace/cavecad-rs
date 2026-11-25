@@ -35,6 +35,7 @@ cat > "$app/Contents/Info.plist" <<PLIST
   <key>CFBundleVersion</key><string>1</string>
   <key>LSMinimumSystemVersion</key><string>13.0</string>
   <key>NSHighResolutionCapable</key><true/>
+  <key>NSBluetoothAlwaysUsageDescription</key><string>Finds the Cavway X1 over Bluetooth to flash its firmware.</string>
 </dict></plist>
 PLIST
 codesign --force --deep --sign - "$app"

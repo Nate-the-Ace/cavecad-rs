@@ -6,6 +6,7 @@
 //! and the host calls `flush` when it fires.
 //!
 //! - [`caveble`], [`cavway`], [`bric`], [`sap5`]: the wire formats (SAP6, Cavway X1, BRIC4/5, SAP5).
+//! - [`cavway_callouts`]: the feature list inside an X1 firmware file (read it, rewrite it).
 //! - [`cavway_flash`]: the X1 update file and its bootloader protocol, with a flasher and a pretend bootloader.
 //! - [`link`]: the path from bytes to a [`Reading`], one per protocol.
 //! - [`legs`]: grouping single shots into legs and splays.
@@ -16,6 +17,7 @@ pub mod bric;
 pub mod calibrate;
 pub mod caveble;
 pub mod cavway;
+pub mod cavway_callouts;
 pub mod cavway_flash;
 pub mod identify;
 pub mod legs;

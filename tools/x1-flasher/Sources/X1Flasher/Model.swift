@@ -43,6 +43,18 @@ final class Model: ObservableObject {
     @Published var total = 0
     @Published var phase = ""
     @Published var log: [String] = []
+    /// Talk to the X1 over Bluetooth instead of the cable (checked only when asked: a scan takes a few seconds).
+    @Published var useBluetooth = UserDefaults.standard.bool(forKey: "useBluetooth") {
+        didSet {
+            UserDefaults.standard.set(useBluetooth, forKey: "useBluetooth")
+            device = nil
+            if useBluetooth { port = nil } else { refresh() }
+        }
+    }
+    /// The feature list inside the chosen firmware file (nil: the file has none).
+    @Published var fileCallouts: [String]?
+    /// Set once a list has been built from the Feature callouts page, so the Flash page can say so.
+    @Published var builtFromList = false
 
     private var timer: Timer?
     private var busy = false
@@ -51,6 +63,8 @@ final class Model: ObservableObject {
 
     /// Cavway's published releases, where they were downloaded (newest first).
     static let library: [(String, String)] = [
+        ("1.1.7-cc7m", "~/Documents/github/cavway-x1-emulator/firmware-lab/out/CVWY_X1_1.1.7-cc7m.bin"),
+        ("1.1.7-cc7", "~/Documents/github/cavecad-rs-ble/tools/x1-patch/build/CVWY_X1_1.1.7-cc7.bin"),
         ("1.1.7-cc4", "~/Documents/github/cavecad-rs-ble/tools/x1-patch/build/CVWY_X1_1.1.7-cc4.bin"),
         ("1.1.7", "~/Documents/github/cavway-firmware/CVWY_X1_1.1.7.bin"),
         ("1.1.6", "~/Documents/github/cavway-firmware/CVWY_X1_1.1.6.bin"),
@@ -93,8 +107,36 @@ final class Model: ObservableObject {
     }
 
     /// Lists ports, and checks the X1 on the chosen one (a read that changes nothing).
-    func refresh() {
+    func refresh(manual: Bool = false) {
         guard !busy, !isFlashing else { return }
+        if useBluetooth {
+            guard manual else { return }
+            busy = true
+            Task {
+                defer { busy = false }
+                checking = true
+                var seen: Device?
+                var problem: String?
+                _ = await run(["--ble", "info"]) { ev in
+                    switch ev["event"] as? String {
+                    case "device":
+                        seen = Device(
+                            port: ev["port"] as? String ?? "Bluetooth",
+                            mode: Device.Mode(rawValue: ev["mode"] as? String ?? "none") ?? .none,
+                            version: ev["version"] as? String,
+                            bootloader: ev["bootloader"] as? Int,
+                            serial: ev["serial"] as? Int)
+                    case "error": problem = ev["message"] as? String
+                    default: break
+                    }
+                }
+                checking = false
+                if let problem { note("Bluetooth: \(problem)") }
+                if let seen { port = seen.port; if seen != device { note(describe(seen)) } }
+                device = seen
+            }
+            return
+        }
         busy = true
         Task {
             defer { busy = false }
@@ -157,6 +199,7 @@ final class Model: ObservableObject {
             }
             firmware = fw
             firmwareError = err
+            fileCallouts = fw == nil ? nil : await callouts(in: path)
             if let fw {
                 UserDefaults.standard.set(path, forKey: "firmwarePath")
                 note("Firmware file: \(fw.name), version \(fw.version)")
@@ -168,7 +211,7 @@ final class Model: ObservableObject {
 
     func startFlash(simulated: Bool) {
         guard let fw = firmware else { return }
-        if !simulated { guard canFlash, port != nil else { return } }
+        if !simulated { guard canFlash else { return }; if !useBluetooth { guard port != nil else { return } } }
         flash = .running(simulated: simulated)
         done = 0
         total = fw.packets
@@ -176,7 +219,9 @@ final class Model: ObservableObject {
         note(simulated ? "Rehearsal (pretend X1) of \(fw.name)" : "FLASHING \(fw.name) (\(fw.version)) to \(port ?? "?")")
         Task {
             var args = ["flash", fw.path]
-            if simulated { args.append("--simulate") } else { args += ["--yes", "--port", port ?? ""] }
+            if simulated { args.append("--simulate") }
+            else if useBluetooth { args += ["--yes", "--ble"] }
+            else { args += ["--yes", "--port", port ?? ""] }
             var outcome: FlashState = .failed(message: "x1flash stopped without saying why", appUntouched: true)
             _ = await run(args) { ev in
                 switch ev["event"] as? String {
@@ -201,14 +246,46 @@ final class Model: ObservableObject {
                 }
             }
             flash = outcome
-            if case .succeeded(false) = outcome { clockAfterRestart = true }
+            if case .succeeded(false) = outcome { clockAfterRestart = !useBluetooth }
             switch outcome {
             case .succeeded: note(simulated ? "Rehearsal finished cleanly" : "UPGRADE SUCCESS (the clock is set when the X1 restarts)")
             case .failed(let m, _): note("Stopped: \(m)")
             default: break
             }
+            if useBluetooth { device = nil }
             refresh()
         }
+    }
+
+    /// The feature list inside a firmware file, or nil if it has none (an older build).
+    func callouts(in path: String) async -> [String]? {
+        var names: [String]?
+        _ = await run(["callouts", "show", path]) { ev in
+            if ev["event"] as? String == "callouts" { names = ev["names"] as? [String] }
+        }
+        return names
+    }
+
+    /// Where lists built from the Feature callouts page are written.
+    static var buildFolder: URL {
+        let u = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("X1 Flasher")
+        try? FileManager.default.createDirectory(at: u, withIntermediateDirectories: true)
+        return u
+    }
+
+    /// Writes a copy of `base` with `names` as its feature list and makes it the firmware to flash. Returns an error text, or nil.
+    func buildList(base: String, names: [String]) async -> String? {
+        let out = Self.buildFolder.appendingPathComponent(((base as NSString).lastPathComponent as NSString).deletingPathExtension + "-list.bin").path
+        var error: String?
+        let code = await run(["callouts", "set", base, "--out", out, "--names", names.joined(separator: "\n")]) { ev in
+            if ev["event"] as? String == "error" { error = ev["message"] as? String }
+        }
+        if let error { return error }
+        if code != 0 { return "x1flash stopped (exit \(code))" }
+        choose(path: out)
+        builtFromList = true
+        note("Built \((out as NSString).lastPathComponent) with \(names.count) feature names")
+        return nil
     }
 
     /// Sets the X1's clock to this Mac's local time.
@@ -219,7 +296,7 @@ final class Model: ObservableObject {
     private func setClockNow() async {
         guard let port else { return }
         var said = "Clock: no answer"
-        _ = await run(["clock", "--port", port]) { ev in
+        _ = await run(["clock"] + (useBluetooth ? ["--ble"] : ["--port", port])) { ev in
             if ev["event"] as? String == "clock" {
                 said = (ev["confirmed"] as? Bool ?? false) ? "Clock set to this Mac's time (confirmed)" : "Clock set to this Mac's time (sent)"
             } else if ev["event"] as? String == "error" {
@@ -232,7 +309,7 @@ final class Model: ObservableObject {
     func powerOff() {
         guard let port else { return }
         note("Power off sent")
-        Task { _ = await run(["off", "--port", port]); device = nil; refresh() }
+        Task { _ = await run(["off"] + (useBluetooth ? ["--ble"] : ["--port", port])); device = nil; refresh() }
     }
 
     /// Runs `x1flash --json …`, handing each JSON line to `onEvent` on the main actor. Returns the exit code.

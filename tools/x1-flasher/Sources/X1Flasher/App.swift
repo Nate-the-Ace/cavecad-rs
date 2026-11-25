@@ -47,12 +47,23 @@ struct MainView: View {
     @State private var confirming = false
     @State private var importing = false
     @State private var showLog = false
+    @State private var page = 0
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
+                Picker("Page", selection: $page) {
+                    Text("Flash").tag(0)
+                    Text("Feature callouts").tag(1)
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
                 DeviceCard()
-                FirmwareCard(importing: $importing)
+                if page == 1 {
+                    CalloutsCard(confirming: $confirming, goToFlash: { page = 0 })
+                } else {
+                    FirmwareCard(importing: $importing)
+                }
                 FlashCard(confirming: $confirming)
                 DisclosureGroup("Log", isExpanded: $showLog) {
                     ScrollView {
@@ -68,8 +79,8 @@ struct MainView: View {
         }
         .toolbar {
             ToolbarItem {
-                Button { model.refresh() } label: { Label("Check X1", systemImage: "arrow.clockwise") }
-                    .help("Look for the X1 on the cable again")
+                Button { model.refresh(manual: true) } label: { Label("Check X1", systemImage: "arrow.clockwise") }
+                    .help(model.useBluetooth ? "Look for the X1 over Bluetooth (a few seconds)" : "Look for the X1 on the cable again")
             }
             ToolbarItem {
                 Button { openWindow(id: "recovery") } label: { Label("Recovery Card", systemImage: "lifepreserver") }
@@ -123,17 +134,33 @@ struct DeviceCard: View {
     @EnvironmentObject var model: Model
 
     var body: some View {
-        Card(title: "X1 on the cable", symbol: "cable.connector") {
+        Card(title: model.useBluetooth ? "X1 over Bluetooth" : "X1 on the cable", symbol: model.useBluetooth ? "dot.radiowaves.left.and.right" : "cable.connector") {
+            Picker("Connect by", selection: $model.useBluetooth) {
+                Text("Cable").tag(false)
+                Text("Bluetooth").tag(true)
+            }
+            .pickerStyle(.segmented)
+            .frame(maxWidth: 260)
+            .disabled(model.isFlashing)
+            if model.useBluetooth {
+                HStack {
+                    Button(model.checking ? "Looking…" : "Look for the X1") { model.refresh(manual: true) }
+                        .disabled(model.checking || model.isFlashing)
+                    if model.checking { ProgressView().controlSize(.small) }
+                    Text("Boot mode first (hold < and >, press DIST), close to the Mac, not connected to a phone.")
+                        .font(.callout).foregroundStyle(.secondary)
+                }
+            }
             HStack(spacing: 10) {
                 switch model.device?.mode {
                 case .app?: Pill(text: "Running", color: .green)
                 case .boot?: Pill(text: "Boot mode: ready to flash", color: .orange)
                 case .none?: Pill(text: "Not answering", color: .secondary)
-                case nil: Pill(text: model.ports.isEmpty ? "Not plugged in" : "Looking…", color: .secondary)
+                case nil: Pill(text: model.useBluetooth ? "Not checked yet" : (model.ports.isEmpty ? "Not plugged in" : "Looking…"), color: .secondary)
                 }
                 if model.checking { ProgressView().controlSize(.small) }
                 Spacer()
-                if model.ports.count > 1 {
+                if !model.useBluetooth, model.ports.count > 1 {
                     Picker("Port", selection: Binding(get: { model.port ?? "" }, set: { model.port = $0; model.device = nil; model.refresh() })) {
                         ForEach(model.ports, id: \.self) { Text(($0 as NSString).lastPathComponent).tag($0) }
                     }
@@ -169,8 +196,10 @@ struct DeviceCard: View {
                     Button("Power off X1") { model.powerOff() }.disabled(model.isFlashing)
                 }
             case nil:
-                Text("Plug the X1 into this Mac with a USB data cable and switch it on.")
-                    .font(.callout).foregroundStyle(.secondary)
+                if !model.useBluetooth {
+                    Text("Plug the X1 into this Mac with a USB data cable and switch it on.")
+                        .font(.callout).foregroundStyle(.secondary)
+                }
             }
         }
     }
@@ -286,7 +315,7 @@ struct FlashCard: View {
                 ProgressView(value: Double(model.done), total: Double(max(model.total, 1)))
                 Text(model.phase).font(.callout)
                 if !sim {
-                    Label("Keep the cable in and the X1 on until it says done.", systemImage: "exclamationmark.triangle")
+                    Label("Keep the X1 connected and on until it says done.", systemImage: "exclamationmark.triangle")
                         .font(.callout).foregroundStyle(.orange)
                 }
             case .succeeded(let sim):
@@ -324,7 +353,7 @@ struct FlashCard: View {
     var hint: String {
         if model.firmware == nil { return "Choose a firmware file first." }
         switch model.device?.mode {
-        case .boot?: return "Ready. Flashing takes about half a minute."
+        case .boot?: return model.useBluetooth ? "Ready. Flashing over Bluetooth takes a few minutes." : "Ready. Flashing takes about half a minute."
         case .app?: return "The X1 is running normally. Put it in boot mode to flash."
         default: return "Connect the X1 and put it in boot mode."
         }
@@ -342,7 +371,9 @@ struct ConfirmSheet: View {
             }
             VStack(alignment: .leading, spacing: 6) {
                 Label("Shots stored on the X1 are erased. Send or download them first.", systemImage: "trash")
-                Label("Keep the cable in and the X1 on until it says done (about 30 s).", systemImage: "cable.connector")
+                Label(model.useBluetooth ? "Keep the X1 close and on until it says done (a few minutes over Bluetooth)."
+                                         : "Keep the cable in and the X1 on until it says done (about 30 s).",
+                      systemImage: model.useBluetooth ? "dot.radiowaves.left.and.right" : "cable.connector")
                 Label("If anything goes wrong, the bootloader stays intact: you can always flash again.", systemImage: "lifepreserver")
             }
             .font(.callout)

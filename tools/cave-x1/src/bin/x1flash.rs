@@ -9,6 +9,8 @@
 //!   x1flash off   [--port P]            power the X1 off (also leaves boot mode)
 //!   x1flash scan start|stop|status      CaveCAD firmware (-cc) scan control
 //!   x1flash clock [--port P]            set the X1's clock to this Mac's local time
+//!   x1flash callouts show FILE.bin      the feature list inside a -cc7 (or later) file
+//!   x1flash callouts set FILE.bin --out NEW.bin --names "A\nB\nC"   a copy with that list (one name per line)
 //!   x1flash ble-scan                    X1s in range over Bluetooth
 //!
 //! Add `--ble` (and optionally `--name 0312`) to info, flash, off, clock or scan to use Bluetooth instead of the cable.
@@ -17,6 +19,7 @@
 //! `--json` prints one JSON object per line instead of text (the Mac app reads these).
 
 use cave_instrument::cavway::{self, parse_reply, query_frame};
+use cave_instrument::cavway_callouts as co;
 use cave_instrument::cavway_flash::{self as fl, Flasher, Image, SimBootloader, Step};
 use std::time::{Duration, Instant};
 
@@ -514,11 +517,19 @@ fn main() {
         .position(|a| a == "--name")
         .and_then(|i| args.get(i + 1))
         .map(String::as_str);
+    let value_of = |flag: &str| {
+        args.iter()
+            .position(|a| a == flag)
+            .and_then(|i| args.get(i + 1))
+            .map(String::as_str)
+    };
+    let out_arg = value_of("--out");
+    let names_arg = value_of("--names");
     let ble: Option<Option<&str>> = args.iter().any(|a| a == "--ble").then_some(name_arg);
     let plain: Vec<&str> = args
         .iter()
         .enumerate()
-        .filter(|(i, a)| !a.starts_with("--") && (*i == 0 || (args[i - 1] != "--port" && args[i - 1] != "--name")))
+        .filter(|(i, a)| !a.starts_with("--") && (*i == 0 || !["--port", "--name", "--out", "--names"].contains(&args[i - 1].as_str())))
         .map(|(_, a)| a.as_str())
         .collect();
     let out = Out { json };
@@ -538,6 +549,28 @@ fn main() {
                     p.join("\n")
                 },
             );
+        }
+        ["callouts", "show", file] => {
+            let bytes = std::fs::read(file).unwrap_or_else(|e| out.error(&format!("cannot read {file}: {e}")));
+            let names = co::callouts(&bytes).unwrap_or_else(|e| out.error(&format!("{file}: {e}")));
+            out.emit(
+                "callouts",
+                &[("names", format!("[{}]", names.iter().map(|x| s(x)).collect::<Vec<_>>().join(",")))],
+                &names.iter().enumerate().map(|(i, n)| format!("{:2}  {n}", i + 1)).collect::<Vec<_>>().join("\n"),
+            );
+        }
+        ["callouts", "set", file] => {
+            let (Some(dst), Some(list)) = (out_arg, names_arg) else {
+                out.error("callouts set FILE --out NEW.bin --names \"A\\nB\\nC\" (one name per line)")
+            };
+            let bytes = std::fs::read(file).unwrap_or_else(|e| out.error(&format!("cannot read {file}: {e}")));
+            let names: Vec<String> = list.lines().map(|l| l.trim().to_string()).filter(|l| !l.is_empty()).collect();
+            let new = co::set_callouts(&bytes, &names).unwrap_or_else(|e| out.error(&e.to_string()));
+            let img = Image::parse(&new).unwrap_or_else(|e| out.error(&format!("the new file is not a valid update: {e}")));
+            std::fs::write(dst, &new).unwrap_or_else(|e| out.error(&format!("cannot write {dst}: {e}")));
+            let mut fields = image_fields(&img, dst);
+            fields.push(("count", names.len().to_string()));
+            out.emit("image", &fields, &format!("wrote {dst}: {} names, {} packets", names.len(), img.packets()));
         }
         ["ble-scan"] => {
             let names = cave_x1::rawlink::scan(Duration::from_secs(8)).unwrap_or_else(|e| out.error(&e));

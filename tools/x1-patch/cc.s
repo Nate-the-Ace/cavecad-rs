@@ -48,14 +48,15 @@
         .set CC_MAGIC,      0xa5
         @ cc5 feature picker: CC_STATE +5 = list cursor, +6 = callout chosen for the next shot (1-based, 0 none)
         .set MODE_PICK,     0x40            @ a UI mode of our own: no stock code or table uses it
-        .set NCALL,         16
+        .set NAME_BYTES,    13              @ one list entry: up to 12 characters and a 0
+        .set MAX_NAMES,     32
         .set KEY_M,         0x2000129a      @ key structs: byte +1 is the event (1 press, 2 long press)
         .set KEY_LT,        0x200012a4
         .set KEY_GT,        0x200012ae
         .set KEY_CLR,       0x200012b8
         .set FONT_TITLE,    0x080193a7      @ the arguments stock menus give SET_FONT (0x0800cf88)
         .set FONT_ROW,      0x0801874a
-        .set CC_VERSION,    6
+        .set CC_VERSION,    7
         .set CC_SETTINGS_MARK, 0xc4         @ settings byte 0x17 (unused by stock): CaveCAD defaults applied once
         .set OPT_SCAN,      0x16            @ settings: Scan Options byte
         @ remote scans: steadiness level 2 (10000, the most lenient), time limit index 3 (10 min), allowed
@@ -351,10 +352,11 @@ cc_settings_boot:
         pop     {r4, pc}
 
 
-@ ---------------------------------------------------------------- feature picker (cc5)
+@ ---------------------------------------------------------------- feature picker (cc5, list as data in cc7)
 @ Hold `<` for 2 s with the laser on (mode 1) to open a list of cave features; `<` `>` scroll, M picks, CLR cancels.
 @ The next shot carries the pick (cc_store). Two hooks: cc_ui (the UI state machine's entry) and cc_draw (the screen
-@ drawing function's first call). Mode 0x40 is ours alone.
+@ drawing function's first call). Mode 0x40 is ours alone. The list is DATA (callout_block, below): x1flash
+@ `callouts set` rewrites it in the .bin, so a list can be changed and reflashed without rebuilding this file.
 @
 @ cc_ui replaces "push {r4,lr} / sub sp,#0x28" at 0x0800cfe0 (b.w here). It does those two instructions itself, so
 @ a frame exists for either exit: back into the stock handler at 0x0800cfe4, or the common exit at 0x0800e7c8.
@@ -373,6 +375,10 @@ cc_ui:
         ldrb    r3, [r3, #1]
         cmp     r3, #2                  @ long press of `<`
         bne     29f
+        adr     r3, callout_block
+        ldrb    r3, [r3, #4]            @ an empty list: nothing to open
+        cmp     r3, #0
+        beq     29f
         bl      cc_state_init
         ldr     r3, =CC_STATE
         movs    r0, #0
@@ -394,7 +400,10 @@ cc_ui:
         ldrb    r3, [r3, #1]
         cmp     r3, #1
         bne     22f
-        cmp     r0, #NCALL - 1
+        adr     r1, callout_block
+        ldrb    r1, [r1, #4]            @ count
+        subs    r1, #1                  @ last index
+        cmp     r0, r1
         bhs     22f
         adds    r0, #1
 22:     strb    r0, [r4, #5]
@@ -421,7 +430,7 @@ cc_ui:
         .global cc_draw
         .thumb_func
 cc_draw:
-        push    {r4, r5, r6, lr}
+        push    {r4, r5, r6, r7, lr}
         bl      DRAW_PREP
         ldr     r0, =MODE
         ldrb    r0, [r0]
@@ -435,19 +444,28 @@ cc_draw:
         bl      DRAW_STR
         ldr     r0, =FONT_ROW
         bl      SET_FONT
+        adr     r7, callout_block       @ r7 = the list
         ldr     r4, =CC_STATE
         ldrb    r4, [r4, #5]            @ r4 = cursor
+        ldrb    r3, [r7, #4]            @ r3 = count
         subs    r5, r4, #2              @ r5 = first row shown, keeping the cursor in the middle
         bpl     30f
         movs    r5, #0
-30:     cmp     r5, #NCALL - 5
-        ble     31f
-        movs    r5, #NCALL - 5
-31:     movs    r6, #0                  @ row 0 to 4
-32:     adds    r0, r5, r6              @ index
-        lsls    r1, r0, #2
-        adr     r2, callout_table
-        ldr     r2, [r2, r1]
+30:     subs    r0, r3, #5              @ the last first-row: count - 5 (0 for a short list)
+        bpl     31f
+        movs    r0, #0
+31:     cmp     r5, r0
+        ble     32f
+        mov     r5, r0
+32:     movs    r6, #0                  @ row 0 to 4
+33:     adds    r0, r5, r6              @ index
+        ldrb    r3, [r7, #4]
+        cmp     r0, r3
+        bhs     36f                     @ past the last item: no more rows
+        movs    r2, #NAME_BYTES
+        muls    r2, r0, r2
+        adds    r2, r2, r7
+        adds    r2, #8                  @ r2 = this name
         lsls    r1, r6, #4
         adds    r1, #0x1e               @ y
         push    {r0, r1}
@@ -455,40 +473,50 @@ cc_draw:
         bl      DRAW_STR
         pop     {r0, r1}
         cmp     r0, r4
-        bne     33f
+        bne     34f
         adr     r2, s_arrow
         movs    r0, #5
         bl      DRAW_STR
-33:     adds    r6, #1
+34:     adds    r6, #1
         cmp     r6, #5
-        blt     32b
-        adr     r2, s_help
+        blt     33b
+36:     adr     r2, s_help
         movs    r1, #0x71
         movs    r0, #0
         bl      DRAW_STR
-39:     pop     {r4, r5, r6, pc}
+39:     pop     {r4, r5, r6, r7, pc}
 
-        .balign 4
-callout_table:
-        .word   c0, c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11, c12, c13, c14, c15
 s_title:  .asciz "Feature"
 s_arrow:  .asciz ">"
 s_help:   .asciz "M:Pick CLR:Back"
-c0:  .asciz "Lead"
-c1:  .asciz "Squeeze"
-c2:  .asciz "Drip"
-c3:  .asciz "Stream"
-c4:  .asciz "Pool"
-c5:  .asciz "Sump"
-c6:  .asciz "Drop"
-c7:  .asciz "Climb"
-c8:  .asciz "Crawl"
-c9:  .asciz "Breakdown"
-c10: .asciz "Flowstone"
-c11: .asciz "Column"
-c12: .asciz "Straw"
-c13: .asciz "Bats"
-c14: .asciz "Bones"
-c15: .asciz "Hazard"
+
+@ The list. x1flash finds it by its first four bytes ("CCAL") and rewrites count and names; keep this layout:
+@   +0  "CCAL"   +4 count (0 to 32)   +5..7 zero   +8 name 0, name 1, ... each 13 bytes: up to 12 ASCII characters,
+@   then zeros (always a terminating 0). Room for 32 names.
+        .balign 4
+callout_block:
+        .ascii  "CCAL"
+        .byte   16, 0, 0, 0
+        .macro  CNAME text
+1:      .asciz  "\text"
+2:      .space  NAME_BYTES - (2b - 1b)
+        .endm
+        CNAME   "Lead"
+        CNAME   "Squeeze"
+        CNAME   "Drip"
+        CNAME   "Stream"
+        CNAME   "Pool"
+        CNAME   "Sump"
+        CNAME   "Drop"
+        CNAME   "Climb"
+        CNAME   "Crawl"
+        CNAME   "Breakdown"
+        CNAME   "Flowstone"
+        CNAME   "Column"
+        CNAME   "Straw"
+        CNAME   "Bats"
+        CNAME   "Bones"
+        CNAME   "Hazard"
+        .space  NAME_BYTES * (MAX_NAMES - 16)
         .balign 4
         .ltorg
