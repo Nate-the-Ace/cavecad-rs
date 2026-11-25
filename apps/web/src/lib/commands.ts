@@ -51,6 +51,18 @@ export const DRAW_OPTIONS: OptionDef[] = [
   },
 ];
 
+/**
+ * The drawing options that are preferences, not per-drawing choices: the phone keeps them in Settings > Sketch and
+ * leaves them out of its slim options strip (the desktop ribbon still shows them with the tool).
+ */
+export const DRAWING_DEFAULT_IDS: readonly string[] = ['detail', 'finger', 'pressure'];
+
+/** The drawing preferences as the very same defs the ribbon shows (ids, ranges and defaults stay in step). */
+export const drawingDefaults = (): OptionDef[] => DRAW_OPTIONS.filter((d) => DRAWING_DEFAULT_IDS.includes(d.id));
+
+/** A command's options without the ones named in `omit` (the phone strip leaves the drawing preferences out). */
+export const optionsWithout = (command: string, omit: readonly string[]): OptionDef[] => optionsFor(command).filter((d) => !omit.includes(d.id));
+
 /** The options of a placing-a-symbol command: its label and how big a click makes it (a drag sets size and direction). Two rows only, to fit the ribbon; "Draw with finger" keeps the value set on a line tool. */
 export const SYMBOL_OPTIONS: OptionDef[] = [
   {

@@ -1,10 +1,12 @@
 <script lang="ts">
   // The armed tool's options as a slim strip over the bottom of the Sketch canvas (the canvas is not dimmed or blocked
   // above it): a 40px header (tool name, Done) then ContextOptions (the ribbon's own settings) restyled for the phone.
-  // Sizes to its content, capped at 30% of the canvas. Done, or Escape, puts the tool down.
+  // Sizes to its content, capped at 30% of the canvas. Done, or Escape, puts the tool down. Only per-use options show
+  // here (Close curve, a symbol's size and label, ...): the drawing preferences (curve detail, finger, pen pressure)
+  // live in Settings > Sketch. A tool with nothing per-use left shows just the header.
   import ContextOptions from './ContextOptions.svelte';
   import { cave } from '../lib/cave.svelte';
-  import { optionsFor } from '../lib/commands';
+  import { DRAWING_DEFAULT_IDS, optionsFor, optionsWithout } from '../lib/commands';
   import { engine, loadEngine } from '../lib/engine';
 
   let labels = $state<Record<string, string>>({});
@@ -15,6 +17,7 @@
     labels = m;
   });
   const show = $derived(cave.tool !== '' && optionsFor(cave.tool).length > 0);
+  const body = $derived(optionsWithout(cave.tool, DRAWING_DEFAULT_IDS).length > 0);
   const title = $derived(labels[cave.tool] ?? cave.tool);
   const onKey = (e: KeyboardEvent) => {
     if (e.key === 'Escape' && cave.tool && !(e.target as HTMLElement | null)?.closest?.('[role="dialog"]')) cave.tool = '';
@@ -28,7 +31,7 @@
 {#if show}
   <div class="strip" role="group" aria-label="Tool options">
     <header><strong>{title}</strong><button class="done" onclick={() => (cave.tool = '')}>Done</button></header>
-    <div class="body"><ContextOptions /></div>
+    {#if body}<div class="body"><ContextOptions omit={DRAWING_DEFAULT_IDS} /></div>{/if}
   </div>
 {/if}
 

@@ -2,9 +2,11 @@
   // The settings of the running command, as a contextual group in the ribbon. Fits the ribbon's
   // fixed body height: a row for each range setting, and the on/off settings side by side on one row.
   import { cave, option, setOption } from '../lib/cave.svelte';
-  import { optionsFor } from '../lib/commands';
+  import { optionsWithout } from '../lib/commands';
 
-  const defs = $derived(optionsFor(cave.tool));
+  // `omit`: option ids to leave out (the phone strip leaves out the drawing preferences it keeps in Settings > Sketch)
+  let { omit = [] }: { omit?: readonly string[] } = $props();
+  const defs = $derived(optionsWithout(cave.tool, omit));
   const ranges = $derived(defs.filter((d) => d.kind === 'range'));
   const toggles = $derived(defs.filter((d) => d.kind === 'toggle'));
   const texts = $derived(defs.filter((d) => d.kind === 'text'));

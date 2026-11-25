@@ -6,7 +6,8 @@
   import { cave, setTool } from '../lib/cave.svelte';
   import { engine, loadEngine } from '../lib/engine';
   import type { SymbolDef } from '../lib/symbols';
-  import { paletteGroups, readStandard, symbolTitle, thumb, visibleSymbols } from '../lib/symbol-palette';
+  import { paletteGroups, symbolTitle, thumb, visibleSymbols } from '../lib/symbol-palette';
+  import { phonePrefs } from '../lib/phone-prefs.svelte';
   import { isFavorite, sectionCollapsed, setAllSections, symbolFavorites, toggleFavorite, toggleSection } from '../lib/symbol-favorites.svelte';
   import { ChevronRight, Star } from '@lucide/svelte';
 
@@ -14,7 +15,7 @@
   let all = $state<SymbolDef[]>([]);
   let query = $state('');
   onMount(() => { loadEngine().then(() => (all = engine.symbols())); });
-  const groups = $derived(paletteGroups(visibleSymbols(all, query, readStandard()), '', symbolFavorites.keys));
+  const groups = $derived(paletteGroups(visibleSymbols(all, query, phonePrefs.standard), '', symbolFavorites.keys));
 
   // Long press (500ms, finger still) toggles a tile's favorite. Moving more than 8px, lifting or a cancel (the browser
   // cancels the pointer when a scroll starts) aborts it; the click after a completed long press is swallowed.

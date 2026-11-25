@@ -16,6 +16,12 @@ export function toggleFavorite(key: string): void {
   try { localStorage.setItem(FAVORITES_KEY, serializeFavorites(symbolFavorites.keys)); } catch { /* storage unavailable: keep it for this session */ }
 }
 
+/** Forgets every favorite symbol (Settings > Sketch). */
+export function clearFavorites(): void {
+  symbolFavorites.keys = [];
+  try { localStorage.setItem(FAVORITES_KEY, serializeFavorites([])); } catch { /* storage unavailable */ }
+}
+
 // Collapsed palette sections (same storage idea; `null` = untouched, so the phone can default to collapsed).
 function loadCollapsed(): string[] | null {
   try { return parseCollapsed(localStorage.getItem(COLLAPSED_KEY)); } catch { return null; }

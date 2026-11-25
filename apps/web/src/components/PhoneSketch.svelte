@@ -6,7 +6,7 @@
   // Under the bar: one 41px row with the drawing-type dropdown and Symbols button (PhoneToolStrip). Over the canvas:
   // favorite chips down the left edge (PhoneChips), the symbol picker as a bottom sheet, and the armed tool's options
   // as a slim strip over the canvas bottom, lifted above the live shot strip (PhoneLiveStrip: tape/compass/clino, dot, Take
-  // shot; 6px + 40px at the very bottom, an overlay). `.tools` (bar) and `.overlay` stay free for later.
+  // shot; 6px + 40px at the very bottom, an overlay; Settings > Sketch can turn it off, and the options strip drops to the bottom). `.tools` (bar) and `.overlay` stay free for later.
   import type { Component } from 'svelte';
   import { Mountain } from '@lucide/svelte';
   import PhoneToolStrip from './PhoneToolStrip.svelte';
@@ -19,6 +19,7 @@
   import ProfilePanel from '../panels/ProfilePanel.svelte';
   import SectionPanel from '../panels/SectionPanel.svelte';
   import { surface } from '../lib/surface.svelte';
+  import { phonePrefs } from '../lib/phone-prefs.svelte';
   import type { Scope } from '../lib/engine';
   import { phone, showPhoneTab, type SketchView } from '../lib/phone.svelte';
 
@@ -48,7 +49,7 @@
     {#key current.id}<div class="undo"><PanelUndo scope={current.id} label={current.label} /></div>{/key}
   </div>
   <PhoneToolStrip onSymbols={() => (picker = true)} />
-  <div class="canvas">
+  <div class="canvas" style:--p-live-inset={phonePrefs.liveStrip ? null : '0px'}>
     {#each VIEWS as v (v.id)}
       {#if made[v.id]}
         {@const P = v.panel}
@@ -58,7 +59,7 @@
     <div class="overlay"></div>
     <PhoneChips />
     <PhoneOptions />
-    <PhoneLiveStrip />
+    {#if phonePrefs.liveStrip}<PhoneLiveStrip />{/if}
     {#if picker}<PhoneSymbols onClose={() => (picker = false)} />{/if}
   </div>
 </div>

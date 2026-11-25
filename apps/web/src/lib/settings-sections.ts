@@ -1,4 +1,4 @@
-// The phone Settings tab is a row of sections (Connection, Survey, Display, Account, About). A module adds one by
+// The phone Settings tab is a row of sections (Connection, Survey, Notebook, Sketch, Cave, Display, Account, About). A module adds one by
 // registering it here; the tab builds its switcher from `settingsSections()` and never names a section itself.
 import type { Component } from 'svelte';
 import { Registry, type Plugin } from './plugin.ts';

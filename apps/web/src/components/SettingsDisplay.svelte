@@ -1,10 +1,9 @@
 <script lang="ts">
   // Settings > Display (phone): dark, light or follow the system, the highlight colour (the same choice as the
-  // desktop View tab's ThemeGroup, through lib/theme.ts), and the drawing options every pane reads.
+  // desktop View tab's ThemeGroup, through lib/theme.ts). The drawing preferences are in Settings > Sketch.
   import { Moon, Sun, MonitorCog } from '@lucide/svelte';
   import { onMount } from 'svelte';
   import { PRESETS, choose, currentChoice, load, onTheme, type Choice, type Mode } from '../lib/theme';
-  import { option, setOption } from '../lib/cave.svelte';
   import './settings.css';
 
   let c = $state<Choice>(load());
@@ -15,8 +14,6 @@
     { id: 'light', label: 'Light', icon: Sun },
     { id: 'auto', label: 'Auto', icon: MonitorCog },
   ];
-  const finger = $derived(option('finger', true));
-  const pressure = $derived(option('pressure', true));
 </script>
 
 <div class="set">
@@ -34,8 +31,6 @@
       <input type="color" value={c.custom} aria-label="Custom color" oninput={(e) => set({ id: 'custom', custom: e.currentTarget.value })} />
     </label>
   </div>
-  <label class="chk"><input type="checkbox" checked={finger} onchange={(e) => setOption('finger', e.currentTarget.checked)} /> Draw with finger</label>
-  <label class="chk"><input type="checkbox" checked={pressure} onchange={(e) => setOption('pressure', e.currentTarget.checked)} /> Pen pressure</label>
 </div>
 
 <style>
