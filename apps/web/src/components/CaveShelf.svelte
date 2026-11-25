@@ -296,8 +296,8 @@
             {/if}
             {#if c?.role === 'owner'}
               <div class="choice">
-                <button class="danger" disabled={c.id === engine.roomId()} onclick={() => ((removing!.step = 'delete'), (typed = ''))}>Delete everywhere…</button>
-                <p>{c.id === engine.roomId() ? 'It is open now: open another cave first, then delete this one.' : 'Deletes it for good, from the server, all your devices and anyone you shared it with.'}</p>
+                <button class="danger" onclick={() => ((removing!.step = 'delete'), (typed = ''))}>Delete everywhere…</button>
+                <p>{c.id === engine.roomId() ? 'It is open now: it is closed first, then deleted for good from the server, all your devices and anyone you shared it with.' : 'Deletes it for good, from the server, all your devices and anyone you shared it with.'}</p>
               </div>
             {:else if c}
               <div class="choice">
