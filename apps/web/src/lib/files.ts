@@ -12,6 +12,7 @@ import { canMakeFolders, choosePlace, currentHome, exportPlace, folder, look, ma
 import { EXT, pack, unpack, type SurfaceParts } from './cavefile';
 import { unzip } from './unzip';
 import { zip } from './zip';
+import { deliverFile, isIOS } from './deliver-file';
 import { addRemoteFile, fileOf, scans } from './scans.svelte';
 
 
@@ -146,6 +147,8 @@ async function writeNew(name: string, data: Uint8Array | string, type: string, t
     if (isAbort(e)) return null;
     throw e;
   }
+  // no save dialog here (Safari, the iPad's WebView): the share sheet on iOS, where a download link does nothing in the app
+  if (isIOS()) return (await deliverFile(name, data, type)) ? name : null;
   download(name, data, type);
   return name;
 }

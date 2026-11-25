@@ -11,13 +11,14 @@
   import { showPanel } from '../lib/workspace.svelte';
   import { openContextMenu } from '../lib/context-menu.svelte';
   import { stationItems } from '../lib/context-items';
-  import { downloadFile } from '../lib/deliver-file';
+  import { deliverExport } from '../lib/deliver-file';
   import { KINDS, STATUSES, checklistCsv, checklistName, effectiveStatus, filterRows, kindCounts, type StationRow } from '../lib/station-table';
   import { formatLength } from '../lib/units';
 
   // `compact` is the phone layout (PhoneNotebook only): a fixed two-row header and one bounded list of two-line rows.
   // `lead` is the phone's Notebook | Stations switch, at the left of the first header row. Desktop never passes either.
-  // The phone's CSV export is in Settings > Cave (all stations); the desktop keeps its download of the rows shown.
+  // The phone's CSV export is in Settings > Cave (all stations); the dock keeps its download of the rows shown (the share
+  // sheet on an iPad, where a download does nothing in the app).
   let { compact = false, lead }: { compact?: boolean; lead?: Snippet } = $props();
 
   let rows = $state<StationRow[]>([]);
@@ -65,7 +66,7 @@
     showPanel('section');
   }
 
-  const download = () => downloadFile(checklistName(cave.fileName), checklistCsv(shown, cave.units), 'text/csv');
+  const download = () => void deliverExport(checklistName(cave.fileName), checklistCsv(shown, cave.units), 'text/csv');
 
   function onKey(e: KeyboardEvent) {
     const t = e.target as HTMLElement;
