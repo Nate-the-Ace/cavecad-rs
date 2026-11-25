@@ -9,6 +9,7 @@ import { engine, loadEngine } from './engine';
 import { WebBleInstrument } from './instrument/webble';
 import { followLog, placeFeatures, resetMarks } from './x1-marks.svelte';
 import type { Catalog, Device, HeldView, Instrument, LinkBridge, LinkEvents, LinkStatus, LogEntry, Reading, SessionState, Snapshot, Step, StandingWalls, SurveyStandard, CalibrationView, SweepKind, SweepView } from './survey-types';
+import { readSurveyBacksights, SURVEY_BACKSIGHTS_KEY } from './notebook-display';
 import { parseShotType, parseSweepKind, SHOT_TYPE_KEY, SWEEP_KIND_KEY, type ShotType } from './phone-survey';
 
 export type { LogEntry } from './survey-types';
@@ -24,7 +25,7 @@ const SWEEP_EVERY_MS = 1500;
 /** The X1's own scan mode stops at 200 shots: CaveCAD's firing does too. */
 const SWEEP_MAX_SHOTS = 200;
 
-const EMPTY_STATE: SessionState = { mode: 'leg', backsights: false, from: '', to: '', awaiting: null, last: null };
+const EMPTY_STATE: SessionState = { mode: 'leg', backsights: readSurveyBacksights(), from: '', to: '', awaiting: null, last: null };
 
 const STANDARD_KEY = 'cavecad.surveyStandard';
 const ACCURACY_KEY = 'cavecad.accuracyCheck';
@@ -291,6 +292,9 @@ export function syncToTrip() {
   apply(engine.surveySyncTrip(cave.trip));
   // the engine is fresh on every load: it follows the sweep kind kept on this device
   if (survey.sweepKind !== survey.sweepDefault) apply(engine.surveySetSweepKind(survey.sweepDefault));
+  // likewise the backsight choice kept on this device
+  const keptBacksights = readSurveyBacksights();
+  if (survey.state.backsights !== keptBacksights) apply(engine.surveySetBacksights(keptBacksights));
 }
 
 /** The engine, as the Bluetooth transport sees it. */
@@ -480,7 +484,10 @@ export const simulating = () => simulator;
 // ---- what the surveyor does ----
 
 export const setMode = (mode: SessionState['mode']) => void apply(engine.surveySetMode(mode));
-export const setBacksights = (on: boolean) => void apply(engine.surveySetBacksights(on));
+export function setBacksights(on: boolean) {
+  keep(SURVEY_BACKSIGHTS_KEY, on ? '1' : '0');
+  void apply(engine.surveySetBacksights(on));
+}
 export const setAuto = (auto: boolean) => void apply(engine.surveySetAuto(auto));
 export const skipBacksight = () => void apply(engine.surveySkipBacksight());
 export const nextStation = () => void apply(engine.surveyNextStation());

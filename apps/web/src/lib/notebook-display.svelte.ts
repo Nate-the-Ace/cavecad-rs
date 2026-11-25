@@ -1,12 +1,12 @@
 // The phone Notebook's display choices (Settings > Notebook), kept per device in localStorage. Reactive so the
 // kept-alive Notebook panel redraws as soon as the switch changes.
-import { BACKSIGHTS_KEY, parseBacksights, serializeBacksights } from './notebook-display.ts';
+import { BACKSIGHTS_KEY, parseBacksights, readSurveyBacksights, serializeBacksights } from './notebook-display.ts';
 
 function load(): boolean {
   try {
-    return parseBacksights(localStorage.getItem(BACKSIGHTS_KEY));
+    return parseBacksights(localStorage.getItem(BACKSIGHTS_KEY), readSurveyBacksights());
   } catch {
-    return true;
+    return readSurveyBacksights();
   }
 }
 
