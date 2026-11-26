@@ -72,6 +72,9 @@ export const WRITES: readonly string[] = [
   'sheetGenerate',
   'sheetSetValues',
   'geoSetLocation',
+  'geoAddEntrance',
+  'restoreToOps',
+  'notebookRemoveTrip',
   'surfaceCommit',
   'setContourInterval',
   'deleteLine',
@@ -92,6 +95,9 @@ export const READS: readonly string[] = [
   'geoStatus',
   'docSerial',
   'geoEntranceXyz',
+  'notebookTripRemoval', // what removing a trip would take (a plan; nothing is changed)
+  'previewOfOps', // a picture of an earlier version, built apart from the open cave
+  'editGroup', // only runs what it is given: the changes inside are refused one by one
   'surfacePlan',
   'surfacePlanForRecord',
   'surfaceGround',
