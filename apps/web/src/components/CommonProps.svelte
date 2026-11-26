@@ -109,12 +109,12 @@
   .common { display: flex; flex-direction: column; gap: 4px; width: 100%; font-size: 12px; }
   .none { margin: 6px 0; color: var(--muted); }
   .edges { display: grid; grid-template-columns: 1fr 1fr; gap: 2px 10px; width: 100%; }
-  .cell { display: flex; align-items: center; gap: 6px; white-space: nowrap; }
+  .cell { display: flex; align-items: center; gap: 4px; white-space: nowrap; min-width: 0; }
   .items { display: flex; flex-wrap: wrap; gap: 4px 14px; align-items: center; }
   .common :global(.field) { gap: 4px; }
-  .common :global(.field label) { min-width: 34px; }
-  .common :global(input[inputmode]) { width: 5.6em; }
-  .common :global(input::placeholder) { color: var(--muted); font-size: 11px; }
+  .common :global(.field label) { min-width: 30px; }
+  .common :global(input[inputmode]) { width: 4.6em; }
+  .common :global(input::placeholder) { color: var(--muted); font-size: 10px; letter-spacing: -0.2px; }
   .common :global(.msg) { display: none; }
   .chk { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); }
   .txt { display: flex; align-items: center; gap: 8px; width: 100%; }
