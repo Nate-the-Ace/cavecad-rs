@@ -6,6 +6,7 @@
   import { drawingDefaults } from '../lib/commands';
   import { clearFavorites, symbolFavorites } from '../lib/symbol-favorites.svelte';
   import { phonePrefs, setLiveStrip, setSymbolStandard } from '../lib/phone-prefs.svelte';
+  import GridSettings from './GridSettings.svelte';
   import './settings.css';
 
   const defs = drawingDefaults();
@@ -25,6 +26,7 @@
 </script>
 
 <div class="set">
+  <GridSettings />
   {#each defs as d (d.id)}
     {#if d.kind === 'range'}
       {@const v = option(d.id, d.default)}

@@ -10,7 +10,7 @@
   import { parseStyle, styleText } from '../lib/line-style-text';
   import TripTimeline from './TripTimeline.svelte';
   import GridPicker from './GridPicker.svelte';
-  import { gridChoice } from '../lib/sketch-grid';
+  import { GRID_OPACITY_DEFAULT, gridChoice } from '../lib/sketch-grid';
   import { engine, loadEngine, type Scene, type TypeStyle } from '../lib/engine';
   import { CaveView, type Projection } from '../lib/viewport/cave-view';
   import { fitPlane, heightSurface } from '../lib/plane';
@@ -112,8 +112,9 @@
   // The ground grid (the same choice as the Profile and Cross Section) under the map.
   $effect(() => {
     const spec = gridChoice(option('sketchGrid', '2'));
+    const opacity = Number(option('gridOpacity', GRID_OPACITY_DEFAULT));
     void viewReady;
-    untrack(() => view?.setGrid(spec));
+    untrack(() => view?.setGrid(spec, opacity));
   });
 
   // Scans placed under the map follow every edit, adjustment, filter, and the settings in the Scans panel.

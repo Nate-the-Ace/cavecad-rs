@@ -27,7 +27,7 @@ import { planFrame } from '../lib/snap-types';
   import { engine, loadEngine, type SheetOptions } from '../lib/engine';
   import { formatLength } from '../lib/units';
   import { fitView, toScreen as project, toWorld as unproject, type Pt, type Transform } from '../lib/sketch-types';
-  import { GRIDS, describeScale, drawGrid, gridCaption, gridChoice, gridFor, matchScale, pxPerMetre, visibleGrid } from '../lib/sketch-grid';
+  import { GRID_OPACITY_DEFAULT, GRIDS, describeScale, drawGrid, gridCaption, gridChoice, gridFor, matchScale, pxPerMetre, visibleGrid } from '../lib/sketch-grid';
   import { PANE_SCOPE, PANE_TITLE, sketch, type Pane } from '../lib/sketch.svelte';
 
   let { pane }: { pane: Pane } = $props();
@@ -212,7 +212,7 @@ import { planFrame } from '../lib/snap-types';
     const c = css();
     const t = tf();
     g.font = '11px system-ui, sans-serif';
-    drawGrid(g, t, w, h, c.text, grid);
+    drawGrid(g, t, w, h, c.text, grid, option('gridOpacity', GRID_OPACITY_DEFAULT));
 
     const dot = (p: Pt, label: string) => {
       const [x, y] = toScreen(p);

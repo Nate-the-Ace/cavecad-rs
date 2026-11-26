@@ -7,6 +7,7 @@
   import { onMount } from 'svelte';
   import { PRESETS, choose, currentChoice, load, onTheme, type Choice, type Mode } from '../lib/theme';
   import { cave, setCompactRibbon, setUnits } from '../lib/cave.svelte';
+  import GridSettings from './GridSettings.svelte';
   import { resetLayout } from '../lib/workspace.svelte';
 
   let c = $state<Choice>(load());
@@ -44,6 +45,7 @@
     </div>
   </div>
   <label class="row check"><input type="checkbox" checked={cave.compactRibbon} onchange={(e) => setCompactRibbon(e.currentTarget.checked)} /> Compact ribbon (every group folds into a dropdown)</label>
+  <GridSettings />
   <div class="row"><button class="btn" onclick={resetLayout}>Reset the panel layout</button></div>
 </div>
 

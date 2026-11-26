@@ -73,6 +73,7 @@ export class CaveView {
   /** The ground grid under the cave (Map), or none. */
   private gridGroup = new THREE.Group();
   private gridSpec: { minorM: number; majorM: number } | null = null;
+  private gridOpacity = 0.3;
   private materials: LineMaterial[] = [];
   /** The ground above the cave (contours, terrain): beside `content`, never cleared by `rebuild()`. */
   private surfaceGroup = new THREE.Group();
@@ -2098,8 +2099,9 @@ export class CaveView {
    * `majorM`; `null` takes it away. It is fixed in the world. A cave too big for the fine lines to be drawn
    * (over `GRID_MAX_LINES` a side) gets only the heavy ones, and none if even those would be too many.
    */
-  setGrid(spec: { minorM: number; majorM: number } | null) {
+  setGrid(spec: { minorM: number; majorM: number } | null, opacity = 0.3) {
     this.gridSpec = spec;
+    this.gridOpacity = opacity;
     this.rebuildGrid();
     this.requestRender();
   }
@@ -2129,7 +2131,7 @@ export class CaveView {
     };
     for (let i = Math.ceil(x0 / step); i * step <= x1; i++) add(i * step, false);
     for (let i = Math.ceil(y0 / step); i * step <= y1; i++) add(i * step, true);
-    for (const [pts, opacity] of [[fine, 0.14], [heavy, 0.34]] as [number[], number][]) {
+    for (const [pts, opacity] of [[fine, Math.min(1, this.gridOpacity * 0.35 * 1.4)], [heavy, Math.min(1, this.gridOpacity * 1.1)]] as [number[], number][]) {
       if (!pts.length) continue;
       const geo = new THREE.BufferGeometry();
       geo.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));

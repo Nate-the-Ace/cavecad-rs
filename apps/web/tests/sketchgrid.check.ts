@@ -1,4 +1,4 @@
-import { DEFAULT_FEET_PER_INCH, GRID, GRIDS, gridFor, PX_PER_INCH, describeScale, feetPerInch, gridCaption, gridLines, matchScale, pxPerMetre, visibleGrid } from '../src/lib/sketch-grid.ts';
+import { DEFAULT_FEET_PER_INCH, GRID, GRIDS, GRID_OFF, GRID_OPACITY_DEFAULT, gridAlphas, gridChoice, gridFor, PX_PER_INCH, describeScale, feetPerInch, gridCaption, gridLines, matchScale, pxPerMetre, visibleGrid } from '../src/lib/sketch-grid.ts';
 import { FOOT } from '../src/lib/units.ts';
 
 let bad = 0;
@@ -54,6 +54,10 @@ ok(gridFor('1').minorM === GRIDS[0].minorM && near(gridFor('1').minorM, 1 * FOOT
 ok(gridFor('nonsense') === GRID && gridFor(undefined) === GRID, 'anything else is the 2 ft default');
 ok(visibleGrid(pxPerMetre(20), gridFor('1')).minor === (gridFor('1').minorM * pxPerMetre(20) >= 4), 'visibility follows the chosen grid');
 ok(gridCaption(gridFor('5')) === '5 ft / 50 ft', 'the caption follows the chosen grid');
+
+ok(gridChoice(GRID_OFF) === null && gridChoice('5')!.minorM === gridFor('5').minorM, '"off" is no grid; a size is that grid');
+ok(gridAlphas(undefined).heavy === GRID_OPACITY_DEFAULT && near(gridAlphas(0.6).minor, 0.21), 'the fine lines are a third of the heavy ones, and the default stands in for nonsense');
+ok(gridAlphas(5).heavy === 1 && gridAlphas(-1).heavy === 0.02, 'strength is held between 2% and 100%');
 
 if (bad) process.exit(1);
 console.log('sketchgrid ok');

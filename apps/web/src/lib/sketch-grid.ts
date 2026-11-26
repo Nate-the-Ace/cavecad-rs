@@ -33,6 +33,14 @@ export const GRIDS = [1, 2, 5, 10].map((ft) => ({ key: String(ft), label: `${ft}
 /** The grid: 2 ft squares, a heavy line every 20 ft (10 squares), in metres. The one a drawing opens with. */
 export const GRID: GridSpec = { minorM: 2 * FOOT, majorM: 20 * FOOT };
 
+/** How strong the heavy lines are by default (0 to 1); the fine lines are a third of it. */
+export const GRID_OPACITY_DEFAULT = 0.3;
+/** The strength of the heavy and the fine lines for a stored opacity (anything unusable is the default). */
+export function gridAlphas(opacity: unknown): { heavy: number; minor: number } {
+  const o = typeof opacity === 'number' && Number.isFinite(opacity) ? Math.min(1, Math.max(0.02, opacity)) : GRID_OPACITY_DEFAULT;
+  return { heavy: o, minor: o * 0.35 };
+}
+
 /** The stored choice that shows no grid. */
 export const GRID_OFF = 'off';
 
@@ -85,7 +93,8 @@ export const gridCaption = (grid: GridSpec = GRID): string => `${formatLength(gr
  * Draws the grid over a pane. `toWorld` and the pane size give the visible area; `tx` and `ty` place the
  * origin. Fine lines are left out when closer than `MIN_GRID_PX`; the spacing never changes.
  */
-export function drawGrid(g: CanvasRenderingContext2D, t: { scale: number; tx: number; ty: number }, w: number, h: number, ink: string, grid: GridSpec = GRID): void {
+export function drawGrid(g: CanvasRenderingContext2D, t: { scale: number; tx: number; ty: number }, w: number, h: number, ink: string, grid: GridSpec = GRID, opacity: number = GRID_OPACITY_DEFAULT): void {
+  const alpha = gridAlphas(opacity);
   const shown = visibleGrid(t.scale, grid);
   if (!shown.major) return;
   const x0 = (0 - t.tx) / t.scale;
@@ -97,7 +106,7 @@ export function drawGrid(g: CanvasRenderingContext2D, t: { scale: number; tx: nu
   g.lineWidth = 1;
   g.strokeStyle = ink;
   for (const heavy of [false, true]) {
-    g.globalAlpha = heavy ? 0.2 : 0.075;
+    g.globalAlpha = heavy ? alpha.heavy : alpha.minor;
     g.beginPath();
     for (const l of gridLines(x0, x1, step, grid.majorM)) {
       if (l.heavy !== heavy) continue;

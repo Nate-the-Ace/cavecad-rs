@@ -5,7 +5,7 @@
   import { Maximize } from '@lucide/svelte';
   import PanelUndo from '../components/PanelUndo.svelte';
   import GridPicker from '../components/GridPicker.svelte';
-  import { drawGrid, gridChoice } from '../lib/sketch-grid';
+  import { GRID_OPACITY_DEFAULT, drawGrid, gridChoice } from '../lib/sketch-grid';
   import { looks } from '../lib/ink';
   import { markViewUsed, registerSelectAll } from '../lib/select-all';
   import { copyGhost, copyOp, copyPress, endCopy, endPaste, pasteGhost, pasteOp, pastePlace, registerClipView, snapToSelection } from '../lib/view-clip.svelte';
@@ -175,6 +175,7 @@ import { planFrame } from '../lib/snap-types';
     void filter.hiddenTrips.length;
     void option('showScans', true);
     void option('sketchGrid', '2');
+    void option('gridOpacity', GRID_OPACITY_DEFAULT);
     void option('halo', true);
     void option('handInk', false); // Ink style redraws every line
     void haloReach();
@@ -261,7 +262,7 @@ import { planFrame } from '../lib/snap-types';
       return;
     }
     const ground = gridChoice(option('sketchGrid', '2'));
-    if (ground) drawGrid(g, { scale, tx: ox, ty: oy }, width, height, c.text, ground);
+    if (ground) drawGrid(g, { scale, tx: ox, ty: oy }, width, height, c.text, ground, option('gridOpacity', GRID_OPACITY_DEFAULT));
 
     // grid: elevation lines every nice step, labelled at the left
     const per = metresPer(cave.units); // metres in one display unit
