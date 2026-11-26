@@ -68,7 +68,7 @@
         <button class="done" onclick={done}>Done</button>
       </span>
     </header>
-    <div class="body">
+    <div class="body" class:pick={mode === 'pick'}>
       {#if mode === 'selection'}
         {#each parts as g (g.part)}<section><h4>{g.name}</h4><SelectionTools part={g.part as 'type'} /></section>{/each}
       {:else if Inspector && pickKind}
@@ -90,6 +90,19 @@
   .body :global(.col), .body :global(.notes), .body :global(.note) { min-width: 0; height: auto; }
   .body :global(.walls), .body :global(.grid) { height: auto; }
   .body :global(.btns) { height: auto; flex-wrap: wrap; }
+  /* a picked station or shot: no group headings, and each group is one or two lines across the whole strip */
+  .body.pick section { flex: 1 1 100%; padding: 1px 0; }
+  .body.pick h4 { display: none; }
+  .body.pick :global(.col.info) { flex-direction: row; flex-wrap: wrap; align-items: baseline; gap: 0 10px; }
+  .body.pick :global(.col .row) { height: auto; }
+  .body.pick :global(.walls) { grid-template-columns: 1fr 1fr; grid-template-rows: auto auto; gap: 2px 10px; width: 100%; }
+  .body.pick :global(.notes) { flex-direction: row; align-items: center; gap: 6px; }
+  .body.pick :global(.notes select) { flex: 0 1 38%; }
+  .body.pick :global(.notes input) { flex: 1 1 0; }
+  .body.pick :global(.note) { width: 100%; }
+  .body.pick :global(.btns) { flex-wrap: nowrap; width: 100%; gap: var(--p-gap); }
+  .body.pick :global(.btns .tool) { flex: 1 1 0; justify-content: center; padding: 0 4px; }
+  .body.pick :global(.btns .tool span) { font-size: var(--p-font-small); }
   .body :global(.tool) { height: var(--p-hit); min-height: 0; min-width: 0; flex-direction: row; gap: 6px; padding: 0 10px; }
   h4 { margin: 0 0 2px; font-size: var(--p-font-small); font-weight: 600; color: var(--muted); }
 </style>

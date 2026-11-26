@@ -75,7 +75,7 @@
 {#if !detail}
   <div class="none">Pick a leg or splay on the Map.</div>
 {:else if part === 'info'}
-  <div class="col">
+  <div class="col info">
     <div class="row"><strong class="label">{detail.splay ? `${detail.from} splay` : `${detail.from} → ${detail.to}`}</strong></div>
     <div class="row muted" title={detail.problem}>{detail.trip_name || `Trip ${detail.trip + 1}`}{detail.problem ? ` · ${detail.problem}` : ''}</div>
   </div>
