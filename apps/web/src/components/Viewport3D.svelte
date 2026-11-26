@@ -107,6 +107,15 @@
     });
   });
 
+  // On the phone a tap adds a line to the selection (or takes it out); only a tap on nothing clears it.
+  $effect(() => {
+    const on = phone.on;
+    void viewReady;
+    untrack(() => {
+      if (view) view.appendSelect = on;
+    });
+  });
+
   // The ground grid (the same choice as the Profile and Cross Section) under the map.
   $effect(() => {
     const spec = gridChoice(option('sketchGrid', '2'));
@@ -442,6 +451,7 @@
     }
     if (!lines.length) top.choose(true); // a drawn line was already selected by the press
     else setPick('', '');
+    if (phone.on && lines.length) return; // a tap that adds to the selection offers no list to choose from
     // when the things under the click are on different levels, each row says how high it is
     const zs = items.map((it) => it.z);
     if (Math.max(...zs) - Math.min(...zs) > 0.5) for (const it of items) it.detail = [it.detail, formatLength(it.z, cave.units, 1)].filter(Boolean).join(' · ');

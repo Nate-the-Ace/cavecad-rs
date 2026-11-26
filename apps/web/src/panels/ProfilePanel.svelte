@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { phone } from '../lib/phone.svelte';
   import { drawHalo, type HaloLine } from '../lib/halo';
   import { onMount, untrack } from 'svelte';
   import { onTheme } from '../lib/theme';
@@ -72,6 +73,7 @@ import { planFrame } from '../lib/snap-types';
       changed();
     },
     select: (id, additive) => (additive ? toggleSelected(id) : selectIds(id ? [id] : [])),
+    append: () => phone.on && !cave.tool,
     commit: (id, pts, widths) => {
       const r = engine.editLine(id, pts, widths, cave.adjusted);
       message = r === 'ok' ? '' : r;
@@ -718,6 +720,13 @@ import { planFrame } from '../lib/snap-types';
       if (e?.pointerType !== 'mouse' && cave.tool !== 'eraser') eraserAt = null; // a pen or finger left: no circle stays behind
       schedule();
       return;
+    }
+    if (e?.type === 'pointerup') {
+      const r = canvas.getBoundingClientRect();
+      if (editor.tap(e.clientX - r.left, e.clientY - r.top)) {
+        schedule();
+        return;
+      }
     }
     if (editor.release()) return;
     if (dragSection) {

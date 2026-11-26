@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { phone } from '../lib/phone.svelte';
   // Cross Section: the passage cut across at a station, drawn from the walls measured there (the
   // same ring the 3D tube is built from), with a pen or mouse to sketch the real shape on top.
   // Sections live at stations: pick one here (or click a station on the map). Sketches belong to
@@ -73,6 +74,7 @@ import { planFrame } from '../lib/snap-types';
       changed();
     },
     select: (id, additive) => (additive ? toggleSelected(id) : selectIds(id ? [id] : [])),
+    append: () => phone.on && !cave.tool,
     commit: (id, pts, widths) => {
       const r = engine.editLine(id, pts, widths, cave.adjusted);
       message = r === 'ok' ? '' : r;
@@ -619,6 +621,13 @@ import { planFrame } from '../lib/snap-types';
       if (e?.pointerType !== 'mouse' && cave.tool !== 'eraser') eraserAt = null; // a pen or finger left: no circle stays behind
       schedule();
       return;
+    }
+    if (e?.type === 'pointerup') {
+      const r = canvas.getBoundingClientRect();
+      if (editor.tap(e.clientX - r.left, e.clientY - r.top)) {
+        schedule();
+        return;
+      }
     }
     if (editor.release()) return;
     if (!live) return;

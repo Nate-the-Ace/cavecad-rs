@@ -134,6 +134,10 @@ export class CaveView {
   onLineEdited: (id: string, points: [number, number][], widths: number[] | null) => void = () => {};
   onSelectLine: (id: string, additive?: boolean) => void = () => {};
   /** The lines under the last press that selected, topmost first (see `takePressStack`). */
+  /** A touch screen: a press adds to the line selection (or takes a line out) and only a press on nothing clears it. */
+  appendSelect = false;
+  /** The selection change a press waits to make until the finger lifts without having moved. */
+  private tapPending: { id: string; x: number; y: number } | null = null;
   private pressStack: ProfileSketch3d[] = [];
   /** Called on a right click on a map line: where, which line, and the ids of the map lines of its kind. */
   onLineMenu: (x: number, y: number, id: string, similar: string[], editWords: (() => void) | null) => void = () => {};
@@ -332,6 +336,12 @@ export class CaveView {
       if (e.pointerType === 'pen') this.guard.pen(e);
     };
     canvas.addEventListener('pointerup', lift);
+    canvas.addEventListener('pointerup', (e) => {
+      const t = this.tapPending;
+      this.tapPending = null;
+      if (!t || Math.hypot(e.clientX - t.x, e.clientY - t.y) > 10) return;
+      this.onSelectLine(t.id, !!t.id);
+    });
     canvas.addEventListener('pointercancel', (e) => {
       lift(e);
       if (e.pointerType === 'touch' && this.liveLine) {
@@ -1467,6 +1477,7 @@ export class CaveView {
   /** A press in the Top or Bottom view with no tool: pick up a fit point of the selected map line, or select the line there. */
   private pressLine(e: PointerEvent) {
     this.pressStack = [];
+    this.tapPending = null;
     // Selecting a line works from any angle (its settings are edited in the ribbon); only moving its fit points needs the top view.
     if (this.drawTool || e.button !== 0 || this.fingers.size > 1) return;
     const rect = this.canvas.getBoundingClientRect();
@@ -1541,9 +1552,19 @@ export class CaveView {
     }
     const stack = this.linesAt(x, y);
     const k = stack[0];
+    const append = !additive && this.appendSelect;
     if (k) {
-      this.pressStack = additive ? [] : stack;
+      this.pressStack = additive || append ? [] : stack;
+      if (append) {
+        // a tap adds the line (or takes it out): decided when the finger lifts, so a pan changes nothing
+        this.tapPending = { id: k.id, x: e.clientX, y: e.clientY };
+        return;
+      }
       this.onSelectLine(k.id, additive);
+      return;
+    }
+    if (append) {
+      this.tapPending = { id: '', x: e.clientX, y: e.clientY }; // a tap on nothing clears the selection
       return;
     }
     if (!additive && [...this.selectedSet].some((id) => this.hasMapLine(id))) this.onSelectLine('');

@@ -62,6 +62,8 @@ export interface Hooks<T extends EditableLine> {
   /** The selected line's id (shared across views), and a way to change it. */
   selected: () => string;
   select: (id: string, additive?: boolean) => void;
+  /** On a touch screen every press adds to the selection (or takes the line out) and only a press on nothing clears it; true then. */
+  append?: () => boolean;
   /** Every selected line, when more than one can be (`selected` then gives a line only while it is the only one). */
   ids?: () => string[];
   /** Saves new fit points for a line (one undoable edit). */
@@ -151,9 +153,24 @@ export class LineEditor<T extends EditableLine = EditableLine> {
     return this.display().find((k) => k.id === this.h.selected());
   }
 
+  /** The selection change a plain press is waiting to make until the finger lifts without having moved (a tap, not a pan). */
+  private tapPending: { id: string; x: number; y: number } | null = null;
+
+  /** Lifts the finger at (`x`, `y`): makes the selection change that press waited for, if it was a tap. Returns true if it did. */
+  tap(x: number, y: number): boolean {
+    const t = this.tapPending;
+    this.tapPending = null;
+    if (!t || Math.hypot(x - t.x, y - t.y) > 10) return false;
+    this.h.select(t.id, !!t.id);
+    this.h.redraw();
+    return true;
+  }
+
   /** A press at screen (`x`, `y`). Picks up a fit point of the selected line, or selects the line there. Returns true when a fit point was picked up. */
   press(x: number, y: number, additive = false): boolean {
     this.pressed = [];
+    this.tapPending = null;
+    const append = !additive && !!this.h.append?.();
     const sel = additive ? undefined : this.selectedLine();
     const op = sel?.kind === 'callout' ? this.h.arrowOp?.(sel.id) : '';
     if (sel && op) {
@@ -182,7 +199,12 @@ export class LineEditor<T extends EditableLine = EditableLine> {
     }
     const lines = this.shown();
     const stack = linesAt(lines, this.h.toScreen, x, y, lineReach(), this.h.paperPx?.(), this.h.ornament);
-    this.pressed = additive ? [] : stack.map((i) => lines[i].id);
+    this.pressed = additive || append ? [] : stack.map((i) => lines[i].id);
+    if (append) {
+      // a tap adds the line (or takes it out); a tap on nothing clears: decided when the finger lifts, so a pan changes nothing
+      this.tapPending = { id: stack.length ? lines[stack[0]].id : '', x, y };
+      return false;
+    }
     if (stack.length) {
       this.h.select(lines[stack[0]].id, additive);
       this.h.redraw();

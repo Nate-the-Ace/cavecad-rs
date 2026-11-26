@@ -40,15 +40,16 @@
     return m;
   });
   const category = (k: string) => (isStampKind(k) ? 'Symbol' : k === 'callout' ? 'Callout' : k === 'text' ? 'Text' : isFillKind(k) ? 'Area' : 'Line');
+  const plural = (k: string, n: number) => ({ Symbol: 'symbols', Callout: 'callouts', Text: 'texts', Area: 'areas', Line: 'lines' })[category(k)] ?? 'objects';
+  const sameCategory = $derived(infos.every((i) => category(i.kind) === category(infos[0]?.kind ?? '')));
+  // several things selected: "Multiple", and below it only what they can all be changed together by
   const title = $derived(
-    mode === 'pick' && pickKind
-      ? INSPECTORS[pickKind].title
-      : infos.length > 1 && !alike
-        ? `${infos.length} objects`
-        : `${category(kind)}${infos.length > 1 ? ` ×${infos.length}` : ''}`,
+    mode === 'pick' && pickKind ? INSPECTORS[pickKind].title : infos.length > 1 ? 'Multiple' : category(kind),
   );
   /** Which kind of symbol, line or area it is (blank for a mixed selection or a kind with no name). */
-  const subtitle = $derived(mode === 'selection' && alike ? (names.get(kind) ?? '') : '');
+  const subtitle = $derived(
+    mode !== 'selection' ? '' : infos.length > 1 ? `${infos.length} ${sameCategory ? plural(kind, infos.length) : 'objects'}${alike ? `: ${names.get(kind) ?? ''}` : ''}` : (names.get(kind) ?? ''),
+  );
 
   // what shows, as [heading, part] pairs: a selection's parts follow the ribbon's tab
   const parts = $derived.by<{ name: string; part: string }[]>(() => {
@@ -58,7 +59,11 @@
     const out = [{ name: stamps ? 'Annotation' : 'Line', part: 'type' }];
     if (stamps && words) out.push({ name: 'Text format', part: 'format' });
     if (alike && kind === 'callout') out.push({ name: 'Leader', part: 'leader' });
-    if (alike && !isStampKind(kind) && kind !== 'fill-custom') out.push({ name: isFillKind(kind) ? 'Area' : 'Line style', part: 'style' });
+    // the line style (type, scale) is shared by lines of different kinds, and the hatch by areas; symbols, text and custom fills share none of it
+    const lineish = infos.every((i) => !isStampKind(i.kind) && i.kind !== 'fill-custom');
+    const fills = infos.every((i) => isFillKind(i.kind));
+    const noFills = infos.every((i) => !isFillKind(i.kind));
+    if (lineish && (fills || noFills)) out.push({ name: fills ? 'Area' : 'Line style', part: 'style' });
     return out;
   });
 
