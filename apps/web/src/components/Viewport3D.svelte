@@ -1,7 +1,7 @@
 <script lang="ts">
   import { looks } from '../lib/ink';
   import { onMount, untrack } from 'svelte';
-  import { ChevronDown, Home, Maximize, Box, Square, Palette, Eye, Library, Lock, LockOpen, History } from '@lucide/svelte';
+  import { ChevronDown, Home, Maximize, Box, Square, Palette, Eye, Library, Lock, LockOpen } from '@lucide/svelte';
   import PanelUndo from './PanelUndo.svelte';
   import { shelf } from '../lib/shelf.svelte';
   import { isSymbolKind, needsWords, symbolDef, withLabelSpot } from '../lib/symbols';
@@ -665,9 +665,7 @@
   {/if}
   <div class="bar">
     <button class="caves" title="The Cave Shelf: open a cave, start a new one, add a trip" onclick={() => (shelf.open = true)}><Library size={15} /> {cave.hasCave ? cave.name || 'Cave' : 'Caves'}</button>
-    {#if scene && scene.trips.length > 1}
-      <button class:on={!!timelineTrips} title="Survey timeline: watch the cave grow trip by trip, in the order it was surveyed" onclick={() => (timelineTrips = timelineTrips ? null : scene ? scene.trips.slice() : null)}><History size={15} /> Timeline</button>
-    {/if}
+    <!-- The Timeline button is out for now (its panel, TripTimeline.svelte, is kept; `timelineTrips` opens it). -->
     <div class="menu">
       <button class:on={showMenu || filter.hiddenTypes.length + filter.hiddenTrips.length > 0} title="Show or hide: walls, passage, sketches, sections, types and trips" aria-expanded={showMenu} onclick={openMenu}><Eye size={15} /> Show</button>
       {#if showMenu}
