@@ -3,6 +3,8 @@
   // Snap button's arrow opens in a drawing view, here for Settings (the views keep only the on/off toggle).
   import { snap, setMode, setSetting, setPref, initSnap } from '../lib/snap.svelte';
   import { onMount } from 'svelte';
+  import SnapGlyph from './SnapGlyph.svelte';
+  import type { SnapMode } from '../lib/snap-types';
 
   onMount(() => void initSnap());
 
@@ -20,9 +22,14 @@
 <div class="snapset">
   {#each [['point', 'Points'], ['relational', 'Relations']] as [group, title]}
     <div class="head">{title}</div>
-    {#each snap.catalog.filter((m) => m.group === group) as m (m.id)}
-      <label><input type="checkbox" checked={running.has(m.id)} onchange={(e) => setMode(m.id, e.currentTarget.checked)} />{m.name}</label>
-    {/each}
+    <div class="tiles" role="group" aria-label={title}>
+      {#each snap.catalog.filter((m) => m.group === group) as m (m.id)}
+        <button class="tile" class:on={running.has(m.id)} aria-pressed={running.has(m.id)} title={m.name} onclick={() => setMode(m.id, !running.has(m.id))}>
+          <SnapGlyph mode={m.id as SnapMode} color={running.has(m.id) ? 'var(--accent)' : 'var(--text)'} />
+          <span class="nm">{m.name}</span>
+        </button>
+      {/each}
+    </div>
   {/each}
   <div class="head">Tracking</div>
   <label><input type="checkbox" checked={snap.settings.tracking} onchange={(e) => setSetting('tracking', e.currentTarget.checked)} />Track from acquired points</label>
@@ -41,6 +48,11 @@
 </div>
 
 <style>
+  .tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(68px, 1fr)); gap: 6px; }
+  .tile { display: flex; flex-direction: column; align-items: center; justify-content: flex-start; gap: 2px; min-height: 64px; padding: 6px 2px 4px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel-2); color: var(--text); font: inherit; touch-action: manipulation; cursor: pointer; }
+  .tile.on { background: var(--accent-bg); border-color: var(--accent); }
+  .tile .nm { font-size: 10.5px; line-height: 1.1; text-align: center; overflow-wrap: anywhere; color: var(--muted); }
+  .tile.on .nm { color: var(--text); }
   .snapset { display: flex; flex-direction: column; gap: 2px; font-size: 13px; color: var(--text); }
   .head { margin-top: 6px; color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; }
   label { display: flex; align-items: center; gap: 8px; padding: 3px 0; min-height: 30px; }
