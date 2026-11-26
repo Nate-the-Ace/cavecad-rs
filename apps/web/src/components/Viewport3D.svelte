@@ -112,7 +112,13 @@
     const spec = gridChoice(option('sketchGrid', '2'));
     const opacity = Number(option('gridOpacity', GRID_OPACITY_DEFAULT));
     void viewReady;
-    untrack(() => view?.setGrid(spec, opacity));
+    void cave.version;
+    void cave.adjusted;
+    untrack(() => {
+      // the grid's 0,0 is the entrance station when the engine knows it; the view falls back to the first station
+      const e = loaded ? engine.geoEntranceXyz(cave.adjusted) : [];
+      view?.setGrid(spec, opacity, e.length >= 2 ? [e[0], e[1]] : null);
+    });
   });
 
   // Scans placed under the map follow every edit, adjustment, filter, and the settings in the Scans panel.

@@ -96,14 +96,15 @@ export const gridCaption = (grid: GridSpec = GRID): string => `${formatLength(gr
  * Draws the grid over a pane. `toWorld` and the pane size give the visible area; `tx` and `ty` place the
  * origin. Fine lines are left out when closer than `MIN_GRID_PX`; the spacing never changes.
  */
-export function drawGrid(g: CanvasRenderingContext2D, t: { scale: number; tx: number; ty: number }, w: number, h: number, ink: string, grid: GridSpec = GRID, opacity: number = GRID_OPACITY_DEFAULT): void {
+export function drawGrid(g: CanvasRenderingContext2D, t: { scale: number; tx: number; ty: number }, w: number, h: number, ink: string, grid: GridSpec = GRID, opacity: number = GRID_OPACITY_DEFAULT, origin: readonly [number, number] = [0, 0]): void {
   const alpha = gridAlphas(opacity);
   const shown = visibleGrid(t.scale, grid);
   if (!shown.major) return;
-  const x0 = (0 - t.tx) / t.scale;
-  const x1 = (w - t.tx) / t.scale;
-  const y1 = t.ty / t.scale;
-  const y0 = (t.ty - h) / t.scale;
+  // the grid's 0,0 is `origin` (the entrance): lines are worked out relative to it, then put back
+  const x0 = (0 - t.tx) / t.scale - origin[0];
+  const x1 = (w - t.tx) / t.scale - origin[0];
+  const y1 = t.ty / t.scale - origin[1];
+  const y0 = (t.ty - h) / t.scale - origin[1];
   const step = shown.minor ? grid.minorM : grid.majorM;
   g.save();
   g.lineWidth = 1;
@@ -113,13 +114,13 @@ export function drawGrid(g: CanvasRenderingContext2D, t: { scale: number; tx: nu
     g.beginPath();
     for (const l of gridLines(x0, x1, step, grid.majorM)) {
       if (l.heavy !== heavy) continue;
-      const x = Math.round(t.tx + l.at * t.scale) + 0.5;
+      const x = Math.round(t.tx + (origin[0] + l.at) * t.scale) + 0.5;
       g.moveTo(x, 0);
       g.lineTo(x, h);
     }
     for (const l of gridLines(y0, y1, step, grid.majorM)) {
       if (l.heavy !== heavy) continue;
-      const y = Math.round(t.ty - l.at * t.scale) + 0.5;
+      const y = Math.round(t.ty - (origin[1] + l.at) * t.scale) + 0.5;
       g.moveTo(0, y);
       g.lineTo(w, y);
     }

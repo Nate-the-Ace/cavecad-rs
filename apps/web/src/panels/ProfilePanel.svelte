@@ -261,7 +261,7 @@ import { planFrame } from '../lib/snap-types';
       return;
     }
     const ground = gridChoice(option('sketchGrid', '2'));
-    if (ground) drawGrid(g, { scale, tx: ox, ty: oy }, width, height, c.text, ground, option('gridOpacity', GRID_OPACITY_DEFAULT));
+    if (ground) drawGrid(g, { scale, tx: ox, ty: oy }, width, height, c.text, ground, option('gridOpacity', GRID_OPACITY_DEFAULT), [0, engine.geoEntranceXyz(cave.adjusted)[2] ?? 0]);
 
     // grid: elevation lines every nice step, labelled at the left
     const per = metresPer(cave.units); // metres in one display unit

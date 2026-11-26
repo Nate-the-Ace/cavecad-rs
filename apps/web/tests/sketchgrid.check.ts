@@ -1,4 +1,4 @@
-import { DEFAULT_FEET_PER_INCH, GRID, GRIDS, GRID_OFF, GRID_OPACITY_DEFAULT, gridAlphas, gridChoice, gridFor, PX_PER_INCH, describeScale, feetPerInch, gridCaption, gridLines, matchScale, pxPerMetre, visibleGrid } from '../src/lib/sketch-grid.ts';
+import { drawGrid, DEFAULT_FEET_PER_INCH, GRID, GRIDS, GRID_OFF, GRID_OPACITY_DEFAULT, gridAlphas, gridChoice, gridFor, PX_PER_INCH, describeScale, feetPerInch, gridCaption, gridLines, matchScale, pxPerMetre, visibleGrid } from '../src/lib/sketch-grid.ts';
 import { FOOT } from '../src/lib/units.ts';
 
 let bad = 0;
@@ -58,6 +58,15 @@ ok(gridCaption(gridFor('5')) === '5 ft / 10 ft', 'the caption follows the chosen
 ok(gridChoice(GRID_OFF) === null && gridChoice('5')!.minorM === gridFor('5').minorM, '"off" is no grid; a size is that grid');
 ok(gridAlphas(undefined).heavy === GRID_OPACITY_DEFAULT && near(gridAlphas(0.6).minor, 0.21), 'the fine lines are a third of the heavy ones, and the default stands in for nonsense');
 ok(gridAlphas(5).heavy === 1 && gridAlphas(-1).heavy === 0.02, 'strength is held between 2% and 100%');
+
+// the grid's 0,0 is the origin it is given (the entrance): a vertical line sits on it, and the heavy ones step from it
+const xs: number[] = [];
+const fake = { save() {}, restore() {}, beginPath() {}, stroke() {}, lineTo() {}, moveTo(x: number) { xs.push(x); }, set lineWidth(_v: number) {}, set strokeStyle(_v: string) {}, set globalAlpha(_v: number) {} } as unknown as CanvasRenderingContext2D;
+const sc = 10; // px per metre
+drawGrid(fake, { scale: sc, tx: 0, ty: 100 }, 200, 100, '#000', GRIDS[2], 1, [7, 0]); // 5 ft squares
+const worldX = xs.map((x) => (x - 0.5) / sc);
+ok(worldX.some((x) => Math.abs(x - 7) < 0.06), 'with an origin at x = 7 m a grid line sits on it');
+ok(!worldX.some((x) => Math.abs(x) < 0.01) || Math.abs(7 / (5 * FOOT) - Math.round(7 / (5 * FOOT))) < 0.01, 'and lines are not left on the old zero');
 
 if (bad) process.exit(1);
 console.log('sketchgrid ok');

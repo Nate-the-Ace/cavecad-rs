@@ -74,6 +74,8 @@ export class CaveView {
   private gridGroup = new THREE.Group();
   private gridSpec: { minorM: number; majorM: number } | null = null;
   private gridOpacity = 0.3;
+  /** The grid's 0,0: the entrance station, when the engine knows it (else the first station). */
+  private gridOrigin: [number, number] | null = null;
   /** The window the grid is drawn over now: its centre and half-width (metres), or null when it must be drawn again. */
   private gridBuilt: { cx: number; cy: number; half: number } | null = null;
   private materials: LineMaterial[] = [];
@@ -2101,9 +2103,10 @@ export class CaveView {
    * `majorM`; `null` takes it away. It is fixed in the world. A cave too big for the fine lines to be drawn
    * (over `GRID_MAX_LINES` a side) gets only the heavy ones, and none if even those would be too many.
    */
-  setGrid(spec: { minorM: number; majorM: number } | null, opacity = 0.3) {
+  setGrid(spec: { minorM: number; majorM: number } | null, opacity = 0.3, origin: [number, number] | null = null) {
     this.gridSpec = spec;
     this.gridOpacity = opacity;
+    this.gridOrigin = origin;
     this.rebuildGrid();
     this.requestRender();
   }
@@ -2143,8 +2146,10 @@ export class CaveView {
     if (g && R <= g.half / 1.5 && R >= g.half / 12 && Math.max(Math.abs(t.x - g.cx), Math.abs(t.y - g.cy)) + R <= g.half) return;
     this.clearGrid();
     const half = R * 3;
-    const cx = Math.round(t.x / spec.majorM) * spec.majorM;
-    const cy = Math.round(t.y / spec.majorM) * spec.majorM;
+    const first = this.data?.stations[0]?.at;
+    const [gx, gy] = this.gridOrigin ?? (first ? [first[0], first[1]] : [0, 0]);
+    const cx = gx + Math.round((t.x - gx) / spec.majorM) * spec.majorM;
+    const cy = gy + Math.round((t.y - gy) / spec.majorM) * spec.majorM;
     this.gridBuilt = { cx, cy, half };
     const MAX_LINES = 300;
     const step = (2 * half) / spec.minorM <= MAX_LINES ? spec.minorM : (2 * half) / spec.majorM <= MAX_LINES ? spec.majorM : 0;
@@ -2154,13 +2159,13 @@ export class CaveView {
     const fine: number[] = [];
     const heavy: number[] = [];
     const add = (at: number, horizontal: boolean) => {
-      const k = at / spec.majorM;
+      const k = (at - (horizontal ? gy : gx)) / spec.majorM;
       const out = Math.abs(k - Math.round(k)) < 1e-6 ? heavy : fine;
       if (horizontal) out.push(x0, at, z, x1, at, z);
       else out.push(at, y0, z, at, y1, z);
     };
-    for (let i = Math.ceil(x0 / step); i * step <= x1; i++) add(i * step, false);
-    for (let i = Math.ceil(y0 / step); i * step <= y1; i++) add(i * step, true);
+    for (let i = Math.ceil((x0 - gx) / step); gx + i * step <= x1; i++) add(gx + i * step, false);
+    for (let i = Math.ceil((y0 - gy) / step); gy + i * step <= y1; i++) add(gy + i * step, true);
     for (const [pts, opacity] of [[fine, Math.min(1, this.gridOpacity * 0.35 * 1.4)], [heavy, Math.min(1, this.gridOpacity * 1.1)]] as [number[], number][]) {
       if (!pts.length) continue;
       const geo = new THREE.BufferGeometry();
