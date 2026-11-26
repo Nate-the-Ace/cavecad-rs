@@ -425,7 +425,8 @@
       cave.station = id;
       setPick('station', id);
       if (!final) return;
-      showPanel('section');
+      // On the phone a picked station stays on the Map: its properties slide up, and the Section tab opens on this station when asked for
+      if (!phone.on) showPanel('section');
       engine.log('info', 'section', `cross section at ${label}`);
     };
     const items: (Candidate & { z: number })[] = [
