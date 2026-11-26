@@ -309,8 +309,11 @@ import { planFrame } from '../lib/snap-types';
       }
     }
 
+    // the walls the survey's measurements give: light and dashed, a reference to trace against
     g.setLineDash([5, 4]);
-    for (const line of [...band.ceiling, ...band.floor]) stroke(g, line, null, c.muted, 1.2);
+    g.globalAlpha = 0.5;
+    for (const line of [...band.ceiling, ...band.floor]) stroke(g, line, null, c.muted, 1.1);
+    g.globalAlpha = 1;
     // near-level splays: real wall hits that say nothing about the ceiling or floor, so ticks, not line points
     g.fillStyle = c.muted;
     for (const [s, z] of band.flat) {

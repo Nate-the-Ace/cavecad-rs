@@ -273,11 +273,14 @@ import { planFrame } from '../lib/snap-types';
       g.globalAlpha = 0.4;
       g.fill();
       g.globalAlpha = 1;
+      // light and dashed: only a reference to trace against
       g.setLineDash([6, 4]);
       g.strokeStyle = c.muted;
-      g.lineWidth = 1.5;
+      g.globalAlpha = 0.5;
+      g.lineWidth = 1.2;
       g.lineJoin = 'round';
       g.stroke();
+      g.globalAlpha = 1;
       g.setLineDash([]);
     }
     g.fillStyle = c.muted;
