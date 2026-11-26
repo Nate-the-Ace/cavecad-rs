@@ -761,8 +761,8 @@
   .cubehost.gone { display: none; }
   .cubemenu { position: relative; }
   .cubemenu > button { padding: 2px 6px; grid-auto-flow: column; gap: 2px; }
-  .cubepop { left: auto; right: 0; top: calc(100% + 4px); min-width: 150px; }
-  .cubepop button { justify-content: start; grid-auto-flow: column; gap: 6px; text-align: left; }
+  .pop.cubepop { left: auto; right: 0; top: calc(100% + 4px); min-width: 150px; }
+  .pop.cubepop button { justify-content: start; grid-auto-flow: column; gap: 6px; text-align: left; }
   .cube.locked > .cubehost { opacity: 0.45; } /* the cube shows which way the view faces but no longer turns it */
   button { font: inherit; padding: 3px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--text); cursor: pointer; display: inline-grid; place-items: center; }
   button.caves { display: inline-flex; gap: 5px; align-items: center; font-weight: 600; max-width: 100%; }
