@@ -451,7 +451,7 @@
       return;
     }
     if (!lines.length) top.choose(true); // a drawn line was already selected by the press
-    else setPick('', '');
+    else if (!phone.on) setPick('', ''); // (on the phone a tapped line joins what is picked: nothing is let go)
     if (phone.on && lines.length) return; // a tap that adds to the selection offers no list to choose from
     // when the things under the click are on different levels, each row says how high it is
     const zs = items.map((it) => it.z);
