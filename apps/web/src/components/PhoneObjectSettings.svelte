@@ -63,6 +63,7 @@
   <div class="strip" role="group" aria-label="Object settings" transition:fly={slide}>
     <header>
       <strong>{title}</strong>
+      {#if Inspector && pickKind}<span class="hinfo"><Inspector part="info" kind={pickKind} /></span>{/if}
       <span class="acts">
         {#if mode === 'selection'}<button class="del" onclick={remove}>Delete</button>{/if}
         <button class="done" onclick={done}>Done</button>
@@ -72,7 +73,7 @@
       {#if mode === 'selection'}
         {#each parts as g (g.part)}<section><h4>{g.name}</h4><SelectionTools part={g.part as 'type'} /></section>{/each}
       {:else if Inspector && pickKind}
-        {#each INSPECTORS[pickKind].groups as g (g.part)}<section><h4>{g.name}</h4><Inspector part={g.part} kind={pickKind} /></section>{/each}
+        {#each INSPECTORS[pickKind].groups.filter((g) => g.part !== 'info') as g (g.part)}<section><h4>{g.name}</h4><Inspector part={g.part} kind={pickKind} /></section>{/each}
       {/if}
     </div>
   </div>
@@ -81,6 +82,12 @@
 <style>
   .strip { position: absolute; left: 0; right: 0; bottom: 0; max-height: 75%; display: flex; flex-direction: column; background: var(--panel); border-top: 1px solid var(--line); z-index: 20; touch-action: pan-y; }
   header { display: flex; align-items: center; justify-content: space-between; min-height: var(--p-row); padding: 0 var(--p-gap) 0 var(--p-pad); flex: none; font-size: var(--p-font); }
+  /* the picked thing's name, elevation and legs sit on the title's line */
+  .hinfo { flex: 1 1 0; min-width: 0; margin: 0 var(--p-gap); overflow: hidden; }
+  .hinfo :global(.col.info) { flex-direction: row; flex-wrap: nowrap; align-items: baseline; gap: 0 8px; height: auto; min-width: 0; white-space: nowrap; font-size: var(--p-font-small); }
+  .hinfo :global(.col.info .row) { height: auto; gap: 6px; min-width: 0; }
+  .hinfo :global(.col.info .row:last-child) { overflow: hidden; text-overflow: ellipsis; }
+  .hinfo :global(.label) { font-size: var(--p-font); }
   .acts { display: flex; gap: var(--p-gap); }
   button { min-height: var(--p-row); min-width: 64px; border: 0; border-radius: var(--p-radius); background: var(--panel-2); color: var(--text); font: inherit; touch-action: manipulation; }
   .done { background: var(--accent); color: #fff; font-weight: 600; }
