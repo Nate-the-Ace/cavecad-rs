@@ -195,12 +195,28 @@ export function previewVersion(h: CaveHistory, keep: number) {
  * things it changed.
  */
 export function restoreOpenCave(h: CaveHistory, roomId: string, keep: number): string {
-  if (engine.roomId() !== roomId) return 'Open this cave first, then restore it.';
-  const r = engine.restoreToOps(versionOps(h, keep), 'map');
+  if (engine.roomId() !== roomId) return 'That cave is not the one open: open it first, then restore it.';
+  const r = engine.restoreToOps(versionOps(h, keep), versionOps(h, h.ops.length), 'map');
   if (!r.startsWith('ok:')) return r.replace(/^error: /, '');
   changed();
   void storeOpenCave();
   return r === 'ok:0' ? 'The cave already is that version.' : `ok:${r.slice(3)}`;
+}
+
+/**
+ * Opens the cave of `roomId` (the copy this shelf keeps, else the one on the server), then puts it back to the version of
+ * `h` with its first `keep` entries, in place. For the history dialog's one button: it needs no cave open first. A sentence
+ * when it could not, else `ok:<changes>`.
+ */
+export async function openAndRestore(h: CaveHistory, roomId: string, keep: number): Promise<string> {
+  if (engine.roomId() !== roomId) {
+    const kept = shelf.records.find((r) => r.roomId === roomId);
+    const problem = kept ? await openKept(kept.id) : await openFromServer(roomId);
+    if (problem === 'waiting') return 'This device does not have the cave key yet.';
+    if (problem) return problem;
+    if (engine.roomId() !== roomId) return 'The cave could not be opened to restore it.';
+  }
+  return restoreOpenCave(h, roomId, keep);
 }
 
 /**

@@ -751,7 +751,7 @@ const rawEngine = {
   /** A plan picture of a cave version (its ops as JSON) without opening it: legs, walls, drawn lines and stations in metres. */
   previewOfOps: (ops: string): CavePicture | null => JSON.parse(preview_of_ops(ops)),
   /** Puts the open cave back to an earlier version of itself (its ops as JSON) as ONE new, undoable edit: nothing is forgotten. `ok:<changes>` or `error: ...`. */
-  restoreToOps: (ops: string, scope: Scope = 'map'): string => restore_to_ops(ops, scope),
+  restoreToOps: (target: string, current: string, scope: Scope = 'map'): string => restore_to_ops(target, current, scope),
   /** The room id of a cave kept in its own format, without opening it ('' when none). */
   roomIdOfNative: (ops: string): string => room_id_of_native(ops),
   /** The stations a cross section can be cut at. */

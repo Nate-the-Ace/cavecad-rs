@@ -6,7 +6,7 @@
   import { onMount } from 'svelte';
   import { slide } from 'svelte/transition';
   import CavePicture from './CavePicture.svelte';
-  import { openEarlierCopy, previewVersion, readHistory, restoreOpenCave, versionOps, type CaveHistory } from '../lib/caves';
+  import { openEarlierCopy, previewVersion, readHistory, openAndRestore, versionOps, type CaveHistory } from '../lib/caves';
   import { engine } from '../lib/engine';
   import { cave } from '../lib/cave.svelte';
   import { formatLength } from '../lib/units';
@@ -57,11 +57,14 @@
   const rows = $derived(history ? history.entries.map((e, i) => ({ ...e, index: i })).slice(-SHOWN).reverse() : []);
   const hidden = $derived(history ? Math.max(0, history.entries.length - SHOWN) : 0);
 
-  /** Puts the open cave back to the picked version, as a new edit: its history stays and the restore can be undone. */
-  function restore() {
+  /** Puts the cave back to the picked version, opening it first when it is not the one on screen. The restore is one new edit: its history stays, and Undo on the Map takes it back. */
+  async function restore() {
     if (keep < 0 || !history || busy) return;
-    const r = restoreOpenCave(history, roomId, keep);
-    if (r.startsWith('ok:')) done = `Restored: ${r.slice(3)} change${r.slice(3) === '1' ? '' : 's'}. The cave's history is kept, and Undo on the Map takes the restore back.`;
+    busy = true;
+    problem = '';
+    const r = await openAndRestore(history, roomId, keep);
+    busy = false;
+    if (r.startsWith('ok:')) done = r === 'ok:0' ? 'The cave already is that version.' : `Restored: ${r.slice(3)} change${r.slice(3) === '1' ? '' : 's'}. The cave's history is kept, and Undo on the Map takes the restore back.`;
     else problem = r;
   }
 
@@ -109,7 +112,7 @@
   <div class="foot">
     <button onclick={onclose} disabled={busy}>{done ? 'Close' : 'Cancel'}</button>
     <button onclick={open} disabled={keep < 0 || busy || !history} title="A separate new cave with that version; this cave is not touched">{busy ? 'Opening…' : 'Open as a copy'}</button>
-    <button class="go" onclick={restore} disabled={keep < 0 || busy || !history || !isOpen} title={isOpen ? 'Put this cave back to that version. Its history is kept: the restore is one more step, and Undo takes it back' : 'Open the cave first, then restore it'}>Restore this cave</button>
+    <button class="go" onclick={restore} disabled={keep < 0 || busy || !history} title={isOpen ? 'Put this cave back to that version. Its history is kept: the restore is one more step, and Undo takes it back' : 'Open this cave, then put it back to that version. Its history is kept: the restore is one more step, and Undo takes it back'}>{busy ? 'Restoring…' : isOpen ? 'Restore this cave' : 'Open it and restore'}</button>
   </div>
 </div>
 

@@ -2270,28 +2270,35 @@ pub fn sync_apply(ops: &str) -> u32 {
     })
 }
 
-/// Puts the open cave back to an EARLIER version of itself, as one new edit: `ops` (JSON) are that version, a room's snapshot
-/// and the entries up to the point to go back to. What the version had is created or set back, what was added since is
-/// removed (the drawing-wide settings, the room id among them, are left alone). Nothing is forgotten: the restore is an edit
-/// like any other, so it goes to the room and every device, the cave's whole history stays, and the restore can be undone on
-/// `scope`'s history. Returns `ok:<number of changes>` or `error: ...`.
+/// Puts the open cave back to an EARLIER version of itself, as one new edit: `target` (JSON ops) is that version, a room's
+/// snapshot and the entries up to the point to go back to; `current` (JSON ops) is the room as it is now. The open cave is
+/// first brought up to `current` (what the room already holds; safe to repeat), so the restore is worked out against the
+/// cave as it really is, even when this copy has not heard of the latest edits yet and they are newer than anything here.
+/// What the version had is then created or set back, and what was added since is removed (the drawing-wide settings, the
+/// room id among them, are left alone). Nothing is forgotten: the restore is an edit like any other, so it goes to the room
+/// and every device, the cave's whole history stays, and the restore can be undone on `scope`'s history. Returns
+/// `ok:<number of changes>` or `error: ...`.
 #[wasm_bindgen]
-pub fn restore_to_ops(ops: &str, scope: &str) -> String {
-    let Ok(ops) = serde_json::from_str::<Vec<cave_doc::Op>>(ops) else {
+pub fn restore_to_ops(target: &str, current: &str, scope: &str) -> String {
+    let (Ok(target_ops), Ok(current_ops)) = (
+        serde_json::from_str::<Vec<cave_doc::Op>>(target),
+        serde_json::from_str::<Vec<cave_doc::Op>>(current),
+    ) else {
         return "error: unreadable version of the cave".into();
     };
-    let mut target = Document::new(ActorId(1));
-    for op in &ops {
-        if target.apply(op).is_err() {
-            return "error: that version does not fit this version of CaveCAD".into();
-        }
+    let mut version = Document::new(ActorId(1));
+    if target_ops.iter().any(|op| version.apply(op).is_err()) {
+        return "error: that version does not fit this version of CaveCAD".into();
     }
     DOC.with(|d| {
         let mut slot = d.borrow_mut();
         let Some(doc) = slot.as_mut() else {
             return "error: no cave is open".into();
         };
-        let actions = doc.actions_to_reach(&target);
+        if current_ops.iter().any(|op| doc.apply(op).is_err()) {
+            return "error: the room's cave does not fit this version of CaveCAD".into();
+        }
+        let actions = doc.actions_to_reach(&version);
         let n = actions.len();
         if n == 0 {
             return "ok:0".into();

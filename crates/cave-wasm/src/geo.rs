@@ -564,7 +564,8 @@ mod tests {
         set_left(&a, 3.0);
         set_left(&a, 9.0);
         assert!(is(left_of(&a), 9.0));
-        let r = crate::restore_to_ops(&early, "map");
+        let now = crate::sync_snapshot();
+        let r = crate::restore_to_ops(&early, &now, "map");
         assert!(r.starts_with("ok:") && r != "ok:0", "{r}");
         assert_ne!(left_of(&a), Some(9.0));
         // the restore is its own step, and the two edits before it are still there to undo one by one
@@ -573,11 +574,25 @@ mod tests {
             is(left_of(&a), 9.0),
             "undoing the restore brings the later state back"
         );
-        assert_eq!(
-            crate::restore_to_ops(&early, "map").starts_with("ok:"),
-            true
+        assert!(crate::restore_to_ops(&early, &now, "map").starts_with("ok:"));
+        assert!(crate::restore_to_ops("nonsense", &now, "map").starts_with("error"));
+    }
+
+    #[test]
+    fn a_restore_is_worked_out_against_the_room_even_when_this_copy_is_behind() {
+        crate::open_demo(CAVE);
+        let a = station("A1");
+        let copy = crate::sync_snapshot(); // what this device has, and the version to go back to
+        set_left(&a, 4.0); // an edit in the room that the copy never heard of
+        let room_now = crate::sync_snapshot();
+        assert_eq!(crate::sync_load(&copy), "ok"); // the device is on its older copy
+        assert_ne!(left_of(&a), Some(4.0));
+        let r = crate::restore_to_ops(&copy, &room_now, "map");
+        assert!(
+            r.starts_with("ok:") && r != "ok:0",
+            "the later edit is undone though this copy never had it: {r}"
         );
-        assert!(crate::restore_to_ops("nonsense", "map").starts_with("error"));
+        assert_ne!(left_of(&a), Some(4.0));
     }
 
     #[test]
