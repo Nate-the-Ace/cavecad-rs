@@ -98,8 +98,8 @@
   .body :global(.walls), .body :global(.grid) { height: auto; }
   .body :global(.btns) { height: auto; flex-wrap: wrap; }
   /* a picked station or shot: no group headings, and each group is one or two lines across the whole strip */
-  .body.pick section { flex: 1 1 100%; padding: 1px 0; }
-  .body.pick h4 { display: none; }
+  .body section { flex: 1 1 100%; padding: 1px 0; }
+  .body h4 { display: none; }
   .body.pick :global(.col.info) { flex-direction: row; flex-wrap: wrap; align-items: baseline; gap: 0 10px; }
   .body.pick :global(.col .row) { height: auto; }
   .body.pick :global(.walls) { grid-template-columns: 1fr 1fr; grid-template-rows: auto auto; gap: 2px 10px; width: 100%; }
@@ -110,6 +110,19 @@
   .body.pick :global(.btns) { flex-wrap: nowrap; width: 100%; gap: var(--p-gap); }
   .body.pick :global(.btns .tool) { flex: 1 1 0; justify-content: center; padding: 0 4px; }
   .body.pick :global(.btns .tool span) { font-size: var(--p-font-small); }
+  /* the same for lines, symbols, text, the halo, viewframes and shots: every group runs across the strip and wraps, with no ribbon-sized rows */
+  .body :global(.sel), .body :global(.types), .body :global(.curve), .body :global(.halo), .body :global(.sliders), .body :global(.row) { flex-wrap: wrap; height: auto; gap: 4px 8px; width: 100%; }
+  .body :global(.style) { display: flex; flex-wrap: wrap; align-items: center; height: auto; gap: 4px 8px; width: 100%; }
+  .body :global(.detail), .body :global(.style .detail) { flex-direction: row; align-items: center; height: auto; gap: 6px; }
+  .body :global(.detail input) { width: 5.5em; }
+  .body :global(.words) { flex: 1 1 140px; width: auto; min-width: 0; }
+  .body :global(.kind) { max-width: 100%; }
+  .body :global(.tip), .body :global(.many), .body :global(.msg) { max-width: none; white-space: normal; }
+  .body :global(.grid) { grid-template-columns: 1fr 1fr; grid-template-rows: none; width: 100%; gap: 4px 10px; }
+  .body :global(.grid > span:empty) { display: none; }
+  .body :global(.sliders label), .body :global(.col label) { width: 100%; justify-content: space-between; }
+  .body :global(.sliders input[type='range']) { flex: 1 1 0; width: auto; min-width: 0; }
+  .body :global(.val) { min-width: 0; }
   .body :global(.tool) { height: var(--p-hit); min-height: 0; min-width: 0; flex-direction: row; gap: 6px; padding: 0 10px; }
   h4 { margin: 0 0 2px; font-size: var(--p-font-small); font-weight: 600; color: var(--muted); }
 </style>
