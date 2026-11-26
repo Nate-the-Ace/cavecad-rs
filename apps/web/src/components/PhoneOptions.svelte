@@ -1,4 +1,8 @@
 <script lang="ts">
+  import { fly } from 'svelte/transition';
+  import { cubicOut } from 'svelte/easing';
+  // slides up from the bottom edge (and back down); no motion for people who ask for less
+  const slide = { y: '100%', duration: typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : 240, easing: cubicOut };
   // The armed tool's options as a slim strip over the bottom of the Sketch canvas (the canvas is not dimmed or blocked
   // above it): a 40px header (tool name, Done) then ContextOptions (the ribbon's own settings) restyled for the phone.
   // Sizes to its content, capped at 30% of the canvas. Done, or Escape, puts the tool down. Only per-use options show
@@ -29,14 +33,14 @@
 </script>
 
 {#if show}
-  <div class="strip" role="group" aria-label="Tool options">
+  <div class="strip" role="group" aria-label="Tool options" transition:fly={slide}>
     <header><strong>{title}</strong><button class="done" onclick={() => (cave.tool = '')}>Done</button></header>
     {#if body}<div class="body"><ContextOptions omit={DRAWING_DEFAULT_IDS} /></div>{/if}
   </div>
 {/if}
 
 <style>
-  .strip { position: absolute; left: 0; right: 0; bottom: var(--p-live-inset, 0px); max-height: 30%; display: flex; flex-direction: column; background: var(--panel); border-top: 1px solid var(--line); z-index: 20; touch-action: pan-y; }
+  .strip { position: absolute; left: 0; right: 0; bottom: 0; max-height: 30%; display: flex; flex-direction: column; background: var(--panel); border-top: 1px solid var(--line); z-index: 20; touch-action: pan-y; }
   header { display: flex; align-items: center; justify-content: space-between; min-height: var(--p-row); padding: 0 var(--p-gap) 0 var(--p-pad); flex: none; font-size: var(--p-font); }
   .done { min-height: var(--p-row); min-width: 64px; border: 0; border-radius: var(--p-radius); background: var(--accent); color: #fff; font: inherit; font-weight: 600; touch-action: manipulation; }
   .body { overflow: auto; padding: 0 var(--p-gap) var(--p-gap); }

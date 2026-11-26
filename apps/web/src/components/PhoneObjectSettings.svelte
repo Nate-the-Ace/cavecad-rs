@@ -1,4 +1,8 @@
 <script lang="ts">
+  import { fly } from 'svelte/transition';
+  import { cubicOut } from 'svelte/easing';
+  // slides up from the bottom edge (and back down); no motion for people who ask for less
+  const slide = { y: '100%', duration: typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : 240, easing: cubicOut };
   // The settings of the picked or selected object (a drawn line, symbol or text; a station, leg, splay) as a strip over
   // the bottom of the Sketch canvas: the same parts the ribbon's contextual tab shows on the desktop. It shows when
   // something is picked; Done puts it away (the object stays picked), and a long press on the object brings it back.
@@ -56,7 +60,7 @@
 </script>
 
 {#if mode && phone.objectSettings}
-  <div class="strip" role="group" aria-label="Object settings">
+  <div class="strip" role="group" aria-label="Object settings" transition:fly={slide}>
     <header>
       <strong>{title}</strong>
       <span class="acts">
@@ -75,7 +79,7 @@
 {/if}
 
 <style>
-  .strip { position: absolute; left: 0; right: 0; bottom: var(--p-live-inset, 0px); max-height: 45%; display: flex; flex-direction: column; background: var(--panel); border-top: 1px solid var(--line); z-index: 20; touch-action: pan-y; }
+  .strip { position: absolute; left: 0; right: 0; bottom: 0; max-height: 45%; display: flex; flex-direction: column; background: var(--panel); border-top: 1px solid var(--line); z-index: 20; touch-action: pan-y; }
   header { display: flex; align-items: center; justify-content: space-between; min-height: var(--p-row); padding: 0 var(--p-gap) 0 var(--p-pad); flex: none; font-size: var(--p-font); }
   .acts { display: flex; gap: var(--p-gap); }
   button { min-height: var(--p-row); min-width: 64px; border: 0; border-radius: var(--p-radius); background: var(--panel-2); color: var(--text); font: inherit; touch-action: manipulation; }
