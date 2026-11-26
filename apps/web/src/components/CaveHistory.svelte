@@ -23,6 +23,26 @@
   let done = $state('');
 
   const SHOWN = 400;
+  /** What the cave measured after each edit (length, depth), worked out in the background so the list can show where it changed. */
+  let after = $state<Record<number, string>>({});
+  $effect(() => {
+    const h = history;
+    if (!h) return;
+    let stop = false;
+    (async () => {
+      const out: Record<number, string> = {};
+      for (let i = h.entries.length - 1; i >= Math.max(0, h.entries.length - SHOWN) && !stop; i--) {
+        const sm = previewVersion(h, i + 1);
+        out[h.entries[i].number] = !sm || sm.empty ? 'empty' : `${formatLength(sm.length_m, cave.units, 0)}${sm.depth_m === null ? '' : ` · ${formatLength(sm.depth_m, cave.units, 0)} deep`}`;
+        if (i % 8 === 0) {
+          after = { ...out };
+          await new Promise((r) => setTimeout(r, 0));
+        }
+      }
+      if (!stop) after = { ...out };
+    })();
+    return () => (stop = true);
+  });
   onMount(async () => {
     const r = await readHistory(roomId);
     if (typeof r === 'string') problem = r;
@@ -64,7 +84,7 @@
     <div class="list" role="listbox" aria-label="Edits, newest first">
       {#each rows as r (r.number)}
         <button role="option" aria-selected={keep === r.index + 1} class:on={keep === r.index + 1} onclick={() => (keep = r.index + 1)}>
-          <span class="n">#{r.number}</span> <span class="w">{r.what}</span>
+          <span class="n">#{r.number}</span> <span class="w">{r.what}</span> <span class="m">{after[r.number] ?? ''}</span>
         </button>
       {/each}
       <button role="option" aria-selected={keep === 0} class:on={keep === 0} onclick={() => (keep = 0)}>
@@ -94,7 +114,9 @@
   .list button.on { background: var(--accent); border-color: var(--accent); color: var(--on-accent, #fff); }
   .n { flex: none; color: var(--muted); min-width: 4.5em; }
   .on .n { color: inherit; }
-  .w { min-width: 0; overflow-wrap: anywhere; }
+  .w { min-width: 0; flex: 1 1 0; overflow-wrap: anywhere; }
+  .m { flex: none; font-size: 11px; color: var(--muted); white-space: nowrap; }
+  .on .m { color: inherit; }
   .foot { display: flex; justify-content: flex-end; gap: 8px; }
   .foot button { min-height: 40px; padding: 0 14px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel-2); color: var(--text); font: inherit; }
   .foot .go { background: var(--accent); border-color: var(--accent); color: var(--on-accent, #fff); font-weight: 600; }
