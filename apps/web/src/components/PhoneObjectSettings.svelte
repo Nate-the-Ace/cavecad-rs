@@ -149,6 +149,8 @@
   .body :global(.grid) { grid-template-columns: 1fr 1fr; grid-template-rows: none; width: 100%; gap: 4px 10px; }
   .body :global(.grid > span:empty) { display: none; }
   .body :global(.sliders label), .body :global(.col label) { width: 100%; justify-content: space-between; }
+  /* a checkbox and its words stay together at the left (shot flags, notes), not pushed to opposite ends */
+  .body :global(.note label), .body :global(.notes label), .body :global(.row label), .body :global(label.check) { width: auto; justify-content: flex-start; gap: 6px; }
   .body :global(.sliders input[type='range']) { flex: 1 1 0; width: auto; min-width: 0; }
   .body :global(.val) { min-width: 0; }
   .body :global(.tool) { height: var(--p-hit); min-height: 0; min-width: 0; flex-direction: row; gap: 6px; padding: 0 10px; }
