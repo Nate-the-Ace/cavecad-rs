@@ -664,12 +664,17 @@
     <TripTimeline trips={timelineTrips} onChange={refresh} onClose={() => (timelineTrips = null)} />
   {/if}
   <div class="bar">
-    <button class="caves" title="The Cave Shelf: open a cave, start a new one, add a trip" onclick={() => (shelf.open = true)}><Library size={15} /> {cave.hasCave ? cave.name || 'Cave' : 'Caves'}</button>
-    <!-- The Timeline button is out for now (its panel, TripTimeline.svelte, is kept; `timelineTrips` opens it). -->
+    <!-- One dropdown named for the cave holds the rest of the map's controls (cave shelf, undo, snap, what is shown). -->
     <div class="menu">
-      <button class:on={showMenu || filter.hiddenTypes.length + filter.hiddenTrips.length > 0} title="Show or hide: walls, passage, sketches, sections, types and trips" aria-expanded={showMenu} onclick={openMenu}><Eye size={15} /> Show</button>
+      <button class="caves" class:on={showMenu || filter.hiddenTypes.length + filter.hiddenTrips.length > 0} title="The cave, and the map's controls: open a cave, undo, snap, what is shown" aria-expanded={showMenu} aria-haspopup="true" onclick={openMenu}><Library size={15} /> {cave.hasCave ? cave.name || 'Cave' : 'Caves'} <ChevronDown size={14} /></button>
       {#if showMenu}
-        <div class="pop" role="group" aria-label="Show or hide">
+        <div class="pop mainpop" role="group" aria-label="Map menu">
+          <div class="toprow">
+            <button title="The Cave Shelf: open a cave, start a new one, add a trip" onclick={() => ((shelf.open = true), (showMenu = false))}><Library size={15} /> Caves…</button>
+            <PanelUndo scope="map" label="on the map" />
+            <SnapButton />
+          </div>
+          <div class="showlist" role="group" aria-label="Show or hide">
           <h4>On the map</h4>
           <label title="Show the survey with loop errors spread out (least-squares adjusted) instead of as measured"><input type="checkbox" bind:checked={cave.adjusted} onchange={refresh} /> Adjusted</label>
           <label><input type="checkbox" bind:checked={walls} onchange={() => view?.setShowWalls(walls)} /> Walls</label>
@@ -703,11 +708,10 @@
           {#if filter.hiddenTypes.length + filter.hiddenTrips.length > 0}
             <button onclick={() => ((filter.hiddenTypes = []), (filter.hiddenTrips = []), refresh())}>Show everything</button>
           {/if}
+          </div>
         </div>
       {/if}
     </div>
-    <PanelUndo scope="map" label="on the map" />
-    <SnapButton />
     <!-- The elevation-colour (palette) button is out for now; `depthColor` and `setElevationColors` are kept. -->
     {#if hopped > 0}
       <button title="Some lines hop between passages on different levels. Re-attach each to the level it starts on." onclick={fixHopped}>Fix {hopped} line{hopped === 1 ? '' : 's'}</button>
@@ -760,7 +764,7 @@
   .cubepop button { justify-content: start; grid-auto-flow: column; gap: 6px; text-align: left; }
   .cube.locked > .cubehost { opacity: 0.45; } /* the cube shows which way the view faces but no longer turns it */
   button { font: inherit; padding: 3px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--text); cursor: pointer; display: inline-grid; place-items: center; }
-  button.caves { display: inline-flex; gap: 5px; align-items: center; font-weight: 600; }
+  button.caves { display: inline-flex; gap: 5px; align-items: center; font-weight: 600; max-width: 100%; }
   button:disabled { opacity: 0.4; cursor: default; }
   button.on { background: var(--accent-bg); }
   button.warn { color: var(--warn); border-color: var(--warn); }
@@ -770,6 +774,9 @@
   .menu { position: relative; }
   .menu > button { gap: 5px; grid-auto-flow: column; }
   .pop { position: absolute; top: calc(100% + 10px); left: 0; z-index: 5; min-width: 200px; max-height: 60vh; overflow: auto; display: flex; flex-direction: column; gap: 4px; padding: 8px 10px; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: 0 6px 20px rgb(0 0 0 / 0.25); }
+  .mainpop { max-height: none; overflow: visible; min-width: 230px; padding: 6px 8px; }
+  .toprow { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; padding-bottom: 6px; border-bottom: 1px solid var(--line); margin-bottom: 4px; }
+  .showlist { display: flex; flex-direction: column; gap: 4px; max-height: 55vh; overflow: auto; }
   .pop h4 { margin: 4px 0 0; font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); }
   .pop label { color: var(--text); }
 </style>
