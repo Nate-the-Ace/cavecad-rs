@@ -707,7 +707,7 @@ import { planFrame } from '../lib/snap-types';
       {#each scales as s}<option value={String(s.feet_per_inch)}>{s.label}</option>{/each}
       {#if selectValue === 'custom'}<option value="custom" disabled>{describeScale(view.tf.scale, scales)}</option>{/if}
     </select>
-    <select value={String(option('sketchGrid', '2'))} aria-label="{PANE_TITLE[pane]} grid" title="Grid: the square, with a heavy line every ten squares" onchange={(e) => { setOption('sketchGrid', e.currentTarget.value); schedule(); }}>
+    <select value={String(option('sketchGrid', '2'))} aria-label="{PANE_TITLE[pane]} grid" title="Grid: the square, with a heavy line every 10 ft" onchange={(e) => { setOption('sketchGrid', e.currentTarget.value); schedule(); }}>
       {#each GRIDS as g}<option value={g.key}>{g.label}</option>{/each}
     </select>
     <button class="ic" class:on={view.frame === 'auto' && view.scale === 'fit'} title="Fit the whole survey" aria-label="Fit {PANE_TITLE[pane]} to the survey" onclick={fitAll}><Maximize size={15} /></button>

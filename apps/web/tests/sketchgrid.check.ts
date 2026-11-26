@@ -22,8 +22,8 @@ ok(near(feetPerInch(pxPerMetre(37)), 37), 'feet per inch and pixels per metre co
 ok(near(pxPerMetre(500 / 12), PX_PER_INCH / 0.0254 / 500, 1e-6), 'a ratio scale in the sheet list means what a ratio means (1:500)');
 
 // The grid does not depend on the scale.
-ok(near(GRID.minorM, 2 * FOOT) && near(GRID.majorM, 20 * FOOT), 'the grid is 2 ft squares with a heavy line every 20 ft');
-ok(gridCaption() === '2 ft / 20 ft', 'and is captioned that way');
+ok(near(GRID.minorM, 2 * FOOT) && near(GRID.majorM, 10 * FOOT), 'the grid is 2 ft squares with a heavy line every 10 ft');
+ok(gridCaption() === '2 ft / 10 ft', 'and is captioned that way');
 ok(near(GRID.minorM * pxPerMetre(20), 9.6), 'at 1" = 20 ft a fine square is 9.6 pixels');
 ok(near(GRID.minorM * pxPerMetre(20) * 10, 96), 'and ten of them are the paper inch');
 const spacings = new Set([5, 20, 50, 100].map(() => GRID.minorM));
@@ -49,11 +49,11 @@ ok(gridLines(0, 1_000_000, 1, 10).length === 0, 'an absurd number of lines is no
 ok(gridLines(0.1, 0.5, 0.1, 0.5).length === 5, 'no line is lost to float error at the ends');
 
 ok(GRIDS.map((g) => g.key).join() === '1,2,5,10', 'the grids on offer are 1, 2, 5 and 10 ft squares');
-ok(GRIDS.every((g) => near(g.majorM, g.minorM * 10)), 'each has a heavy line every ten squares');
+ok(GRIDS.every((g) => near(g.majorM, 10 * FOOT)), 'every grid has its heavy line every 10 ft, whatever the square');
 ok(gridFor('1').minorM === GRIDS[0].minorM && near(gridFor('1').minorM, 1 * FOOT), 'a stored choice finds its grid');
 ok(gridFor('nonsense') === GRID && gridFor(undefined) === GRID, 'anything else is the 2 ft default');
 ok(visibleGrid(pxPerMetre(20), gridFor('1')).minor === (gridFor('1').minorM * pxPerMetre(20) >= 4), 'visibility follows the chosen grid');
-ok(gridCaption(gridFor('5')) === '5 ft / 50 ft', 'the caption follows the chosen grid');
+ok(gridCaption(gridFor('5')) === '5 ft / 10 ft', 'the caption follows the chosen grid');
 
 ok(gridChoice(GRID_OFF) === null && gridChoice('5')!.minorM === gridFor('5').minorM, '"off" is no grid; a size is that grid');
 ok(gridAlphas(undefined).heavy === GRID_OPACITY_DEFAULT && near(gridAlphas(0.6).minor, 0.21), 'the fine lines are a third of the heavy ones, and the default stands in for nonsense');

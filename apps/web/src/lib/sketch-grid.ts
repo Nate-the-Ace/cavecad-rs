@@ -4,7 +4,7 @@
 // (tests/sketchgrid.check.ts).
 //
 // The grid is the same at every scale and every zoom: a chosen size of square (1 ft, 2 ft, 5 ft, 10 ft) with a
-// heavy line every ten squares, fixed in the world (it moves with the drawing). It opens at 2 ft squares. It is
+// heavy line every 10 ft whatever the square, fixed in the world (it moves with the drawing). It opens at 2 ft squares. It is
 // never re-spaced to suit the zoom; when it would be too fine to see, the fine lines are left out.
 
 import { FOOT, formatLength } from './units.ts';
@@ -27,11 +27,14 @@ export interface GridSpec {
   majorM: number;
 }
 
-/** The grids on offer: `key` is the minor square in feet; the heavy line is every ten squares. */
-export const GRIDS = [1, 2, 5, 10].map((ft) => ({ key: String(ft), label: `${ft} ft squares`, minorM: ft * FOOT, majorM: ft * 10 * FOOT }));
+/** The heavy line is always every 10 ft, whatever the square. */
+export const MAJOR_FT = 10;
 
-/** The grid: 2 ft squares, a heavy line every 20 ft (10 squares), in metres. The one a drawing opens with. */
-export const GRID: GridSpec = { minorM: 2 * FOOT, majorM: 20 * FOOT };
+/** The grids on offer: `key` is the square in feet; the heavy line is every 10 ft (a 10 ft square is all heavy). */
+export const GRIDS = [1, 2, 5, 10].map((ft) => ({ key: String(ft), label: `${ft} ft squares`, minorM: ft * FOOT, majorM: MAJOR_FT * FOOT }));
+
+/** The grid: 2 ft squares, a heavy line every 10 ft (5 squares), in metres. The one a drawing opens with. */
+export const GRID: GridSpec = { minorM: 2 * FOOT, majorM: MAJOR_FT * FOOT };
 
 /** How strong the heavy lines are by default (0 to 1); the fine lines are a third of it. */
 export const GRID_OPACITY_DEFAULT = 0.3;
@@ -86,7 +89,7 @@ export function gridLines(from: number, to: number, step: number, major: number,
   return out;
 }
 
-/** The grid's size as it is captioned: "2 ft / 20 ft". */
+/** The grid's size as it is captioned: "2 ft / 10 ft". */
 export const gridCaption = (grid: GridSpec = GRID): string => `${formatLength(grid.minorM, 'imperial')} / ${formatLength(grid.majorM, 'imperial')}`;
 
 /**
