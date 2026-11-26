@@ -74,6 +74,8 @@ export class CaveView {
   private gridGroup = new THREE.Group();
   private gridSpec: { minorM: number; majorM: number } | null = null;
   private gridOpacity = 0.3;
+  /** The window the grid is drawn over now: its centre and half-width (metres), or null when it must be drawn again. */
+  private gridBuilt: { cx: number; cy: number; half: number } | null = null;
   private materials: LineMaterial[] = [];
   /** The ground above the cave (contours, terrain): beside `content`, never cleared by `rebuild()`. */
   private surfaceGroup = new THREE.Group();
@@ -2106,21 +2108,49 @@ export class CaveView {
     this.requestRender();
   }
 
+  /** Forgets the built grid so the next frame draws it afresh (the spec, strength or cave changed). */
   private rebuildGrid() {
+    this.gridBuilt = null;
+    this.clearGrid();
+  }
+
+  private clearGrid() {
     for (const o of [...this.gridGroup.children]) {
       this.gridGroup.remove(o);
       (o as THREE.LineSegments).geometry.dispose();
       ((o as THREE.LineSegments).material as THREE.Material).dispose();
     }
-    const b = this.data?.bounds;
+  }
+
+  /** How far from the view's centre the ground can be seen, in metres (generous: a tilted view sees further). */
+  private visibleRadius(): number {
+    if (this.camera === this.ortho) return (Math.max(this.ortho.right - this.ortho.left, this.ortho.top - this.ortho.bottom) / 2 / this.ortho.zoom) * 1.6;
+    const dist = this.persp.position.distanceTo(this.controls.target);
+    return dist * Math.tan((FOV * Math.PI) / 360) * Math.max(1, this.width / this.height) * 2.2;
+  }
+
+  /**
+   * Keeps the ground grid under whatever is in view, so it has no edge: it is drawn over a window several times the
+   * visible area and drawn again only when the view moves near the window's edge or zooms a long way. The squares
+   * stay the same size at every zoom; when even the heavy lines would be too many to read (zoomed far out) none show.
+   */
+  private ensureGrid() {
     const spec = this.gridSpec;
-    if (!b || !spec) return;
-    const pad = spec.majorM;
-    const x0 = b[0] - pad, x1 = b[3] + pad, y0 = b[1] - pad, y1 = b[4] + pad;
-    const GRID_MAX_LINES = 300;
-    const step = Math.max(x1 - x0, y1 - y0) / spec.minorM <= GRID_MAX_LINES ? spec.minorM : Math.max(x1 - x0, y1 - y0) / spec.majorM <= GRID_MAX_LINES ? spec.majorM : 0;
+    if (!spec) return;
+    const t = this.controls.target;
+    const R = Math.max(5, this.visibleRadius());
+    const g = this.gridBuilt;
+    if (g && R <= g.half / 1.5 && R >= g.half / 12 && Math.max(Math.abs(t.x - g.cx), Math.abs(t.y - g.cy)) + R <= g.half) return;
+    this.clearGrid();
+    const half = R * 3;
+    const cx = Math.round(t.x / spec.majorM) * spec.majorM;
+    const cy = Math.round(t.y / spec.majorM) * spec.majorM;
+    this.gridBuilt = { cx, cy, half };
+    const MAX_LINES = 300;
+    const step = (2 * half) / spec.minorM <= MAX_LINES ? spec.minorM : (2 * half) / spec.majorM <= MAX_LINES ? spec.majorM : 0;
     if (!step) return;
-    const z = b[2];
+    const x0 = cx - half, x1 = cx + half, y0 = cy - half, y1 = cy + half;
+    const z = this.data?.bounds?.[2] ?? 0;
     const fine: number[] = [];
     const heavy: number[] = [];
     const add = (at: number, horizontal: boolean) => {
@@ -2138,6 +2168,7 @@ export class CaveView {
       const mat = new THREE.LineBasicMaterial({ color: this.theme.text, transparent: true, opacity, depthWrite: false });
       const lines = new THREE.LineSegments(geo, mat);
       lines.renderOrder = -1;
+      lines.frustumCulled = false;
       this.gridGroup.add(lines);
     }
   }
@@ -2260,6 +2291,7 @@ export class CaveView {
   }
 
   private render() {
+    this.ensureGrid();
     // A lamp on the camera lights whatever you are looking at, from any angle.
     this.headlamp.position.copy(this.camera.position);
     this.headlamp.target.position.copy(this.controls.target);
