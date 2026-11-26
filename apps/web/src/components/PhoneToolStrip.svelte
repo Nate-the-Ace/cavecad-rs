@@ -27,8 +27,10 @@
 </script>
 
 <div class="strip" role="group" aria-label="Drawing tools">
-    <select class="type" class:pressed={cave.tool !== ''} aria-label="Drawing type" {value} onchange={choose}>
-      <option value="">None</option>
+    <label class="typebox" class:pressed={cave.tool !== ''}>
+    <span class="cap">Line type</span>
+    <select class="type" aria-label="Line type to draw with" {value} onchange={choose}>
+      <option value="">None: tap to pick</option>
       {#if isSym}<option value={SYM}>Symbol: {armed?.name ?? cave.tool.slice(4)}</option>{/if}
       {#each groups as g (g.name)}
         <optgroup label={g.name}>
@@ -36,6 +38,7 @@
         </optgroup>
       {/each}
     </select>
+    </label>
     <button class="sym" class:pressed={isSym} aria-haspopup="dialog" onclick={onSymbols}>
       <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" aria-hidden="true"><path d="M9 2.5 15.5 14h-13z" /><circle cx="9" cy="10" r="1.2" /></svg>
       <span>Symbols</span>
@@ -44,8 +47,12 @@
 
 <style>
   .strip { display: flex; gap: var(--p-gap); padding: 0 var(--p-gap); flex: none; background: var(--panel); border-bottom: 1px solid var(--line); }
-  .type, .sym { box-sizing: border-box; height: var(--p-row); border: 1px solid var(--line); background: var(--panel-2); color: var(--text); border-radius: var(--p-radius); touch-action: manipulation; }
-  .type { flex: 1; min-width: 0; padding: 0 6px; font: inherit; font-size: var(--p-font-input); }
+  .sym { box-sizing: border-box; height: var(--p-row); border: 1px solid var(--line); background: var(--panel-2); color: var(--text); border-radius: var(--p-radius); touch-action: manipulation; }
+  /* the dropdown sits in a box that says what it is for: "Line type", then the choice (None until one is picked) */
+  .typebox { flex: 1; min-width: 0; display: flex; align-items: center; gap: 6px; box-sizing: border-box; height: var(--p-row); padding: 0 0 0 8px; border: 1px solid var(--line); background: var(--panel-2); color: var(--text); border-radius: var(--p-radius); }
+  .cap { flex: none; font-size: var(--p-font-small); font-weight: 600; color: var(--muted); white-space: nowrap; }
+  .typebox.pressed .cap { color: var(--accent); }
+  .typebox .type { flex: 1; min-width: 0; height: 100%; border: 0; background: transparent; color: inherit; border-radius: 0 var(--p-radius) var(--p-radius) 0; padding: 0 6px 0 0; font: inherit; font-size: var(--p-font-input); font-weight: 600; text-overflow: ellipsis; }
   .sym { flex: none; display: inline-flex; align-items: center; gap: 5px; padding: 0 12px; font: inherit; font-size: var(--p-font); cursor: pointer; }
   .pressed { background: var(--accent-bg); border-color: var(--accent); color: var(--accent); }
 </style>
