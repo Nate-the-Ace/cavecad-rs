@@ -755,8 +755,9 @@
   .vp { outline: none; position: relative; height: 100%; overflow: hidden; background: var(--panel-2); }
   canvas { position: absolute; inset: 0; display: block; touch-action: none; }
   .overlay { pointer-events: none; }
-  .bar { position: absolute; top: 4px; left: 4px; max-width: calc(100% - 120px); flex-wrap: wrap; display: flex; gap: 6px 10px; align-items: center; padding: 6px 8px; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); font-size: 12px; }
-  .cube { position: absolute; top: 4px; right: 4px; display: flex; flex-direction: column; align-items: flex-end; }
+  /* z-index 20: over the phone's favourite chips (10), under the symbol sheet (30), so the open dropdown is never hidden by them */
+  .bar { z-index: 20; position: absolute; top: 4px; left: 4px; max-width: calc(100% - 120px); flex-wrap: wrap; display: flex; gap: 6px 10px; align-items: center; padding: 6px 8px; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); font-size: 12px; }
+  .cube { z-index: 20; position: absolute; top: 4px; right: 4px; display: flex; flex-direction: column; align-items: flex-end; }
   .cubehost.gone { display: none; }
   .cubemenu { position: relative; }
   .cubemenu > button { padding: 2px 6px; grid-auto-flow: column; gap: 2px; }
