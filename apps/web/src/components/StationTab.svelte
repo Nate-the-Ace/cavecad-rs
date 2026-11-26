@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { phone } from '../lib/phone.svelte';
   // The groups of the station tab: what the survey says about the picked station (kind of place, legs,
   // elevation), its passage dimensions and notes (editable: each edit goes to the shot that holds it,
   // as one undoable step in the Stations history), and whether it is an agreed benchmark. Elevation
@@ -128,7 +129,8 @@
     <button class="tool" class:pressed={detail.benchmark} aria-pressed={detail.benchmark} title="An agreed benchmark is drawn as a fixed survey point (a dotted triangle)" onclick={benchmark}><Landmark size={22} strokeWidth={1.6} /><span>Benchmark</span></button>
     <button class="tool" title="Show this station's cross section" onclick={() => (showPanel('section'), (cave.station = detail!.id))}><Scissors size={22} strokeWidth={1.6} /><span>Section</span></button>
     <div class="undo"><PanelUndo scope="stations" label="station edits" /></div>
-    <button class="tool" onclick={clearPick}><Check size={22} strokeWidth={1.6} /><span>Done</span></button>
+    <!-- the phone strip has its own Done in its header -->
+    {#if !phone.on}<button class="tool" onclick={clearPick}><Check size={22} strokeWidth={1.6} /><span>Done</span></button>{/if}
   </div>
 {/if}
 {#if message && part === 'mark'}<div class="msg" role="alert">{message}</div>{/if}

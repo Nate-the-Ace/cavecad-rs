@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { phone } from '../lib/phone.svelte';
   // The groups of the tab for a picked survey leg or splay: where it runs, what was measured (tape,
   // bearing, inclination, and the back readings), its note, and the flags that leave it off the map or out
   // of the survey. Edits go to the shot as one undoable step in the Stations history.
@@ -99,7 +100,8 @@
 {:else}
   <div class="btns">
     <div class="undo"><PanelUndo scope="stations" label="survey edits" /></div>
-    <button class="tool" onclick={clearPick}><Check size={22} strokeWidth={1.6} /><span>Done</span></button>
+    <!-- the phone strip has its own Done in its header -->
+    {#if !phone.on}<button class="tool" onclick={clearPick}><Check size={22} strokeWidth={1.6} /><span>Done</span></button>{/if}
   </div>
   {#if message}<div class="msg" role="alert">{message}</div>{/if}
 {/if}
