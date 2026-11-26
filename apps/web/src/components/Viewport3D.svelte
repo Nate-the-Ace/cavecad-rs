@@ -1,7 +1,7 @@
 <script lang="ts">
   import { looks } from '../lib/ink';
   import { onMount, untrack } from 'svelte';
-  import { ChevronDown, Home, Maximize, Box, Square, Eye, Library, Lock, LockOpen } from '@lucide/svelte';
+  import { LocateFixed, ChevronDown, Home, Maximize, Box, Square, Eye, Library, Lock, LockOpen } from '@lucide/svelte';
   import PanelUndo from './PanelUndo.svelte';
   import { isSymbolKind, needsWords, symbolDef, withLabelSpot } from '../lib/symbols';
   import { drawing, liveStyle } from '../lib/line-style.svelte';
@@ -28,7 +28,7 @@
   import { panelState, showPanel } from '../lib/workspace.svelte';
   import { setActiveView } from '../lib/snapshot';
   import { have, mapUrl, scans } from '../lib/scans.svelte';
-  import { entrancePick, pickEntrance, pickUndoable, surface, undoEntrancePick } from '../lib/surface.svelte';
+  import { locateEntrance, entrancePick, pickEntrance, pickUndoable, surface, undoEntrancePick } from '../lib/surface.svelte';
   import { terrainSampler } from '../lib/terrain';
   import { formatLength, unitName } from '../lib/units';
 
@@ -243,6 +243,21 @@
     entrancePick.on = false;
     entrancePick.message = 'Moving the entrance and downloading the surface for it…';
     entrancePick.message = await pickEntrance(cx, cy, r);
+  }
+  /** One button: GPS fix as the entrance (A1 is made in a cave with no stations), the ground there, the entrance to the lowest ground nearby. */
+  let locating = $state(false);
+  async function locate() {
+    if (locating) return;
+    locating = true;
+    showMenu = false;
+    entrancePick.canUndo = false;
+    entrancePick.message = 'Getting your location…';
+    try {
+      entrancePick.message = await locateEntrance((t) => (entrancePick.message = t));
+    } finally {
+      locating = false;
+    }
+    void refresh();
   }
   function undoPick() {
     entrancePick.message = undoEntrancePick();
@@ -685,6 +700,7 @@
         <div class="pop mainpop" role="group" aria-label="Map menu">
           <div class="toprow">
             <PanelUndo scope="map" label="on the map" />
+            <button disabled={locating} title="Use this device's GPS as the cave's entrance (making station A1 in a new cave), download the ground there, and move the entrance to the lowest ground nearby" onclick={locate}><LocateFixed size={15} /> {locating ? 'Locating…' : 'Locate entrance'}</button>
             <SnapButton toggleOnly />
           </div>
           <div class="showlist" role="group" aria-label="Show or hide">

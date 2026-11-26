@@ -256,7 +256,12 @@ pub fn survey_connect(kind: &str, options: &str) -> String {
         } else if kind == "sim" && choice.quirk == "memory" {
             // a pretend X1 with four shots left from another day: a leg and a splay
             s.open_memory();
-            for (d, a, i) in [(4.2, 131.0, -3.0), (4.21, 131.2, -3.1), (4.19, 130.9, -2.9), (1.8, 40.0, 12.0)] {
+            for (d, a, i) in [
+                (4.2, 131.0, -3.0),
+                (4.21, 131.2, -3.1),
+                (4.19, 130.9, -2.9),
+                (1.8, 40.0, 12.0),
+            ] {
                 let mut r = cave_instrument::Reading::new(d, a, i, "sim");
                 r.leg = Some(d > 4.0);
                 s.reading(host, r);
@@ -851,14 +856,20 @@ mod tests {
             })
         };
         // sent as it connects: acknowledged but kept aside
-        let v = json(survey_frame("frame", &packet(2.0, cave_instrument::Mark::None)));
+        let v = json(survey_frame(
+            "frame",
+            &packet(2.0, cave_instrument::Mark::None),
+        ));
         assert_eq!(v["sends"].as_array().unwrap().len(), 1);
         assert_eq!(v["snapshot"]["stored"].as_array().unwrap().len(), 1);
         assert!(v["snapshot"]["log"].as_array().unwrap().is_empty());
         let v = json(survey_memory_done());
         assert_eq!(v["snapshot"]["reading_memory"], false);
         // live: a splay marked Feature on the X1 is written with its class
-        json(survey_frame("frame", &packet(3.3, cave_instrument::Mark::Feature)));
+        json(survey_frame(
+            "frame",
+            &packet(3.3, cave_instrument::Mark::Feature),
+        ));
         let v = json(survey_settle_now());
         assert_eq!(v["snapshot"]["log"].as_array().unwrap().len(), 1);
         let scene: Value = json(crate::scene(false, "{}"));
@@ -890,13 +901,23 @@ mod tests {
             ..cavway::PacketSpec::default()
         });
         let v = json(survey_frame("frame", &packet));
-        assert!(v["snapshot"]["log"].as_array().unwrap().is_empty(), "no shot written");
+        assert!(
+            v["snapshot"]["log"].as_array().unwrap().is_empty(),
+            "no shot written"
+        );
         assert!(v["snapshot"]["feature"].is_null(), "used up");
         let hit = &v["snapshot"]["feature_hits"][0];
         assert_eq!(hit["symbol"], "sym-bat");
         assert_eq!(hit["label"], "Bat roost");
-        assert!((hit["offset"][0].as_f64().unwrap() - 4.0).abs() < 1e-6, "{hit}");
-        assert_eq!(cave_wasm_page(&trip)["rows"].as_array().unwrap().len(), rows_before, "the notebook is untouched");
+        assert!(
+            (hit["offset"][0].as_f64().unwrap() - 4.0).abs() < 1e-6,
+            "{hit}"
+        );
+        assert_eq!(
+            cave_wasm_page(&trip)["rows"].as_array().unwrap().len(),
+            rows_before,
+            "the notebook is untouched"
+        );
         // the next shot is an ordinary splay again
         let packet = cavway::encode_packet(&cavway::PacketSpec {
             distance: 2.0,

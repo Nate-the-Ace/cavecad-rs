@@ -401,3 +401,56 @@ export async function adoptSurfaceParts(parts: SurfaceParts): Promise<void> {
 
 setSurfacePartsSource(currentSurfaceParts);
 setSurfaceAdopter(adoptSurfaceParts);
+
+/** The device's position from its GPS (one fix, as exact as it will give): coordinates stay on this screen. */
+function devicePosition(): Promise<{ lat: number; lon: number; accuracy: number }> {
+  return new Promise((resolve, reject) => {
+    if (typeof navigator === 'undefined' || !navigator.geolocation) return reject(new Error('This device cannot say where it is.'));
+    navigator.geolocation.getCurrentPosition(
+      (p) => resolve({ lat: p.coords.latitude, lon: p.coords.longitude, accuracy: p.coords.accuracy }),
+      (e) => reject(new Error(e.code === 1 ? "CaveCAD is not allowed to use this device's location. Allow it in Settings (Privacy, Location Services)." : 'This device could not get a location fix. Try again in the open.')),
+      { enableHighAccuracy: true, timeout: 25000, maximumAge: 0 },
+    );
+  });
+}
+
+/**
+ * One button for the entrance: takes a GPS fix, makes it the cave's entrance (the first station, A1, is made when the cave
+ * has none yet), downloads the ground there, then moves the entrance to the lowest ground in a small circle around the fix
+ * (the circle is at least 10 m and at most 60 m across from the centre, 1.5 times the GPS's own uncertainty). `say` is told
+ * each step. Everything is on the Map's history, so its Undo steps back through it. Returns what to tell the person.
+ */
+export async function locateEntrance(say: (text: string) => void): Promise<string> {
+  if (surface.busy) return 'A download is running: try again when it has finished.';
+  say('Getting your location…');
+  let fix: { lat: number; lon: number; accuracy: number };
+  try {
+    fix = await devicePosition();
+  } catch (e) {
+    return e instanceof Error ? e.message : 'Could not get a location.';
+  }
+  const acc = Math.max(1, Math.round(fix.accuracy));
+  const source = `device:${acc}`;
+  const opened = cave.opened;
+  const st = geoStatus();
+  if (!st) return 'Open a cave first.';
+  let res: string;
+  if (st.stations.length === 0) {
+    res = engine.geoAddEntrance({ label: 'A1', lat: fix.lat, lon: fix.lon, source }, 'map');
+  } else {
+    // the entrance is the station the location is already on, else the one the survey suggests, else the first
+    const station = st.location?.station ?? (st.candidate.kind !== 'stored' ? st.candidate.station : null) ?? st.stations[0].id;
+    res = engine.geoSetLocation({ station, lat: fix.lat, lon: fix.lon, source }, 'map');
+  }
+  if (res !== 'ok') return res.replace(/^error: /, '');
+  changed();
+  say(`Got it (within about ${formatLength(acc, cave.units, 0)}). Downloading the ground…`);
+  const got = await fetchSurface({ photo: !!geoStatus()?.surface?.photo, elevation: true }, 'map');
+  if (cave.opened !== opened) return CAVE_CHANGED;
+  if (!got.ok || !surface.tiff) return `Your location is saved as the entrance (within about ${formatLength(acc, cave.units, 0)}), but the ground could not be downloaded (${got.lines.join(' ')}). Try again when you have signal.`;
+  const xyz = engine.geoEntranceXyz(cave.adjusted);
+  if (xyz.length < 2) return 'Your location is saved as the entrance, but its position in the cave is unknown.';
+  const r = Math.min(60, Math.max(10, acc * 1.5));
+  say(`Looking for the lowest ground within ${formatLength(r, cave.units, 0)}…`);
+  return pickEntrance(xyz[0], xyz[1], r);
+}

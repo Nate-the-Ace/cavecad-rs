@@ -21,13 +21,30 @@ fn entrance(scene: &cave_scene::Scene, station: cave_id::Id) -> Option<[f64; 3]>
     scene.stations.iter().find(|s| s.id == id).map(|s| s.at)
 }
 
+/// The entrance's position: its solved one, or, in a cave with no shots yet (a lone first station, A1), the
+/// origin: the first station of a survey is where it starts.
+fn entrance_or_origin(
+    doc: &Document,
+    scene: &cave_scene::Scene,
+    station: cave_id::Id,
+) -> Option<[f64; 3]> {
+    entrance(scene, station).or_else(|| {
+        let lone = scene.stations.is_empty()
+            && doc
+                .entity(station)
+                .is_some_and(|e| e.kind() == Kind::Station);
+        lone.then_some([0.0, 0.0, 0.0])
+    })
+}
+
 type Placed = (Placement, Location, [f64; 3], cave_scene::Scene);
 
 /// The placement of the cave on the Earth, the stored location, the entrance's solved position, the scene.
 fn placement(doc: &Document, adjusted: bool) -> Result<Placed, String> {
     let loc = record::location(doc).ok_or("no location")?;
     let scene = cave_scene::build(doc, adjusted);
-    let at = entrance(&scene, loc.station).ok_or("the entrance station has no position")?;
+    let at = entrance_or_origin(doc, &scene, loc.station)
+        .ok_or("the entrance station has no position")?;
     Ok((Placement::new([at[0], at[1]], loc.at()), loc, at, scene))
 }
 
@@ -155,6 +172,65 @@ pub fn geo_set_location(json_in: &str, scope: &str) -> String {
             source: req.source,
         };
         let actions = record::set_location(doc, &loc);
+        commit(doc, actions, scope)
+    })
+}
+
+#[derive(Deserialize)]
+struct AddEntrance {
+    label: String,
+    lat: f64,
+    lon: f64,
+    source: String,
+}
+
+/// For a cave with no stations yet: makes the entrance station (`label`, "A1" when empty) and stores the
+/// location on it, as one undoable edit on `scope`'s history. A cave that already has stations refuses
+/// (its entrance is one of them). JSON `{label, lat, lon, source}`; returns `ok` or `error: ...`.
+#[wasm_bindgen]
+pub fn geo_add_entrance(json_in: &str, scope: &str) -> String {
+    if let Err(e) = check_scope(scope) {
+        return e;
+    }
+    let req: AddEntrance = match serde_json::from_str(json_in) {
+        Ok(r) => r,
+        Err(e) => return err(e),
+    };
+    if !(req.lat.abs() <= 90.0 && req.lon.abs() <= 180.0) {
+        return err("that is not a latitude and longitude");
+    }
+    DOC.with(|d| {
+        let mut slot = d.borrow_mut();
+        let Some(doc) = slot.as_mut() else {
+            return err("no cave is open");
+        };
+        if !doc.ids_of(Kind::Station).is_empty() {
+            return err("this cave already has stations");
+        }
+        let id = cave_id::IdSource::next_id(&mut crate::random_ids());
+        let label = match req.label.trim() {
+            "" => "A1".to_string(),
+            l => l.chars().take(40).collect(),
+        };
+        let mut actions = vec![
+            Action::Create {
+                id,
+                kind: Kind::Station,
+            },
+            Action::Set {
+                id,
+                field: Field::StationLabel,
+                value: cave_doc::Value::Text(label),
+            },
+        ];
+        let loc = Location {
+            station: id,
+            lat: req.lat,
+            lon: req.lon,
+            ground_m: None,
+            source: req.source,
+        };
+        actions.extend(record::set_location(doc, &loc));
         commit(doc, actions, scope)
     })
 }
@@ -461,6 +537,37 @@ mod tests {
             ),
             "settings",
         )
+    }
+
+    #[test]
+    fn a_new_cave_gets_its_first_station_from_a_location() {
+        assert_eq!(crate::new_cave("t", "trip", "m"), "ok");
+        assert!(status()["stations"].as_array().unwrap().is_empty());
+        let bad = super::geo_add_entrance(
+            r#"{"label":"","lat":123,"lon":0,"source":"device:8"}"#,
+            "map",
+        );
+        assert!(bad.starts_with("error"), "{bad}");
+        let r = super::geo_add_entrance(
+            r#"{"label":" ","lat":36.9,"lon":-86.4,"source":"device:8"}"#,
+            "map",
+        );
+        assert_eq!(r, "ok");
+        let st = status();
+        assert_eq!(st["stations"].as_array().unwrap().len(), 1);
+        assert_eq!(st["stations"][0]["label"], "A1");
+        assert_eq!(st["location"]["station"], st["stations"][0]["id"]);
+        // a lone first station is the origin, so ground can be looked up around it
+        assert_eq!(geo_entrance_xyz(false), vec![0.0, 0.0, 0.0]);
+        // a cave that has stations keeps its own entrance
+        let again = super::geo_add_entrance(
+            r#"{"label":"A2","lat":36.9,"lon":-86.4,"source":"device:8"}"#,
+            "map",
+        );
+        assert!(again.starts_with("error"), "{again}");
+        // and one undo on the Map's history takes the station and location back together
+        assert!(crate::undo("map"));
+        assert!(status()["stations"].as_array().unwrap().is_empty());
     }
 
     #[test]
