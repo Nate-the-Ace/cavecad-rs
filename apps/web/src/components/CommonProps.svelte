@@ -7,6 +7,7 @@
   import LengthField from './LengthField.svelte';
   import PanelUndo from './PanelUndo.svelte';
   import { cave, changed } from '../lib/cave.svelte';
+  import { engine, type Scope } from '../lib/engine';
   import { byGroup, sharedValue, writeAll, type Prop, type Value } from '../lib/properties';
   import { sharedProps, type AnySubject } from '../lib/property-defs';
 
@@ -44,7 +45,8 @@
   });
 
   function write(p: Prop, v: Value) {
-    const r = writeAll(subjects, p, v);
+    // one change to several things is one undo step (in each panel it touches)
+    const r = engine.editGroup(() => writeAll(subjects, p, v));
     message = r === 'ok' ? '' : r.replace(/^error: /, '');
     changed();
   }
@@ -62,6 +64,13 @@
   /** The Dimensions group shows each edge's distance with its open box beside it. */
   const edgeCells = (list: Prop[]): { len: Prop; open?: Prop }[] =>
     list.filter((p) => p.control === 'length').map((len) => ({ len, open: list.find((p) => p.id === `${len.id}_open`) }));
+  /** The histories these edits go to: stations and shots in Stations, a drawn object in the view it was drawn in. */
+  const scopes = $derived.by<{ scope: Scope; label: string }[]>(() => {
+    const names: Record<string, string> = { stations: 'the survey', map: 'the map', profile: 'the profile', section: 'the cross section' };
+    const seen = new Set<string>();
+    for (const s of subjects) seen.add(s.type === 'drawn' ? (s.data as { view: string }).view : 'stations');
+    return [...seen].map((scope) => ({ scope: scope as Scope, label: `in ${names[scope] ?? scope}` }));
+  });
   void cave;
 </script>
 
@@ -122,7 +131,7 @@
         {/if}
       </section>
     {/each}
-    {#if subjects.some((x) => x.type !== 'drawn')}<div class="undo"><PanelUndo scope="stations" label="edits to these" /></div>{/if}
+    <div class="undos">{#each scopes as u (u.scope)}<span class="undo"><PanelUndo scope={u.scope} label={u.label} /></span>{/each}</div>
   {/if}
   {#if message}<div class="msg" role="alert">{message}</div>{/if}
 </div>
@@ -158,6 +167,7 @@
   .clr input[type='color'] { width: 34px; height: 26px; padding: 0; border: 1px solid var(--line); border-radius: 6px; background: var(--panel-2); }
   .small { font: inherit; font-size: 12px; padding: 3px 9px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel-2); color: var(--text); }
   .small:disabled { opacity: 0.5; }
-  .undo { display: flex; gap: 2px; }
+  .undos { display: flex; flex-wrap: wrap; gap: 4px 12px; }
+  .undo { display: inline-flex; gap: 2px; }
   .msg { color: var(--danger); font-size: 11px; }
 </style>

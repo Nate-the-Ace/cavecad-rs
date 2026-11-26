@@ -22,6 +22,19 @@ impl History {
         self.redo.clear();
     }
 
+    /// Remembers a local edit as part of the last one, so a single undo takes both back (a change made to
+    /// several things at once is one step). With nothing recorded yet it is recorded as usual.
+    pub fn record_merged(&mut self, edit: &Edit) {
+        match self.undo.pop() {
+            // the later edit is undone first, then the earlier one
+            Some(last) => self
+                .undo
+                .push(edit.inverse.iter().cloned().chain(last).collect()),
+            None => self.undo.push(edit.inverse.clone()),
+        }
+        self.redo.clear();
+    }
+
     /// True if there is something to undo.
     pub fn can_undo(&self) -> bool {
         !self.undo.is_empty()
@@ -97,6 +110,53 @@ mod tests {
         h.redo(&mut d).unwrap();
         h.redo(&mut d).unwrap();
         assert_eq!(d.entity(id).unwrap().text(Field::StationLabel), "A2");
+    }
+
+    #[test]
+    fn merged_edits_undo_together() {
+        let mut d = Document::new(ActorId(1));
+        let mut h = History::new();
+        let mut ids = SeqIds::new(1);
+        let a = ids.next_id();
+        let b = ids.next_id();
+        let make = |d: &mut Document, id| {
+            d.edit(vec![
+                Action::Create {
+                    id,
+                    kind: Kind::Station,
+                },
+                Action::Set {
+                    id,
+                    field: Field::StationLabel,
+                    value: Value::Text("x".into()),
+                },
+            ])
+            .unwrap()
+        };
+        let e = make(&mut d, a);
+        h.record(&e);
+        // two changes made together: the first starts a step, the second joins it
+        let rename = |d: &mut Document, id, to: &str| {
+            d.edit(vec![Action::Set {
+                id,
+                field: Field::StationLabel,
+                value: Value::Text(to.into()),
+            }])
+            .unwrap()
+        };
+        let e = make(&mut d, b);
+        h.record(&e);
+        let e = rename(&mut d, a, "y");
+        h.record(&e);
+        let e = rename(&mut d, b, "z");
+        h.record_merged(&e);
+        h.undo(&mut d).unwrap();
+        assert_eq!(d.entity(a).unwrap().text(Field::StationLabel), "x");
+        assert_eq!(d.entity(b).unwrap().text(Field::StationLabel), "x");
+        assert!(h.can_undo(), "the two creations are still there to undo");
+        h.redo(&mut d).unwrap();
+        assert_eq!(d.entity(a).unwrap().text(Field::StationLabel), "y");
+        assert_eq!(d.entity(b).unwrap().text(Field::StationLabel), "z");
     }
 
     #[test]

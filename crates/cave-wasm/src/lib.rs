@@ -1911,13 +1911,40 @@ pub fn add_profile_sketch(
     }
 }
 
+thread_local! {
+    /// While a group of edits is being made (a change to several things at once): the panels that already have
+    /// a step for it. The first edit in a panel starts that panel's step; the rest join it.
+    static GROUP: std::cell::RefCell<Option<std::collections::HashSet<String>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Starts a group of edits: until `end_edit_group`, all the edits made in one panel are one undo step in it.
+#[wasm_bindgen]
+pub fn begin_edit_group() {
+    GROUP.with(|g| *g.borrow_mut() = Some(Default::default()));
+}
+
+/// Ends the group started by `begin_edit_group`.
+#[wasm_bindgen]
+pub fn end_edit_group() {
+    GROUP.with(|g| *g.borrow_mut() = None);
+}
+
 /// Puts an edit on a panel's undo history (`profile`, `section` or `map`).
 pub(crate) fn record_edit(scope: &str, edit: &cave_doc::Edit) {
+    let joins = GROUP.with(|g| {
+        g.borrow_mut()
+            .as_mut()
+            .is_some_and(|started| !started.insert(scope.to_string()))
+    });
     HISTORY.with(|h| {
-        h.borrow_mut()
-            .entry(scope.to_string())
-            .or_default()
-            .record(edit)
+        let mut h = h.borrow_mut();
+        let history = h.entry(scope.to_string()).or_default();
+        if joins {
+            history.record_merged(edit);
+        } else {
+            history.record(edit);
+        }
     });
 }
 

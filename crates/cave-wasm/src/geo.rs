@@ -539,6 +539,45 @@ mod tests {
         )
     }
 
+    /// A station's passage left distance, as the station tab reads it.
+    fn left_of(id: &str) -> Option<f64> {
+        let d: serde_json::Value = serde_json::from_str(&crate::station_detail(id, false)).unwrap();
+        d["walls"]["left"].as_f64()
+    }
+    fn is(left: Option<f64>, v: f64) -> bool {
+        left.is_some_and(|l| (l - v).abs() < 1e-9)
+    }
+
+    fn set_left(id: &str, left: f64) {
+        let d: serde_json::Value = serde_json::from_str(&crate::station_detail(id, false)).unwrap();
+        let mut w = d["walls"].clone();
+        w.as_object_mut().unwrap().remove("on");
+        w["left"] = left.into();
+        assert_eq!(crate::set_station_walls(id, &w.to_string()), "ok");
+    }
+
+    #[test]
+    fn a_change_to_several_stations_is_one_undo_step() {
+        crate::open_demo(CAVE);
+        let (a, b) = (station("A1"), station("B"));
+        let (was_a, was_b) = (left_of(&a), left_of(&b));
+        crate::begin_edit_group();
+        set_left(&a, 7.5);
+        set_left(&b, 8.5);
+        crate::end_edit_group();
+        assert!(is(left_of(&a), 7.5) && is(left_of(&b), 8.5));
+        assert!(crate::undo("stations"));
+        assert_eq!(left_of(&a), was_a, "one undo takes the first station back");
+        assert_eq!(left_of(&b), was_b, "and the second with it");
+        assert!(crate::redo("stations"));
+        assert!(is(left_of(&a), 7.5) && is(left_of(&b), 8.5));
+        // outside a group each edit is its own step
+        set_left(&a, 1.0);
+        set_left(&b, 2.0);
+        assert!(crate::undo("stations"));
+        assert!(is(left_of(&b), 8.5) && is(left_of(&a), 1.0));
+    }
+
     #[test]
     fn a_new_cave_gets_its_first_station_from_a_location() {
         assert_eq!(crate::new_cave("t", "trip", "m"), "ok");
