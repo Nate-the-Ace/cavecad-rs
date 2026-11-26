@@ -15,6 +15,8 @@
   const shared = $derived(sharedProps(subjects));
   const groups = $derived(byGroup(shared));
   let message = $state('');
+  /** A slider being dragged: shown at once, written when it is let go. */
+  let drag = $state<Record<string, number>>({});
 
   // length fields hold what is typed; everything else writes on change
   // (filled before the first render: a length field handed `undefined` has nothing to show)
@@ -92,6 +94,26 @@
                 <label class="txt"><span>{p.label}</span><input type="text" maxlength="200" value={sv.various ? '' : String(sv.value ?? '')} placeholder={sv.various ? 'VARIOUS' : p.label} aria-label={p.label} onchange={(e) => write(p, e.currentTarget.value)} /></label>
               {:else if p.control === 'angle'}
                 <label class="num"><span>{p.label}</span><input type="text" inputmode="decimal" value={angleText(p)} placeholder={sv.various ? 'VARIOUS' : ''} aria-label={p.label} onchange={(e) => angle(p, e.currentTarget.value)} />°</label>
+              {:else if p.control === 'select'}
+                {@const opts = p.options?.() ?? []}
+                <label class="sel"><span>{p.label}</span>
+                  <select aria-label={p.label} value={sv.various ? '' : String(sv.value ?? '')} onchange={(e) => write(p, e.currentTarget.value)}>
+                    {#if sv.various}<option value="" disabled selected>VARIOUS</option>{/if}
+                    {#each opts as [key, label] (key)}<option value={key}>{label}</option>{/each}
+                  </select>
+                </label>
+              {:else if p.control === 'range'}
+                {@const shown = drag[p.id] ?? (sv.various ? null : (sv.value as number))}
+                <label class="rng"><span>{p.label} <b>{shown === null ? 'VARIOUS' : (p.format?.(shown) ?? String(shown))}</b></span>
+                  <input type="range" min={p.min} max={p.max} step={p.step} value={shown ?? p.min} aria-label={p.label}
+                    oninput={(e) => (drag[p.id] = Number(e.currentTarget.value))}
+                    onchange={(e) => { const v = Number(e.currentTarget.value); delete drag[p.id]; write(p, v); }} />
+                </label>
+              {:else if p.control === 'color'}
+                <label class="clr"><span>{p.label}</span>
+                  <input type="color" aria-label={p.label} value={sv.various || !sv.value ? '#e8e6e1' : String(sv.value)} onchange={(e) => write(p, e.currentTarget.value)} />
+                  <button class="small" disabled={!sv.various && !sv.value} onclick={() => write(p, '')}>Auto</button>
+                </label>
               {:else}
                 <LengthField id={`common-${p.id}`} label={p.label} min={p.min} placeholder={sv.various ? 'VARIOUS' : ''} bind:value={lens[p.id]} />
               {/if}
@@ -100,7 +122,7 @@
         {/if}
       </section>
     {/each}
-    <div class="undo"><PanelUndo scope="stations" label="edits to these" /></div>
+    {#if subjects.some((x) => x.type !== 'drawn')}<div class="undo"><PanelUndo scope="stations" label="edits to these" /></div>{/if}
   {/if}
   {#if message}<div class="msg" role="alert">{message}</div>{/if}
 </div>
@@ -108,12 +130,17 @@
 <style>
   .common { display: flex; flex-direction: column; gap: 4px; width: 100%; font-size: 12px; }
   .none { margin: 6px 0; color: var(--muted); }
-  .edges { display: grid; grid-template-columns: 1fr 1fr; gap: 2px 10px; width: 100%; }
+  .edges { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 2px 10px; width: 100%; }
   .cell { display: flex; align-items: center; gap: 4px; white-space: nowrap; min-width: 0; }
+  /* the distance field takes what is left, so the open box and its word always fit beside it */
+  .cell :global(.field) { flex: 1 1 0; min-width: 0; }
+  .cell :global(.field input) { flex: 1 1 0; width: auto; min-width: 2.6em; }
+  .cell :global(.field label) { flex: none; }
+  .cell .chk { flex: none; font-size: 11px; gap: 3px; }
   .items { display: flex; flex-wrap: wrap; gap: 4px 14px; align-items: center; }
   .common :global(.field) { gap: 4px; }
   .common :global(.field label) { min-width: 30px; }
-  .common :global(input[inputmode]) { width: 4.6em; }
+  .items :global(input[inputmode]) { width: 4.6em; }
   .common :global(input::placeholder) { color: var(--muted); font-size: 10px; letter-spacing: -0.2px; }
   .common :global(.msg) { display: none; }
   .chk { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); }
@@ -122,6 +149,15 @@
   .txt input { flex: 1 1 0; min-width: 0; height: 28px; padding: 0 8px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel-2); color: var(--text); font: inherit; font-size: var(--p-font-input, 16px); }
   .num { display: inline-flex; align-items: center; gap: 4px; }
   .num input { width: 4.6em; height: 26px; padding: 0 6px; text-align: right; border: 1px solid var(--line); border-radius: 6px; background: var(--panel-2); color: var(--text); font: inherit; }
+  .sel, .rng, .clr { display: flex; align-items: center; gap: 8px; color: var(--muted); }
+  .sel { width: 100%; }
+  .sel select { flex: 1 1 0; min-width: 0; height: 28px; padding: 0 6px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel-2); color: var(--text); font: inherit; font-size: var(--p-font-input, 16px); }
+  .rng { flex-direction: column; align-items: stretch; gap: 2px; flex: 1 1 140px; min-width: 120px; }
+  .rng b { color: var(--text); font-weight: 600; }
+  .rng input { margin: 0; accent-color: var(--accent); }
+  .clr input[type='color'] { width: 34px; height: 26px; padding: 0; border: 1px solid var(--line); border-radius: 6px; background: var(--panel-2); }
+  .small { font: inherit; font-size: 12px; padding: 3px 9px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel-2); color: var(--text); }
+  .small:disabled { opacity: 0.5; }
   .undo { display: flex; gap: 2px; }
   .msg { color: var(--danger); font-size: 11px; }
 </style>

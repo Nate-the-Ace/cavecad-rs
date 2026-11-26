@@ -6,7 +6,6 @@
   // The settings of the picked or selected object (a drawn line, symbol or text; a station, leg, splay) as a strip over
   // the bottom of the Sketch canvas: the same parts the ribbon's contextual tab shows on the desktop. It shows when
   // something is picked; Done puts it away (the object stays picked), and a long press on the object brings it back.
-  import SelectionTools from './SelectionTools.svelte';
   import CommonProps from './CommonProps.svelte';
   import { loadSubjects } from '../lib/property-defs';
   import { cave, selectedIds, setPick } from '../lib/cave.svelte';
@@ -35,7 +34,7 @@
   /** Everything in a mixed selection, as the property registry reads it (lib/property-defs.ts). */
   const subjects = $derived.by(() => {
     void cave.version;
-    return mode === 'multi' ? loadSubjects({ stations: stationIds, shots: shotIds, drawn: ids }) : [];
+    return mode === 'multi' || mode === 'selection' ? loadSubjects({ stations: stationIds, shots: shotIds, drawn: ids }) : [];
   });
   const count = (n: number, one: string, many: string) => (n ? [`${n} ${n === 1 ? one : many}`] : []);
   const multiTitle = $derived([...count(stationIds.length, 'station', 'stations'), ...count(shotIds.length, 'leg or splay', 'legs and splays'), ...count(infos.length, 'drawn object', 'drawn objects')].join(', '));
@@ -64,22 +63,6 @@
   const subtitle = $derived(
     mode === 'multi' ? multiTitle : mode !== 'selection' ? '' : infos.length > 1 ? `${infos.length} ${sameCategory ? plural(kind, infos.length) : 'objects'}${alike ? `: ${names.get(kind) ?? ''}` : ''}` : (names.get(kind) ?? ''),
   );
-
-  // what shows, as [heading, part] pairs: a selection's parts follow the ribbon's tab
-  const parts = $derived.by<{ name: string; part: string }[]>(() => {
-    if (mode !== 'selection') return [];
-    const stamps = infos.every((i) => isStampKind(i.kind));
-    const words = infos.some((i) => i.kind === 'text' || i.kind === 'callout' || !!i.text);
-    const out = [{ name: stamps ? 'Annotation' : 'Line', part: 'type' }];
-    if (stamps && words) out.push({ name: 'Text format', part: 'format' });
-    if (alike && kind === 'callout') out.push({ name: 'Leader', part: 'leader' });
-    // the line style (type, scale) is shared by lines of different kinds, and the hatch by areas; symbols, text and custom fills share none of it
-    const lineish = infos.every((i) => !isStampKind(i.kind) && i.kind !== 'fill-custom');
-    const fills = infos.every((i) => isFillKind(i.kind));
-    const noFills = infos.every((i) => !isFillKind(i.kind));
-    if (lineish && (fills || noFills)) out.push({ name: fills ? 'Area' : 'Line style', part: 'style' });
-    return out;
-  });
 
   // a new thing picked shows its settings
   const key = $derived(mode === 'selection' ? `l:${ids.join(',')}` : mode === 'pick' ? `p:${cave.pick.kind}:${cave.pick.id}` : mode === 'multi' ? `m:${ids.join(',')}|${picks.map((p) => p.id).join(',')}` : '');
@@ -112,7 +95,7 @@
     </header>
     <div class="body" class:pick={mode === 'pick'}>
       {#if mode === 'selection'}
-        {#each parts as g (g.part)}<section><h4>{g.name}</h4><SelectionTools part={g.part as 'type'} /></section>{/each}
+        <section><CommonProps subjects={subjects} /></section>
       {:else if mode === 'multi'}
         <section>
           <CommonProps subjects={subjects} />

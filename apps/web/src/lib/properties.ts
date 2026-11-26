@@ -10,7 +10,7 @@ export type SubjectType = 'station' | 'shot' | 'drawn';
 /** A setting's value: a number (a length in metres, an angle in degrees), a switch, words, or nothing set. */
 export type Value = number | boolean | string | null;
 /** How a property is edited. */
-export type Control = 'length' | 'angle' | 'toggle' | 'text';
+export type Control = 'length' | 'angle' | 'toggle' | 'text' | 'select' | 'range' | 'color';
 
 /** One object in a selection, with what the engine says about it (read once, when the selection changes). */
 export interface Subject<D = unknown> {
@@ -20,7 +20,7 @@ export interface Subject<D = unknown> {
 }
 
 /** The groups settings are listed under, in order. */
-export const GROUPS = ['Note', 'Dimensions', 'Measured', 'Flags', 'Mark'] as const;
+export const GROUPS = ['Note', 'Symbol', 'Line', 'Text format', 'Leader', 'Dimensions', 'Measured', 'Flags', 'Mark'] as const;
 export type Group = (typeof GROUPS)[number];
 
 /** One setting. */
@@ -29,8 +29,15 @@ export interface Prop<S extends Subject = Subject> {
   label: string;
   group: Group;
   control: Control;
-  /** Smallest a length may be. */
+  /** Smallest a length or a slider may be. */
   min?: number;
+  /** Largest a slider may be, and its step. */
+  max?: number;
+  step?: number;
+  /** How a slider's value reads (`×1.50`). */
+  format?: (v: number) => string;
+  /** The choices of a select, as [value, label] (read when the panel is drawn, so the list can follow the cave). */
+  options?: () => [string, string][];
   /** Whether this setting exists for that object. */
   applies(s: S): boolean;
   /** The value now, or null when it is not set. */
