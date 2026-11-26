@@ -1,7 +1,7 @@
 <script lang="ts">
   import { looks } from '../lib/ink';
   import { onMount, untrack } from 'svelte';
-  import { ChevronDown, Home, Maximize, Box, Square, Palette, Eye, Library, Lock, LockOpen } from '@lucide/svelte';
+  import { ChevronDown, Home, Maximize, Box, Square, Eye, Library, Lock, LockOpen } from '@lucide/svelte';
   import PanelUndo from './PanelUndo.svelte';
   import { shelf } from '../lib/shelf.svelte';
   import { isSymbolKind, needsWords, symbolDef, withLabelSpot } from '../lib/symbols';
@@ -708,7 +708,7 @@
     </div>
     <PanelUndo scope="map" label="on the map" />
     <SnapButton />
-    <button class:on={depthColor} title="Colour by elevation" onclick={() => ((depthColor = !depthColor), view?.setElevationColors(depthColor), loadPassage())}><Palette size={15} /></button>
+    <!-- The elevation-colour (palette) button is out for now; `depthColor` and `setElevationColors` are kept. -->
     {#if hopped > 0}
       <button title="Some lines hop between passages on different levels. Re-attach each to the level it starts on." onclick={fixHopped}>Fix {hopped} line{hopped === 1 ? '' : 's'}</button>
     {/if}
