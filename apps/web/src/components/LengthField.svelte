@@ -4,7 +4,7 @@
   import { cave } from '../lib/cave.svelte';
   import { lengthText, parseLength, unitName } from '../lib/units';
 
-  let { value = $bindable<number | null>(null), id, label = '', min }: { value?: number | null; id: string; label?: string; min?: number } = $props();
+  let { value = $bindable<number | null>(null), id, label = '', min, placeholder = '' }: { value?: number | null; id: string; label?: string; min?: number; placeholder?: string } = $props();
 
   let text = $state('');
   let bad = $state(false);
@@ -13,7 +13,7 @@
   // Show the held value in the current unit, unless the person is in the middle of typing.
   $effect(() => {
     const u = cave.units;
-    const v = value;
+    const v = value ?? null; // a bound value that is not there yet is no value
     if (!editing) {
       text = v === null ? '' : lengthText(v, u);
       bad = false;
@@ -40,7 +40,7 @@
 
 <span class="field" class:bad>
   {#if label}<label for={id}>{label}</label>{/if}
-  <input {id} inputmode="decimal" autocomplete="off" bind:value={text} oninput={() => (editing = true)} onblur={commit} onkeydown={(e) => e.key === 'Enter' && commit()} aria-invalid={bad} />
+  <input {id} inputmode="decimal" autocomplete="off" {placeholder} bind:value={text} oninput={() => (editing = true)} onblur={commit} onkeydown={(e) => e.key === 'Enter' && commit()} aria-invalid={bad} />
   <span class="unit">{unitName(cave.units)}</span>
   {#if bad}<span class="msg" role="alert">Not a length{cave.units === 'imperial' ? " (try 12.5 or 5'6\")" : ' (try 12.5 or 30 cm)'}</span>{/if}
 </span>

@@ -17,7 +17,10 @@
   let message = $state('');
 
   // length fields hold what is typed; everything else writes on change
-  let lens = $state<Record<string, number | null>>({});
+  // (filled before the first render: a length field handed `undefined` has nothing to show)
+  let lens = $state<Record<string, number | null>>(
+    Object.fromEntries(shared.filter((p) => p.control === 'length').map((p) => [p.id, sharedValue(subjects, p).value as number | null])),
+  );
   $effect(() => {
     const list = shared.filter((p) => p.control === 'length');
     const subs = subjects;
@@ -70,7 +73,7 @@
           <div class="edges">
             {#each edgeCells(g.props) as cell (cell.len.id)}
               <span class="cell">
-                <LengthField id={`common-${cell.len.id}`} label={cell.len.label} min={cell.len.min} bind:value={lens[cell.len.id]} />
+                <LengthField id={`common-${cell.len.id}`} label={cell.len.label} min={cell.len.min} placeholder={sharedValue(subjects, cell.len).various ? 'VARIOUS' : ''} bind:value={lens[cell.len.id]} />
                 {#if cell.open}
                   {@const op = cell.open}
                   {@const sv = sharedValue(subjects, op)}
@@ -90,7 +93,7 @@
               {:else if p.control === 'angle'}
                 <label class="num"><span>{p.label}</span><input type="text" inputmode="decimal" value={angleText(p)} placeholder={sv.various ? 'VARIOUS' : ''} aria-label={p.label} onchange={(e) => angle(p, e.currentTarget.value)} />°</label>
               {:else}
-                <LengthField id={`common-${p.id}`} label={p.label} min={p.min} bind:value={lens[p.id]} />
+                <LengthField id={`common-${p.id}`} label={p.label} min={p.min} placeholder={sv.various ? 'VARIOUS' : ''} bind:value={lens[p.id]} />
               {/if}
             {/each}
           </div>
@@ -110,7 +113,8 @@
   .items { display: flex; flex-wrap: wrap; gap: 4px 14px; align-items: center; }
   .common :global(.field) { gap: 4px; }
   .common :global(.field label) { min-width: 34px; }
-  .common :global(input[inputmode]) { width: 4.6em; }
+  .common :global(input[inputmode]) { width: 5.6em; }
+  .common :global(input::placeholder) { color: var(--muted); font-size: 11px; }
   .common :global(.msg) { display: none; }
   .chk { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); }
   .txt { display: flex; align-items: center; gap: 8px; width: 100%; }
