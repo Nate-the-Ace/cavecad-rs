@@ -7,6 +7,7 @@
   import { clearFavorites, symbolFavorites } from '../lib/symbol-favorites.svelte';
   import { phonePrefs, setLiveStrip, setSymbolStandard } from '../lib/phone-prefs.svelte';
   import GridSettings from './GridSettings.svelte';
+  import SnapSettings from './SnapSettings.svelte';
   import './settings.css';
 
   const defs = drawingDefaults();
@@ -27,6 +28,8 @@
 
 <div class="set">
   <GridSettings />
+  <h4 class="sub">Snap</h4>
+  <SnapSettings />
   {#each defs as d (d.id)}
     {#if d.kind === 'range'}
       {@const v = option(d.id, d.default)}
@@ -53,6 +56,7 @@
 </div>
 
 <style>
+  .sub { margin: 8px 0 0; font-size: var(--p-font-small); text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
   .range input[type='range'] { flex: 1 1 auto; min-height: var(--p-row); margin: 0; accent-color: var(--accent); }
   .range .val { flex: 0 0 76px; text-align: right; font-size: var(--p-font-small); color: var(--muted); }
   .clear { flex: none; }

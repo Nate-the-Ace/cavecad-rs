@@ -8,7 +8,6 @@
   import { onTheme } from '../lib/theme';
   import { Maximize, ChevronLeft, ChevronRight } from '@lucide/svelte';
   import PanelUndo from '../components/PanelUndo.svelte';
-  import GridPicker from '../components/GridPicker.svelte';
   import { GRID_OPACITY_DEFAULT, drawGrid, gridChoice } from '../lib/sketch-grid';
   import { looks } from '../lib/ink';
   import { drawHandles, drawStrokes, ornamentFor } from '../lib/section-glyph';
@@ -825,7 +824,6 @@ import { planFrame } from '../lib/snap-types';
     </select>
     <button title="Next station" disabled={index < 0 || index >= stations.length - 1} onclick={() => step(1)}><ChevronRight size={15} /></button>
     <PanelUndo scope="section" label="in this cross section" />
-    <GridPicker label="Section grid" />
     <button title="Fit (or double middle-click)" onclick={fit}><Maximize size={15} /></button>
   </div>
   {#if ready && !stations.length}

@@ -4,7 +4,6 @@
   import { onTheme } from '../lib/theme';
   import { Maximize } from '@lucide/svelte';
   import PanelUndo from '../components/PanelUndo.svelte';
-  import GridPicker from '../components/GridPicker.svelte';
   import { GRID_OPACITY_DEFAULT, drawGrid, gridChoice } from '../lib/sketch-grid';
   import { looks } from '../lib/ink';
   import { markViewUsed, registerSelectAll } from '../lib/select-all';
@@ -919,7 +918,6 @@ import { planFrame } from '../lib/snap-types';
     </select>
     <label class="show" title="Show the cross sections drawn at stations, next to their stations (drag one to place it)"><input type="checkbox" checked={cave.showSections.profile} onchange={(e) => (setShowSections('profile', e.currentTarget.checked), schedule())} /> Sections</label>
     <PanelUndo scope="profile" label="in the profile" />
-    <GridPicker label="Profile grid" />
     <button title="Fit band (or double middle-click)" onclick={fit}><Maximize size={15} /></button>
   </div>
   {#if band?.note || message || (band && (band.omitted > 0 || band.unplaced > 0))}

@@ -3,13 +3,11 @@
   import { onMount, untrack } from 'svelte';
   import { ChevronDown, Home, Maximize, Box, Square, Eye, Library, Lock, LockOpen } from '@lucide/svelte';
   import PanelUndo from './PanelUndo.svelte';
-  import { shelf } from '../lib/shelf.svelte';
   import { isSymbolKind, needsWords, symbolDef, withLabelSpot } from '../lib/symbols';
   import { drawing, liveStyle } from '../lib/line-style.svelte';
   import { cursorsFor, presence as room, reportCursor } from '../lib/presence.svelte';
   import { parseStyle, styleText } from '../lib/line-style-text';
   import TripTimeline from './TripTimeline.svelte';
-  import GridPicker from './GridPicker.svelte';
   import { GRID_OPACITY_DEFAULT, gridChoice } from '../lib/sketch-grid';
   import { engine, loadEngine, type Scene, type TypeStyle } from '../lib/engine';
   import { CaveView, type Projection } from '../lib/viewport/cave-view';
@@ -674,17 +672,15 @@
     <TripTimeline trips={timelineTrips} onChange={refresh} onClose={() => (timelineTrips = null)} />
   {/if}
   <div class="bar">
-    <!-- One dropdown named for the cave holds the rest of the map's controls (cave shelf, undo, snap, what is shown). -->
+    <!-- One dropdown named for the cave holds the rest of the map's controls (undo, snap on/off, what is shown). -->
     <div class="menu">
-      <button class="caves" class:on={showMenu || filter.hiddenTypes.length + filter.hiddenTrips.length > 0} title="The cave, and the map's controls: open a cave, undo, snap, what is shown" aria-expanded={showMenu} aria-haspopup="true" onclick={openMenu}><Library size={15} /> {cave.hasCave ? cave.name || 'Cave' : 'Caves'} <ChevronDown size={14} /></button>
+      <button class="caves" class:on={showMenu || filter.hiddenTypes.length + filter.hiddenTrips.length > 0} title="The map's controls: undo, snap on/off, what is shown" aria-expanded={showMenu} aria-haspopup="true" onclick={openMenu}><Library size={15} /> {cave.hasCave ? cave.name || 'Cave' : 'Caves'} <ChevronDown size={14} /></button>
       {#if showMenu}
         <div class="pop mainpop" role="group" aria-label="Map menu">
           <div class="toprow">
-            <button title="The Cave Shelf: open a cave, start a new one, add a trip" onclick={() => ((shelf.open = true), (showMenu = false))}><Library size={15} /> Caves…</button>
             <PanelUndo scope="map" label="on the map" />
-            <SnapButton />
+            <SnapButton toggleOnly />
           </div>
-          <div class="toprow"><GridPicker label="Map grid" /></div>
           <div class="showlist" role="group" aria-label="Show or hide">
           <h4>On the map</h4>
           <label title="Show the survey with loop errors spread out (least-squares adjusted) instead of as measured"><input type="checkbox" bind:checked={cave.adjusted} onchange={refresh} /> Adjusted</label>
