@@ -27,7 +27,28 @@
   const mode = $derived(cave.tool ? '' : infos.length ? 'selection' : pickKind ? 'pick' : '');
   const alike = $derived(infos.every((i) => i.kind === infos[0]?.kind));
   const kind = $derived(infos[0]?.kind ?? '');
-  const title = $derived(mode === 'pick' && pickKind ? INSPECTORS[pickKind].title : infos.length > 1 && !alike ? 'Several objects' : `Settings${infos.length > 1 ? ` (${infos.length})` : ''}`);
+  // what the thing is called: a symbol is a "Symbol" and which one it is, a line is a "Line" and which type, and so on
+  const names = $derived.by(() => {
+    void cave.version;
+    const m = new Map<string, string>();
+    try {
+      for (const g of engine.drawToolGroups()) for (const t of g.tools) m.set(t.key, t.label);
+      for (const sy of engine.symbols()) m.set(sy.key, sy.name);
+    } catch {
+      /* the engine is not ready: the type just goes unnamed */
+    }
+    return m;
+  });
+  const category = (k: string) => (isStampKind(k) ? 'Symbol' : k === 'callout' ? 'Callout' : k === 'text' ? 'Text' : isFillKind(k) ? 'Area' : 'Line');
+  const title = $derived(
+    mode === 'pick' && pickKind
+      ? INSPECTORS[pickKind].title
+      : infos.length > 1 && !alike
+        ? `${infos.length} objects`
+        : `${category(kind)}${infos.length > 1 ? ` ×${infos.length}` : ''}`,
+  );
+  /** Which kind of symbol, line or area it is (blank for a mixed selection or a kind with no name). */
+  const subtitle = $derived(mode === 'selection' && alike ? (names.get(kind) ?? '') : '');
 
   // what shows, as [heading, part] pairs: a selection's parts follow the ribbon's tab
   const parts = $derived.by<{ name: string; part: string }[]>(() => {
@@ -63,6 +84,7 @@
   <div class="strip" role="group" aria-label="Object settings" transition:fly={slide}>
     <header>
       <strong>{title}</strong>
+      {#if subtitle}<span class="what">{subtitle}</span>{/if}
       {#if Inspector && pickKind}<span class="hinfo"><Inspector part="info" kind={pickKind} /></span>{/if}
       <span class="acts">
         {#if mode === 'selection'}<button class="del" onclick={remove}>Delete</button>{/if}
@@ -83,6 +105,7 @@
   .strip { position: absolute; left: 0; right: 0; bottom: 0; max-height: 75%; display: flex; flex-direction: column; background: var(--panel); border-top: 1px solid var(--line); z-index: 20; touch-action: pan-y; }
   header { display: flex; align-items: center; justify-content: space-between; min-height: var(--p-row); padding: 0 var(--p-gap) 0 var(--p-pad); flex: none; font-size: var(--p-font); }
   /* the picked thing's name, elevation and legs sit on the title's line */
+  .what { flex: 1 1 0; min-width: 0; margin: 0 var(--p-gap); color: var(--muted); font-size: var(--p-font); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .hinfo { flex: 1 1 0; min-width: 0; margin: 0 var(--p-gap); overflow: hidden; }
   .hinfo :global(.col.info) { flex-direction: row; flex-wrap: nowrap; align-items: baseline; gap: 0 8px; height: auto; min-width: 0; white-space: nowrap; font-size: var(--p-font-small); }
   .hinfo :global(.col.info .row) { height: auto; gap: 6px; min-width: 0; }
