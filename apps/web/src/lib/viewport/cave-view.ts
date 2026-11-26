@@ -127,6 +127,8 @@ export class CaveView {
   /** Every selected line (a multiple selection shows a halo on each, but handles only on a lone one). */
   private selectedSet = new Set<string>();
   /** A fit point of a map line being moved: which line, which point, and the line's points now. */
+  /** Where the finger went down on a handle: on a touch screen a tap there (no drag) takes the line out of the selection. */
+  private lineEditFrom: { x: number; y: number } | null = null;
   private lineEdit: { id: string; index: number; pts: [number, number, number][]; stamp: boolean; leader: boolean } | null = null;
   /** Called when a map line's fit points have been moved (plan metres) or a line is picked or put down. */
   /** A leader waiting for its next press to add or remove an arrow, and the call that says it was used. */
@@ -589,6 +591,16 @@ export class CaveView {
       }
       const edit = this.lineEdit;
       if (edit) {
+        const from = this.lineEditFrom;
+        this.lineEditFrom = null;
+        if (this.appendSelect && from && Math.hypot(e.clientX - from.x, e.clientY - from.y) <= 10) {
+          // a tap on the object's handle, not a drag: nothing moved, so nothing is saved; the tap takes it out of the selection
+          this.lineEdit = null;
+          this.controls.enabled = true;
+          this.onSelectLine(edit.id, true);
+          this.requestRender();
+          return;
+        }
         this.lineEdit = null;
         clearPick();
         this.controls.enabled = true;
@@ -1537,6 +1549,7 @@ export class CaveView {
         this.controls.enabled = false;
         this.canvas.setPointerCapture(e.pointerId);
         this.lineEdit = { id: sel.id, index: i, pts: sel.points.map((p) => [...p] as [number, number, number]), stamp: isStampKind(sel.kind), leader: sel.kind === 'callout' };
+        this.lineEditFrom = { x: e.clientX, y: e.clientY };
         return;
       }
     }

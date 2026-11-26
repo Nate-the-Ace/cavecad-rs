@@ -155,9 +155,19 @@ export class LineEditor<T extends EditableLine = EditableLine> {
 
   /** The selection change a plain press is waiting to make until the finger lifts without having moved (a tap, not a pan). */
   private tapPending: { id: string; x: number; y: number } | null = null;
+  /** Where a press picked up a handle: on a touch screen, letting go there without a drag takes the line out of the selection. */
+  private dragFrom: { id: string; x: number; y: number } | null = null;
 
   /** Lifts the finger at (`x`, `y`): makes the selection change that press waited for, if it was a tap. Returns true if it did. */
   tap(x: number, y: number): boolean {
+    const from = this.dragFrom;
+    this.dragFrom = null;
+    if (from && this.drag && this.h.append?.() && Math.hypot(x - from.x, y - from.y) <= 10) {
+      this.drag = null; // nothing moved: nothing is saved, and the tap takes the line out
+      this.h.select(from.id, true);
+      this.h.redraw();
+      return true;
+    }
     const t = this.tapPending;
     this.tapPending = null;
     if (!t || Math.hypot(x - t.x, y - t.y) > 10) return false;
@@ -170,6 +180,7 @@ export class LineEditor<T extends EditableLine = EditableLine> {
   press(x: number, y: number, additive = false): boolean {
     this.pressed = [];
     this.tapPending = null;
+    this.dragFrom = null;
     const append = !additive && !!this.h.append?.();
     const sel = additive || (append && (this.h.ids?.().length ?? 0) > 1) ? undefined : this.selectedLine();
     const op = sel?.kind === 'callout' ? this.h.arrowOp?.(sel.id) : '';
@@ -186,6 +197,7 @@ export class LineEditor<T extends EditableLine = EditableLine> {
       const i = nearestPoint(sel.points.map(this.h.toScreen), x, y, handleReach());
       if (i >= 0) {
         this.drag = { id: sel.id, index: i, points: sel.points.map((p) => [...p] as Pt), widths: sel.widths ? [...sel.widths] : null, stamp: isStampKind(sel.kind), leader: sel.kind === 'callout' };
+        this.dragFrom = { id: sel.id, x, y };
         return true;
       }
     }
