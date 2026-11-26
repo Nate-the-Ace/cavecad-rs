@@ -130,7 +130,7 @@ export type ServerAccess = Pick<RoomClientOptions, 'base' | 'fetch' | 'device' |
  */
 export type ServerCave = { id: string; createdAt: number; hasKey: boolean; open: boolean; label: string | null; role: Role; ownerName: string };
 /** A cave fetched whole from its room: the snapshot's ops (null when the room has none) and each later entry's ops, in order. */
-export type Downloaded = { status: 'ok'; snapshot: string | null; entries: string[] } | { status: 'waiting' } | { status: 'unknown' };
+export type Downloaded = { status: 'ok'; snapshot: string | null; entries: string[]; /** The room's number of each entry, in step with `entries`. */ numbers: number[] } | { status: 'waiting' } | { status: 'unknown' };
 type StreamLine = { t: string; number?: number; keyVersion?: number; locked?: string; authorDevice?: string };
 
 const enc = new TextEncoder();
@@ -404,6 +404,7 @@ export async function downloadCave(o: ServerAccess, cave: string, deadAfterMs = 
     last = s.upTo;
   }
   const entries: string[] = [];
+  const numbers: number[] = [];
   const abort = new AbortController();
   let dog: ReturnType<typeof setTimeout> | undefined;
   const pet = () => {
@@ -427,9 +428,10 @@ export async function downloadCave(o: ServerAccess, cave: string, deadAfterMs = 
         while ((i = buf.indexOf('\n')) >= 0) {
           const line = JSON.parse(buf.slice(0, i)) as StreamLine;
           buf = buf.slice(i + 1);
-          if (line.t === 'live') return { status: 'ok', snapshot: snapOps, entries };
+          if (line.t === 'live') return { status: 'ok', snapshot: snapOps, entries, numbers };
           if (line.t !== 'entry' || typeof line.number !== 'number' || line.number <= last) continue;
           entries.push((open ? readOpenEntry(line) : await unlockEntry(key!, cave, c.keyVersion, line)).ops);
+          numbers.push(line.number);
           last = line.number;
         }
       }

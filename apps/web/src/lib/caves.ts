@@ -14,6 +14,7 @@ import { noRoomForThisCave, serverAccess } from './room.svelte';
 import { downloadCave } from './room-client';
 import { syncedHash } from './device-key';
 import { closeContextMenu } from './context-menu.svelte';
+import { describeEntry } from './history-summary';
 
 /** A different cave is now on screen: everything that belonged to the last one is let go. */
 function landed(name: string, home: Home | null = null) {
@@ -145,6 +146,59 @@ export async function openFromServer(roomId: string): Promise<'waiting' | string
   shelf.currentId = '';
   landed(engine.shelfSummary()?.name ?? 'Cave');
   if (!(await storeOpenCave())) return shelf.problem || 'The cave opened but this browser would not keep it.';
+  return null;
+}
+
+/** A cave's history as the server keeps it, each entry with its number and a few words on what it changed. */
+export type CaveHistory = { entries: { number: number; what: string }[]; before: number };
+
+/**
+ * Reads a cave's history from its room (the newest snapshot, then every entry after it) without opening it. `before` is
+ * how many entries the snapshot already holds: the earliest point that can be gone back to. A sentence when it could not.
+ */
+export async function readHistory(roomId: string): Promise<CaveHistory | string> {
+  const access = await serverAccess();
+  if (!access) return "Can't reach the CaveCAD server. Check you are online and signed in, then try again.";
+  try {
+    const got = await downloadCave(access, roomId);
+    if (got.status === 'waiting') return 'This device does not have the cave key yet.';
+    if (got.status === 'unknown') return 'That cave is not on the server.';
+    return { entries: got.entries.map((ops, i) => ({ number: got.numbers[i], what: describeEntry(ops) })), before: got.numbers[0] ? got.numbers[0] - 1 : 0 };
+  } catch (e) {
+    console.warn('[rooms] history', e);
+    return 'The history could not be fetched from the server. Try again in a moment.';
+  }
+}
+
+/**
+ * Opens an EARLIER version of a server cave as a separate copy: the room's snapshot with only its first `keep` later
+ * entries applied. The copy gets a room id of its own, so nothing it does ever reaches the cave it came from (that
+ * cave, and its history, are not touched). A sentence when it could not, else null.
+ */
+export async function openEarlierCopy(roomId: string, keep: number): Promise<string | null> {
+  await flush();
+  if (!confirmDiscard()) return 'Cancelled.';
+  const access = await serverAccess();
+  if (!access) return "Can't reach the CaveCAD server. Check you are online and signed in, then try again.";
+  let got;
+  try {
+    got = await downloadCave(access, roomId);
+  } catch (e) {
+    console.warn('[rooms] earlier version', e);
+    return 'The cave could not be fetched from the server. Try again in a moment.';
+  }
+  if (got.status !== 'ok') return 'That cave could not be fetched from the server.';
+  const r = engine.syncLoad(got.snapshot ?? '[]');
+  if (r !== 'ok') return r.replace(/^error: /, '');
+  for (const ops of got.entries.slice(0, Math.max(0, keep))) engine.syncApply(ops);
+  // its own room: a copy that kept the old room id would sync its older state over the cave it was taken from
+  const own = 'cave_' + Array.from(crypto.getRandomValues(new Uint8Array(12)), (b) => b.toString(16).padStart(2, '0')).join('');
+  const set = engine.setRoomId(own);
+  if (set !== 'ok') return set.replace(/^error: /, '');
+  shelf.currentId = '';
+  const name = engine.shelfSummary()?.name ?? 'Cave';
+  landed(`${name} (earlier version)`);
+  if (!(await storeOpenCave())) return shelf.problem || 'The copy opened but this browser would not keep it.';
   return null;
 }
 

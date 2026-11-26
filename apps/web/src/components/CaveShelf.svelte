@@ -21,6 +21,7 @@
   import { folderExistsNative, isDesktop } from '../lib/desktop';
   import { formatLength } from '../lib/units';
   import { openContextMenu } from '../lib/context-menu.svelte';
+  import CaveHistory from './CaveHistory.svelte';
 
   let { embedded = false }: { embedded?: boolean } = $props();
   /** Showing: open as the window, or drawn inline. */
@@ -40,6 +41,8 @@
   /** The open end the next trip would start from. */
   let from = $state('');
   let message = $state('');
+  /** The cave whose earlier versions are being picked from (its room), or null. */
+  let history = $state<{ roomId: string; name: string } | null>(null);
   $effect(() => {
     if (active) {
       void loadEngine().then(() => loadShelf()).then(() => refreshServerCaves());
@@ -392,6 +395,8 @@
   {/if}
 {/snippet}
 
+{#if history}<CaveHistory roomId={history.roomId} name={history.name} onclose={() => (history = null)} />{/if}
+
 {#snippet detail()}
       <div class="detail">
         {#if remote && !summary}
@@ -424,6 +429,7 @@
               <button onclick={() => void download(record!.id)} title="Save a copy of this cave as a file, to keep or to send to someone">Download a copy…</button>
               {#if record.home?.path && isDesktop()}<button onclick={() => void reveal(record!)}>Show its folder</button>{/if}
               {#if record.home && !lost}<button onclick={() => void find(record!)} title="Point CaveCAD at this cave's folder if you moved it">Find its folder…</button>{/if}
+              {#if record.roomId}<button onclick={() => (history = { roomId: record!.roomId ?? '', name: record!.name })} title="The server keeps every edit: open the cave as it was some edits ago, as a separate copy (the cave itself is not changed)">An earlier version…</button>{/if}
             </div>
           {/if}
           {#if summary.ends.length}
