@@ -15,7 +15,7 @@
   import { openContextMenu } from '../lib/context-menu.svelte';
   import { lineItems, offerLineStack, viewItems } from '../lib/context-items';
   import { closeCycle, type Candidate } from '../lib/cycle.svelte';
-  import { cave, changed, filter, option, selectedIds, selectIds, toggleSelected, setPick, setShowSections, haloFade, haloReach, toolStyle } from '../lib/cave.svelte';
+  import { cave, changed, filter, option, selectedIds, selectIds, toggleSelected, setPick, togglePick, setShowSections, haloFade, haloReach, toolStyle } from '../lib/cave.svelte';
   import { defaultBandOffset, drawHandles, drawStrokes, glyphCurves, hits, leaderEnd, ornamentFor } from '../lib/section-glyph';
   import { LineEditor, endpointNear, joinFit } from '../lib/line-editor';
 import { PaneSnap } from '../lib/snap-pane';
@@ -672,6 +672,7 @@ import { planFrame } from '../lib/snap-types';
     }
     const hit = best && engine.scene(cave.adjusted).stations.find((x) => x.label === best!.label);
     if (lines.length) {
+      if (phone.on) return; // a tap that adds the line to the selection keeps the rest of it, and offers no list
       // a drawn line under the click wins (it is drawn over the survey); the station, if any, is offered in the stacked list
       setPick('', '');
       const station: Candidate[] = hit ? [{ key: `station:${hit.id}`, label: `Station ${hit.label}`, choose: () => ((cave.station = hit.id), setPick('station', hit.id)) }] : [];
@@ -680,7 +681,8 @@ import { planFrame } from '../lib/snap-types';
     }
     closeCycle();
     if (hit) {
-      setPick('station', hit.id);
+      if (phone.on) togglePick('station', hit.id);
+      else setPick('station', hit.id);
       cave.station = hit.id;
     } else if (cave.pick.kind) {
       setPick('', ''); // a click on nothing lets go

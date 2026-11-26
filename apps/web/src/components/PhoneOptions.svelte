@@ -40,7 +40,7 @@
 {/if}
 
 <style>
-  .strip { position: absolute; left: 0; right: 0; bottom: 0; max-height: 30%; display: flex; flex-direction: column; background: var(--panel); border-top: 1px solid var(--line); z-index: 20; touch-action: pan-y; }
+  .strip { position: absolute; left: 0; right: 0; bottom: 0; max-height: 30%; display: flex; flex-direction: column; background: var(--panel); border-top: 1px solid var(--line); z-index: 31; touch-action: pan-y; }
   header { display: flex; align-items: center; justify-content: space-between; min-height: var(--p-row); padding: 0 var(--p-gap) 0 var(--p-pad); flex: none; font-size: var(--p-font); }
   .done { min-height: var(--p-row); min-width: 64px; border: 0; border-radius: var(--p-radius); background: var(--accent); color: #fff; font: inherit; font-weight: 600; touch-action: manipulation; }
   .body { overflow: auto; padding: 0 var(--p-gap) var(--p-gap); }

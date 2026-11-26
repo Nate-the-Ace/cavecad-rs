@@ -21,7 +21,7 @@
   import { phone } from '../lib/phone.svelte';
   import { snap, clearPick, cycle, escapePick, pickBuiltUp, toggleSnap } from '../lib/snap.svelte';
   import SnapButton from './SnapButton.svelte';
-  import { cave, changed, filter, haloFade, haloReach, option, setOption, selectedIds, selectIds, toggleSelected, setPick, setShowSections, setShown, wireFilter, toolStyle } from '../lib/cave.svelte';
+  import { cave, changed, filter, haloFade, haloReach, option, setOption, selectedIds, selectIds, toggleSelected, setPick, togglePick, setShowSections, setShown, wireFilter, toolStyle } from '../lib/cave.svelte';
   import { tolerancePx } from '../lib/commands';
   import { CUBE_SIZES, ViewCube, cubePx } from '../lib/viewport/view-cube';
   import { onTheme } from '../lib/theme';
@@ -432,7 +432,8 @@
     const labelAt = (p: number[]) => scene?.stations.find((st) => same(st.at, p))?.label ?? '?';
     const pickStationNow = (id: string, label: string, final: boolean) => {
       cave.station = id;
-      setPick('station', id);
+      if (phone.on) togglePick('station', id);
+      else setPick('station', id);
       if (!final) return;
       // On the phone a picked station stays on the Map: its properties slide up, and the Section tab opens on this station when asked for
       if (!phone.on) showPanel('section');
@@ -441,7 +442,7 @@
     const items: (Candidate & { z: number })[] = [
       ...lines.map((k) => ({ ...lineCandidate(k.id, k.kind ?? '', k.text, () => (setPick('', ''), selectIds([k.id]))), z: k.points[0]?.[2] ?? 0 })),
       ...stations.map((st) => ({ key: `station:${st.id}`, label: `Station ${st.label}`, choose: (final: boolean) => pickStationNow(st.id, st.label, final), z: st.at[2] })),
-      ...shots.map((sh) => ({ key: `${sh.kind}:${sh.id}`, label: sh.kind === 'leg' ? `Leg ${labelAt(sh.from)} – ${labelAt(sh.to)}` : `Splay from ${labelAt(sh.from)}`, choose: () => setPick(sh.kind, sh.id), z: (sh.from[2] + sh.to[2]) / 2 })),
+      ...shots.map((sh) => ({ key: `${sh.kind}:${sh.id}`, label: sh.kind === 'leg' ? `Leg ${labelAt(sh.from)} – ${labelAt(sh.to)}` : `Splay from ${labelAt(sh.from)}`, choose: () => (phone.on ? togglePick(sh.kind, sh.id) : setPick(sh.kind, sh.id)), z: (sh.from[2] + sh.to[2]) / 2 })),
     ];
     const top = items[0];
     if (!top) {

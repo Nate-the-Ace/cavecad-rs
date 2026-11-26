@@ -7,6 +7,7 @@
   // the bottom of the Sketch canvas: the same parts the ribbon's contextual tab shows on the desktop. It shows when
   // something is picked; Done puts it away (the object stays picked), and a long press on the object brings it back.
   import SelectionTools from './SelectionTools.svelte';
+  import BulkSurvey from './BulkSurvey.svelte';
   import { cave, selectedIds, setPick } from '../lib/cave.svelte';
   import { engine } from '../lib/engine';
   import { INSPECTORS } from '../lib/inspectors';
@@ -24,7 +25,16 @@
     return ids.map((id) => engine.lineInfo(id)).filter((i): i is NonNullable<ReturnType<typeof engine.lineInfo>> => !!i);
   });
   const pickKind = $derived(cave.pick.kind as Exclude<PickKind, ''> | '');
-  const mode = $derived(cave.tool ? '' : infos.length ? 'selection' : pickKind ? 'pick' : '');
+  // the survey things picked (stations, legs, splays) and the drawn objects selected can be several at once: a lone drawn
+  // object is 'selection', a lone survey thing is 'pick', anything more is 'multi'
+  const picks = $derived(cave.picks);
+  const stationIds = $derived(picks.filter((p) => p.kind === 'station').map((p) => p.id));
+  const shotIds = $derived(picks.filter((p) => p.kind === 'leg' || p.kind === 'splay').map((p) => p.id));
+  const mode = $derived(cave.tool ? '' : infos.length + picks.length === 0 ? '' : picks.length === 0 ? 'selection' : infos.length === 0 && picks.length === 1 ? 'pick' : 'multi');
+  const onlyStations = $derived(infos.length === 0 && shotIds.length === 0 && stationIds.length > 1);
+  const onlyShots = $derived(infos.length === 0 && stationIds.length === 0 && shotIds.length > 1);
+  const count = (n: number, one: string, many: string) => (n ? [`${n} ${n === 1 ? one : many}`] : []);
+  const multiTitle = $derived([...count(stationIds.length, 'station', 'stations'), ...count(shotIds.length, 'leg or splay', 'legs and splays'), ...count(infos.length, 'drawn object', 'drawn objects')].join(', '));
   const alike = $derived(infos.every((i) => i.kind === infos[0]?.kind));
   const kind = $derived(infos[0]?.kind ?? '');
   // what the thing is called: a symbol is a "Symbol" and which one it is, a line is a "Line" and which type, and so on
@@ -44,11 +54,11 @@
   const sameCategory = $derived(infos.every((i) => category(i.kind) === category(infos[0]?.kind ?? '')));
   // several things selected: "Multiple", and below it only what they can all be changed together by
   const title = $derived(
-    mode === 'pick' && pickKind ? INSPECTORS[pickKind].title : infos.length > 1 ? 'Multiple' : category(kind),
+    mode === 'pick' && pickKind ? INSPECTORS[pickKind].title : mode === 'multi' || infos.length > 1 ? 'Multiple' : category(kind),
   );
   /** Which kind of symbol, line or area it is (blank for a mixed selection or a kind with no name). */
   const subtitle = $derived(
-    mode !== 'selection' ? '' : infos.length > 1 ? `${infos.length} ${sameCategory ? plural(kind, infos.length) : 'objects'}${alike ? `: ${names.get(kind) ?? ''}` : ''}` : (names.get(kind) ?? ''),
+    mode === 'multi' ? multiTitle : mode !== 'selection' ? '' : infos.length > 1 ? `${infos.length} ${sameCategory ? plural(kind, infos.length) : 'objects'}${alike ? `: ${names.get(kind) ?? ''}` : ''}` : (names.get(kind) ?? ''),
   );
 
   // what shows, as [heading, part] pairs: a selection's parts follow the ribbon's tab
@@ -68,7 +78,7 @@
   });
 
   // a new thing picked shows its settings
-  const key = $derived(mode === 'selection' ? `l:${ids.join(',')}` : mode === 'pick' ? `p:${cave.pick.kind}:${cave.pick.id}` : '');
+  const key = $derived(mode === 'selection' ? `l:${ids.join(',')}` : mode === 'pick' ? `p:${cave.pick.kind}:${cave.pick.id}` : mode === 'multi' ? `m:${ids.join(',')}|${picks.map((p) => p.id).join(',')}` : '');
   let last = '';
   $effect(() => {
     if (key && key !== last) phone.objectSettings = true;
@@ -90,7 +100,7 @@
     <header>
       <strong>{title}</strong>
       {#if subtitle}<span class="what">{subtitle}</span>{/if}
-      {#if Inspector && pickKind}<span class="hinfo"><Inspector part="info" kind={pickKind} /></span>{/if}
+      {#if mode === 'pick' && Inspector && pickKind}<span class="hinfo"><Inspector part="info" kind={pickKind} /></span>{/if}
       <span class="acts">
         {#if mode === 'selection'}<button class="del" onclick={remove}>Delete</button>{/if}
         <button class="done" onclick={done}>Done</button>
@@ -99,6 +109,12 @@
     <div class="body" class:pick={mode === 'pick'}>
       {#if mode === 'selection'}
         {#each parts as g (g.part)}<section><h4>{g.name}</h4><SelectionTools part={g.part as 'type'} /></section>{/each}
+      {:else if mode === 'multi'}
+        <section>
+          {#if onlyStations}<BulkSurvey kind="station" ids={stationIds} />
+          {:else if onlyShots}<BulkSurvey kind="shot" ids={shotIds} />
+          {:else}<p class="none">These are different kinds of thing, so they have no settings in common.</p>{/if}
+        </section>
       {:else if Inspector && pickKind}
         {#each INSPECTORS[pickKind].groups.filter((g) => g.part !== 'info') as g (g.part)}<section><h4>{g.name}</h4><Inspector part={g.part} kind={pickKind} /></section>{/each}
       {/if}
@@ -107,7 +123,7 @@
 {/if}
 
 <style>
-  .strip { position: absolute; left: 0; right: 0; bottom: 0; max-height: 75%; display: flex; flex-direction: column; background: var(--panel); border-top: 1px solid var(--line); z-index: 20; touch-action: pan-y; }
+  .strip { position: absolute; left: 0; right: 0; bottom: 0; max-height: 75%; display: flex; flex-direction: column; background: var(--panel); border-top: 1px solid var(--line); z-index: 31; touch-action: pan-y; }
   header { display: flex; align-items: center; justify-content: space-between; min-height: var(--p-row); padding: 0 var(--p-gap) 0 var(--p-pad); flex: none; font-size: var(--p-font); }
   /* the picked thing's name, elevation and legs sit on the title's line */
   .what { flex: 1 1 0; min-width: 0; margin: 0 var(--p-gap); color: var(--muted); font-size: var(--p-font); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -122,6 +138,7 @@
   /* everything is meant to fit with no scrolling: the groups flow side by side and wrap, and the ribbon-sized buttons shrink to a touch row */
   .body { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 0 var(--p-pad); padding: 0 var(--p-gap) var(--p-gap); font-size: var(--p-font-small); }
   section { padding: 2px 0 4px; min-width: 0; }
+  .none { margin: 6px 0; color: var(--muted); }
   .body :global(.col), .body :global(.notes), .body :global(.note) { min-width: 0; height: auto; }
   .body :global(.walls), .body :global(.grid) { height: auto; }
   .body :global(.btns) { height: auto; flex-wrap: wrap; }

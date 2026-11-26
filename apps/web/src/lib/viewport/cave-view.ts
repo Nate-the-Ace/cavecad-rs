@@ -340,6 +340,8 @@ export class CaveView {
       const t = this.tapPending;
       this.tapPending = null;
       if (!t || Math.hypot(e.clientX - t.x, e.clientY - t.y) > 10) return;
+      // a tap on a station or leg is for picking it, not for clearing what is selected
+      if (!t.id && (this.stationsAt(e.clientX, e.clientY).length || this.shotsAt(e.clientX, e.clientY).length)) return;
       this.onSelectLine(t.id, !!t.id);
     });
     canvas.addEventListener('pointercancel', (e) => {
@@ -1509,7 +1511,8 @@ export class CaveView {
       return;
     }
     const additive = e.shiftKey || e.metaKey || e.ctrlKey; // adds to the selection or takes out of it
-    const sel = additive ? undefined : this.displayMapLines().find((k) => k.id === this.selectedLine);
+    // with several lines selected a tap on one of them takes it out (it does not pick up its handles)
+    const sel = additive || (this.appendSelect && this.selectedSet.size > 1) ? undefined : this.displayMapLines().find((k) => k.id === this.selectedLine);
     const pending = this.arrowOp();
     if (sel && sel.kind === 'callout' && pending.id === sel.id && pending.op && this.canDrawHere) {
       const pick = this.pickPoint(e, sel.id);

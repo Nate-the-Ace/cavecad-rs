@@ -171,7 +171,7 @@ export class LineEditor<T extends EditableLine = EditableLine> {
     this.pressed = [];
     this.tapPending = null;
     const append = !additive && !!this.h.append?.();
-    const sel = additive ? undefined : this.selectedLine();
+    const sel = additive || (append && (this.h.ids?.().length ?? 0) > 1) ? undefined : this.selectedLine();
     const op = sel?.kind === 'callout' ? this.h.arrowOp?.(sel.id) : '';
     if (sel && op) {
       const screen = sel.points.map(this.h.toScreen);

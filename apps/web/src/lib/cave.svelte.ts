@@ -46,12 +46,28 @@ export type PickKind = '' | 'station' | 'leg' | 'splay' | 'halo' | 'viewframe';
 /** Picks a thing (a tool and a selected line are put down: one thing is picked at a time). */
 export function setPick(kind: PickKind, id: string) {
   cave.pick = { kind, id: kind ? id : '' };
+  cave.picks = kind ? [{ kind, id }] : [];
   if (kind) cave.selected = '';
+}
+
+/**
+ * Adds a station, leg or splay to what is picked (or takes it out again), keeping lines already selected: a touch screen
+ * builds a multiple selection by tapping. A halo or viewframe is always picked alone.
+ */
+export function togglePick(kind: PickKind, id: string) {
+  if (!kind) return setPick('', '');
+  if (kind !== 'station' && kind !== 'leg' && kind !== 'splay') return setPick(kind, id);
+  const has = cave.picks.some((p) => p.kind === kind && p.id === id);
+  const base = cave.picks.filter((p) => p.kind === 'station' || p.kind === 'leg' || p.kind === 'splay');
+  const next = has ? base.filter((p) => !(p.kind === kind && p.id === id)) : [...base, { kind, id }];
+  cave.picks = next;
+  cave.pick = next[0] ? { ...next[0] } : { kind: '', id: '' };
 }
 
 /** Lets go of whatever is picked. */
 export function clearPick() {
   cave.pick = { kind: '', id: '' };
+  cave.picks = [];
 }
 
 const COMPACT_KEY = 'cavecad.ribbon.compact';
@@ -84,6 +100,8 @@ export const cave = $state({
   tool: '',
   /** The survey thing picked for its tab in the ribbon: a station, a leg or a splay (`kind`), by id. */
   pick: { kind: '' as PickKind, id: '' },
+  /** Everything picked from the survey (stations, legs, splays), the first being `pick`: a touch screen picks several at once. */
+  picks: [] as { kind: PickKind; id: string }[],
   /** The line (a feature id) selected for editing, or empty. Its fit points show as handles in the view it was drawn in. */
   selected: '',
   /** More lines selected with it (a multiple selection), valid only while `selected` is still `alsoOf`. */
