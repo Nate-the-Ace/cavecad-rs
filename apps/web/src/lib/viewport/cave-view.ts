@@ -77,7 +77,7 @@ export class CaveView {
   /** The grid's 0,0: the entrance station, when the engine knows it (else the first station). */
   private gridOrigin: [number, number] | null = null;
   /** The window the grid is drawn over now: its centre and half-width (metres), or null when it must be drawn again. */
-  private gridBuilt: { cx: number; cy: number; half: number } | null = null;
+  private gridBuilt: { cx: number; cy: number; half: number; step: number } | null = null;
   private materials: LineMaterial[] = [];
   /** The ground above the cave (contours, terrain): beside `content`, never cleared by `rebuild()`. */
   private surfaceGroup = new THREE.Group();
@@ -2143,16 +2143,19 @@ export class CaveView {
     const t = this.controls.target;
     const R = Math.max(5, this.visibleRadius());
     const g = this.gridBuilt;
-    if (g && R <= g.half / 1.5 && R >= g.half / 12 && Math.max(Math.abs(t.x - g.cx), Math.abs(t.y - g.cy)) + R <= g.half) return;
+    const MAX_LINES = 300;
+    // the squares drawn for a window of half-width `h`: the fine ones while there are not too many, else only the heavy ones, else none
+    const stepFor = (h: number) => ((2 * h) / spec.minorM <= MAX_LINES ? spec.minorM : (2 * h) / spec.majorM <= MAX_LINES ? spec.majorM : 0);
+    // drawn again when the view nears the window's edge, outgrows it, zooms far in, or could now show finer lines than were drawn (zoomed back in)
+    if (g && R <= g.half / 1.5 && R >= g.half / 12 && Math.max(Math.abs(t.x - g.cx), Math.abs(t.y - g.cy)) + R <= g.half && stepFor(g.half) === g.step && stepFor(R * 3) === g.step) return;
     this.clearGrid();
     const half = R * 3;
     const first = this.data?.stations[0]?.at;
     const [gx, gy] = this.gridOrigin ?? (first ? [first[0], first[1]] : [0, 0]);
     const cx = gx + Math.round((t.x - gx) / spec.majorM) * spec.majorM;
     const cy = gy + Math.round((t.y - gy) / spec.majorM) * spec.majorM;
-    this.gridBuilt = { cx, cy, half };
-    const MAX_LINES = 300;
-    const step = (2 * half) / spec.minorM <= MAX_LINES ? spec.minorM : (2 * half) / spec.majorM <= MAX_LINES ? spec.majorM : 0;
+    const step = stepFor(half);
+    this.gridBuilt = { cx, cy, half, step };
     if (!step) return;
     const x0 = cx - half, x1 = cx + half, y0 = cy - half, y1 = cy + half;
     const z = this.data?.bounds?.[2] ?? 0;
