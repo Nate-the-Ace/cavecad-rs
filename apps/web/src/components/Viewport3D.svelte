@@ -9,6 +9,8 @@
   import { cursorsFor, presence as room, reportCursor } from '../lib/presence.svelte';
   import { parseStyle, styleText } from '../lib/line-style-text';
   import TripTimeline from './TripTimeline.svelte';
+  import GridPicker from './GridPicker.svelte';
+  import { gridChoice } from '../lib/sketch-grid';
   import { engine, loadEngine, type Scene, type TypeStyle } from '../lib/engine';
   import { CaveView, type Projection } from '../lib/viewport/cave-view';
   import { fitPlane, heightSurface } from '../lib/plane';
@@ -105,6 +107,13 @@
       if (view && profileOn) view.setProfileSketches(engine.mapProfileSketches(cave.adjusted));
       view?.setMapLines(engine.mapLines(cave.adjusted));
     });
+  });
+
+  // The ground grid (the same choice as the Profile and Cross Section) under the map.
+  $effect(() => {
+    const spec = gridChoice(option('sketchGrid', '2'));
+    void viewReady;
+    untrack(() => view?.setGrid(spec));
   });
 
   // Scans placed under the map follow every edit, adjustment, filter, and the settings in the Scans panel.
@@ -674,6 +683,7 @@
             <PanelUndo scope="map" label="on the map" />
             <SnapButton />
           </div>
+          <div class="toprow"><GridPicker label="Map grid" /></div>
           <div class="showlist" role="group" aria-label="Show or hide">
           <h4>On the map</h4>
           <label title="Show the survey with loop errors spread out (least-squares adjusted) instead of as measured"><input type="checkbox" bind:checked={cave.adjusted} onchange={refresh} /> Adjusted</label>

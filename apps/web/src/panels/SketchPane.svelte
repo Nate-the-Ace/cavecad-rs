@@ -27,7 +27,7 @@ import { planFrame } from '../lib/snap-types';
   import { engine, loadEngine, type SheetOptions } from '../lib/engine';
   import { formatLength } from '../lib/units';
   import { fitView, toScreen as project, toWorld as unproject, type Pt, type Transform } from '../lib/sketch-types';
-  import { GRIDS, describeScale, drawGrid, gridCaption, gridFor, matchScale, pxPerMetre, visibleGrid } from '../lib/sketch-grid';
+  import { GRIDS, describeScale, drawGrid, gridCaption, gridChoice, gridFor, matchScale, pxPerMetre, visibleGrid } from '../lib/sketch-grid';
   import { PANE_SCOPE, PANE_TITLE, sketch, type Pane } from '../lib/sketch.svelte';
 
   let { pane }: { pane: Pane } = $props();
@@ -197,7 +197,7 @@ import { planFrame } from '../lib/snap-types';
     if (close) g.closePath();
   }
 
-  const grid = $derived(gridFor(option('sketchGrid', '2')));
+  const grid = $derived(gridChoice(option('sketchGrid', '2')) ?? gridFor('2'));
 
   function draw() {
     const { w, h } = view.size;

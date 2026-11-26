@@ -33,6 +33,12 @@ export const GRIDS = [1, 2, 5, 10].map((ft) => ({ key: String(ft), label: `${ft}
 /** The grid: 2 ft squares, a heavy line every 20 ft (10 squares), in metres. The one a drawing opens with. */
 export const GRID: GridSpec = { minorM: 2 * FOOT, majorM: 20 * FOOT };
 
+/** The stored choice that shows no grid. */
+export const GRID_OFF = 'off';
+
+/** The grid a stored choice shows in a view: `null` for "off", the default grid for anything unrecognised. */
+export const gridChoice = (key: unknown): GridSpec | null => (key === GRID_OFF ? null : gridFor(key));
+
 /** The grid a stored choice names (a key of `GRIDS`), or the default for anything else. */
 export const gridFor = (key: unknown): GridSpec => GRIDS.find((g) => g.key === String(key)) ?? GRID;
 

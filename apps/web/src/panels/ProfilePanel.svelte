@@ -4,6 +4,8 @@
   import { onTheme } from '../lib/theme';
   import { Maximize } from '@lucide/svelte';
   import PanelUndo from '../components/PanelUndo.svelte';
+  import GridPicker from '../components/GridPicker.svelte';
+  import { drawGrid, gridChoice } from '../lib/sketch-grid';
   import { looks } from '../lib/ink';
   import { markViewUsed, registerSelectAll } from '../lib/select-all';
   import { copyGhost, copyOp, copyPress, endCopy, endPaste, pasteGhost, pasteOp, pastePlace, registerClipView, snapToSelection } from '../lib/view-clip.svelte';
@@ -172,6 +174,7 @@ import { planFrame } from '../lib/snap-types';
     void scans.fetched; // a page of the cave arrived from the server
     void filter.hiddenTrips.length;
     void option('showScans', true);
+    void option('sketchGrid', '2');
     void option('halo', true);
     void option('handInk', false); // Ink style redraws every line
     void haloReach();
@@ -257,6 +260,8 @@ import { planFrame } from '../lib/snap-types';
       g.fillText('Open a cave, then pick a run.', width / 2, height / 2);
       return;
     }
+    const ground = gridChoice(option('sketchGrid', '2'));
+    if (ground) drawGrid(g, { scale, tx: ox, ty: oy }, width, height, c.text, ground);
 
     // grid: elevation lines every nice step, labelled at the left
     const per = metresPer(cave.units); // metres in one display unit
@@ -913,6 +918,7 @@ import { planFrame } from '../lib/snap-types';
     </select>
     <label class="show" title="Show the cross sections drawn at stations, next to their stations (drag one to place it)"><input type="checkbox" checked={cave.showSections.profile} onchange={(e) => (setShowSections('profile', e.currentTarget.checked), schedule())} /> Sections</label>
     <PanelUndo scope="profile" label="in the profile" />
+    <GridPicker label="Profile grid" />
     <button title="Fit band (or double middle-click)" onclick={fit}><Maximize size={15} /></button>
   </div>
   {#if band?.note || message || (band && (band.omitted > 0 || band.unplaced > 0))}
@@ -925,7 +931,7 @@ import { planFrame } from '../lib/snap-types';
 <style>
   .profile { position: relative; height: 100%; overflow: hidden; background: var(--panel-2); }
   canvas { position: absolute; inset: 0; display: block; touch-action: none; outline: none; }
-  .bar { position: absolute; top: 8px; left: 8px; right: 8px; display: flex; gap: 6px; align-items: center; padding: 6px 8px; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); font-size: 12px; width: fit-content; max-width: calc(100% - 16px); }
+  .bar { position: absolute; top: 8px; left: 8px; right: 8px; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; padding: 6px 8px; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); font-size: 12px; width: fit-content; max-width: calc(100% - 16px); }
   select, button { font: inherit; padding: 3px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--text); cursor: pointer; display: inline-grid; place-items: center; }
   select { max-width: 260px; }
   .show { display: flex; gap: 4px; align-items: center; color: var(--muted); }

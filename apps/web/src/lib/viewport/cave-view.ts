@@ -70,6 +70,9 @@ export class CaveView {
   private readonly ortho = new THREE.OrthographicCamera(-1, 1, 1, -1, -1e5, 1e5);
   private camera: THREE.PerspectiveCamera | THREE.OrthographicCamera = this.persp;
   private content = new THREE.Group();
+  /** The ground grid under the cave (Map), or none. */
+  private gridGroup = new THREE.Group();
+  private gridSpec: { minorM: number; majorM: number } | null = null;
   private materials: LineMaterial[] = [];
   /** The ground above the cave (contours, terrain): beside `content`, never cleared by `rebuild()`. */
   private surfaceGroup = new THREE.Group();
@@ -235,6 +238,7 @@ export class CaveView {
     this.ortho.up.set(0, 0, 1);
     this.persp.position.copy(viewDirection(HOME_DIR).multiplyScalar(50));
     this.scene.add(this.content);
+    this.scene.add(this.gridGroup);
     this.scene.add(this.surfaceGroup);
     this.scene.add(new THREE.AmbientLight(0xffffff, 0.9));
     this.scene.add(this.headlamp);
@@ -2089,12 +2093,60 @@ export class CaveView {
     return true;
   }
 
+  /**
+   * Draws a grid of `spec` squares on the ground under the cave (at its lowest station), one heavy line every
+   * `majorM`; `null` takes it away. It is fixed in the world. A cave too big for the fine lines to be drawn
+   * (over `GRID_MAX_LINES` a side) gets only the heavy ones, and none if even those would be too many.
+   */
+  setGrid(spec: { minorM: number; majorM: number } | null) {
+    this.gridSpec = spec;
+    this.rebuildGrid();
+    this.requestRender();
+  }
+
+  private rebuildGrid() {
+    for (const o of [...this.gridGroup.children]) {
+      this.gridGroup.remove(o);
+      (o as THREE.LineSegments).geometry.dispose();
+      ((o as THREE.LineSegments).material as THREE.Material).dispose();
+    }
+    const b = this.data?.bounds;
+    const spec = this.gridSpec;
+    if (!b || !spec) return;
+    const pad = spec.majorM;
+    const x0 = b[0] - pad, x1 = b[3] + pad, y0 = b[1] - pad, y1 = b[4] + pad;
+    const GRID_MAX_LINES = 300;
+    const step = Math.max(x1 - x0, y1 - y0) / spec.minorM <= GRID_MAX_LINES ? spec.minorM : Math.max(x1 - x0, y1 - y0) / spec.majorM <= GRID_MAX_LINES ? spec.majorM : 0;
+    if (!step) return;
+    const z = b[2];
+    const fine: number[] = [];
+    const heavy: number[] = [];
+    const add = (at: number, horizontal: boolean) => {
+      const k = at / spec.majorM;
+      const out = Math.abs(k - Math.round(k)) < 1e-6 ? heavy : fine;
+      if (horizontal) out.push(x0, at, z, x1, at, z);
+      else out.push(at, y0, z, at, y1, z);
+    };
+    for (let i = Math.ceil(x0 / step); i * step <= x1; i++) add(i * step, false);
+    for (let i = Math.ceil(y0 / step); i * step <= y1; i++) add(i * step, true);
+    for (const [pts, opacity] of [[fine, 0.14], [heavy, 0.34]] as [number[], number][]) {
+      if (!pts.length) continue;
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
+      const mat = new THREE.LineBasicMaterial({ color: this.theme.text, transparent: true, opacity, depthWrite: false });
+      const lines = new THREE.LineSegments(geo, mat);
+      lines.renderOrder = -1;
+      this.gridGroup.add(lines);
+    }
+  }
+
   setScene(scene: Scene | null, refit = true) {
     // A cave that starts with no survey keeps its survey framed while it is typed in, until the person moves
     // the view themself; otherwise a new cave grows off-screen.
     if (refit) this.autoFit = (scene?.stations.length ?? 0) < 2; // a cave opened: only an empty one is framed as it grows
     else if ((this.data?.stations.length ?? 0) < 2 && (scene?.stations.length ?? 0) < 2) this.autoFit = true;
     this.data = scene;
+    this.rebuildGrid();
     this.shadedFrom.set(0, 0, 1); // a fresh scene is shaded for the view from above
     this.shadedPersp = false;
     if (!refit || this.camera === this.persp) this.reshade();

@@ -8,6 +8,8 @@
   import { onTheme } from '../lib/theme';
   import { Maximize, ChevronLeft, ChevronRight } from '@lucide/svelte';
   import PanelUndo from '../components/PanelUndo.svelte';
+  import GridPicker from '../components/GridPicker.svelte';
+  import { drawGrid, gridChoice } from '../lib/sketch-grid';
   import { looks } from '../lib/ink';
   import { drawHandles, drawStrokes, ornamentFor } from '../lib/section-glyph';
   import { LineEditor, endpointNear, joinFit } from '../lib/line-editor';
@@ -161,6 +163,7 @@ import { planFrame } from '../lib/snap-types';
     void scans.paths.length; // scans appear when they are added or their folder is opened
     void scans.fetched; // a page of the cave arrived from the server
     void option('showScans', true);
+    void option('sketchGrid', '2');
     void option('halo', true);
     void option('handInk', false); // Ink style redraws every line
     void haloReach();
@@ -229,6 +232,8 @@ import { planFrame } from '../lib/snap-types';
     const c = css();
     const s = section;
     if (!s) return;
+    const ground = gridChoice(option('sketchGrid', '2'));
+    if (ground) drawGrid(g, { scale, tx: ox, ty: oy }, width, height, c.text, ground);
 
     // the rock halo: a soft glow from the measured walls out into the rock, with rock marks fading with it
     if (option('halo', true)) {
@@ -819,6 +824,7 @@ import { planFrame } from '../lib/snap-types';
     </select>
     <button title="Next station" disabled={index < 0 || index >= stations.length - 1} onclick={() => step(1)}><ChevronRight size={15} /></button>
     <PanelUndo scope="section" label="in this cross section" />
+    <GridPicker label="Section grid" />
     <button title="Fit (or double middle-click)" onclick={fit}><Maximize size={15} /></button>
   </div>
   {#if ready && !stations.length}
