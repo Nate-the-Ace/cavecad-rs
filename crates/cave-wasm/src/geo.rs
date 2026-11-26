@@ -557,6 +557,30 @@ mod tests {
     }
 
     #[test]
+    fn restoring_an_earlier_version_keeps_the_history_and_can_be_undone() {
+        crate::open_demo(CAVE);
+        let a = station("A1");
+        let early = crate::sync_snapshot(); // the version to go back to
+        set_left(&a, 3.0);
+        set_left(&a, 9.0);
+        assert!(is(left_of(&a), 9.0));
+        let r = crate::restore_to_ops(&early, "map");
+        assert!(r.starts_with("ok:") && r != "ok:0", "{r}");
+        assert_ne!(left_of(&a), Some(9.0));
+        // the restore is its own step, and the two edits before it are still there to undo one by one
+        assert!(crate::undo("map"));
+        assert!(
+            is(left_of(&a), 9.0),
+            "undoing the restore brings the later state back"
+        );
+        assert_eq!(
+            crate::restore_to_ops(&early, "map").starts_with("ok:"),
+            true
+        );
+        assert!(crate::restore_to_ops("nonsense", "map").starts_with("error"));
+    }
+
+    #[test]
     fn a_change_to_several_stations_is_one_undo_step() {
         crate::open_demo(CAVE);
         let (a, b) = (station("A1"), station("B"));

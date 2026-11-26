@@ -150,7 +150,13 @@ export async function openFromServer(roomId: string): Promise<'waiting' | string
 }
 
 /** A cave's history as the server keeps it, each entry with its number and a few words on what it changed. */
-export type CaveHistory = { entries: { number: number; what: string }[]; before: number };
+export type CaveHistory = {
+  entries: { number: number; what: string }[];
+  before: number;
+  /** The room's snapshot ops and every entry's ops after it: what any version is built from (see `versionOps`). */
+  snapshot: string | null;
+  ops: string[];
+};
 
 /**
  * Reads a cave's history from its room (the newest snapshot, then every entry after it) without opening it. `before` is
@@ -163,11 +169,38 @@ export async function readHistory(roomId: string): Promise<CaveHistory | string>
     const got = await downloadCave(access, roomId);
     if (got.status === 'waiting') return 'This device does not have the cave key yet.';
     if (got.status === 'unknown') return 'That cave is not on the server.';
-    return { entries: got.entries.map((ops, i) => ({ number: got.numbers[i], what: describeEntry(ops) })), before: got.numbers[0] ? got.numbers[0] - 1 : 0 };
+    return { entries: got.entries.map((ops, i) => ({ number: got.numbers[i], what: describeEntry(ops) })), before: got.numbers[0] ? got.numbers[0] - 1 : 0, snapshot: got.snapshot, ops: got.entries };
   } catch (e) {
     console.warn('[rooms] history', e);
     return 'The history could not be fetched from the server. Try again in a moment.';
   }
+}
+
+/** The ops of the version that has the room's snapshot and its first `keep` entries (one JSON list). */
+export function versionOps(h: CaveHistory, keep: number): string {
+  const all: unknown[] = [...(h.snapshot ? (JSON.parse(h.snapshot) as unknown[]) : [])];
+  for (const ops of h.ops.slice(0, Math.max(0, keep))) all.push(...(JSON.parse(ops) as unknown[]));
+  return JSON.stringify(all);
+}
+
+/** What a version of the cave looks like (its length, depth, stations), worked out without opening it. */
+export function previewVersion(h: CaveHistory, keep: number) {
+  return engine.shelfSummarizeNative(versionOps(h, keep));
+}
+
+/**
+ * Puts the cave that is open back to an earlier version of itself, ON THE SAME CAVE: the version is the room's snapshot with
+ * only its first `keep` entries. The restore is one new edit (the cave's whole history stays, the restore is a step in it,
+ * and every device receives it), and one Undo on the Map takes it back. A sentence when it could not, else the number of
+ * things it changed.
+ */
+export function restoreOpenCave(h: CaveHistory, roomId: string, keep: number): string {
+  if (engine.roomId() !== roomId) return 'Open this cave first, then restore it.';
+  const r = engine.restoreToOps(versionOps(h, keep), 'map');
+  if (!r.startsWith('ok:')) return r.replace(/^error: /, '');
+  changed();
+  void storeOpenCave();
+  return r === 'ok:0' ? 'The cave already is that version.' : `ok:${r.slice(3)}`;
 }
 
 /**

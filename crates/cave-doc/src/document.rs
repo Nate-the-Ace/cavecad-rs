@@ -2,7 +2,7 @@
 
 use crate::clock::{ActorId, Clock, Stamp};
 use crate::entity::{Entity, Lww};
-use crate::field::{Kind, Value};
+use crate::field::{Field, Kind, Value};
 use crate::op::{Action, Op};
 use cave_id::Id;
 use std::collections::BTreeMap;
@@ -114,6 +114,60 @@ impl Document {
             }
         }
         ops
+    }
+
+    /// The actions that turn this document into what `target` holds: what `target` has live and this does not is created,
+    /// what differs is set back, and what this has live and `target` does not is removed. Drawing-wide settings are left
+    /// alone (the room id, the scale, the location belong to the cave as it is now, not to a version of its survey). Applied
+    /// as one edit, this is a restore: the document reads as `target` did, yet nothing is forgotten, because the restore is
+    /// itself an edit that every editor receives and can undo.
+    pub fn actions_to_reach(&self, target: &Document) -> Vec<Action> {
+        let ids: std::collections::BTreeSet<Id> = self
+            .entities
+            .keys()
+            .chain(target.entities.keys())
+            .copied()
+            .collect();
+        let (mut create, mut set, mut remove) = (Vec::new(), Vec::new(), Vec::new());
+        for id in ids {
+            let mine = self.entities.get(&id);
+            let theirs = target.entities.get(&id);
+            let Some(kind) = theirs.map(|e| e.kind).or(mine.map(|e| e.kind)) else {
+                continue;
+            };
+            if kind == Kind::Setting || mine.zip(theirs).is_some_and(|(a, b)| a.kind != b.kind) {
+                continue;
+            }
+            let mine_live = mine.is_some_and(|e| e.exists.value);
+            let theirs_live = theirs.is_some_and(|e| e.exists.value);
+            if theirs_live {
+                if !mine_live {
+                    create.push(Action::Create { id, kind });
+                }
+                let fields: std::collections::BTreeSet<Field> = mine
+                    .iter()
+                    .flat_map(|e| e.fields.keys())
+                    .chain(theirs.iter().flat_map(|e| e.fields.keys()))
+                    .copied()
+                    .collect();
+                for field in fields {
+                    let want = theirs.map_or_else(|| field.default_value(), |e| e.get(field));
+                    let have = mine.map_or_else(|| field.default_value(), |e| e.get(field));
+                    if want != have {
+                        set.push(Action::Set {
+                            id,
+                            field,
+                            value: want,
+                        });
+                    }
+                }
+            } else if mine_live {
+                remove.push(Action::Remove { id, kind });
+            }
+        }
+        create.extend(set);
+        create.extend(remove);
+        create
     }
 
     /// A live entity, or `None` if absent or removed.
@@ -244,7 +298,6 @@ impl Document {
 mod tests {
     use super::*;
     use crate::clock::Stamp;
-    use crate::field::Field;
     use cave_id::{IdSource, SeqIds};
 
     fn doc(a: u64) -> Document {
@@ -430,5 +483,100 @@ mod tests {
         d.edit(vec![set(id, Field::ShotLeft, Value::Number(None))])
             .unwrap();
         assert_eq!(d.entity(id).unwrap().number(Field::ShotLeft), None);
+    }
+
+    /// A document rebuilt from another's ops: what an earlier version of a cave is.
+    fn rebuilt(from: &Document) -> Document {
+        let mut d = doc(9);
+        for op in from.snapshot() {
+            d.apply(&op).unwrap();
+        }
+        d
+    }
+
+    fn label(d: &Document, id: Id) -> Option<String> {
+        d.entity(id).map(|e| e.text(Field::StationLabel))
+    }
+
+    #[test]
+    fn restoring_makes_the_document_read_as_the_earlier_version_and_can_be_undone() {
+        let mut ids = SeqIds::new(1);
+        let (a, b, c) = (ids.next_id(), ids.next_id(), ids.next_id());
+        let mut live = doc(1);
+        live.edit(vec![
+            Action::Create {
+                id: a,
+                kind: Kind::Station,
+            },
+            set(a, Field::StationLabel, Value::Text("A1".into())),
+            Action::Create {
+                id: b,
+                kind: Kind::Station,
+            },
+            set(b, Field::StationLabel, Value::Text("B".into())),
+        ])
+        .unwrap();
+        let before = rebuilt(&live); // the version to go back to
+        // later edits: one station renamed, one removed, one added
+        live.edit(vec![
+            set(a, Field::StationLabel, Value::Text("changed".into())),
+            Action::Remove {
+                id: b,
+                kind: Kind::Station,
+            },
+            Action::Create {
+                id: c,
+                kind: Kind::Station,
+            },
+            set(c, Field::StationLabel, Value::Text("new".into())),
+        ])
+        .unwrap();
+        assert_eq!(label(&live, a).as_deref(), Some("changed"));
+        let actions = live.actions_to_reach(&before);
+        let restore = live.edit(actions).unwrap();
+        assert_eq!(
+            label(&live, a).as_deref(),
+            Some("A1"),
+            "a renamed station reads as it did"
+        );
+        assert_eq!(
+            label(&live, b).as_deref(),
+            Some("B"),
+            "a removed one is back"
+        );
+        assert!(live.entity(c).is_none(), "one added since is gone");
+        assert!(
+            live.actions_to_reach(&before).is_empty(),
+            "restoring twice finds nothing left to do"
+        );
+        // the restore is an edit like any other: it can be undone, and nothing before it was lost
+        live.edit(restore.inverse).unwrap();
+        assert_eq!(label(&live, a).as_deref(), Some("changed"));
+        assert!(live.entity(c).is_some());
+    }
+
+    #[test]
+    fn restoring_leaves_the_drawing_wide_settings_alone() {
+        let mut ids = SeqIds::new(1);
+        let (a, key) = (ids.next_id(), ids.next_id());
+        let mut live = doc(1);
+        live.edit(vec![Action::Create {
+            id: a,
+            kind: Kind::Station,
+        }])
+        .unwrap();
+        let before = rebuilt(&live);
+        live.edit(vec![
+            Action::Create {
+                id: key,
+                kind: Kind::Setting,
+            },
+            set(key, Field::SettingValue, Value::Text("room".into())),
+        ])
+        .unwrap();
+        assert!(
+            live.actions_to_reach(&before).is_empty(),
+            "a setting made since is not a part of the survey's version"
+        );
     }
 }

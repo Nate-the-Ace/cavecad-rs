@@ -2270,6 +2270,43 @@ pub fn sync_apply(ops: &str) -> u32 {
     })
 }
 
+/// Puts the open cave back to an EARLIER version of itself, as one new edit: `ops` (JSON) are that version, a room's snapshot
+/// and the entries up to the point to go back to. What the version had is created or set back, what was added since is
+/// removed (the drawing-wide settings, the room id among them, are left alone). Nothing is forgotten: the restore is an edit
+/// like any other, so it goes to the room and every device, the cave's whole history stays, and the restore can be undone on
+/// `scope`'s history. Returns `ok:<number of changes>` or `error: ...`.
+#[wasm_bindgen]
+pub fn restore_to_ops(ops: &str, scope: &str) -> String {
+    let Ok(ops) = serde_json::from_str::<Vec<cave_doc::Op>>(ops) else {
+        return "error: unreadable version of the cave".into();
+    };
+    let mut target = Document::new(ActorId(1));
+    for op in &ops {
+        if target.apply(op).is_err() {
+            return "error: that version does not fit this version of CaveCAD".into();
+        }
+    }
+    DOC.with(|d| {
+        let mut slot = d.borrow_mut();
+        let Some(doc) = slot.as_mut() else {
+            return "error: no cave is open".into();
+        };
+        let actions = doc.actions_to_reach(&target);
+        let n = actions.len();
+        if n == 0 {
+            return "ok:0".into();
+        }
+        match doc.edit(actions) {
+            Ok(edit) => {
+                record_edit(scope, &edit);
+                tracing::info!(source = "edit", "restored an earlier version ({n} changes)");
+                format!("ok:{n}")
+            }
+            Err(e) => format!("error: {e:?}"),
+        }
+    })
+}
+
 /// The whole open cave as JSON ops, to hand to a device that is joining.
 #[wasm_bindgen]
 pub fn sync_snapshot() -> String {
