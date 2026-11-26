@@ -103,6 +103,9 @@ export class CaveView {
   private haloFade = 0.5;
   private showLabels = true;
   private selected = '';
+  /** Every station and every leg or splay picked (a touch screen picks several), each lit on the map. */
+  private pickedStations = new Set<string>();
+  private pickedShots = new Set<string>();
   /** Cross-section sketches drawn beside their stations, and whether they are shown. */
   private sections: MapSection[] = [];
   private showSections = true;
@@ -1932,6 +1935,13 @@ export class CaveView {
     this.requestRender();
   }
 
+  /** All the stations and the legs and splays (shot ids) picked, to light up together. */
+  setPicked(stations: string[], shots: string[]) {
+    this.pickedStations = new Set(stations);
+    this.pickedShots = new Set(shots);
+    this.requestRender();
+  }
+
   /** The station under a screen point (within `radius` pixels), or null: what a click snaps to. */
   pickStation(clientX: number, clientY: number, radius = 14): { id: string; label: string } | null {
     const s = this.data;
@@ -2507,9 +2517,10 @@ export class CaveView {
       g.globalAlpha = 1;
     }
     // the picked leg or splay: a bright line in the theme's highlight colour along it
-    if (this.selectedShot) {
-      const leg = s.legs.find((l) => l.shot === this.selectedShot);
-      const si = leg ? -1 : s.splay_shots.indexOf(this.selectedShot);
+    for (const shotId of new Set([this.selectedShot, ...this.pickedShots])) {
+      if (!shotId) continue;
+      const leg = s.legs.find((l) => l.shot === shotId);
+      const si = leg ? -1 : s.splay_shots.indexOf(shotId);
       const ends: [[number, number, number], [number, number, number]] | null = leg ? [leg.from, leg.to] : si >= 0 ? [[s.splays[si][0], s.splays[si][1], s.splays[si][2]], [s.splays[si][3], s.splays[si][4], s.splays[si][5]]] : null;
       const a = ends && this.project(ends[0]);
       const b = ends && this.project(ends[1]);
@@ -2528,9 +2539,10 @@ export class CaveView {
         g.stroke();
       }
     }
-    const chosen = this.selected ? s.stations.find((st) => st.id === this.selected) : undefined;
-    const cp = chosen ? this.project(chosen.at) : null;
-    if (cp) {
+    for (const stationId of new Set([this.selected, ...this.pickedStations])) {
+      const chosen = stationId ? s.stations.find((st) => st.id === stationId) : undefined;
+      const cp = chosen ? this.project(chosen.at) : null;
+      if (!cp) continue;
       // the picked station: a filled halo and ring in the theme's highlight colour
       const hi = `#${this.theme.accent.getHexString()}`;
       g.fillStyle = hi;

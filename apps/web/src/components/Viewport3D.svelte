@@ -407,6 +407,8 @@
     const id = cave.pick.kind === 'station' ? cave.pick.id : '';
     view?.setSelected(id);
     view?.setSelectedShot(cave.pick.kind === 'leg' || cave.pick.kind === 'splay' ? cave.pick.id : '');
+    // everything picked on a touch screen is lit, not only the first
+    view?.setPicked(cave.picks.filter((p) => p.kind === 'station').map((p) => p.id), cave.picks.filter((p) => p.kind === 'leg' || p.kind === 'splay').map((p) => p.id));
   });
 
   // A plain click on a station picks it for the Cross Section panel (a drag orbits, as always).
