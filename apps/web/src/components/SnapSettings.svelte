@@ -25,7 +25,7 @@
     <div class="tiles" role="group" aria-label={title}>
       {#each snap.catalog.filter((m) => m.group === group) as m (m.id)}
         <button class="tile" class:on={running.has(m.id)} aria-pressed={running.has(m.id)} title={m.name} onclick={() => setMode(m.id, !running.has(m.id))}>
-          <SnapGlyph mode={m.id as SnapMode} color={running.has(m.id) ? 'var(--accent)' : 'var(--text)'} />
+          <SnapGlyph mode={m.id as SnapMode} color={running.has(m.id) ? 'var(--on-accent, #fff)' : 'var(--text)'} />
           <span class="nm">{m.name}</span>
         </button>
       {/each}
@@ -50,9 +50,10 @@
 <style>
   .tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(68px, 1fr)); gap: 6px; }
   .tile { display: flex; flex-direction: column; align-items: center; justify-content: flex-start; gap: 2px; min-height: 64px; padding: 6px 2px 4px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel-2); color: var(--text); font: inherit; touch-action: manipulation; cursor: pointer; }
-  .tile.on { background: var(--accent-bg); border-color: var(--accent); }
-  .tile .nm { font-size: 10.5px; line-height: 1.1; text-align: center; overflow-wrap: anywhere; color: var(--muted); }
-  .tile.on .nm { color: var(--text); }
+  /* on = solid accent with a light glyph and name (the same as every other toggle); stated here so it holds on the phone and the dock */
+  .snapset .tile.on { background: var(--accent); border-color: var(--accent); color: var(--on-accent, #fff); }
+  .tile .nm { font-size: 10.5px; line-height: 1.1; text-align: center; overflow-wrap: anywhere; color: var(--muted); white-space: normal; }
+  .snapset .tile.on .nm { color: var(--on-accent, #fff); }
   .snapset { display: flex; flex-direction: column; gap: 2px; font-size: 13px; color: var(--text); }
   .head { margin-top: 6px; color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; }
   label { display: flex; align-items: center; gap: 8px; padding: 3px 0; min-height: 30px; }
