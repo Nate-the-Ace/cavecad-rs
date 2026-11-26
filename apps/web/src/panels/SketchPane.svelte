@@ -27,7 +27,7 @@ import { planFrame } from '../lib/snap-types';
   import { engine, loadEngine, type SheetOptions } from '../lib/engine';
   import { formatLength } from '../lib/units';
   import { fitView, toScreen as project, toWorld as unproject, type Pt, type Transform } from '../lib/sketch-types';
-  import { GRID, describeScale, drawGrid, gridCaption, matchScale, pxPerMetre, visibleGrid } from '../lib/sketch-grid';
+  import { GRIDS, describeScale, drawGrid, gridCaption, gridFor, matchScale, pxPerMetre, visibleGrid } from '../lib/sketch-grid';
   import { PANE_SCOPE, PANE_TITLE, sketch, type Pane } from '../lib/sketch.svelte';
 
   let { pane }: { pane: Pane } = $props();
@@ -197,6 +197,8 @@ import { planFrame } from '../lib/snap-types';
     if (close) g.closePath();
   }
 
+  const grid = $derived(gridFor(option('sketchGrid', '2')));
+
   function draw() {
     const { w, h } = view.size;
     // Drawn lines ask the engine (which of them are flipped), so nothing is drawn before it is loaded.
@@ -210,7 +212,7 @@ import { planFrame } from '../lib/snap-types';
     const c = css();
     const t = tf();
     g.font = '11px system-ui, sans-serif';
-    drawGrid(g, t, w, h, c.text);
+    drawGrid(g, t, w, h, c.text, grid);
 
     const dot = (p: Pt, label: string) => {
       const [x, y] = toScreen(p);
@@ -336,18 +338,18 @@ import { planFrame } from '../lib/snap-types';
     if (eraser.active || eraserAt) paintEraser(g, eraser.path.map(toScreen), eraserAt, eraserRadiusPx(t.scale), c.accent);
 
     // what the scale is, and the grid: a bar one heavy square long
-    const bar = GRID.majorM * t.scale;
+    const bar = grid.majorM * t.scale;
     g.strokeStyle = c.text;
     g.fillStyle = c.muted;
     g.lineWidth = 2;
-    if (bar < w - 30 && visibleGrid(t.scale).major) {
+    if (bar < w - 30 && visibleGrid(t.scale, grid).major) {
       g.beginPath();
       g.moveTo(16, h - 14);
       g.lineTo(16 + bar, h - 14);
       g.stroke();
     }
-    const fine = visibleGrid(t.scale).minor ? '' : ' (fine lines hidden: zoom in)';
-    g.fillText(`${describeScale(t.scale, scales)}  ·  grid ${gridCaption()}${fine}`, 16, h - 22);
+    const fine = visibleGrid(t.scale, grid).minor ? '' : ' (fine lines hidden: zoom in)';
+    g.fillText(`${describeScale(t.scale, scales)}  ·  grid ${gridCaption(grid)}${fine}`, 16, h - 22);
     if (message) {
       g.fillStyle = c.warn;
       g.fillText(message, 12, 50);
@@ -704,6 +706,9 @@ import { planFrame } from '../lib/snap-types';
       <option value="fit">Fit survey</option>
       {#each scales as s}<option value={String(s.feet_per_inch)}>{s.label}</option>{/each}
       {#if selectValue === 'custom'}<option value="custom" disabled>{describeScale(view.tf.scale, scales)}</option>{/if}
+    </select>
+    <select value={String(option('sketchGrid', '2'))} aria-label="{PANE_TITLE[pane]} grid" title="Grid: the square, with a heavy line every ten squares" onchange={(e) => { setOption('sketchGrid', e.currentTarget.value); schedule(); }}>
+      {#each GRIDS as g}<option value={g.key}>{g.label}</option>{/each}
     </select>
     <button class="ic" class:on={view.frame === 'auto' && view.scale === 'fit'} title="Fit the whole survey" aria-label="Fit {PANE_TITLE[pane]} to the survey" onclick={fitAll}><Maximize size={15} /></button>
   </header>

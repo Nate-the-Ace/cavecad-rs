@@ -93,15 +93,15 @@
   .chev { display: inline-flex; transition: transform 0.12s; }
   .chev.open { transform: rotate(90deg); }
   h3 { margin: 0; font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
-  .grid { display: grid; grid-template-columns: repeat(4, minmax(52px, 1fr)); gap: var(--p-gap); }
+  .grid { display: grid; grid-template-columns: repeat(3, minmax(72px, 1fr)); gap: var(--p-gap); }
   .cell { position: relative; display: flex; flex-direction: column; }
   .cell .tile { flex: 1; -webkit-touch-callout: none; user-select: none; -webkit-user-select: none; }
   /* 32pt hit area, drawn small in the tile's top-right corner */
-  .star { position: absolute; top: -2px; right: -2px; display: grid; place-items: center; width: 32px; height: 32px; padding: 0; border: 0; background: none; color: var(--muted); }
+  .star { position: absolute; top: -6px; right: -6px; display: grid; place-items: center; width: var(--p-hit); height: var(--p-hit); padding: 0; border: 0; background: none; color: var(--muted); touch-action: manipulation; }
   .star.on { color: var(--accent); }
-  .tile { display: flex; flex-direction: column; align-items: center; justify-content: flex-start; gap: 3px; min-height: 52px; padding: 6px 2px; background: none; border: 1px solid transparent; border-radius: var(--p-radius); color: var(--text); font-size: 11px; text-align: center; line-height: 1.15; overflow-wrap: anywhere; }
+  .tile { touch-action: manipulation; display: flex; flex-direction: column; align-items: center; justify-content: flex-start; gap: 3px; min-height: 72px; padding: 8px 4px; background: none; border: 1px solid transparent; border-radius: var(--p-radius); color: var(--text); font-size: 11px; text-align: center; line-height: 1.15; overflow-wrap: anywhere; }
   .tile.armed { background: var(--accent-bg); border-color: var(--accent); }
-  .tile canvas { width: 44px; height: 44px; color: var(--text); }
+  .tile canvas { width: 52px; height: 52px; color: var(--text); }
   small { display: block; font-size: 9px; color: var(--muted); letter-spacing: 0.05em; }
   .none { color: var(--muted); font-size: var(--p-font); }
 </style>

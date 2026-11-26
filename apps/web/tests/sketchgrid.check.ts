@@ -1,4 +1,4 @@
-import { DEFAULT_FEET_PER_INCH, GRID, PX_PER_INCH, describeScale, feetPerInch, gridCaption, gridLines, matchScale, pxPerMetre, visibleGrid } from '../src/lib/sketch-grid.ts';
+import { DEFAULT_FEET_PER_INCH, GRID, GRIDS, gridFor, PX_PER_INCH, describeScale, feetPerInch, gridCaption, gridLines, matchScale, pxPerMetre, visibleGrid } from '../src/lib/sketch-grid.ts';
 import { FOOT } from '../src/lib/units.ts';
 
 let bad = 0;
@@ -47,6 +47,13 @@ ok(gridLines(-25, 25, 5, 20).filter((l) => l.heavy).map((l) => l.at).join() === 
 ok(gridLines(0, 10, 0, 10).length === 0 && gridLines(5, 5, 1, 5).length === 0, 'a zero step or an empty range has no lines');
 ok(gridLines(0, 1_000_000, 1, 10).length === 0, 'an absurd number of lines is not drawn');
 ok(gridLines(0.1, 0.5, 0.1, 0.5).length === 5, 'no line is lost to float error at the ends');
+
+ok(GRIDS.map((g) => g.key).join() === '1,2,5,10', 'the grids on offer are 1, 2, 5 and 10 ft squares');
+ok(GRIDS.every((g) => near(g.majorM, g.minorM * 10)), 'each has a heavy line every ten squares');
+ok(gridFor('1').minorM === GRIDS[0].minorM && near(gridFor('1').minorM, 1 * FOOT), 'a stored choice finds its grid');
+ok(gridFor('nonsense') === GRID && gridFor(undefined) === GRID, 'anything else is the 2 ft default');
+ok(visibleGrid(pxPerMetre(20), gridFor('1')).minor === (gridFor('1').minorM * pxPerMetre(20) >= 4), 'visibility follows the chosen grid');
+ok(gridCaption(gridFor('5')) === '5 ft / 50 ft', 'the caption follows the chosen grid');
 
 if (bad) process.exit(1);
 console.log('sketchgrid ok');

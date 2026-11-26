@@ -668,6 +668,7 @@
           <label title="Show the profile sketches along their runs (they fade out from the top or bottom, where they cannot be read)"><input type="checkbox" checked={cave.showSections.profileSketches} onchange={(e) => setShowSections('profileSketches', e.currentTarget.checked)} /> Profile sketches</label>
           <label title="Show the cross sections drawn at stations, next to their stations (drag one to place it)"><input type="checkbox" checked={cave.showSections.map} onchange={(e) => setShowSections('map', e.currentTarget.checked)} /> Sections</label>
           <label title="Draw a paler section through stations with no measurements"><input type="checkbox" bind:checked={fillGaps} onchange={loadPassage} /> Fill gaps</label>
+          <label title="Draw the aligned scanned pages under the map (opacity and placement are in the Scans panel)"><input type="checkbox" checked={option('showScans', true)} onchange={(e) => setOption('showScans', e.currentTarget.checked)} /> Scans</label>
           {#if surfaceShown}
             <h4>Surface</h4>
             <label title="The aerial photo under the cave, at half strength"><input type="checkbox" checked={option('surfacePhoto', true)} onchange={(e) => setOption('surfacePhoto', e.currentTarget.checked)} /> Photo</label>

@@ -88,10 +88,18 @@ export interface Hooks<T extends EditableLine> {
 }
 
 /** How close, in pixels, a press must be to a line to select it, and to a fit point to pick it up. */
-const LINE_REACH = 7;
-const HANDLE_REACH = 10;
+const FINE_LINE_REACH = 7;
+const FINE_HANDLE_REACH = 10;
 /** How close, in pixels, a dragged arrow tip must come to another thing's point to fasten to it. */
-const SNAP_REACH = 10;
+const FINE_SNAP_REACH = 10;
+
+/** A finger is blunter than a mouse: on a touch screen (a coarse primary pointer) every reach is this many times larger. */
+export const FINGER_FACTOR = 2.4;
+const coarse = (): boolean => typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches;
+const scaled = (px: number): number => (coarse() ? Math.round(px * FINGER_FACTOR) : px);
+const lineReach = (): number => scaled(FINE_LINE_REACH);
+const handleReach = (): number => scaled(FINE_HANDLE_REACH);
+const snapReach = (): number => scaled(FINE_SNAP_REACH);
 
 export class LineEditor<T extends EditableLine = EditableLine> {
   /** A fit point being moved: the line, which point, and the line's points as they are right now. */
@@ -118,7 +126,7 @@ export class LineEditor<T extends EditableLine = EditableLine> {
   /** A point to fasten a leader tip to: object snap when the view gives it, else the nearest vertex of another thing. */
   private snapped(x: number, y: number, exclude: string): Pt | null {
     if (this.h.snap) return this.h.snap(x, y, exclude);
-    return nearestVertex(this.shown(), exclude, this.h.toScreen, x, y, SNAP_REACH);
+    return nearestVertex(this.shown(), exclude, this.h.toScreen, x, y, snapReach());
   }
 
   /** The lines that are switched on (every labelled symbol with its label's note point). */
@@ -151,14 +159,14 @@ export class LineEditor<T extends EditableLine = EditableLine> {
     if (sel && op) {
       const screen = sel.points.map(this.h.toScreen);
       const spot = this.snapped(x, y, sel.id) ?? this.h.toWorld(x, y);
-      const next = op === 'add' ? withArrow(sel.points, spot) : withoutArrow(sel.points, arrowAt(screen, x, y, HANDLE_REACH + 6));
+      const next = op === 'add' ? withArrow(sel.points, spot) : withoutArrow(sel.points, arrowAt(screen, x, y, handleReach() + 6));
       if (next) this.saveLeader(sel.id, next, sel.style);
       this.h.arrowDone?.();
       this.h.redraw();
       return true;
     }
     if (sel) {
-      const i = nearestPoint(sel.points.map(this.h.toScreen), x, y, HANDLE_REACH);
+      const i = nearestPoint(sel.points.map(this.h.toScreen), x, y, handleReach());
       if (i >= 0) {
         this.drag = { id: sel.id, index: i, points: sel.points.map((p) => [...p] as Pt), widths: sel.widths ? [...sel.widths] : null, stamp: isStampKind(sel.kind), leader: sel.kind === 'callout' };
         return true;
@@ -173,7 +181,7 @@ export class LineEditor<T extends EditableLine = EditableLine> {
       return true;
     }
     const lines = this.shown();
-    const stack = linesAt(lines, this.h.toScreen, x, y, LINE_REACH, this.h.paperPx?.(), this.h.ornament);
+    const stack = linesAt(lines, this.h.toScreen, x, y, lineReach(), this.h.paperPx?.(), this.h.ornament);
     this.pressed = additive ? [] : stack.map((i) => lines[i].id);
     if (stack.length) {
       this.h.select(lines[stack[0]].id, additive);
@@ -251,7 +259,7 @@ export class LineEditor<T extends EditableLine = EditableLine> {
     const sel = this.selectedLine();
     if (!sel) return false;
     const screen = sel.points.map(this.h.toScreen);
-    if (distanceToCurve(screen, x, y, !!sel.closed) > LINE_REACH + 3) return false;
+    if (distanceToCurve(screen, x, y, !!sel.closed) > lineReach() + 3) return false;
     const { index, at } = insertionAt(screen, x, y, !!sel.closed);
     const points = [...sel.points];
     points.splice(index, 0, this.h.toWorld(at[0], at[1]));
@@ -264,7 +272,7 @@ export class LineEditor<T extends EditableLine = EditableLine> {
   /** A right press at screen (`x`, `y`): the line there is selected (unless it already is) and a way to find the lines like it is returned. Null when no line is there. */
   contextAt(x: number, y: number): (() => string[]) | null {
     const lines = this.shown();
-    const hit = topLineAt(lines, this.h.toScreen, x, y, LINE_REACH, this.h.paperPx?.(), this.h.ornament);
+    const hit = topLineAt(lines, this.h.toScreen, x, y, lineReach(), this.h.paperPx?.(), this.h.ornament);
     if (hit < 0) return null;
     const line = lines[hit];
     const now = this.h.ids ? this.h.ids() : [this.h.selected()];
@@ -276,7 +284,7 @@ export class LineEditor<T extends EditableLine = EditableLine> {
   /** The words of the stamp (symbol, text or leader) at screen (`x`, `y`), with where they start on screen: what a double click edits. Null when none. */
   wordsAt(x: number, y: number): { id: string; text: string; kind: string; x: number; y: number; size: number; angle: number } | null {
     const lines = this.shown();
-    const hit = topLineAt(lines, this.h.toScreen, x, y, LINE_REACH, this.h.paperPx?.(), this.h.ornament);
+    const hit = topLineAt(lines, this.h.toScreen, x, y, lineReach(), this.h.paperPx?.(), this.h.ornament);
     if (hit < 0 || !isStampKind(lines[hit].kind)) return null;
     const l = lines[hit];
     const spot = stampEditSpot(l.kind ?? '', l.points.map((p) => this.h.toScreen(p) as [number, number]), leaderLook(l.style, this.h.paperPx?.()));
@@ -310,7 +318,7 @@ export class LineEditor<T extends EditableLine = EditableLine> {
 export const PICKUP_REACH = 12;
 
 /** The open line of kind `kind` with an end near screen (`x`, `y`): which line, which end, where on screen. */
-export function endpointNear<T extends EditableLine>(lines: T[], kind: string, toScreen: (p: Pt) => Pt, x: number, y: number, reach = PICKUP_REACH): { line: T; atStart: boolean; at: Pt } | null {
+export function endpointNear<T extends EditableLine>(lines: T[], kind: string, toScreen: (p: Pt) => Pt, x: number, y: number, reach = scaled(PICKUP_REACH)): { line: T; atStart: boolean; at: Pt } | null {
   let best: { line: T; atStart: boolean; at: Pt } | null = null;
   let bestD = reach;
   for (const line of lines) {

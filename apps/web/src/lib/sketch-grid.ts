@@ -3,9 +3,9 @@
 // tab's (`engine.sheetOptions().scales`), lengths and feet are `units.ts`. Pure and tested
 // (tests/sketchgrid.check.ts).
 //
-// The grid is the same at every scale and every zoom: 2 ft squares with a heavy line every 20 ft, fixed in the
-// world (it moves with the drawing). It is never re-spaced to suit the zoom; when it would be too fine to see,
-// the fine lines are left out and the grid is still 2 ft.
+// The grid is the same at every scale and every zoom: a chosen size of square (1 ft, 2 ft, 5 ft, 10 ft) with a
+// heavy line every ten squares, fixed in the world (it moves with the drawing). It opens at 2 ft squares. It is
+// never re-spaced to suit the zoom; when it would be too fine to see, the fine lines are left out.
 
 import { FOOT, formatLength } from './units.ts';
 
@@ -21,15 +21,27 @@ export const pxPerMetre = (feetPerInch: number): number => PX_PER_INCH / (feetPe
 /** The feet to the paper inch a pixels-per-metre figure is. */
 export const feetPerInch = (pxPerM: number): number => PX_PER_INCH / (pxPerM * FOOT);
 
-/** The grid: 2 ft squares, a heavy line every 20 ft (10 squares), in metres. */
-export const GRID = { minorM: 2 * FOOT, majorM: 20 * FOOT } as const;
+/** A grid: the square (`minorM`) and the heavy line (`majorM`), in metres. */
+export interface GridSpec {
+  minorM: number;
+  majorM: number;
+}
+
+/** The grids on offer: `key` is the minor square in feet; the heavy line is every ten squares. */
+export const GRIDS = [1, 2, 5, 10].map((ft) => ({ key: String(ft), label: `${ft} ft squares`, minorM: ft * FOOT, majorM: ft * 10 * FOOT }));
+
+/** The grid: 2 ft squares, a heavy line every 20 ft (10 squares), in metres. The one a drawing opens with. */
+export const GRID: GridSpec = { minorM: 2 * FOOT, majorM: 20 * FOOT };
+
+/** The grid a stored choice names (a key of `GRIDS`), or the default for anything else. */
+export const gridFor = (key: unknown): GridSpec => GRIDS.find((g) => g.key === String(key)) ?? GRID;
 
 /** Fewest pixels between lines for them to be worth drawing: closer than this they only make a haze. */
 export const MIN_GRID_PX = 4;
 
 /** Which of the grid's lines are far enough apart to draw at this zoom (the spacing itself never changes). */
-export function visibleGrid(pxPerM: number): { minor: boolean; major: boolean } {
-  return { minor: GRID.minorM * pxPerM >= MIN_GRID_PX, major: GRID.majorM * pxPerM >= MIN_GRID_PX };
+export function visibleGrid(pxPerM: number, grid: GridSpec = GRID): { minor: boolean; major: boolean } {
+  return { minor: grid.minorM * pxPerM >= MIN_GRID_PX, major: grid.majorM * pxPerM >= MIN_GRID_PX };
 }
 
 /** The scale (one of `scales`, the Sheets tab's list) a pixels-per-metre figure is, within half a percent; `null` for one zoomed to. */
@@ -61,33 +73,33 @@ export function gridLines(from: number, to: number, step: number, major: number,
 }
 
 /** The grid's size as it is captioned: "2 ft / 20 ft". */
-export const gridCaption = (): string => `${formatLength(GRID.minorM, 'imperial')} / ${formatLength(GRID.majorM, 'imperial')}`;
+export const gridCaption = (grid: GridSpec = GRID): string => `${formatLength(grid.minorM, 'imperial')} / ${formatLength(grid.majorM, 'imperial')}`;
 
 /**
  * Draws the grid over a pane. `toWorld` and the pane size give the visible area; `tx` and `ty` place the
  * origin. Fine lines are left out when closer than `MIN_GRID_PX`; the spacing never changes.
  */
-export function drawGrid(g: CanvasRenderingContext2D, t: { scale: number; tx: number; ty: number }, w: number, h: number, ink: string): void {
-  const shown = visibleGrid(t.scale);
+export function drawGrid(g: CanvasRenderingContext2D, t: { scale: number; tx: number; ty: number }, w: number, h: number, ink: string, grid: GridSpec = GRID): void {
+  const shown = visibleGrid(t.scale, grid);
   if (!shown.major) return;
   const x0 = (0 - t.tx) / t.scale;
   const x1 = (w - t.tx) / t.scale;
   const y1 = t.ty / t.scale;
   const y0 = (t.ty - h) / t.scale;
-  const step = shown.minor ? GRID.minorM : GRID.majorM;
+  const step = shown.minor ? grid.minorM : grid.majorM;
   g.save();
   g.lineWidth = 1;
   g.strokeStyle = ink;
   for (const heavy of [false, true]) {
     g.globalAlpha = heavy ? 0.2 : 0.075;
     g.beginPath();
-    for (const l of gridLines(x0, x1, step, GRID.majorM)) {
+    for (const l of gridLines(x0, x1, step, grid.majorM)) {
       if (l.heavy !== heavy) continue;
       const x = Math.round(t.tx + l.at * t.scale) + 0.5;
       g.moveTo(x, 0);
       g.lineTo(x, h);
     }
-    for (const l of gridLines(y0, y1, step, GRID.majorM)) {
+    for (const l of gridLines(y0, y1, step, grid.majorM)) {
       if (l.heavy !== heavy) continue;
       const y = Math.round(t.ty - l.at * t.scale) + 0.5;
       g.moveTo(0, y);

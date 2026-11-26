@@ -34,3 +34,16 @@ select option { background: var(--panel); color: var(--text); }
   --dv-separator-border: var(--line);
   --dv-paneview-header-border-color: var(--line);
 }
+
+/* Touch: a long press or a drag on a drawing, a symbol or a control must never bring up the browser's text selection,
+   magnifier or callout menu. Text a person may need to copy (fields, logs, version strings) opts back in. */
+.phone, .phone *, canvas {
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+.phone input, .phone textarea, .phone [contenteditable='true'], .phone [data-selectable], .phone [data-selectable] * {
+  -webkit-touch-callout: default;
+  -webkit-user-select: text;
+  user-select: text;
+}
