@@ -7,7 +7,8 @@
   // the bottom of the Sketch canvas: the same parts the ribbon's contextual tab shows on the desktop. It shows when
   // something is picked; Done puts it away (the object stays picked), and a long press on the object brings it back.
   import SelectionTools from './SelectionTools.svelte';
-  import BulkSurvey from './BulkSurvey.svelte';
+  import CommonProps from './CommonProps.svelte';
+  import { loadSubjects } from '../lib/property-defs';
   import { cave, selectedIds, setPick } from '../lib/cave.svelte';
   import { engine } from '../lib/engine';
   import { INSPECTORS } from '../lib/inspectors';
@@ -31,8 +32,11 @@
   const stationIds = $derived(picks.filter((p) => p.kind === 'station').map((p) => p.id));
   const shotIds = $derived(picks.filter((p) => p.kind === 'leg' || p.kind === 'splay').map((p) => p.id));
   const mode = $derived(cave.tool ? '' : infos.length + picks.length === 0 ? '' : picks.length === 0 ? 'selection' : infos.length === 0 && picks.length === 1 ? 'pick' : 'multi');
-  const onlyStations = $derived(infos.length === 0 && shotIds.length === 0 && stationIds.length > 1);
-  const onlyShots = $derived(infos.length === 0 && stationIds.length === 0 && shotIds.length > 1);
+  /** Everything in a mixed selection, as the property registry reads it (lib/property-defs.ts). */
+  const subjects = $derived.by(() => {
+    void cave.version;
+    return mode === 'multi' ? loadSubjects({ stations: stationIds, shots: shotIds, drawn: ids }) : [];
+  });
   const count = (n: number, one: string, many: string) => (n ? [`${n} ${n === 1 ? one : many}`] : []);
   const multiTitle = $derived([...count(stationIds.length, 'station', 'stations'), ...count(shotIds.length, 'leg or splay', 'legs and splays'), ...count(infos.length, 'drawn object', 'drawn objects')].join(', '));
   const alike = $derived(infos.every((i) => i.kind === infos[0]?.kind));
@@ -111,9 +115,7 @@
         {#each parts as g (g.part)}<section><h4>{g.name}</h4><SelectionTools part={g.part as 'type'} /></section>{/each}
       {:else if mode === 'multi'}
         <section>
-          {#if onlyStations}<BulkSurvey kind="station" ids={stationIds} />
-          {:else if onlyShots}<BulkSurvey kind="shot" ids={shotIds} />
-          {:else}<p class="none">These are different kinds of thing, so they have no settings in common.</p>{/if}
+          <CommonProps subjects={subjects} />
         </section>
       {:else if Inspector && pickKind}
         {#each INSPECTORS[pickKind].groups.filter((g) => g.part !== 'info') as g (g.part)}<section><h4>{g.name}</h4><Inspector part={g.part} kind={pickKind} /></section>{/each}
@@ -138,7 +140,6 @@
   /* everything is meant to fit with no scrolling: the groups flow side by side and wrap, and the ribbon-sized buttons shrink to a touch row */
   .body { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 0 var(--p-pad); padding: 0 var(--p-gap) var(--p-gap); font-size: var(--p-font-small); }
   section { padding: 2px 0 4px; min-width: 0; }
-  .none { margin: 6px 0; color: var(--muted); }
   .body :global(.col), .body :global(.notes), .body :global(.note) { min-width: 0; height: auto; }
   .body :global(.walls), .body :global(.grid) { height: auto; }
   .body :global(.btns) { height: auto; flex-wrap: wrap; }
