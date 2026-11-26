@@ -1,5 +1,5 @@
 // Settings that follow the person to every device they sign in on: their preferences (units, theme, drawing options, snaps,
-// symbol standard, drawing scales, sheet set-up, compact ribbon, the cave shelf at startup) and the panel arrangement on
+// symbol standard, favourite symbols, drawing scales, sheet set-up, compact ribbon, the cave shelf at startup) and the panel arrangement on
 // screen. Each is kept in this browser as before; this file watches those keeps and sends them to the account, and on sign-in
 // takes the account's copy when it is newer (Nathan's rule: the newer copy wins). Settings that belong to the hardware (draw
 // with a finger, pen pressure, the pen button) stay on each device.
@@ -9,6 +9,8 @@ import { snap } from './snap.svelte';
 import { sheet } from './sheet.svelte';
 import { shelf } from './shelf.svelte';
 import { DOCK_KEY, applyDock } from './workspace.svelte';
+import { FAVORITES_KEY, parseFavorites } from './symbol-favorites';
+import { symbolFavorites } from './symbol-favorites.svelte';
 
 /** The preferences kept with the account, by their key in this browser. */
 const SETTINGS = [
@@ -22,6 +24,7 @@ const SETTINGS = [
   'cavecad.sheet.paperChosen',
   'cavecad.ribbon.compact',
   'cavecad.shelf.startup',
+  FAVORITES_KEY, // the favourite symbols
 ];
 /** Drawing options that belong to this device's hardware: never sent, never replaced. */
 const DEVICE_OPTIONS = ['finger', 'pressure', 'penButtonErases'];
@@ -86,6 +89,8 @@ const settings: Pref = {
     if (sh) Object.assign(sheet, Object.fromEntries(Object.entries(sh).filter(([k]) => k in sheet)));
     setCompactRibbon(get('cavecad.ribbon.compact') === '1');
     shelf.startup = get('cavecad.shelf.startup') !== '0';
+    // the favourite symbols the account sent show at once (the store reads its key only when the app starts)
+    symbolFavorites.keys = parseFavorites(get(FAVORITES_KEY));
   },
 };
 
