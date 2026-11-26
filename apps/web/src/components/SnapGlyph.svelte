@@ -18,7 +18,7 @@
     const style = getComputedStyle(canvas);
     const name = color.startsWith('var(') ? color.slice(4, -1) : '';
     const ink = name ? style.getPropertyValue(name).trim() || style.color : color === 'currentColor' ? style.color : color;
-    glyph(g, mode, size / 2, size / 2, size * 0.3, ink);
+    glyph(g, mode, size / 2, size / 2, size * 0.34, ink);
   });
 </script>
 
