@@ -112,7 +112,7 @@
   <div class="foot">
     <button onclick={onclose} disabled={busy}>{done ? 'Close' : 'Cancel'}</button>
     <button onclick={open} disabled={keep < 0 || busy || !history} title="A separate new cave with that version; this cave is not touched">{busy ? 'Opening…' : 'Open as a copy'}</button>
-    <button class="go" onclick={restore} disabled={keep < 0 || busy || !history} title={isOpen ? 'Put this cave back to that version. Its history is kept: the restore is one more step, and Undo takes it back' : 'Open this cave, then put it back to that version. Its history is kept: the restore is one more step, and Undo takes it back'}>{busy ? 'Restoring…' : isOpen ? 'Restore this cave' : 'Open it and restore'}</button>
+    <button class="go" onclick={restore} disabled={keep < 0 || busy || !history} title={isOpen ? 'Put this cave back to that version. Its history is kept: the restore is one more step, and Undo takes it back' : 'Open this cave, then put it back to that version. Its history is kept: the restore is one more step, and Undo takes it back'}>{busy ? 'Restoring…' : 'Restore'}</button>
   </div>
 </div>
 
