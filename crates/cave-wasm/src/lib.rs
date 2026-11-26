@@ -2307,6 +2307,60 @@ pub fn restore_to_ops(ops: &str, scope: &str) -> String {
     })
 }
 
+/// A plan picture of a cave version, without opening it: `ops` (JSON) are that version. Everything in the survey and the
+/// drawing as flat numbers, in metres (east, north): `legs` `[x1,y1,x2,y2]`, `walls` and `lines` (each `[x,y,x,y,...]`, a
+/// drawn line also with its `kind`), `stations` `[x,y]`, and the `bounds` `[minx,miny,maxx,maxy]` (null when empty).
+/// The open cave is not touched.
+#[wasm_bindgen]
+pub fn preview_of_ops(ops: &str) -> String {
+    let Ok(ops) = serde_json::from_str::<Vec<cave_doc::Op>>(ops) else {
+        return "null".into();
+    };
+    let mut doc = Document::new(ActorId(1));
+    if ops.iter().any(|op| doc.apply(op).is_err()) {
+        return "null".into();
+    }
+    let scene = cave_scene::build(&doc, false);
+    let flat = |pts: &[[f64; 3]]| -> Vec<f64> { pts.iter().flat_map(|p| [p[0], p[1]]).collect() };
+    let lines = cave_scene::map_lines_3d(&doc, false);
+    let mut xs: Vec<f64> = Vec::new();
+    let mut ys: Vec<f64> = Vec::new();
+    let mut note = |x: f64, y: f64| {
+        xs.push(x);
+        ys.push(y);
+    };
+    for s in &scene.stations {
+        note(s.at[0], s.at[1]);
+    }
+    for w in &scene.walls {
+        for p in w {
+            note(p[0], p[1]);
+        }
+    }
+    for l in &lines {
+        for p in &l.points {
+            note(p[0], p[1]);
+        }
+    }
+    let bounds = (!xs.is_empty()).then(|| {
+        let fold = |v: &[f64], f: fn(f64, f64) -> f64, init: f64| v.iter().copied().fold(init, f);
+        [
+            fold(&xs, f64::min, f64::INFINITY),
+            fold(&ys, f64::min, f64::INFINITY),
+            fold(&xs, f64::max, f64::NEG_INFINITY),
+            fold(&ys, f64::max, f64::NEG_INFINITY),
+        ]
+    });
+    serde_json::json!({
+        "legs": scene.legs.iter().map(|l| [l.from[0], l.from[1], l.to[0], l.to[1]]).collect::<Vec<_>>(),
+        "walls": scene.walls.iter().map(|w| flat(w)).collect::<Vec<_>>(),
+        "lines": lines.iter().map(|l| serde_json::json!({"kind": l.kind, "pts": flat(&l.points), "closed": l.closed})).collect::<Vec<_>>(),
+        "stations": scene.stations.iter().map(|s| [s.at[0], s.at[1]]).collect::<Vec<_>>(),
+        "bounds": bounds,
+    })
+    .to_string()
+}
+
 /// The whole open cave as JSON ops, to hand to a device that is joining.
 #[wasm_bindgen]
 pub fn sync_snapshot() -> String {

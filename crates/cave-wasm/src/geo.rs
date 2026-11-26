@@ -581,6 +581,22 @@ mod tests {
     }
 
     #[test]
+    fn a_version_can_be_pictured_without_opening_it() {
+        crate::open_demo(CAVE);
+        let ops = crate::sync_snapshot();
+        let v: serde_json::Value = serde_json::from_str(&crate::preview_of_ops(&ops)).unwrap();
+        assert_eq!(
+            v["legs"].as_array().unwrap().len(),
+            2,
+            "the two legs are drawn"
+        );
+        assert_eq!(v["stations"].as_array().unwrap().len(), 3);
+        assert!(v["bounds"].is_array());
+        assert_eq!(crate::preview_of_ops("nonsense"), "null");
+        assert!(crate::preview_of_ops("[]").contains("\"bounds\":null"));
+    }
+
+    #[test]
     fn a_change_to_several_stations_is_one_undo_step() {
         crate::open_demo(CAVE);
         let (a, b) = (station("A1"), station("B"));

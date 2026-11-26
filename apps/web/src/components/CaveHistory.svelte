@@ -4,7 +4,9 @@
   // with that edit and everything before it, and nothing after. The cave itself and its history are never touched: the
   // copy gets a room of its own, so it never syncs back into the original.
   import { onMount } from 'svelte';
-  import { openEarlierCopy, previewVersion, readHistory, restoreOpenCave, type CaveHistory } from '../lib/caves';
+  import { slide } from 'svelte/transition';
+  import CavePicture from './CavePicture.svelte';
+  import { openEarlierCopy, previewVersion, readHistory, restoreOpenCave, versionOps, type CaveHistory } from '../lib/caves';
   import { engine } from '../lib/engine';
   import { cave } from '../lib/cave.svelte';
   import { formatLength } from '../lib/units';
@@ -20,6 +22,8 @@
   /** This cave is the one on screen: it can be put back in place, keeping its history. */
   const isOpen = $derived(cave.hasCave && engine.roomId() === roomId);
   const preview = $derived(history && keep >= 0 ? previewVersion(history, keep) : null);
+  /** The picked version drawn in plan: it opens under its row. */
+  const picture = $derived(history && keep >= 0 ? engine.previewOfOps(versionOps(history, keep)) : null);
   let done = $state('');
 
   const SHOWN = 400;
@@ -83,13 +87,21 @@
   {#if history}
     <div class="list" role="listbox" aria-label="Edits, newest first">
       {#each rows as r (r.number)}
-        <button role="option" aria-selected={keep === r.index + 1} class:on={keep === r.index + 1} onclick={() => (keep = r.index + 1)}>
-          <span class="n">#{r.number}</span> <span class="w">{r.what}</span> <span class="m">{after[r.number] ?? ''}</span>
-        </button>
+        <div class="entry" class:on={keep === r.index + 1}>
+          <button role="option" aria-selected={keep === r.index + 1} aria-expanded={keep === r.index + 1} class:on={keep === r.index + 1} onclick={() => (keep = keep === r.index + 1 ? -1 : r.index + 1)}>
+            <span class="n">#{r.number}</span> <span class="w">{r.what}</span> <span class="m">{after[r.number] ?? ''}</span>
+          </button>
+          {#if keep === r.index + 1}
+            <div class="open" transition:slide={{ duration: 200 }}><CavePicture {picture} /></div>
+          {/if}
+        </div>
       {/each}
-      <button role="option" aria-selected={keep === 0} class:on={keep === 0} onclick={() => (keep = 0)}>
-        <span class="n">before all of these</span> <span class="w">{hidden ? `(${hidden} older edits are not listed)` : 'the cave as the server last saved it whole'}</span>
-      </button>
+      <div class="entry" class:on={keep === 0}>
+        <button role="option" aria-selected={keep === 0} aria-expanded={keep === 0} class:on={keep === 0} onclick={() => (keep = keep === 0 ? -1 : 0)}>
+          <span class="n">before all of these</span> <span class="w">{hidden ? `(${hidden} older edits are not listed)` : 'the cave as the server last saved it whole'}</span>
+        </button>
+        {#if keep === 0}<div class="open" transition:slide={{ duration: 200 }}><CavePicture {picture} /></div>{/if}
+      </div>
     </div>
   {/if}
   {#if preview}<p class="note prev"><strong>That version:</strong> {preview.empty ? 'nothing surveyed' : `${formatLength(preview.length_m, cave.units, 0)} surveyed · ${preview.stations} stations${preview.depth_m === null ? '' : ` · ${formatLength(preview.depth_m, cave.units, 0)} deep`}`}</p>{/if}
@@ -110,8 +122,11 @@
   .ok { color: var(--accent); }
   .err { margin: 0; color: var(--danger); font-size: 12px; }
   .list { flex: 1 1 0; min-height: 0; overflow: auto; display: flex; flex-direction: column; gap: 2px; }
+  .entry { display: flex; flex-direction: column; border-radius: 6px; background: var(--panel-2); }
+  .entry.on { outline: 1px solid var(--accent); }
+  .open { padding: 0 8px 8px; }
   .list button { display: flex; gap: 8px; align-items: baseline; text-align: left; padding: 8px; border: 1px solid transparent; border-radius: 6px; background: var(--panel-2); color: var(--text); font: inherit; font-size: 12px; min-height: 40px; touch-action: manipulation; }
-  .list button.on { background: var(--accent); border-color: var(--accent); color: var(--on-accent, #fff); }
+  .list button.on { background: var(--accent); border-color: var(--accent); color: var(--on-accent, #fff); border-radius: 6px 6px 0 0; }
   .n { flex: none; color: var(--muted); min-width: 4.5em; }
   .on .n { color: inherit; }
   .w { min-width: 0; flex: 1 1 0; overflow-wrap: anywhere; }
