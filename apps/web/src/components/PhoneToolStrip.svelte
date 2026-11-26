@@ -28,9 +28,9 @@
 
 <div class="strip" role="group" aria-label="Drawing tools">
     <label class="typebox" class:pressed={cave.tool !== ''}>
-    <span class="cap">Line type</span>
-    <select class="type" aria-label="Line type to draw with" {value} onchange={choose}>
-      <option value="">None: tap to pick</option>
+    <span class="cap">Draw:</span>
+    <select class="type" aria-label="What to draw" {value} onchange={choose}>
+      <option value="">Tap to pick what to draw</option>
       {#if isSym}<option value={SYM}>Symbol: {armed?.name ?? cave.tool.slice(4)}</option>{/if}
       {#each groups as g (g.name)}
         <optgroup label={g.name}>
@@ -48,7 +48,7 @@
 <style>
   .strip { display: flex; gap: var(--p-gap); padding: 0 var(--p-gap); flex: none; background: var(--panel); border-bottom: 1px solid var(--line); }
   .sym { box-sizing: border-box; height: var(--p-row); border: 1px solid var(--line); background: var(--panel-2); color: var(--text); border-radius: var(--p-radius); touch-action: manipulation; }
-  /* the dropdown sits in a box that says what it is for: "Line type", then the choice (None until one is picked) */
+  /* the dropdown sits in a box that says what it is for: "Draw:", then the choice (an invitation to pick until one is) */
   .typebox { flex: 1; min-width: 0; display: flex; align-items: center; gap: 6px; box-sizing: border-box; height: var(--p-row); padding: 0 0 0 8px; border: 1px solid var(--line); background: var(--panel-2); color: var(--text); border-radius: var(--p-radius); }
   .cap { flex: none; font-size: var(--p-font-small); font-weight: 600; color: var(--muted); white-space: nowrap; }
   .typebox.pressed .cap { color: var(--accent); }
