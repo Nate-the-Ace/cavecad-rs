@@ -116,9 +116,12 @@
 {:else if part === 'notes'}
   {#if detail.notes.length}
     <div class="col notes">
+      <!-- on the phone the strip edits the first note only; the picker of which shot's note is left to the desktop -->
+      {#if !phone.on}
       <select bind:value={note} aria-label="Which note" title="The notes written at this station, one for each shot that arrives">
         {#each detail.notes as n, i}<option value={i}>{n.on}{n.text ? '' : ' (empty)'}</option>{/each}
       </select>
+      {/if}
       <input type="text" bind:value={words} maxlength="200" aria-label="Note" placeholder="Note" onchange={saveNote} onkeydown={(e) => e.key === 'Enter' && saveNote()} />
     </div>
   {:else}
