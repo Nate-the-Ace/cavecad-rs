@@ -1,7 +1,7 @@
 <script lang="ts">
   import { looks } from '../lib/ink';
   import { onMount, untrack } from 'svelte';
-  import { Home, Maximize, Box, Square, Palette, Eye, Library, Lock, LockOpen, History } from '@lucide/svelte';
+  import { ChevronDown, Home, Maximize, Box, Square, Palette, Eye, Library, Lock, LockOpen, History } from '@lucide/svelte';
   import PanelUndo from './PanelUndo.svelte';
   import { shelf } from '../lib/shelf.svelte';
   import { isSymbolKind, needsWords, symbolDef, withLabelSpot } from '../lib/symbols';
@@ -23,7 +23,7 @@
   import SnapButton from './SnapButton.svelte';
   import { cave, changed, filter, haloFade, haloReach, option, setOption, selectedIds, selectIds, toggleSelected, setPick, setShowSections, setShown, wireFilter, toolStyle } from '../lib/cave.svelte';
   import { tolerancePx } from '../lib/commands';
-  import { ViewCube } from '../lib/viewport/view-cube';
+  import { CUBE_SIZES, ViewCube, cubePx } from '../lib/viewport/view-cube';
   import { onTheme } from '../lib/theme';
   import { panelState, showPanel } from '../lib/workspace.svelte';
   import { setActiveView } from '../lib/snapshot';
@@ -50,6 +50,13 @@
   let scene = $state.raw<Scene | null>(null);
   let palette = $state<TypeStyle[]>([]);
   let showMenu = $state(false);
+  let cubeMenu = $state(false);
+  let cube: ViewCube | undefined;
+  const cubeSize = $derived(String(option('cubeSize', 'medium')));
+  $effect(() => {
+    const px = cubePx(cubeSize);
+    untrack(() => cube?.setSize(px));
+  });
   /** Palette entries the cave has something of, in palette order. */
   const listed = $derived(palette.filter((p) => scene?.types.includes(p.key) && !isSymbolKind(p.key)));
   /** Each type's colour now, for the swatches that make the Show menu the map's key (read again when it opens). */
@@ -368,6 +375,7 @@
   let down: { x: number; y: number } | null = null;
   function onDown(e: PointerEvent) {
     showMenu = false; // a press on the map closes the Show menu
+    cubeMenu = false;
     wrap.focus({ preventScroll: true }); // so Delete and Escape reach the map
     down = e.button === 0 ? { x: e.clientX, y: e.clientY } : null;
   }
@@ -514,9 +522,11 @@
       centre: () => view?.centreXY() ?? null,
     });
     const v = new CaveView(gl, overlay);
-    const cube = new ViewCube(cubeHost, (dir) => v.snapTo(dir), (da, dp) => v.orbitBy(da, dp));
+    const cubeView = new ViewCube(cubeHost, (dir) => v.snapTo(dir), (da, dp) => v.orbitBy(da, dp));
+    cube = cubeView;
+    cubeView.setSize(cubePx(option('cubeSize', 'medium')));
     v.onRender = (camera, target) => {
-      cube.sync(camera, target);
+      cubeView.sync(camera, target);
       const hint = cave.tool && !v.canDrawHere ? 'Snap to the Top view to draw on the map' : '';
       if (hint !== drawHint) drawHint = hint;
     };
@@ -637,7 +647,8 @@
       offClip();
       ro.disconnect();
       offTheme();
-      cube.dispose();
+      cubeView.dispose();
+      cube = undefined;
       v.dispose();
       view = null;
       viewReady = false;
@@ -712,16 +723,27 @@
     {#if drawHint}<span class="status">{drawHint}</span>{:else if entrancePick.message}<span class="status pick">{entrancePick.message}{#if entrancePick.canUndo}<button title="Put the entrance and its surface back as they were before this pick" onclick={undoPick}>Undo</button>{/if}<button title="Dismiss" aria-label="Dismiss" onclick={() => ((entrancePick.message = ''), (entrancePick.canUndo = false))}>×</button></span>{:else if status}<span class="status">{status}</span>{/if}
   </div>
   <div class="cube" class:locked>
-    <div bind:this={cubeHost}></div>
-    <div class="cubebar">
-      <button class:on={locked} aria-pressed={locked} title={locked ? 'The view is locked: it cannot be turned. Pan and zoom still work. Click to unlock.' : 'Lock the view so it cannot be turned by accident while you sketch'} onclick={() => setOption('mapLock', !locked)}>
-        {#if locked}<Lock size={15} />{:else}<LockOpen size={15} />{/if}
+    <div bind:this={cubeHost} class="cubehost" class:gone={cubeSize === 'hidden'}></div>
+    <div class="cubemenu">
+      <button class:on={locked || cubeMenu} aria-expanded={cubeMenu} aria-haspopup="menu" title="View controls: lock, home, fit, projection and the size of this cube" onclick={() => (cubeMenu = !cubeMenu)}>
+        {#if locked}<Lock size={14} />{/if}<ChevronDown size={14} />
       </button>
-      <button title="Home view" disabled={locked} onclick={() => view?.home()}><Home size={15} /></button>
-      <button title="Fit to cave" onclick={() => view?.fit()}><Maximize size={15} /></button>
-      <button title={projection === 'perspective' ? 'Switch to orthographic' : 'Switch to perspective'} onclick={() => view?.setProjection(projection === 'perspective' ? 'orthographic' : 'perspective')}>
-        {#if projection === 'perspective'}<Box size={15} />{:else}<Square size={15} />{/if}
-      </button>
+      {#if cubeMenu}
+        <div class="pop cubepop" role="menu">
+          <button role="menuitemcheckbox" aria-checked={locked} class:on={locked} title="Lock the view so it cannot be turned by accident while you sketch" onclick={() => setOption('mapLock', !locked)}>
+            {#if locked}<Lock size={14} />{:else}<LockOpen size={14} />{/if} {locked ? 'Unlock view' : 'Lock view'}
+          </button>
+          <button role="menuitem" disabled={locked} onclick={() => (view?.home(), (cubeMenu = false))}><Home size={14} /> Home view</button>
+          <button role="menuitem" onclick={() => (view?.fit(), (cubeMenu = false))}><Maximize size={14} /> Fit to cave</button>
+          <button role="menuitem" onclick={() => view?.setProjection(projection === 'perspective' ? 'orthographic' : 'perspective')}>
+            {#if projection === 'perspective'}<Box size={14} /> Orthographic{:else}<Square size={14} /> Perspective{/if}
+          </button>
+          <h4>Cube size</h4>
+          {#each [...CUBE_SIZES, { key: 'hidden', label: 'Hidden' }] as c}
+            <button role="menuitemradio" aria-checked={cubeSize === c.key} class:on={cubeSize === c.key} onclick={() => setOption('cubeSize', c.key)}>{c.label}</button>
+          {/each}
+        </div>
+      {/if}
     </div>
   </div>
 </div>
@@ -731,10 +753,14 @@
   .vp { outline: none; position: relative; height: 100%; overflow: hidden; background: var(--panel-2); }
   canvas { position: absolute; inset: 0; display: block; touch-action: none; }
   .overlay { pointer-events: none; }
-  .bar { position: absolute; top: 8px; left: 8px; max-width: calc(100% - 160px); flex-wrap: wrap; display: flex; gap: 6px 10px; align-items: center; padding: 6px 8px; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); font-size: 12px; }
-  .cube { position: absolute; top: 8px; right: 8px; display: flex; flex-direction: column; align-items: center; }
-  .cubebar { display: flex; gap: 4px; margin-top: 2px; }
-  .cube.locked > :first-child { opacity: 0.45; } /* the cube shows which way the view faces but no longer turns it */
+  .bar { position: absolute; top: 4px; left: 4px; max-width: calc(100% - 120px); flex-wrap: wrap; display: flex; gap: 6px 10px; align-items: center; padding: 6px 8px; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); font-size: 12px; }
+  .cube { position: absolute; top: 4px; right: 4px; display: flex; flex-direction: column; align-items: flex-end; }
+  .cubehost.gone { display: none; }
+  .cubemenu { position: relative; }
+  .cubemenu > button { padding: 2px 6px; grid-auto-flow: column; gap: 2px; }
+  .cubepop { left: auto; right: 0; top: calc(100% + 4px); min-width: 150px; }
+  .cubepop button { justify-content: start; grid-auto-flow: column; gap: 6px; text-align: left; }
+  .cube.locked > .cubehost { opacity: 0.45; } /* the cube shows which way the view faces but no longer turns it */
   button { font: inherit; padding: 3px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--text); cursor: pointer; display: inline-grid; place-items: center; }
   button.caves { display: inline-flex; gap: 5px; align-items: center; font-weight: 600; }
   button:disabled { opacity: 0.4; cursor: default; }

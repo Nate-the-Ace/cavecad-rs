@@ -4,7 +4,17 @@ import * as THREE from 'three';
 import type { Dir } from './cave-view';
 import { readTheme } from './theme';
 
-const SIZE = 132;
+/** The cube's sizes, in pixels. */
+export const CUBE_SIZES = [
+  { key: 'small', label: 'Small', px: 72 },
+  { key: 'medium', label: 'Medium', px: 96 },
+  { key: 'large', label: 'Large', px: 132 },
+] as const;
+export type CubeSize = (typeof CUBE_SIZES)[number]['key'];
+/** The pixel size of a stored choice (`medium` for anything else). */
+export const cubePx = (key: unknown): number => (CUBE_SIZES.find((c) => c.key === key) ?? CUBE_SIZES[1]).px;
+
+const SIZE = cubePx('medium');
 /** Outer third of a face counts as its edge or corner; the middle third is the face itself. */
 const EDGE = 0.5 / 3;
 /** Pixels a press may move and still count as a click. */
@@ -116,6 +126,13 @@ export class ViewCube {
       this.marker.visible = false;
       this.draw();
     });
+  }
+
+  /** Resizes the cube to `px` pixels square. */
+  setSize(px: number) {
+    this.canvas.style.width = this.canvas.style.height = `${px}px`;
+    this.renderer.setSize(px, px, false);
+    this.draw();
   }
 
   private pick(e: MouseEvent): THREE.Vector3 | null {
