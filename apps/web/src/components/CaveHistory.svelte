@@ -85,10 +85,10 @@
   {#if problem}<p class="err" role="alert">{problem}</p>{/if}
   {#if !history && !problem}<p class="note">Reading its history…</p>{/if}
   {#if history}
-    <div class="list" role="listbox" aria-label="Edits, newest first">
+    <div class="list" role="group" aria-label="Edits, newest first">
       {#each rows as r (r.number)}
         <div class="entry" class:on={keep === r.index + 1}>
-          <button role="option" aria-selected={keep === r.index + 1} aria-expanded={keep === r.index + 1} class:on={keep === r.index + 1} onclick={() => (keep = keep === r.index + 1 ? -1 : r.index + 1)}>
+          <button aria-pressed={keep === r.index + 1} aria-expanded={keep === r.index + 1} class:on={keep === r.index + 1} onclick={() => (keep = keep === r.index + 1 ? -1 : r.index + 1)}>
             <span class="n">#{r.number}</span> <span class="w">{r.what}</span> <span class="m">{after[r.number] ?? ''}</span>
           </button>
           {#if keep === r.index + 1}
@@ -97,7 +97,7 @@
         </div>
       {/each}
       <div class="entry" class:on={keep === 0}>
-        <button role="option" aria-selected={keep === 0} aria-expanded={keep === 0} class:on={keep === 0} onclick={() => (keep = keep === 0 ? -1 : 0)}>
+        <button aria-pressed={keep === 0} aria-expanded={keep === 0} class:on={keep === 0} onclick={() => (keep = keep === 0 ? -1 : 0)}>
           <span class="n">before all of these</span> <span class="w">{hidden ? `(${hidden} older edits are not listed)` : 'the cave as the server last saved it whole'}</span>
         </button>
         {#if keep === 0}<div class="open" transition:slide={{ duration: 200 }}><CavePicture {picture} /></div>{/if}
